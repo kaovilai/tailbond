@@ -74,6 +74,8 @@ function toast(msg, bad = false) {
 }
 async function api(method, path, body) {
   const opts = { method, headers: {} };
+  // the API only accepts JSON-typed mutations (CSRF guard)
+  if (body === undefined && method !== 'GET' && method !== 'DELETE') body = {};
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -118,12 +120,12 @@ function drawSpark(svg, series, w, hgt, opts = {}) {
   const id = svg.dataset.gid || (svg.dataset.gid = 'g' + Math.random().toString(36).slice(2, 8));
   svg.innerHTML =
     `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1">` +
-    `<stop offset="0" stop-color="var(--down)" stop-opacity=".35"/><stop offset="1" stop-color="var(--down)" stop-opacity="0"/></linearGradient></defs>` +
-    (opts.grid ? `<line x1="0" x2="${w}" y1="${hgt / 2}" y2="${hgt / 2}" stroke="var(--line)" stroke-dasharray="4 6"/>` : '') +
+    `<stop offset="0" style="stop-color:var(--down);stop-opacity:.35"/><stop offset="1" style="stop-color:var(--down);stop-opacity:0"/></linearGradient></defs>` +
+    (opts.grid ? `<line x1="0" x2="${w}" y1="${hgt / 2}" y2="${hgt / 2}" style="stroke:var(--line)" stroke-dasharray="4 6" vector-effect="non-scaling-stroke"/>` : '') +
     `<path d="${rx} L${w} ${hgt} L0 ${hgt}Z" fill="url(#${id})"/>` +
-    `<path d="${rx}" fill="none" stroke="var(--down)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
-    `<path d="${tx}" fill="none" stroke="var(--up)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" stroke-dasharray="${opts.dash ? '5 4' : ''}" vector-effect="non-scaling-stroke"/>` +
-    (opts.label ? `<text x="${w - 4}" y="12" text-anchor="end" font-size="11" fill="var(--muted)">${rateStr(max)}</text>` : '');
+    `<path d="${rx}" fill="none" style="stroke:var(--down)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
+    `<path d="${tx}" fill="none" style="stroke:var(--up)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
+    (opts.label ? `<text x="${w - 4}" y="12" text-anchor="end" font-size="11" style="fill:var(--muted)">${rateStr(max)}</text>` : '');
 }
 
 // ---------- rendering ----------
@@ -141,7 +143,7 @@ function render(st) {
   const chip = $('#state-chip');
   chip.textContent = st.state;
   chip.className = 'state-chip s-' + st.state;
-  drawSpark($('#spark-total'), push('total', st.totals.rx_bps, st.totals.tx_bps), 600, 120, { grid: true, label: true, sw: 2.2 });
+  drawSpark($('#spark-total'), push('total', st.totals.rx_bps, st.totals.tx_bps), 600, 120, { grid: true, sw: 2.2 });
 
   const sub = st.role === 'server'
     ? `Home server · ${st.server || 'no public address'}`
