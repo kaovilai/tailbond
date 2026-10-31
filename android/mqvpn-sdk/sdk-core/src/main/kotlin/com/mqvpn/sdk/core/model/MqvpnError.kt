@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 mp0rta and mqvpn contributors
+
+package com.mqvpn.sdk.core.model
+
+/**
+ * VPN error types mapped from libmqvpn error codes.
+ */
+sealed interface MqvpnError {
+    val message: String
+
+    data class TunCreationFailed(override val message: String) : MqvpnError
+    data class AuthFailed(override val message: String) : MqvpnError
+    data class TlsError(override val message: String) : MqvpnError
+    data class ProtocolError(val code: Int, override val message: String) : MqvpnError
+    data class EngineError(val code: Int, override val message: String) : MqvpnError
+    data class AbiMismatch(override val message: String) : MqvpnError
+    data class Timeout(override val message: String) : MqvpnError
+    data class ConnectionClosed(override val message: String) : MqvpnError
+    data class Unknown(val nativeCode: Int, override val message: String) : MqvpnError
+
+    companion object {
+        /** Map C error code to MqvpnError. */
+        fun fromNativeCode(code: Int): MqvpnError = when (code) {
+            -4 -> TlsError("TLS handshake failed")
+            -5 -> AuthFailed("Access key rejected by the server")
+            // Also what a wrong access key looks like when the server closes
+            // without a status (403 would be -5), so name that cause first.
+            -6 -> ProtocolError(code, "Connection rejected — check the access key and server address")
+            -11 -> AbiMismatch("Callback ABI version mismatch")
+            -12 -> Timeout("Connection timeout")
+            // MQVPN_ERR_CLOSED: the connection was closed before or instead
+            // of establishing — on screen this is "the server didn't answer"
+            -10 -> ConnectionClosed("Connection to the server failed")
+            -3 -> EngineError(code, "Engine error")
+            else -> Unknown(code, "Error code $code")
+        }
+    }
+}

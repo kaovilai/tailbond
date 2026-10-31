@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 mp0rta and mqvpn contributors
+
+package com.mqvpn.sdk.core
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.net.VpnService
+import android.os.IBinder
+import android.util.Log
+import androidx.annotation.MainThread
+import com.mqvpn.sdk.core.model.MqvpnConfig
+import com.mqvpn.sdk.core.model.MqvpnState
+import com.mqvpn.sdk.core.model.PathInfo
+import com.mqvpn.sdk.core.model.ReorderStats
+import com.mqvpn.sdk.core.model.VpnStats
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * Public-facing manager for the mqvpn SDK.
+ *
+ * Provides [StateFlow]-based observation of VPN state, stats, and paths.
+ * Manages the VpnService lifecycle via [ServiceConnection].
+ */
+class MqvpnManager(private val context: Context) {
+
+    private val _vpnState = MutableStateFlow<MqvpnState>(MqvpnState.Disconnected)
+    val vpnState: StateFlow<MqvpnState> = _vpnState.asStateFlow()
+
+    private val _stats = MutableStateFlow(VpnStats())
+    val stats: StateFlow<VpnStats> = _stats.asStateFlow()
+
+    private val _paths = MutableStateFlow<List<PathInfo>>(emptyList())
+    val paths: StateFlow<List<PathInfo>> = _paths.asStateFlow()
+
+    private val _reorderStats = MutableStateFlow(ReorderStats())
+    val reorderStats: StateFlow<ReorderStats> = _reorderStats.asStateFlow()
+
+    private var boundService: MqvpnVpnService? = null
+    private var serviceConnection: ServiceConnection? = null
+
+    /**
+     * Prepare VPN permission. Returns null if already granted,
+     * otherwise returns an Intent to launch the system VPN dialog.
+     */
+    fun prepareVpn(): Intent? = VpnService.prepare(context)
+
+    /**
+     * Start VPN with the given config.
+     * Launches the VpnService, binds to it, and calls startTunnel().
+     *
+     * While a session is running the service refuses a second connect and
+     * keeps that session without re-emitting its state, so [vpnState] stays
+     * at the Connecting set here; call [disconnect] first.
+     *
+     * @throws IllegalArgumentException when [MqvpnConfig.serverAddress] or
+     *   [MqvpnConfig.tlsServerName] is not a bare ASCII identifier (see
+     *   [MqvpnConfig.hostIdentifierError]). Thrown before any state change or
+     *   service start.
+     */
+    @MainThread
+    fun connect(config: MqvpnConfig, serviceClass: Class<out MqvpnVpnService>) {
+        // synchronous: a bad host must fail here, not inside the service (whose executor only logs)
+        config.hostIdentifierError()?.let { throw IllegalArgumentException(it) }
+        unbind() // release any binding left from a previous connect
+        _vpnState.value = MqvpnState.Connecting
+
+        val intent = Intent(context, serviceClass).apply {
+            putExtra(EXTRA_CONFIG_JSON, config.toJson())
+        }
+        context.startForegroundService(intent)
+        // No BIND_AUTO_CREATE: a binding that keeps the service alive would
+        // pin it after it stops itself on a terminal state, so onDestroy —
+        // and with it the session cleanup that closes the TUN — never runs.
+        bind(intent, 0)
+    }
+
+    /**
+     * Re-attach to a service that may already be running. Call when the UI
+     * (re)starts: a ViewModel or process recreated while the VPN kept running
+     * has no binding, so [vpnState]/[stats] would stay stale and [disconnect]
+     * could not reach the service. Without BIND_AUTO_CREATE an idle service is
+     * not spun up, and a dormant binding connects if the service starts later.
+     * No-op while a binding already exists.
+     */
+    @MainThread
+    fun attach(serviceClass: Class<out MqvpnVpnService>) {
+        if (serviceConnection != null) return
+        bind(Intent(context, serviceClass), 0)
+    }
+
+    // Bind to service for lifecycle observation
+    private fun bind(intent: Intent, flags: Int) {
+        val conn = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                val binder = service as? MqvpnVpnService.LocalBinder ?: return
+                val svc = binder.getService()
+                boundService = svc
+                svc.manager = this@MqvpnManager
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                // Service stopped or crashed. Keep a terminal Error on
+                // display; reset anything else to prevent UI divergence.
+                boundService?.manager = null
+                boundService = null
+                if (_vpnState.value !is MqvpnState.Error) {
+                    _vpnState.value = MqvpnState.Disconnected
+                }
+                resetMetrics()
+            }
+
+            override fun onBindingDied(name: ComponentName?) {
+                // The service died before delivering its binder (e.g. a
+                // startup failure stopped it right away): Android then skips
+                // onServiceDisconnected. Release the dead binding — it would
+                // make every later attach() an early-returning no-op — and
+                // stop showing a live state.
+                unbind()
+                if (_vpnState.value !is MqvpnState.Error) {
+                    _vpnState.value = MqvpnState.Disconnected
+                }
+                resetMetrics()
+            }
+        }
+        serviceConnection = conn
+        try {
+            context.bindService(intent, conn, flags)
+        } catch (e: Exception) {
+            Log.w(TAG, "bindService failed: ${e.message}")
+        }
+    }
+
+    /** Disconnect the VPN. */
+    @MainThread
+    fun disconnect() {
+        boundService?.stopTunnel()
+        // Release the binding now instead of waiting for the stopping
+        // service's callbacks, so they cannot race the state set below.
+        unbind()
+        _vpnState.value = MqvpnState.Disconnected
+        resetMetrics()
+    }
+
+    private fun unbind() {
+        boundService?.manager = null
+        boundService = null
+        serviceConnection?.let { conn ->
+            try {
+                context.unbindService(conn)
+            } catch (_: IllegalArgumentException) {
+                // bindService failed earlier; nothing was registered
+            }
+        }
+        serviceConnection = null
+    }
+
+    /** Get libmqvpn version string. */
+    fun getVersion(): String = MqvpnSdk.getVersion()
+
+    /** Generate a random PSK key. */
+    fun generateKey(): String = MqvpnSdk.generateKey()
+
+    /** Update state (called from VpnService). */
+    internal fun updateState(state: MqvpnState) {
+        _vpnState.value = state
+    }
+
+    /** Update stats (called from VpnService). */
+    internal fun updateStats(s: VpnStats) {
+        _stats.value = s
+    }
+
+    /** Update paths (called from VpnService). */
+    internal fun updatePaths(p: List<PathInfo>) {
+        _paths.value = p
+    }
+
+    /** Update reorder stats (called from VpnService). */
+    internal fun updateReorderStats(s: ReorderStats) { _reorderStats.value = s }
+
+    /** Reset all metric flows to zero (called on service disconnect). */
+    internal fun resetMetrics() {
+        _stats.value = VpnStats()
+        _paths.value = emptyList()
+        _reorderStats.value = ReorderStats()
+    }
+
+    @MainThread
+    fun destroy() {
+        boundService?.manager = null
+        serviceConnection?.let { conn ->
+            try { context.unbindService(conn) } catch (_: Exception) {}
+        }
+        serviceConnection = null
+        boundService = null
+    }
+
+    companion object {
+        private const val TAG = "MqvpnManager"
+        internal const val EXTRA_CONFIG_JSON = "mqvpn_config_json"
+    }
+}
