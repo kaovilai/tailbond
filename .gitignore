@@ -1,0 +1,6 @@
+out/
+*.apk
+*.ipk
+*.rpm
+.gradle/
+local.properties

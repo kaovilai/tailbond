@@ -1,0 +1,3 @@
+[submodule "third_party/mqvpn"]
+	path = third_party/mqvpn
+	url = https://github.com/mp0rta/mqvpn
