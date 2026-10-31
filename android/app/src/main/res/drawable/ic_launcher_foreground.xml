@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "ST" mark from assets/icon.svg, drawn as paths (vector drawables cannot render text). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M48.3,46.8 C47.2,44.6 45,43.5 42,43.5 C38.3,43.5 35.8,45.6 35.8,48.6 C35.8,51.8 38.6,53 42,54 C45.6,55 48.4,56.3 48.4,59.6 C48.4,62.7 45.7,64.5 42,64.5 C38.8,64.5 36.4,63.3 35.4,61"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M57,41 H75 V46 H57 Z M63.5,46 H68.5 V67 H63.5 Z" />
+</vector>
