@@ -1,0 +1,30 @@
+#!/bin/bash
+# tailbond server-down hook (Fedora). Run by tailbondd after mqvpn's server stops.
+# Removes the runtime NAT/firewall state added by server-up. The permanent
+# firewalld config and the Tailscale route advertisement stay, so a restart
+# needs no new route approval.
+set -u
+
+LIBDIR=/usr/lib/tailbond
+TB_TUN="${TB_TUN:-tb0}"
+TAILNET4=100.64.0.0/10
+TAILNET6=fd7a:115c:a1e0::/48
+
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  echo "firewalld: leaving tailbond zone/policies in place (inactive without $TB_TUN)"
+  exit 0
+fi
+
+if [ -x "$LIBDIR/mqvpn/mqvpn-server-nat.sh" ] && [ -n "${TB_CONFIG:-}" ]; then
+  "$LIBDIR/mqvpn/mqvpn-server-nat.sh" teardown "$TB_CONFIG" || true
+fi
+c=(-m comment --comment tailbond-tailnet)
+iptables -t nat -D POSTROUTING -s "$TB_SUBNET" -d "$TAILNET4" -o tailscale0 -j MASQUERADE "${c[@]}" 2>/dev/null || true
+iptables -D FORWARD -i "$TB_TUN" -o tailscale0 -j ACCEPT "${c[@]}" 2>/dev/null || true
+iptables -D FORWARD -i tailscale0 -o "$TB_TUN" -j ACCEPT "${c[@]}" 2>/dev/null || true
+if [ -n "${TB_SUBNET6:-}" ]; then
+  ip6tables -t nat -D POSTROUTING -s "$TB_SUBNET6" -d "$TAILNET6" -o tailscale0 -j MASQUERADE "${c[@]}" 2>/dev/null || true
+  ip6tables -D FORWARD -i "$TB_TUN" -o tailscale0 -j ACCEPT "${c[@]}" 2>/dev/null || true
+fi
+echo "removed tailbond NAT rules"
+exit 0

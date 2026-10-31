@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Traffic from bonded clients to anywhere (internet, LAN, tailscale0).
+     The server-up hook adds masquerade rich rules scoped to the tunnel
+     subnets, so return traffic finds its way back without extra routes. -->
+<policy target="ACCEPT" priority="-100">
+  <short>tailbond egress</short>
+  <description>Forward and masquerade traffic from tailbond clients.</description>
+  <ingress-zone name="tailbond"/>
+  <egress-zone name="ANY"/>
+</policy>

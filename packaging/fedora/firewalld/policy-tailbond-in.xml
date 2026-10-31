@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tailnet peers reaching bonded clients by tunnel IP through the
+     advertised subnet route. Only tailnet source ranges are accepted. -->
+<policy target="CONTINUE" priority="-100">
+  <short>tailbond from tailnet</short>
+  <description>Allow tailnet peers to reach tailbond clients.</description>
+  <ingress-zone name="ANY"/>
+  <egress-zone name="tailbond"/>
+  <rule family="ipv4"><source address="100.64.0.0/10"/><accept/></rule>
+  <rule family="ipv6"><source address="fd7a:115c:a1e0::/48"/><accept/></rule>
+</policy>
