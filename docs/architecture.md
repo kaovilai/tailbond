@@ -28,7 +28,8 @@ Roles of `tailbondd` (`--role` / config `role`):
   - `tailscale set --advertise-routes=10.77.0.0/24` so tailnet peers reach bonded clients by tunnel IP (requires route approval in the admin console, once).
   - Bonded clients reach the tailnet: route `100.64.0.0/10` and `fd7a:115c:a1e0::/48` from `tb0` to `tailscale0` with masquerade. The server is one tailnet device; clients don't appear in the admin console.
   - Optional `--advertise-exit-node`; not required, since bonded clients exit via the server's internet NAT (mqvpn-server-nat.sh).
-- DNS for clients: `tailbondd` runs a forwarder on `10.77.0.1:53`. `*.ts.net` and the tailnet's MagicDNS suffix go to `100.100.100.100`, everything else to the system resolver. mqvpn pushes `DNS = 10.77.0.1`.
+- DNS for clients: `tailbondd` runs a forwarder on `10.77.0.1:53`. `*.ts.net` and the tailnet's MagicDNS suffix go to `100.100.100.100`, everything else to the system resolver. mqvpn's server cannot push DNS, so the pairing payload carries `dns: ["10.77.0.1"]` and the client sets `DNS = 10.77.0.1`.
+- Hybrid TCP lane: the server's egress ACL denies private ranges by default, including CGNAT. The server config always has `EgressAllow` for `100.64.0.0/10` and `fd7a:115c:a1e0::/48` so tailnet TCP works.
 - TLS: if `tailscale cert <machine>.<tailnet>.ts.net` works, use it as mqvpn `Cert`/`Key`. Clients connect to the public address with `tls_server_name = <machine>.<tailnet>.ts.net` and verify normally. Fallback: self-signed + `insecure: true` plus the cert SHA-256 pinned in the pairing payload (enforced by the agent/app, not by mqvpn).
 
 ## Modes (user-facing → mqvpn config)
@@ -89,6 +90,12 @@ Auth: if `ui_password` is set, a session cookie from `POST /api/login {"password
 | DELETE | `/api/clients/{name}` | server: revoke |
 | POST | `/api/pair` | client: `{"uri"}` to import a pairing |
 | GET | `/api/tailscale` | `tailscale status --json` summary + route approval state |
+| GET | `/api/clients/{name}` | server, additive: re-issue `{"uri","qr_svg"}` for an existing client |
+| GET | `/api/logs?since=<seq>&limit=<n>` | additive: `{"entries":[{"seq","t","src":"agent\|mqvpn\|hook","line"}]}` ring buffer |
+| GET/POST | `/api/settings` | additive: read role/TLS/pairing info; set `public_addr`, `ui_password` |
+| POST | `/api/logout` | additive |
+
+Mutating requests must send `Content-Type: application/json` (CSRF guard). `POST /api/paths` also accepts `kind` and `reset_usage`. On the server role, `/api/connect` and `/api/disconnect` start/stop mqvpn.
 
 Normalized status:
 
@@ -107,7 +114,17 @@ Normalized status:
 }
 ```
 
-Rates (`*_bps`) are derived by the agent from successive byte counters.
+Rates (`*_bps`) are bits per second, derived by the agent from successive byte counters.
+
+Additive fields (consumers must ignore unknown keys):
+- top level: `error` (last mqvpn failure), `control_api` (live per-path stats available), `paired` (client), `version`;
+- path: `data_cap_mb`, `used_bytes` (this month), `cap_reached`;
+- `tailscale`: `installed`, `dns_name`, `ips`;
+- `clients[]` (server role), one per registered or connected client:
+  `{"name","registered","connected","endpoint","scheduler","connected_sec","tx_bps","rx_bps","tx_bytes","rx_bytes","paths":[path…]}`.
+  Server-side paths have no `iface` (mqvpn's server doesn't know it) and `kind` is `unknown`.
+
+Client role without the control API patch: `state` comes from mqvpn's log (`state: … → ESTABLISHED`), totals from `tb0`'s kernel counters, per-path bytes from each bound interface's counters, RTT from the 30 s `[STATUS]` log lines, and `control_api` is `false`.
 
 ## Web UI
 
@@ -139,9 +156,11 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 | `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES` |
 | `client-down` | tunnel down | same |
 
-- Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`), `tailscale set --advertise-routes`.
+Every hook also gets `TB_ROLE`, `TB_MODE`, `TB_STATE_DIR` and `TB_CONFIG` (path of the generated mqvpn INI). Besides `<hooks_dir>/<hook>`, executables in `<hooks_dir>/<hook>.d/` run in lexical order.
+
+- Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`), `tailscale set --advertise-routes`. Without a running firewalld they fall back to mqvpn's NAT script plus iptables masquerade toward `tailscale0`.
 - OpenWrt hooks (`packaging/openwrt/hooks/`): UCI network/firewall zone `tailbond` for `tb0`, forwarding `lan → tailbond`, policy routing of LAN through `tb0`, server-role equivalents for Flint 3.
-- The agent runs mqvpn with `manage_routes = false` on OpenWrt and lets hooks route. On Fedora (server only) mqvpn's own NAT script stays in charge of internet NAT.
+- The agent runs mqvpn with `manage_routes = false` on OpenWrt and lets hooks route. On Fedora (server only), internet NAT comes from the firewalld `tailbond-out` policy, or from mqvpn's own NAT script when firewalld isn't running.
 
 ## Agent config file
 
@@ -162,3 +181,11 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 ```
 
 The agent generates the mqvpn INI under `state_dir` (`server.conf` / `client.conf`) from this file plus the mode table, and enables mqvpn's control API on `127.0.0.1:9077`.
+
+Additive keys (all optional):
+- `server.users`: `[{"name","key","created"}]`, the registered clients (written by `POST /api/clients`; the file is mode 0600);
+- `server.disable_dns`: no DNS forwarder (the pairing payload then has no `dns`);
+- `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic);
+- `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`.
+
+Mode table details: `Reorder on (Profile = fiber_lte)` is rendered as `[Reorder] Enabled = true` plus a `[ReorderRule]` for UDP 443 with `fiber_lte` and one for UDP 53 with `default_udp`. The server always enables `[Hybrid]`, `[Reorder]` and `AllowClientScheduler`, so each client's mode takes effect. Failover keeps only the best usable priority tier in the client's `Path` list. The bonding modes use primary and secondary paths, and add backup paths only when no primary or secondary path is usable. Paths over their monthly `data_cap_mb` drop out.
