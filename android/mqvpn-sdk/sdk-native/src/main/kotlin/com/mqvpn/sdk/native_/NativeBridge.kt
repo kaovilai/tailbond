@@ -103,6 +103,16 @@ object NativeBridge {
     /** mqvpn_config_add_reorder_rule(cfg, proto, port, profile) */
     external fun configAddReorderRule(cfg: Long, proto: Int, port: Int, profile: Int): Int
 
+    /** tailbond: mqvpn_config_set_reinjection(cfg, mode: 0=OFF, 1=DEADLINE, 2=IDLE) */
+    external fun configSetReinjection(cfg: Long, mode: Int): Int
+
+    /**
+     * tailbond: pin the server's leaf certificate by SHA-256 (32 bytes), or
+     * clear the pin with null. While set, the pin replaces platform trust for
+     * every client created afterwards. Process-wide; call before [clientNew].
+     */
+    external fun setCertPin(sha256: ByteArray?): Int
+
     /** mqvpn_config_set_hybrid_enabled(cfg, enabled) */
     external fun configSetHybridEnabled(cfg: Long, enabled: Boolean): Int
 

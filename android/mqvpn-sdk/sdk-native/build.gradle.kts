@@ -1,0 +1,50 @@
+// Fork of third_party/mqvpn/android/sdk-native/build.gradle.kts (v0.19.0).
+// tailbond: sources and prebuilt libs come from the submodule via -DMQVPN_ROOT;
+// instrumented tests and the debug-only JNI test seams are left out.
+plugins {
+    id("com.android.library")
+}
+
+val mqvpnRoot = rootProject.file("../third_party/mqvpn").canonicalFile
+
+android {
+    namespace = "com.mqvpn.sdk.native_"
+    compileSdk = 37
+    ndkVersion = "28.2.13676358"
+
+    defaultConfig {
+        minSdk = 26
+        consumerProguardFiles("consumer-rules.pro")
+
+        externalNativeBuild {
+            cmake {
+                cFlags("-ffile-prefix-map=$mqvpnRoot=/mqvpn")
+                arguments(
+                    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--build-id=none",
+                    "-DMQVPN_ROOT=$mqvpnRoot",
+                )
+            }
+        }
+
+        ndk {
+            // Only ABIs with prebuilt .a files (scripts/build-native.sh output).
+            abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/jni/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    implementation("androidx.annotation:annotation:1.11.0")
+}

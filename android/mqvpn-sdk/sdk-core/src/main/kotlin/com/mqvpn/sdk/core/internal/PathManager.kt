@@ -10,10 +10,13 @@ import com.mqvpn.sdk.core.MqvpnTunnel
 import com.mqvpn.sdk.native_.NativeBridge
 import com.mqvpn.sdk.network.NetworkEvent
 import com.mqvpn.sdk.network.NetworkMonitor
+import com.mqvpn.sdk.network.NetworkPath
 import com.mqvpn.sdk.network.PathBinder
 import com.mqvpn.sdk.runtime.ExecutorStoppedException
 import com.mqvpn.sdk.runtime.MqvpnExecutor
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,7 +46,17 @@ internal class PathManager(
             PathBinder.bindAndDetachUdp(network, host, port, prot)
         },
     private val closeFd: (Int) -> Unit = ::closeFdSafe,
+    /**
+     * tailbond: whether an available network should carry a path right now
+     * (per-path enable, priority/standby, data cap). A network the gate
+     * refuses stays known to the monitor and is attached by a later
+     * [reconcile] once the gate lets it through; an attached one the gate
+     * now refuses is detached the same way.
+     */
+    private val wanted: (NetworkPath) -> Boolean = { true },
 ) {
+    // tailbond: events and reconciles both attach/detach; one at a time.
+    private val mutex = Mutex()
     private var connected = false
     private val pathHandles = mutableMapOf<Network, Long>()  // network → pathHandle
     private val pathFds = mutableMapOf<Long, Int>()           // pathHandle → fd
@@ -54,16 +67,39 @@ internal class PathManager(
      * Available: [IO] bindSocket → [engine] addPath (+ connect once)
      * Lost: [engine] removePath → close(fd) → pathReleased
      */
-    suspend fun handleEvent(event: NetworkEvent) {
+    suspend fun handleEvent(event: NetworkEvent) = mutex.withLock {
         when (event) {
-            is NetworkEvent.Available -> handleAvailable(event)
-            is NetworkEvent.Lost -> handleLost(event)
+            is NetworkEvent.Available ->
+                if (wanted(event.path)) attach(event.path)
+                else Log.i(TAG, "Path held back by policy: ${event.path.name}")
+            is NetworkEvent.Lost -> detach(event.path)
         }
     }
 
-    private suspend fun handleAvailable(event: NetworkEvent.Available) {
-        val network = event.path.network
-        val name = event.path.name
+    /**
+     * tailbond: bring the attached set in line with [wanted]: attach every
+     * available network it accepts, detach every attached one it refuses.
+     * Called from IO when settings or path health change.
+     */
+    suspend fun reconcile() = mutex.withLock {
+        val available = networkMonitor.activeNetworks.values.toList()
+        // pathHandles is engine-thread state
+        val attached = handOver { pathHandles.keys.toSet() } ?: return@withLock
+        for (path in available) {
+            val want = wanted(path)
+            if (want && path.network !in attached) {
+                Log.i(TAG, "Policy attaches ${path.name}")
+                attach(path)
+            } else if (!want && path.network in attached) {
+                Log.i(TAG, "Policy detaches ${path.name}")
+                detach(path)
+            }
+        }
+    }
+
+    private suspend fun attach(path: NetworkPath) {
+        val network = path.network
+        val name = path.name
 
         // Step 1: Create socket (blocking I/O, runs on IO thread)
         val fd = bindUdp(network, serverHost, serverPort, protector)
@@ -108,9 +144,9 @@ internal class PathManager(
         Log.i(TAG, "Path added: $name (handle=$handle, fd=$fd)")
     }
 
-    private suspend fun handleLost(event: NetworkEvent.Lost) {
-        val network = event.path.network
-        val name = event.path.name
+    private suspend fun detach(path: NetworkPath) {
+        val network = path.network
+        val name = path.name
 
         // One engine-thread block: remove (library abandons the path, the
         // reactor stops polling) → close (ours) → released (the library
@@ -195,7 +231,7 @@ internal class PathManager(
         }
 
         /**
-         * Sentinel returned from the executor block in [handleAvailable] when
+         * Sentinel returned from the executor block in [attach] when
          * the network was lost during the IO bind step. Must not collide with
          * any negative error code returned by [MqvpnTunnel.addPath] (xquic /
          * JNI errors are small negatives in the 0..-32 range).

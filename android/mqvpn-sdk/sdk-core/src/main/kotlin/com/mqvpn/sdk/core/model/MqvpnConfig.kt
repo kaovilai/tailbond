@@ -87,7 +87,33 @@ data class MqvpnConfig(
     val cellularPathEnabled: Boolean = true,
     /** Use Ethernet networks as paths. Fixed when the tunnel starts. */
     val ethernetPathEnabled: Boolean = true,
+    /** tailbond: speculative duplication of unacked stream data (mqvpn `Reinjection`). */
+    val reinjection: Reinjection = Reinjection.OFF,
+    /**
+     * tailbond: SHA-256 (hex, 64 chars, ':' allowed) of the server's leaf
+     * certificate. When set it replaces platform trust: the leaf must hash to
+     * this value and nothing else is checked, and [insecure] is ignored.
+     */
+    val certSha256: String? = null,
 ) : Parcelable {
+
+    /** tailbond: mqvpn_reinjection_t. */
+    @Serializable
+    enum class Reinjection(val native: Int) {
+        OFF(0),
+        DEADLINE(1),
+        IDLE(2),
+    }
+
+    /** tailbond: [certSha256] as 32 bytes; null when unset, throws when malformed. */
+    fun certPinBytes(): ByteArray? {
+        val hex = certSha256?.replace(":", "")?.trim()?.lowercase() ?: return null
+        if (hex.isEmpty()) return null
+        require(hex.length == 64 && hex.all { it in '0'..'9' || it in 'a'..'f' }) {
+            "certSha256 must be 64 hex characters"
+        }
+        return ByteArray(32) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+    }
 
     @Serializable
     enum class Scheduler(val native: Int) {

@@ -38,6 +38,8 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <android/log.h>
+#include <openssl/mem.h>
+#include <openssl/sha.h>
 
 #include "libmqvpn.h"
 #include "log.h"
@@ -586,11 +588,40 @@ out:
     return rc;
 }
 
+/* ─── tailbond: leaf certificate SHA-256 pin ───
+ *
+ * A pairing with a self-signed server certificate carries the SHA-256 of
+ * that certificate (DER). When a pin is set, it replaces platform trust:
+ * the leaf must hash to the pin, nothing else is checked (the pin is the
+ * identity). Process-wide on purpose: tailbond runs one tunnel at a time
+ * and sets (or clears) the pin right before every clientNew(), so the
+ * verifier needs no per-client context. Written on the engine thread
+ * before mqvpn_client_new; read on the same thread during the handshake. */
+static uint8_t g_cert_pin[SHA256_DIGEST_LENGTH];
+static atomic_int g_cert_pin_set = 0;
+
+static int
+jni_cert_pin_check(const uint8_t *leaf, size_t leaf_len)
+{
+    uint8_t digest[SHA256_DIGEST_LENGTH];
+    if (leaf == NULL || leaf_len == 0) return -1;
+    SHA256(leaf, leaf_len, digest);
+    if (CRYPTO_memcmp(digest, g_cert_pin, sizeof(digest)) != 0) {
+        LOGE("TLS certificate rejected: leaf SHA-256 does not match the pinned certificate");
+        return -1;
+    }
+    return 0;
+}
+
 static int
 jni_cert_verify(const uint8_t *const certs[], const size_t cert_len[], size_t n_certs,
                 const char *hostname, void *ctx)
 {
     (void)ctx;
+    if (atomic_load(&g_cert_pin_set)) {
+        if (n_certs == 0) return -1;
+        return jni_cert_pin_check(certs[0], cert_len[0]);
+    }
     if (!g_platform_trust_cls || !g_platform_trust_verify || !g_byte_array_cls) {
         LOGE("TLS certificate rejected: PlatformTrust unavailable");
         return -1;
@@ -847,6 +878,33 @@ JNI_FN(configSetRedundant)(JNIEnv *env, jobject thiz, jlong cfg, jboolean enable
     }
     return mqvpn_config_set_redundant((mqvpn_config_t *)(intptr_t)cfg, enabled ? 1 : 0,
                                       n > 0 ? narrowed : NULL, (size_t)n);
+}
+
+/* tailbond: configSetReinjection(cfg, mode: 0=OFF, 1=DEADLINE, 2=IDLE) → int */
+JNIEXPORT jint JNICALL
+JNI_FN(configSetReinjection)(JNIEnv *env, jobject thiz, jlong cfg, jint mode)
+{
+    (void)env;
+    (void)thiz;
+    return mqvpn_config_set_reinjection((mqvpn_config_t *)(intptr_t)cfg,
+                                        (mqvpn_reinjection_t)mode);
+}
+
+/* tailbond: setCertPin(sha256: ByteArray?) → int. null clears the pin; a
+ * non-null array must be 32 bytes. Applies to clients created afterwards. */
+JNIEXPORT jint JNICALL
+JNI_FN(setCertPin)(JNIEnv *env, jobject thiz, jbyteArray sha256)
+{
+    (void)thiz;
+    if (sha256 == NULL) {
+        atomic_store(&g_cert_pin_set, 0);
+        return MQVPN_OK;
+    }
+    if ((*env)->GetArrayLength(env, sha256) != SHA256_DIGEST_LENGTH) return MQVPN_ERR_INVALID_ARG;
+    (*env)->GetByteArrayRegion(env, sha256, 0, SHA256_DIGEST_LENGTH, (jbyte *)g_cert_pin);
+    if ((*env)->ExceptionCheck(env)) return MQVPN_ERR_INVALID_ARG;
+    atomic_store(&g_cert_pin_set, 1);
+    return MQVPN_OK;
 }
 
 /* configSetHybridEnabled(cfg, enable) → int */

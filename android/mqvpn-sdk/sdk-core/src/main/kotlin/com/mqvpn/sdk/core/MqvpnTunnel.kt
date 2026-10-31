@@ -194,11 +194,17 @@ class MqvpnTunnel internal constructor(
             require(config.pathMtu == 0 || config.pathMtu in 1280..9000) {
                 "pathMtu must be 0 or 1280-9000, not ${config.pathMtu}"
             }
+            config.certPinBytes() // tailbond: a malformed pin fails before any native allocation
             val cfg = NativeBridge.configNew()
             NativeBridge.configSetServer(cfg, config.serverAddress, config.serverPort)
             config.tlsServerName?.let { NativeBridge.configSetTlsServerName(cfg, it) }
             NativeBridge.configSetAuthKey(cfg, config.authKey)
-            NativeBridge.configSetInsecure(cfg, config.insecure)
+            // tailbond: a pin replaces the verifier's trust decision, and
+            // insecure=1 would bypass the verifier altogether, so it is off.
+            val pin = config.certPinBytes()
+            NativeBridge.setCertPin(pin)
+            NativeBridge.configSetInsecure(cfg, config.insecure && pin == null)
+            NativeBridge.configSetReinjection(cfg, config.reinjection.native)
             NativeBridge.configSetScheduler(cfg, config.scheduler.native)
             NativeBridge.configSetRequestServerScheduler(cfg, config.requestServerScheduler)
             NativeBridge.configSetCc(cfg, config.cc.native)

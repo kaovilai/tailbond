@@ -15,9 +15,12 @@ import com.mqvpn.sdk.core.internal.TunnelCallbacks
 import com.mqvpn.sdk.core.model.MqvpnConfig
 import com.mqvpn.sdk.core.model.MqvpnError
 import com.mqvpn.sdk.core.model.MqvpnState
+import com.mqvpn.sdk.core.model.PathInfo
 import com.mqvpn.sdk.core.model.ReconnectInfo
 import com.mqvpn.sdk.core.model.TunnelInfo
+import com.mqvpn.sdk.core.model.VpnStats
 import com.mqvpn.sdk.network.NetworkMonitor
+import com.mqvpn.sdk.network.NetworkPath
 import com.mqvpn.sdk.network.PathPolicy
 import com.mqvpn.sdk.runtime.MqvpnPoller
 import com.mqvpn.sdk.runtime.NativeReactorWaiter
@@ -78,9 +81,10 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
     private lateinit var executor: MqvpnPoller
     private var tunnel: MqvpnTunnel? = null
     private var lastReorderStatsMs = 0L
+    private var lastMetricsMs = 0L
     private var tunnelBridge: TunnelBridge? = null
-    private var pathManager: PathManager? = null
-    private var networkMonitor: NetworkMonitor? = null
+    @Volatile private var pathManager: PathManager? = null
+    @Volatile private var networkMonitor: NetworkMonitor? = null
     private var currentConfig: MqvpnConfig? = null
     private var currentTunPfd: ParcelFileDescriptor? = null
 
@@ -106,10 +110,17 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
                 val result = t?.tick() ?: 0
                 // Poll stats/paths and push to MqvpnManager on each tick
                 if (t != null) {
-                    manager?.updateStats(t.getStats())
-                    manager?.updatePaths(t.getPaths())
+                    val stats = t.getStats()
+                    val paths = t.getPaths()
+                    manager?.updateStats(stats)
+                    manager?.updatePaths(paths)
                     // JNI array + boxed list: once per wall-clock second, not per poll
                     val now = SystemClock.elapsedRealtime()
+                    // tailbond: once-a-second metrics hook (notification, path policy)
+                    if (now - lastMetricsMs >= 1000) {
+                        lastMetricsMs = now
+                        onMetrics(stats, paths)
+                    }
                     if (now - lastReorderStatsMs >= 1000) {
                         lastReorderStatsMs = now
                         manager?.updateReorderStats(t.getReorderStats())
@@ -166,15 +177,7 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
             val t = MqvpnTunnel.create(config, this, waiter.reactorHandle)
             tunnel = t
 
-            val monitor = NetworkMonitor(
-                this,
-                PathPolicy(
-                    config.wifiPathEnabled,
-                    config.cellularPathEnabled,
-                    config.ethernetPathEnabled,
-                    config.bluetoothPathEnabled,
-                ),
-            )
+            val monitor = NetworkMonitor(this, pathPolicy(config))
             networkMonitor = monitor
 
             val pm = PathManager(
@@ -186,6 +189,7 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
                     Log.e(TAG, "ending the session: $reason")
                     stopTunnel()
                 },
+                wanted = { path -> isPathWanted(path) },
             )
             pathManager = pm
 
@@ -208,8 +212,10 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
     /**
      * Stop VPN tunnel. Called by [MqvpnManager.disconnect].
      * Do NOT call from onDestroy — cleanup runs automatically.
+     * tailbond: public so a subclass driven by intents (tile, notification
+     * action, always-on) can stop its own session without an MqvpnManager.
      */
-    internal open fun stopTunnel() {
+    open fun stopTunnel() {
         executor.enqueue { cleanup() }
     }
 
@@ -389,6 +395,36 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
     abstract fun onVpnStateChanged(newState: MqvpnState)
 
     // --- Optional callbacks ---
+
+    /**
+     * tailbond: transports the network monitor holds and announces for this
+     * session (fixed while it runs). Default: the config's per-transport flags.
+     */
+    protected open fun pathPolicy(config: MqvpnConfig): PathPolicy = PathPolicy(
+        config.wifiPathEnabled,
+        config.cellularPathEnabled,
+        config.ethernetPathEnabled,
+        config.bluetoothPathEnabled,
+    )
+
+    /**
+     * tailbond: whether an available network should carry a path now. Called
+     * on IO threads on every network event and [requestPathReconcile].
+     */
+    protected open fun isPathWanted(path: NetworkPath): Boolean = true
+
+    /** tailbond: the networks the monitor currently offers (attached or held back). */
+    protected fun availableNetworks(): List<NetworkPath> =
+        networkMonitor?.activeNetworks?.values?.toList() ?: emptyList()
+
+    /** tailbond: re-run [isPathWanted] over every available network (attach/detach). */
+    protected fun requestPathReconcile() {
+        val pm = pathManager ?: return
+        scope.launch(Dispatchers.IO) { pm.reconcile() }
+    }
+
+    /** tailbond: once a second on the engine thread while a session exists. Keep it cheap. */
+    protected open fun onMetrics(stats: VpnStats, paths: List<PathInfo>) {}
 
     open fun onLog(level: Int, message: String) {}
     open fun onReconnectScheduled(delaySec: Int) {}

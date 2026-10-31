@@ -1,8 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
 project(mqvpn_jni C CXX)
 
-# Prebuilt libmqvpn.a, xquic, BoringSSL per ABI
-set(PREBUILT_DIR ${CMAKE_SOURCE_DIR}/../../../prebuilt/${ANDROID_ABI})
+# tailbond: this module is a fork that lives outside the mqvpn tree; Gradle
+# passes the submodule root as MQVPN_ROOT. The default keeps the upstream
+# in-tree layout working.
+set(MQVPN_ROOT ${CMAKE_SOURCE_DIR}/../../../../../ CACHE PATH "mqvpn source root")
+
+# Prebuilt libmqvpn.a, xquic, BoringSSL per ABI (scripts/build_android.sh output)
+set(PREBUILT_DIR ${MQVPN_ROOT}/android/sdk-native/prebuilt/${ANDROID_ABI})
 
 # libmqvpn (static)
 add_library(mqvpn STATIC IMPORTED)
@@ -28,12 +33,12 @@ set_target_properties(crypto PROPERTIES
     IMPORTED_LOCATION ${PREBUILT_DIR}/libcrypto.a)
 
 # Include paths
-# From src/main/jni/ → up 5 levels → mqvpn/
-set(MQVPN_ROOT ${CMAKE_SOURCE_DIR}/../../../../../)
+# tailbond: BoringSSL headers for SHA-256 (certificate pin in mqvpn_jni.c)
 include_directories(
     ${MQVPN_ROOT}/include
     ${MQVPN_ROOT}/src
     ${MQVPN_ROOT}/third_party/xquic/include
+    ${MQVPN_ROOT}/third_party/xquic/third_party/boringssl/include
 )
 
 # JNI shared library
