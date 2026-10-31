@@ -127,3 +127,38 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 - RPM: `packaging/fedora/build-rpm.sh` → `out/rpm/`.
 - IPK: `packaging/openwrt/build-ipk.sh` → `out/ipk/tailbond_<ver>_aarch64_cortex-a53.ipk` (plain ar/tar ipk; no OpenWrt SDK needed since binaries are static).
 - APK: `android/` Gradle → `out/android/tailbond-debug.apk`.
+
+## Platform hooks (keep the agent platform-neutral)
+
+`tailbondd` never edits firewall, routing or Tailscale settings directly. It runs executable hooks from `hooks_dir` (default `/usr/lib/tailbond/hooks`) and logs their output:
+
+| Hook | When | Args / env |
+|---|---|---|
+| `server-up` | after mqvpn server starts | env `TB_TUN`, `TB_SUBNET`, `TB_SUBNET6`, `TB_PORT`, `TB_DNS_IP` |
+| `server-down` | after mqvpn server stops | same |
+| `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES` |
+| `client-down` | tunnel down | same |
+
+- Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`), `tailscale set --advertise-routes`.
+- OpenWrt hooks (`packaging/openwrt/hooks/`): UCI network/firewall zone `tailbond` for `tb0`, forwarding `lan → tailbond`, policy routing of LAN through `tb0`, server-role equivalents for Flint 3.
+- The agent runs mqvpn with `manage_routes = false` on OpenWrt and lets hooks route. On Fedora (server only) mqvpn's own NAT script stays in charge of internet NAT.
+
+## Agent config file
+
+`/etc/tailbond/tailbond.json`:
+
+```json
+{
+  "role": "server",
+  "mqvpn_bin": "/usr/bin/mqvpn",
+  "state_dir": "/var/lib/tailbond",
+  "hooks_dir": "/usr/lib/tailbond/hooks",
+  "listen": ":8077",
+  "ui_password": "",
+  "mode": "speed",
+  "server": {"port": 443, "public_addr": "", "subnet": "10.77.0.0/24", "subnet6": "fd77:77::/112", "use_tailscale_cert": true},
+  "client": {"pairing_uri": "", "paths": [{"iface": "wan", "enabled": true, "priority": "primary", "data_cap_mb": 0}]}
+}
+```
+
+The agent generates the mqvpn INI under `state_dir` (`server.conf` / `client.conf`) from this file plus the mode table, and enables mqvpn's control API on `127.0.0.1:9077`.
