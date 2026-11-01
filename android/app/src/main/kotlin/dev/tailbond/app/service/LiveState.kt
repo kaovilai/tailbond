@@ -1,11 +1,33 @@
 package dev.tailbond.app.service
 
+import com.mqvpn.sdk.core.model.MqvpnError
 import dev.tailbond.app.model.PathKind
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 enum class ConnState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
+
+/** Why the last attempt failed, so the UI can name the fix (see Words.error). */
+enum class ErrorKind {
+    /** No answer from the server (port forward, server off, wrong address). */
+    UNREACHABLE,
+    /** TLS: certificate doesn't verify or doesn't match the pin. */
+    IDENTITY,
+    /** The server refused this phone's key. */
+    REJECTED,
+    NOT_PAIRED,
+    OTHER;
+
+    companion object {
+        fun of(e: MqvpnError): ErrorKind = when (e) {
+            is MqvpnError.Timeout, is MqvpnError.ConnectionClosed -> UNREACHABLE
+            is MqvpnError.TlsError -> IDENTITY
+            is MqvpnError.AuthFailed, is MqvpnError.ProtocolError -> REJECTED
+            else -> OTHER
+        }
+    }
+}
 
 data class PathSample(
     val name: String,
@@ -24,6 +46,7 @@ data class PathSample(
 data class Live(
     val state: ConnState = ConnState.DISCONNECTED,
     val message: String? = null,
+    val errorKind: ErrorKind? = null,
     val tunnelIp: String? = null,
     val connectedAtMs: Long = 0,
     val txBps: Long = 0,
@@ -53,8 +76,8 @@ object LiveState {
         }
     }
 
-    fun reset(state: ConnState = ConnState.DISCONNECTED, message: String? = null) {
-        _live.value = Live(state = state, message = message)
+    fun reset(state: ConnState = ConnState.DISCONNECTED, message: String? = null, errorKind: ErrorKind? = null) {
+        _live.value = Live(state = state, message = message, errorKind = errorKind)
     }
 }
 

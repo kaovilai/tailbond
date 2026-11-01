@@ -4,10 +4,10 @@ import com.mqvpn.sdk.network.PathType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** Link kinds the dashboard shows a card for. */
+/** Link kinds the Connections section shows a card for. [phrase] is the mid-sentence form. */
 @Serializable
-enum class PathKind(val label: String) {
-    WIFI("Wi-Fi"), CELLULAR("Cellular"), ETHERNET("Ethernet");
+enum class PathKind(val label: String, val phrase: String) {
+    WIFI("Wi-Fi", "Wi-Fi"), CELLULAR("Mobile data", "mobile data"), ETHERNET("Ethernet", "Ethernet");
 
     companion object {
         fun of(type: PathType): PathKind? = when (type) {
@@ -27,16 +27,21 @@ enum class PathKind(val label: String) {
     }
 }
 
+/** Contract names primary/secondary/backup; [label] and [explain] are what the app shows. */
 @Serializable
-enum class Priority(val label: String) { PRIMARY("Primary"), SECONDARY("Secondary"), BACKUP("Backup") }
+enum class Priority(val label: String, val explain: String) {
+    PRIMARY("Main", "Always carries traffic"),
+    SECONDARY("Extra", "Adds speed. In \"Save mobile data\" it waits as a backup"),
+    BACKUP("Backup only", "Used only when the others stop working"),
+}
 
 @Serializable
 data class PathSetting(val enabled: Boolean = true, val priority: Priority = Priority.PRIMARY)
 
 @Serializable
-enum class RouteMode(val label: String) {
-    FULL("Full tunnel"),
-    TAILNET_LAN("Tailnet + home LAN only"),
+enum class RouteMode(val label: String, val explain: String) {
+    FULL("Through your home server", "All internet traffic leaves from home, like using an exit node"),
+    TAILNET_LAN("Only Tailscale machines", "Websites and apps use this phone's own connection; only your tailnet goes through home"),
 }
 
 /** Everything the user can change besides the pairing itself. Persisted as JSON. */
@@ -52,6 +57,10 @@ data class AppSettings(
     val cellularCapMb: Long = 0,
     /** Failover only: mqvpn's experimental backup_fec scheduler instead of minrtt. */
     val experimentalBackupFec: Boolean = false,
+    /** First-launch explainer done (tailbond replaces the Tailscale VPN on this phone). */
+    val onboarded: Boolean = false,
+    /** The user handed the VPN back to Tailscale; nothing reconnects tailbond until they turn it on again. */
+    val handedToTailscale: Boolean = false,
 ) {
     fun path(kind: PathKind): PathSetting = paths[kind] ?: DEFAULT_PATHS.getValue(kind)
 

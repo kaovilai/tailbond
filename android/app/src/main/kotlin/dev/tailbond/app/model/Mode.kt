@@ -12,10 +12,10 @@ import com.mqvpn.sdk.core.model.MqvpnConfig.Scheduler
  * that table is encoded on Android.
  */
 enum class Mode(val wire: String, val label: String, val blurb: String) {
-    SPEED("speed", "Speed", "Aggregate bandwidth across every link"),
-    STREAMING("streaming", "Streaming", "Calls and streams survive link trouble"),
-    REDUNDANT("redundant", "Redundant", "Every UDP packet on every link"),
-    FAILOVER("failover", "Failover", "One primary link, others only on failure"),
+    SPEED("speed", "Fastest", "Adds Wi-Fi and mobile data together for the most speed"),
+    STREAMING("streaming", "Smooth calls and video", "Calls and video keep going when one connection has trouble"),
+    REDUNDANT("redundant", "Most reliable", "Sends everything over both connections. Uses the most mobile data"),
+    FAILOVER("failover", "Save mobile data", "Uses Wi-Fi, and mobile data only when Wi-Fi stops working"),
     ;
 
     /**

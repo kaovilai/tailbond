@@ -48,6 +48,40 @@
 </header>
 
 <main>
+  <!-- server role, on a phone (or opened from the app as #add-phone): one tap pairs this phone -->
+  <section class="card add-phone hidden" id="add-phone" aria-labelledby="add-phone-title">
+    <div class="add-phone-head"><svg class="ico"><use href="#i-device"/></svg><h2 id="add-phone-title">Add this phone</h2></div>
+    <p class="muted">This is your home server's page. Two steps, then tailbond takes over from Tailscale on this phone. No code to scan.</p>
+    <div class="step">
+      <span class="num">1</span>
+      <div>
+        <b>Get the tailbond app</b> <span class="muted small">(skip if it's installed)</span>
+        <div id="apk-yes" class="hidden"><a class="btn" href="tailbond.apk" download>Download tailbond for Android</a>
+          <p class="muted small">Open the downloaded file to install it. Android warns about apps from outside the Play Store and asks you to allow installs from your browser: this app comes from your own home server. Unsure? Ask whoever set up the server to install it for you. Then come back to this page for step 2.</p></div>
+        <p id="apk-no" class="muted small">Ask whoever set up this home server for the tailbond app.</p>
+      </div>
+    </div>
+    <div class="step">
+      <span class="num">2</span>
+      <div class="grow">
+        <b>Add this phone</b>
+        <label class="field" for="phone-name"><span>Name for this phone</span>
+          <input id="phone-name" maxlength="63" autocomplete="off" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+      </div>
+    </div>
+    <button class="btn primary big" type="button" id="add-phone-btn"><svg class="ico sm"><use href="#i-plus"/></svg>Add this phone</button>
+    <div class="add-phone-done hidden" id="add-phone-done">
+      <p><b>Opening tailbond…</b> In the app, tap <b>Add phone</b>, then turn tailbond on. Android turns Tailscale's VPN off; your Tailscale machines stay reachable through <span class="server-name">this server</span>.</p>
+      <div class="row">
+        <a class="btn primary" id="phone-open" href="#">Open in tailbond</a>
+        <button class="btn" type="button" id="phone-copy"><svg class="ico sm"><use href="#i-copy"/></svg>Copy link</button>
+      </div>
+      <p class="muted small">Nothing opened? Install the app (step 1), then tap <b>Open in tailbond</b>. This link is just for this phone.</p>
+    </div>
+    <p class="muted small">Later, to go back to Tailscale, tap <b>Switch back to Tailscale</b> in the tailbond app.</p>
+    <button class="linkish small" type="button" id="show-dashboard">Show the home server's own dashboard (for whoever runs it)</button>
+  </section>
+
   <section class="hero card" aria-label="Throughput">
     <div class="hero-rates">
       <div class="rate down">
@@ -72,15 +106,15 @@
   </section>
 
   <section class="modes" role="radiogroup" aria-label="Bonding mode" id="modes">
-    <button role="radio" data-mode="speed"><svg class="ico"><use href="#i-speed"/></svg><span><b>Speed</b><small>Combine every link</small></span></button>
-    <button role="radio" data-mode="streaming"><svg class="ico"><use href="#i-streaming"/></svg><span><b>Streaming</b><small>Calls stay up</small></span></button>
-    <button role="radio" data-mode="redundant"><svg class="ico"><use href="#i-redundant"/></svg><span><b>Redundant</b><small>Every packet twice</small></span></button>
-    <button role="radio" data-mode="failover"><svg class="ico"><use href="#i-failover"/></svg><span><b>Failover</b><small>Backup on standby</small></span></button>
+    <button role="radio" data-mode="speed" title="speed"><svg class="ico"><use href="#i-speed"/></svg><span><b>Fastest</b><small>All links together</small></span></button>
+    <button role="radio" data-mode="streaming" title="streaming"><svg class="ico"><use href="#i-streaming"/></svg><span><b>Smooth calls</b><small>Calls and video stay up</small></span></button>
+    <button role="radio" data-mode="redundant" title="redundant"><svg class="ico"><use href="#i-redundant"/></svg><span><b>Most reliable</b><small>Every packet twice</small></span></button>
+    <button role="radio" data-mode="failover" title="failover"><svg class="ico"><use href="#i-failover"/></svg><span><b>Save mobile data</b><small>Backup only on failure</small></span></button>
   </section>
 
   <nav class="tabs" id="tabs">
     <button data-tab="connections" class="active">Connections</button>
-    <button data-tab="clients" data-role="server">Clients</button>
+    <button data-tab="clients" data-role="server">Devices</button>
     <button data-tab="setup" data-role="client">Setup</button>
     <button data-tab="tailscale">Tailscale</button>
     <button data-tab="logs">Logs</button>
@@ -95,13 +129,18 @@
     <form class="card add-client" id="add-client">
       <div>
         <h3>Add a device</h3>
-        <p class="muted">Each phone or travel router gets its own key. Scan the QR code in the tailbond app or paste the link into the router's Setup tab.</p>
+        <p class="muted">Each phone or travel router gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link into the router's Setup tab. On the phone itself, open this page and use <b>Add this phone</b>.</p>
       </div>
       <div class="row">
         <input id="client-name" placeholder="name, e.g. pixel" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required autocomplete="off">
         <button class="btn primary" type="submit"><svg class="ico sm"><use href="#i-plus"/></svg>Add</button>
       </div>
     </form>
+    <div class="card invite">
+      <h3>Invite someone's phone</h3>
+      <p class="muted">Send this link to a family member. They open it on their phone while Tailscale is on, and tap <b>Add this phone</b>.</p>
+      <div class="uri-row"><input id="invite-link" readonly><button class="btn icon" type="button" id="invite-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
+    </div>
     <div class="card warn hidden" id="addr-warning"></div>
     <div class="client-list" id="clients"></div>
   </section>

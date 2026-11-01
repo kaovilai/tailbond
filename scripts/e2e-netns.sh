@@ -9,7 +9,9 @@
 #
 # Checks (hard): ping through the tunnel; the server agent's /api/status lists
 # the client with 2 active paths; traffic continues after one path goes down;
-# mode switch reconnects; hooks fire; revocation works.
+# mode switch reconnects; hooks fire; revocation works; GET /api/peers is
+# served on the tunnel IP to paired clients only (401 without / 200 with the
+# token derived from the pairing key; Tailscale is disabled, so the list is empty).
 # Checks (soft): client-side per-path stats, which need the mqvpn client
 # control API patch (patches/mqvpn/0001-client-control-api.patch).
 set -euo pipefail
@@ -35,6 +37,7 @@ fi
 command -v tc >/dev/null || { echo "tc missing: dnf install iproute-tc"; exit 2; }
 command -v curl >/dev/null || { echo "curl missing"; exit 2; }
 command -v jq >/dev/null || { echo "jq missing"; exit 2; }
+command -v openssl >/dev/null || { echo "openssl missing"; exit 2; }
 
 WORK="$(mktemp -d /tmp/tailbond-e2e.XXXXXX)"
 PASS=0 FAIL=0 SOFT=0
@@ -197,6 +200,27 @@ TUNIP="$(capi "http://$API/api/status" | jq -r .tunnel_ip)"
 [[ "$TUNIP" == 10.77.0.* ]] && ok "client tunnel_ip $TUNIP" || bad "client tunnel_ip '$TUNIP'"
 [ -s "$WORK/hook-client-up.env" ] && grep -q "^TB_TUNNEL_IP=$TUNIP" "$WORK/hook-client-up.env" && grep -q '^TB_SERVER_IP=10.200.1.1' "$WORK/hook-client-up.env" \
   && ok "client-up hook ran with TB_TUNNEL_IP/TB_SERVER_IP" || bad "client-up hook env: $(cat "$WORK/hook-client-up.env" 2>/dev/null)"
+
+say "machine list over the tunnel (GET /api/peers on 10.77.0.1:8077)"
+PKEY="$(jq -r .key <<<"$PAYLOAD")"
+# docs/architecture.md "Client API token": hex HMAC-SHA256(key = pairing key, "tailbond-api")
+TOKEN="$(printf '%s' tailbond-api | openssl dgst -sha256 -hmac "$PKEY" -r | cut -d' ' -f1)"
+PEERS_URL="http://10.77.0.1:8077/api/peers"
+code() { ip netns exec "$NS_C" curl -s -m 3 -o "$WORK/peers.out" -w '%{http_code}' "$@"; }
+# the agent binds the tunnel address once tb0 has it (retried every 5 s)
+if wait_for 20 "agent listening on the tunnel IP" sh -c "[ \"\$(ip netns exec $NS_C curl -s -m 2 -o /dev/null -w '%{http_code}' $PEERS_URL)\" = 401 ]"; then
+  ok "no token: 401 on $PEERS_URL"
+else
+  bad "tunnel listener: $(code "$PEERS_URL")"
+fi
+[ "$(code -H "Authorization: Bearer $(printf '%064d' 0)" "$PEERS_URL")" = 401 ] && ok "wrong token: 401" || bad "wrong token not rejected"
+if [ "$(code -H "Authorization: Bearer $TOKEN" "$PEERS_URL")" = 200 ] &&
+   jq -e '.client == "e2e-router" and (.peers | type == "array") and (.tailscale_running == false)' "$WORK/peers.out" >/dev/null; then
+  ok "derived token: 200, peers list (empty, Tailscale disabled)"
+else
+  bad "derived token: $(cat "$WORK/peers.out")"
+fi
+[ "$(code -H "Authorization: Bearer $TOKEN" http://10.77.0.1:8077/api/status)" = 404 ] && ok "admin API not served on the tunnel IP" || bad "tunnel IP serves /api/status"
 
 two_paths() {
   ip netns exec "$NS_S" curl -fsS -m 2 "http://$API/api/status" |

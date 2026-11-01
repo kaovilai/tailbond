@@ -110,6 +110,20 @@ type Config struct {
 	ControlAddr string `json:"control_addr,omitempty"`
 	// Additive: mqvpn log level.
 	LogLevel string `json:"log_level,omitempty"`
+	// Additive: Android APK the web UI offers as GET /tailbond.apk
+	// (default DefaultAndroidAPK; served only if the file exists).
+	AndroidAPK string `json:"android_apk,omitempty"`
+}
+
+// DefaultAndroidAPK is where packages may install the Android app for download.
+const DefaultAndroidAPK = "/usr/share/tailbond/tailbond.apk"
+
+// APKPath is the Android APK to offer for download.
+func (c *Config) APKPath() string {
+	if c.AndroidAPK != "" {
+		return c.AndroidAPK
+	}
+	return DefaultAndroidAPK
 }
 
 func Default() *Config {

@@ -34,6 +34,10 @@ Roles of `tailbondd` (`--role` / config `role`):
 
 ## Modes (user-facing → mqvpn config)
 
+The wire names below are the contract. Apps show plain words instead
+(Android: Fastest / Smooth calls and video / Most reliable / Save mobile data;
+priorities Main / Extra / Backup only).
+
 | Mode | Purpose | Scheduler | Other keys |
 |---|---|---|---|
 | `speed` (default) | aggregate bandwidth | `wlb` | Hybrid on, Reorder on (`Profile = fiber_lte`), `Reinjection = deadline`, `RequestServerScheduler = true` |
@@ -76,7 +80,9 @@ Upstream mqvpn only serves the control API in server mode. `patches/mqvpn/0001-c
 
 ## tailbondd HTTP API (served on `:8077`, UI at `/`)
 
-Auth: if `ui_password` is set, a session cookie from `POST /api/login {"password"}`. Server role binds `127.0.0.1` plus the Tailscale IP by default. Client role binds the LAN.
+Auth: if `ui_password` is set, a session cookie from `POST /api/login {"password"}`. Server role binds `127.0.0.1` plus the Tailscale IP by default (or the configured `listen` host), and always also its tunnel IP (`10.77.0.1:8077`, bound once `tb0` has it) unless `listen` is a wildcard. Client role binds the LAN.
+
+Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come from bonded clients. There the agent serves **only** `GET /api/peers` with a client API token (below); everything else is 404, with or without `ui_password`.
 
 | Method | Path | Body / result |
 |---|---|---|
@@ -90,10 +96,47 @@ Auth: if `ui_password` is set, a session cookie from `POST /api/login {"password
 | DELETE | `/api/clients/{name}` | server: revoke |
 | POST | `/api/pair` | client: `{"uri"}` to import a pairing |
 | GET | `/api/tailscale` | `tailscale status --json` summary + route approval state |
+| GET | `/tailbond.apk` | additive: the Android app, if the file at `android_apk` exists (else 404); `/api/settings` reports `android_apk: true/false` |
+| GET | `/api/peers` | server, additive: the tailnet machines bonded clients reach (below). Auth: client API token, or an admin session |
 | GET | `/api/clients/{name}` | server, additive: re-issue `{"uri","qr_svg"}` for an existing client |
 | GET | `/api/logs?since=<seq>&limit=<n>` | additive: `{"entries":[{"seq","t","src":"agent\|mqvpn\|hook","line"}]}` ring buffer |
 | GET/POST | `/api/settings` | additive: read role/TLS/pairing info; set `public_addr`, `ui_password` |
 | POST | `/api/logout` | additive |
+
+### Client API token and `GET /api/peers`
+
+A paired client authenticates to the server's agent with
+
+```
+Authorization: Bearer <lowercase hex HMAC-SHA256(key = the pairing payload's "key", message = "tailbond-api")>
+```
+
+The agent recomputes it for every registered user (constant-time compare);
+revoking a client revokes its token. The token opens `GET /api/peers` only;
+it is not an admin session. Test vector: key `test-key-123` →
+`68c8131634495b2e11cfcb57f604aa091793b004cfac7f5ae50ae49d553c1747`.
+
+`GET /api/peers` summarises `tailscale status --json` (online first, then by name):
+
+```json
+{
+  "server": "homebox", "tailnet": "alex@example.com", "magic_dns_suffix": "tail1234.ts.net",
+  "tailscale_running": true, "client": "pixel",
+  "self": {"hostname": "homebox", "dns_name": "homebox.tail1234.ts.net", "tailscale_ips": ["100.101.1.1"], "os": "linux", "online": true},
+  "peers": [
+    {"hostname": "nas", "dns_name": "nas.tail1234.ts.net", "tailscale_ips": ["100.101.2.2", "fd7a:115c:a1e0::2"],
+     "os": "linux", "online": true},
+    {"hostname": "work-laptop", "dns_name": "work-laptop.tail1234.ts.net", "tailscale_ips": ["100.101.3.3"],
+     "os": "macOS", "online": false, "last_seen": "2026-10-30T08:00:00Z"}
+  ]
+}
+```
+
+`dns_name` has no trailing dot; `last_seen` is omitted when Tailscale reports
+none. With Tailscale disabled or down, `peers` is `[]` and
+`tailscale_running` is `false`. The Android app polls
+`http://10.77.0.1:8077/api/peers` every 30 s while connected (cleartext is
+allowed for that address only; the request travels inside the tunnel).
 
 Mutating requests must send `Content-Type: application/json` (CSRF guard). `POST /api/paths` also accepts `kind` and `reset_usage`. On the server role, `/api/connect` and `/api/disconnect` start/stop mqvpn.
 
@@ -132,7 +175,11 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 - a header with the total download/upload rate and a 60 s sparkline, and a connected/disconnected toggle;
 - a mode selector (Speed / Streaming / Redundant / Failover);
 - one card per connection: icon by kind, live rate sparkline, latency, loss, state chip, enable toggle, priority dropdown, data used vs cap;
-- server role: a Clients tab (add client → QR code, revoke, per-client paths) and a Tailscale panel;
+- server role: a Devices tab (add a device → QR code, revoke, per-client paths) and a Tailscale panel;
+- server role, viewed on a phone (or opened as `#add-phone`): an **Add this phone** card on top. One tap
+  creates the client (`POST /api/clients`, name guessed from the phone model) and navigates to the
+  `tailbond://pair` deep link, so the app opens with the pairing; no QR code on the same device.
+  Re-adding an existing name reuses that client's key (`GET /api/clients/{name}`) after a confirm;
 - client role: a Setup tab (paste/scan pairing URI).
 - Works on phone screens; dark/light follows the system.
 
@@ -186,6 +233,7 @@ Additive keys (all optional):
 - `server.users`: `[{"name","key","created"}]`, the registered clients (written by `POST /api/clients`; the file is mode 0600);
 - `server.disable_dns`: no DNS forwarder (the pairing payload then has no `dns`);
 - `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic);
-- `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`.
+- `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`;
+- `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing).
 
 Mode table details: `Reorder on (Profile = fiber_lte)` is rendered as `[Reorder] Enabled = true` plus a `[ReorderRule]` for UDP 443 with `fiber_lte` and one for UDP 53 with `default_udp`. The server always enables `[Hybrid]`, `[Reorder]` and `AllowClientScheduler`, so each client's mode takes effect. Failover keeps only the best usable priority tier in the client's `Path` list. The bonding modes use primary and secondary paths, and add backup paths only when no primary or secondary path is usable. Paths over their monthly `data_cap_mb` drop out.

@@ -24,3 +24,14 @@ fun formatDuration(sec: Long): String {
     val s = sec % 60
     return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s) else String.format(Locale.US, "%d:%02d", m, s)
 }
+
+/** "↓38.4 ↑4.1 Mbps": download and upload in one unit, for narrow cards. */
+fun formatRatePair(rxBps: Long, txBps: Long): String {
+    val peak = maxOf(rxBps, txBps)
+    val (div, unit) = when {
+        peak >= 1_000_000_000 -> 1e9 to "Gbps"
+        peak >= 1_000_000 -> 1e6 to "Mbps"
+        else -> 1e3 to "kbps"
+    }
+    return String.format(Locale.US, "↓%.1f ↑%.1f %s", rxBps / div, txBps / div, unit)
+}

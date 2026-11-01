@@ -30,6 +30,15 @@ class Repository private constructor(ctx: Context) {
     /** Cellular bytes (tx+rx through tunnel paths) this calendar month. */
     val cellularBytes: StateFlow<Long> = _cellularBytes.asStateFlow()
 
+    private val _peers = MutableStateFlow(prefs.getString(KEY_PEERS, null)?.let { PeerList.fromJson(it) })
+    /** Last machine list from the home server (kept so it shows while disconnected). */
+    val peers: StateFlow<PeerList?> = _peers.asStateFlow()
+
+    fun savePeers(p: PeerList) {
+        prefs.edit { putString(KEY_PEERS, p.toJson()) }
+        _peers.value = p
+    }
+
     private fun loadProfile(): PairingPayload? {
         val sealed = prefs.getString(KEY_PROFILE, null) ?: return null
         val json = SecureBox.open(sealed) ?: return null
@@ -42,8 +51,9 @@ class Repository private constructor(ctx: Context) {
     }
 
     fun clearProfile() {
-        prefs.edit { remove(KEY_PROFILE) }
+        prefs.edit { remove(KEY_PROFILE); remove(KEY_PEERS) }
         _profile.value = null
+        _peers.value = null
     }
 
     fun updateSettings(f: (AppSettings) -> AppSettings) {
@@ -88,6 +98,7 @@ class Repository private constructor(ctx: Context) {
         private const val KEY_SETTINGS = "settings_json"
         private const val KEY_CELL_MONTH = "cell_month"
         private const val KEY_CELL_BYTES = "cell_bytes"
+        private const val KEY_PEERS = "peers_json"
 
         @Volatile private var instance: Repository? = null
 

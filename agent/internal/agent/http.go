@@ -42,8 +42,10 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/clients/{name}", a.hClientDelete)
 	mux.HandleFunc("POST /api/pair", a.hPair)
 	mux.HandleFunc("GET /api/tailscale", a.hTailscale)
+	mux.HandleFunc("GET /api/peers", a.hPeers)
 	mux.HandleFunc("GET /api/settings", a.hSettingsGet)
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
+	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpErr(w, http.StatusNotFound, errNotFound) })
 
 	var assets fs.FS = web.FS
@@ -65,8 +67,23 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'")
+		// Bonded clients reach the server's tunnel address; there only the
+		// token-authenticated peer list exists (no UI, no admin API).
+		if a.viaTunnel(r) {
+			if r.URL.Path != "/api/peers" || r.Method != http.MethodGet {
+				httpErr(w, http.StatusNotFound, errNotFound)
+				return
+			}
+			if a.clientForToken(r) == "" {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="tailbond"`)
+				httpErr(w, http.StatusUnauthorized, errors.New("client token required"))
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" {
-			if !a.authorized(r) {
+			if !a.authorized(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
 				httpErr(w, http.StatusUnauthorized, errors.New("login required"))
 				return
 			}
@@ -381,11 +398,35 @@ type settingsView struct {
 	PairedAs    string `json:"paired_as,omitempty"`
 	ManageRoute bool   `json:"manage_routes,omitempty"`
 	Version     string `json:"version"`
+	AndroidAPK  bool   `json:"android_apk"`
+}
+
+// hAPK offers the Android app to phones opening the dashboard (additive).
+func (a *Agent) hAPK(w http.ResponseWriter, r *http.Request) {
+	f, err := os.Open(a.store.Get().APKPath())
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition", `attachment; filename="tailbond.apk"`)
+	http.ServeContent(w, r, "tailbond.apk", st.ModTime(), f)
+}
+
+func apkAvailable(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version}
+	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath())}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo
@@ -438,20 +479,31 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 
 // listenAddrs resolves the "listen" setting. With no host the server role
 // binds loopback plus its Tailscale IPs, the client role every interface.
+// The server role also binds its tunnel address (for bonded clients' GET
+// /api/peers) unless the listen host is a wildcard that already covers it.
 func (a *Agent) listenAddrs(ctx context.Context) []string {
 	cfg := a.store.Get()
 	host, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
 		host, port = "", strings.TrimPrefix(cfg.Listen, ":")
 	}
-	if host != "" {
+	if cfg.Role == config.RoleClient {
 		return []string{net.JoinHostPort(host, port)}
 	}
-	if cfg.Role == config.RoleClient {
-		return []string{net.JoinHostPort("", port)}
+	var out []string
+	switch host {
+	case "":
+		out = append(out, net.JoinHostPort("127.0.0.1", port))
+		for _, ip := range a.ts.Get(ctx).IPs {
+			out = append(out, net.JoinHostPort(ip, port))
+		}
+	case "0.0.0.0", "::":
+		return []string{net.JoinHostPort(host, port)}
+	default:
+		out = append(out, net.JoinHostPort(host, port))
 	}
-	out := []string{net.JoinHostPort("127.0.0.1", port)}
-	for _, ip := range a.ts.Get(ctx).IPs {
+	// appears once mqvpn is up; serveHTTP retries the bind
+	if ip := cfg.ServerTunnelIP(); ip != "" && ip != host {
 		out = append(out, net.JoinHostPort(ip, port))
 	}
 	return out
@@ -495,7 +547,8 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 	if err := bind(true); err != nil {
 		return err
 	}
-	t := time.NewTicker(30 * time.Second)
+	// retry often enough that the tunnel address is served soon after mqvpn starts
+	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
 		select {
