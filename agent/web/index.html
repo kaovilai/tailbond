@@ -48,6 +48,28 @@
 </header>
 
 <main>
+  <!-- server role, on a phone (or opened from the app as #add-phone): one tap pairs this phone -->
+  <section class="card add-phone hidden" id="add-phone" aria-labelledby="add-phone-title">
+    <div class="add-phone-head"><svg class="ico"><use href="#i-device"/></svg><h2 id="add-phone-title">Add this phone</h2></div>
+    <p class="muted">Gives this phone its own key and opens it in the tailbond app. No code to scan.</p>
+    <label class="field" for="phone-name"><span>Name for this phone</span>
+      <input id="phone-name" maxlength="63" autocomplete="off" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+    <button class="btn primary big" type="button" id="add-phone-btn"><svg class="ico sm"><use href="#i-plus"/></svg>Add this phone</button>
+    <div class="add-phone-done hidden" id="add-phone-done">
+      <p><b>Opening tailbond…</b> In the app, tap <b>Add phone</b>, then turn tailbond on. Android turns Tailscale's VPN off; your Tailscale machines stay reachable through <span class="server-name">this server</span>.</p>
+      <div class="row">
+        <a class="btn primary" id="phone-open" href="#">Open in tailbond</a>
+        <button class="btn" type="button" id="phone-copy"><svg class="ico sm"><use href="#i-copy"/></svg>Copy link</button>
+      </div>
+      <p class="muted small">Nothing opened? Install the tailbond app first, then tap <b>Open in tailbond</b>. The link holds this phone's key: don't share it.</p>
+    </div>
+    <ol class="steps muted small">
+      <li>Tap <b>Add this phone</b>. The tailbond app opens.</li>
+      <li>Tap <b>Add phone</b> in the app, then turn it on.</li>
+      <li>To go back to Tailscale later, tap <b>Switch back to Tailscale</b> in the app.</li>
+    </ol>
+  </section>
+
   <section class="hero card" aria-label="Throughput">
     <div class="hero-rates">
       <div class="rate down">
@@ -80,7 +102,7 @@
 
   <nav class="tabs" id="tabs">
     <button data-tab="connections" class="active">Connections</button>
-    <button data-tab="clients" data-role="server">Clients</button>
+    <button data-tab="clients" data-role="server">Devices</button>
     <button data-tab="setup" data-role="client">Setup</button>
     <button data-tab="tailscale">Tailscale</button>
     <button data-tab="logs">Logs</button>
@@ -95,7 +117,7 @@
     <form class="card add-client" id="add-client">
       <div>
         <h3>Add a device</h3>
-        <p class="muted">Each phone or travel router gets its own key. Scan the QR code in the tailbond app or paste the link into the router's Setup tab.</p>
+        <p class="muted">Each phone or travel router gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link into the router's Setup tab. On the phone itself, open this page and use <b>Add this phone</b>.</p>
       </div>
       <div class="row">
         <input id="client-name" placeholder="name, e.g. pixel" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required autocomplete="off">

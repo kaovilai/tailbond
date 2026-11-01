@@ -174,7 +174,11 @@ function render(st) {
   for (const [k, s] of state.hist) if (Date.now() - s.seen > 120000) state.hist.delete(k);
 }
 
+const IS_PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches;
+
 function setRole(role) {
+  // the phone flow only makes sense on the server, viewed from the phone being added
+  $('#add-phone').classList.toggle('hidden', !(role === 'server' && (IS_PHONE || location.hash === '#add-phone')));
   state.role = role;
   for (const b of document.querySelectorAll('#tabs button[data-role]')) b.classList.toggle('hidden', b.dataset.role !== role);
   if (role === 'client') loadSettings();
@@ -542,6 +546,47 @@ function setupClients() {
   });
 }
 
+// "pixel-8" from "Android 14; Pixel 8)"; reduced user agents ("Android 10; K") give "phone"
+function guessPhoneName() {
+  const m = /Android [\d.]+; ([^;)]+)\)/.exec(navigator.userAgent);
+  const model = m && m[1].trim();
+  if (!model || model.length < 2) return 'phone';
+  return model.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'phone';
+}
+
+function setupAddPhone() {
+  const input = $('#phone-name');
+  input.value = guessPhoneName();
+  if (location.hash === '#add-phone') $('#add-phone').scrollIntoView();
+  let uri = '';
+  $('#add-phone-btn').addEventListener('click', async () => {
+    const name = input.value.trim();
+    if (!input.checkValidity() || !name) { input.focus(); return toast('Use letters, digits, dots or dashes for the name', true); }
+    const btn = $('#add-phone-btn');
+    btn.disabled = true;
+    let res;
+    try {
+      res = await api('POST', '/api/clients', { name });
+    } catch (err) {
+      if (!/already exists/.test(err.message)) { btn.disabled = false; return toast(err.message, true); }
+      // tapped twice, or re-adding the same phone: reuse that device's key
+      if (!confirm(`A device called “${name}” already exists. Use it on this phone?`)) { btn.disabled = false; return; }
+      try { res = await api('GET', '/api/clients/' + encodeURIComponent(name)); } catch (e2) { btn.disabled = false; return toast(e2.message, true); }
+    }
+    btn.disabled = false;
+    uri = res.uri;
+    $('#phone-open').href = uri;
+    for (const el of document.querySelectorAll('.server-name')) el.textContent = state.status?.tailscale?.self || 'this server';
+    $('#add-phone-done').classList.remove('hidden');
+    btn.classList.add('hidden');
+    location.href = uri; // the tailbond app handles tailbond://pair
+  });
+  $('#phone-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(uri); } catch { /* insecure context: fall through */ }
+    toast('Link copied');
+  });
+}
+
 function setupPairing() {
   $('#pair-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -623,6 +668,7 @@ setupModes();
 setupPower();
 setupTabs();
 setupClients();
+setupAddPhone();
 setupPairing();
 setupLogin();
 connect();
