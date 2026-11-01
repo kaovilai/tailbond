@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.tailbond.app.data.PeersClient
 import dev.tailbond.app.data.Repository
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
@@ -12,12 +13,20 @@ import dev.tailbond.app.model.RouteMode
 import dev.tailbond.app.pairing.Pairing
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.pairing.PairingResult
+import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.LiveState
 import dev.tailbond.app.service.TailbondVpnService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -41,6 +50,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _apps = MutableStateFlow<List<AppEntry>>(emptyList())
     val apps: StateFlow<List<AppEntry>> = _apps.asStateFlow()
 
+    private val _handoff = MutableStateFlow<Handoff?>(null)
+    val handoff: StateFlow<Handoff?> = _handoff.asStateFlow()
+
+    private val peerStatus = MutableStateFlow(PeersUi())
+    /** Machine list: the cached list plus the state of the last refresh. */
+    val peers: StateFlow<PeersUi> = combine(repo.peers, peerStatus) { list, st -> st.copy(list = list) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, PeersUi(repo.peers.value))
+
+    init {
+        // refresh the machine list every 30 s while connected
+        viewModelScope.launch {
+            live.map { it.state == ConnState.CONNECTED }.distinctUntilChanged().collectLatest { up ->
+                while (up) {
+                    refreshPeersNow()
+                    delay(30_000)
+                }
+            }
+        }
+    }
+
+    private suspend fun refreshPeersNow() {
+        val key = profile.value?.key ?: return
+        peerStatus.value = peerStatus.value.copy(loading = true)
+        val err = withContext(Dispatchers.IO) {
+            try {
+                repo.savePeers(PeersClient.fetch(key)); null
+            } catch (e: Exception) {
+                e.message ?: e.javaClass.simpleName
+            }
+        }
+        peerStatus.value = PeersUi(loading = false, error = err)
+    }
+
+    fun refreshPeers() { viewModelScope.launch { refreshPeersNow() } }
+
+    fun finishOnboarding() = repo.updateSettings { it.copy(onboarded = true) }
+
+    fun askHandoff(h: Handoff?) { _handoff.value = h }
+
+    /** "Switch back to Tailscale": stop, and remember it so nothing turns tailbond back on by itself. */
+    fun handToTailscale() {
+        repo.updateSettings { it.copy(handedToTailscale = true) }
+        disconnect()
+    }
+
     /** Returns true when [text] parsed; the payload then waits in [pending]. */
     fun offerPairing(text: String): Boolean = when (val r = Pairing.parse(text)) {
         is PairingResult.Ok -> { _pending.value = r.payload; _pairError.value = null; true }
@@ -50,7 +104,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun confirmPairing() {
         val p = _pending.value ?: return
         repo.saveProfile(p)
-        repo.updateSettings { it.copy(mode = null) } // start from the server's suggested mode
+        // start from the server's suggested mode
+        repo.updateSettings { it.copy(mode = null, onboarded = true) }
         _pending.value = null
     }
 

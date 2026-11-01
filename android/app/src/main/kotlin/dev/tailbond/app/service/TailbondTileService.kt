@@ -8,8 +8,8 @@ import android.service.quicksettings.TileService
 import android.app.PendingIntent
 import dev.tailbond.app.R
 import dev.tailbond.app.data.Repository
+import dev.tailbond.app.model.Words
 import dev.tailbond.app.ui.MainActivity
-import dev.tailbond.app.ui.formatBps
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,13 +42,8 @@ class TailbondTileService : TileService() {
         tile.state = if (on) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = getString(R.string.app_name)
         if (Build.VERSION.SDK_INT >= 29) {
-            tile.subtitle = when (live.state) {
-                ConnState.CONNECTED -> formatBps(live.rxBps + live.txBps)
-                ConnState.CONNECTING -> getString(R.string.state_connecting)
-                ConnState.RECONNECTING -> getString(R.string.state_reconnecting)
-                ConnState.ERROR -> getString(R.string.state_error)
-                ConnState.DISCONNECTED -> getString(R.string.tile_off)
-            }
+            // same words as the app's status line: "Wi-Fi + mobile data", "Disconnected", "Can't connect"
+            tile.subtitle = Words.tileSubtitle(live)
         }
         tile.updateTile()
     }

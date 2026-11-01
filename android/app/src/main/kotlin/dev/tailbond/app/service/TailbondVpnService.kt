@@ -30,6 +30,8 @@ import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.RouteMode
 import dev.tailbond.app.model.TunnelPlan
+import dev.tailbond.app.model.Words
+import dev.tailbond.app.model.serverShortName
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.ui.MainActivity
 import dev.tailbond.app.ui.formatBps
@@ -88,15 +90,17 @@ class TailbondVpnService : MqvpnVpnService() {
         }
         val profile = repo.profile.value
         if (profile == null) {
-            LiveState.reset(ConnState.ERROR, getString(R.string.err_not_paired))
+            LiveState.reset(ConnState.ERROR, getString(R.string.err_not_paired), ErrorKind.NOT_PAIRED)
             finish()
             return START_NOT_STICKY
         }
         ServiceCompat.startForeground(
-            this, NOTIFICATION_ID, buildNotification(getString(R.string.state_connecting), null),
+            this, NOTIFICATION_ID, buildNotification(getString(R.string.state_connecting), serverName(profile)),
             if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
         )
         stopping = false
+        // turning tailbond on again ends a "Switch back to Tailscale"
+        if (repo.settings.value.handedToTailscale) repo.updateSettings { it.copy(handedToTailscale = false) }
         if (session == null) begin(profile, repo.settings.value)
         return START_STICKY
     }
@@ -105,7 +109,7 @@ class TailbondVpnService : MqvpnVpnService() {
         val config = try {
             TunnelPlan.config(profile, settings)
         } catch (e: Exception) {
-            LiveState.reset(ConnState.ERROR, e.message)
+            LiveState.reset(ConnState.ERROR, e.message, ErrorKind.OTHER)
             finish()
             return
         }
@@ -187,12 +191,12 @@ class TailbondVpnService : MqvpnVpnService() {
                 LiveState.set {
                     it.copy(state = ConnState.CONNECTED, message = null, tunnelIp = t.assignedIp, connectedAtMs = t.connectedAtMs)
                 }
-                notifyText(getString(R.string.state_connected))
+                notifyText(getString(R.string.notif_connected, serverName(repo.profile.value)))
             }
             is MqvpnState.Error -> {
                 session = null
                 restartPending = false
-                LiveState.reset(ConnState.ERROR, newState.error.message)
+                LiveState.reset(ConnState.ERROR, newState.error.message, ErrorKind.of(newState.error))
                 main.launch { finish() }
             }
             is MqvpnState.Disconnected -> {
@@ -286,10 +290,13 @@ class TailbondVpnService : MqvpnVpnService() {
             )
         }
         if (ticks % 2 == 0L) {
-            val kinds = samples.filter { it.status == PathGate.STATUS_ACTIVE }.mapNotNull { it.kind?.label }.distinct()
+            val s2 = session
+            val summary = if (s2 != null) {
+                Words.connectionsSummary(LiveState.live.value, s2.settings, TunnelPlan.effectiveMode(s2.profile, s2.settings), cap)
+            } else null
             notifyText(
-                "↓ ${formatBps(rxBps)}  ↑ ${formatBps(txBps)}",
-                kinds.joinToString(" + ").ifEmpty { null },
+                getString(R.string.notif_connected, serverName(s2?.profile)),
+                listOfNotNull(summary, "↓ ${formatBps(rxBps)}  ↑ ${formatBps(txBps)}").joinToString(" · "),
             )
         }
     }
@@ -354,6 +361,8 @@ class TailbondVpnService : MqvpnVpnService() {
         if (stopping) return
         getSystemService<NotificationManager>()?.notify(NOTIFICATION_ID, buildNotification(title, text))
     }
+
+    private fun serverName(p: PairingPayload?): String = p?.let { serverShortName(it) } ?: getString(R.string.home_server)
 
     companion object {
         private const val TAG = "tailbond"

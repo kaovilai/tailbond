@@ -1,8 +1,11 @@
 package dev.tailbond.app.ux
 
+import dev.tailbond.app.data.PeerList
+import dev.tailbond.app.data.PeerNode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.service.ConnState
+import dev.tailbond.app.service.ErrorKind
 import dev.tailbond.app.service.Live
 import dev.tailbond.app.service.PathGate
 import dev.tailbond.app.service.PathSample
@@ -55,12 +58,30 @@ object UxFixtures {
     val connectedBoth = connected(wifi, cell)
     val connecting = Live(state = ConnState.CONNECTING)
     val disconnected = Live()
-    val errorUnreachable = Live(state = ConnState.ERROR, message = "Connection to the server failed")
-    val errorTimeout = Live(state = ConnState.ERROR, message = "Connection timeout")
-    val errorCert = Live(state = ConnState.ERROR, message = "TLS handshake failed")
+    val errorUnreachable = Live(state = ConnState.ERROR, message = "Connection to the server failed", errorKind = ErrorKind.UNREACHABLE)
+    val errorTimeout = Live(state = ConnState.ERROR, message = "Connection timeout", errorKind = ErrorKind.UNREACHABLE)
+    val errorCert = Live(state = ConnState.ERROR, message = "TLS handshake failed", errorKind = ErrorKind.IDENTITY)
     val onePathFailed = connected(wifi, cellFailed)
     /** Failover mode, Wi-Fi primary healthy, cellular held back in standby. */
     val failoverStandby = connected(wifi, cellStandby)
     /** Failover mode, Wi-Fi gone, standby cellular took over. */
     val failoverTakeover = connected(wifiFailed, cellCarrying, standby = true)
+
+    private fun node(host: String, ip: String, os: String, online: Boolean = true, lastSeen: String? = null) =
+        PeerNode(host, "$host.tail1234.ts.net", listOf(ip, "fd7a:115c:a1e0::" + ip.substringAfterLast('.')), os, online, lastSeen)
+
+    val peers = PeerList(
+        server = "homebox",
+        tailnet = "alex@example.com",
+        magicDnsSuffix = "tail1234.ts.net",
+        tailscaleRunning = true,
+        self = node("homebox", "100.101.1.1", "linux"),
+        peers = listOf(
+            node("apple-tv", "100.101.4.4", "tvOS"),
+            node("nas", "100.101.2.2", "linux"),
+            node("pixel-tablet", "100.101.5.5", "android"),
+            node("work-laptop", "100.101.3.3", "macOS", online = false, lastSeen = "2026-10-30T08:00:00Z"),
+        ),
+        fetchedAtMs = System.currentTimeMillis() - 20 * 60_000,
+    )
 }

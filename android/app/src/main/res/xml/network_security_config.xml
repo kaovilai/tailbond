@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext only to the home server's tunnel address (GET /api/peers over the
+     tunnel; the tunnel itself is QUIC/TLS). Everything else stays HTTPS-only. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.77.0.1</domain>
+    </domain-config>
+</network-security-config>
