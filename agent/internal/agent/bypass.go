@@ -76,6 +76,10 @@ func (a *Agent) bypassWatcher(ctx context.Context) {
 	a.applyBypass(true)
 	t := time.NewTicker(5 * time.Minute) // re-assert (e.g. after a firewall reload)
 	defer t.Stop()
+	// a device with a rule may come back with a new private address: follow
+	// its DHCP name (the hook runs only when the rendered rules change)
+	leases := time.NewTicker(30 * time.Second)
+	defer leases.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,6 +88,8 @@ func (a *Agent) bypassWatcher(ctx context.Context) {
 			a.applyBypass(true)
 		case <-t.C:
 			a.applyBypass(true)
+		case <-leases.C:
+			a.applyBypass(false)
 		}
 	}
 }
@@ -114,6 +120,13 @@ func (a *Agent) applyBypass(force bool) {
 	}
 	mask, _ := cfg.Client.MarkMask()
 	opt := bypass.Options{Mask: mask, LocalDNS: cfg.Client.LocalDNSForBypass(), WANDNS: map[string][]string{}, WANDev: map[string]string{}}
+	opt.HostMACs = map[string][]string{}
+	for _, c := range lanClients(cfg.Client.LeasesPath(), "", nil) {
+		if c.Name != "" {
+			k := strings.ToLower(c.Name)
+			opt.HostMACs[k] = append(opt.HostMACs[k], c.MAC)
+		}
+	}
 	a.mu.Lock()
 	for dev, it := range a.client.ifs {
 		if it.WAN && it.Usable() && len(it.DNS) > 0 {

@@ -188,3 +188,24 @@ func TestEmpty(t *testing.T) {
 		t.Fatalf("%+v", f)
 	}
 }
+
+func TestDeviceRuleFollowsHostName(t *testing.T) {
+	rs := []config.BypassRule{
+		{ID: "laptop", Kind: "device", Match: "aa:bb:cc:dd:ee:01", Host: "Work-Laptop", Target: "tunnel"},
+		{ID: "tv", Kind: "device", Match: "aa:bb:cc:dd:ee:02", Target: "direct"},
+	}
+	o := opts()
+	// the laptop came back with a new private address; a spoofer claims the
+	// TV's MAC under the laptop's name: not taken from the TV rule
+	o.HostMACs = map[string][]string{"work-laptop": {"aa:bb:cc:dd:ee:09", "aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:01"}}
+	f := Render(rs, o)
+	if !strings.Contains(f.Nft, `ether saddr { aa:bb:cc:dd:ee:01, aa:bb:cc:dd:ee:09 } counter name "c_laptop"`) {
+		t.Fatalf("nft:\n%s", f.Nft)
+	}
+	if !strings.Contains(f.Nft, `ether saddr aa:bb:cc:dd:ee:02 counter name "c_tv"`) {
+		t.Fatal("tv rule")
+	}
+	if strings.Count(f.IPTables, `--comment "tb:laptop"`) != 2 || !strings.Contains(f.IPTables, "--mac-source aa:bb:cc:dd:ee:09") {
+		t.Fatalf("iptables:\n%s", f.IPTables)
+	}
+}

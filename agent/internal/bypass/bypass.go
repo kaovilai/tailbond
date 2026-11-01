@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math/bits"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 
@@ -48,6 +49,9 @@ type Options struct {
 	WANDNS   map[string][]string
 	WANDev   map[string]string
 	LocalDNS bool
+	// HostMACs: DHCP host name (lower case) -> the MACs leased under it now;
+	// a device rule with a host also matches those
+	HostMACs map[string][]string
 }
 
 // WAN is one "only this WAN" target.
@@ -140,8 +144,9 @@ func Render(rules []config.BypassRule, opt Options) Files {
 		}
 		live = append(live, r)
 	}
-	f.Nft = renderNft(live, markOf, mask)
-	f.IPSet, f.IPTables, f.IP6Tables = renderIPT(live, markOf, mask)
+	macs := deviceMACs(live, opt.HostMACs)
+	f.Nft = renderNft(live, markOf, mask, macs)
+	f.IPSet, f.IPTables, f.IP6Tables = renderIPT(live, markOf, mask, macs)
 	f.DnsmasqNftset, f.DnsmasqIPSet, f.Domains = renderDnsmasq(live, opt)
 	return f
 }
@@ -162,12 +167,45 @@ func ipsetName(id string, v6 bool) string {
 	return "tb_" + id + "_4"
 }
 
+// deviceMACs: every MAC each device rule matches: its own, plus the ones
+// leased now under its host name that no other device rule claims.
+func deviceMACs(rules []config.BypassRule, hostMACs map[string][]string) map[string][]string {
+	claimed := map[string]bool{}
+	for _, r := range rules {
+		if r.Kind == config.BypassDevice && r.Match != "" {
+			claimed[r.Match] = true
+		}
+	}
+	out := map[string][]string{}
+	for _, r := range rules {
+		if r.Kind != config.BypassDevice {
+			continue
+		}
+		var list []string
+		if r.Match != "" {
+			list = append(list, r.Match)
+		}
+		if r.Host != "" {
+			for _, m := range hostMACs[strings.ToLower(r.Host)] {
+				if !claimed[m] && !slices.Contains(list, m) {
+					list = append(list, m)
+				}
+			}
+		}
+		sort.Strings(list[min(1, len(list)):]) // the rule's own MAC first
+		out[r.ID] = list
+	}
+	return out
+}
+
 // nftMatches returns the match expressions of a rule: one nft rule each.
-func nftMatches(r config.BypassRule) []string {
+func nftMatches(r config.BypassRule, macs map[string][]string) []string {
 	switch r.Kind {
 	case config.BypassDevice:
-		if r.Match != "" {
-			return []string{"ether saddr " + r.Match}
+		if m := macs[r.ID]; len(m) == 1 {
+			return []string{"ether saddr " + m[0]}
+		} else if len(m) > 1 {
+			return []string{"ether saddr { " + strings.Join(m, ", ") + " }"}
 		}
 		return []string{"ip saddr " + r.IP}
 	case config.BypassIP:
@@ -185,7 +223,7 @@ func nftMatches(r config.BypassRule) []string {
 	return nil
 }
 
-func renderNft(rules []config.BypassRule, markOf map[string]uint32, mask uint32) string {
+func renderNft(rules []config.BypassRule, markOf map[string]uint32, mask uint32, macs map[string][]string) string {
 	keep := ^mask
 	var b strings.Builder
 	// recreate atomically: declare, delete, define (nft -f is one transaction)
@@ -214,7 +252,7 @@ func renderNft(rules []config.BypassRule, markOf map[string]uint32, mask uint32)
 	b.WriteString("\t\tiifname != @lan_ifs return\n")
 	for _, r := range rules {
 		m := markOf[r.ID]
-		for _, match := range nftMatches(r) {
+		for _, match := range nftMatches(r, macs) {
 			fmt.Fprintf(&b, "\t\t%s counter name \"c_%s\" meta mark set meta mark & %s | %s ct mark set ct mark & %s | %s accept comment \"%s\"\n",
 				match, r.ID, hex(keep), hex(m), hex(keep), hex(m), r.ID)
 		}
@@ -224,11 +262,15 @@ func renderNft(rules []config.BypassRule, markOf map[string]uint32, mask uint32)
 }
 
 // iptMatch returns the iptables match for one family ("" = not this family).
-func iptMatch(r config.BypassRule, v6 bool) []string {
+func iptMatch(r config.BypassRule, v6 bool, macs map[string][]string) []string {
 	switch r.Kind {
 	case config.BypassDevice:
-		if r.Match != "" {
-			return []string{"-m mac --mac-source " + r.Match}
+		if m := macs[r.ID]; len(m) > 0 {
+			var out []string
+			for _, x := range m {
+				out = append(out, "-m mac --mac-source "+x)
+			}
+			return out
 		}
 		if v6 {
 			return nil
@@ -249,7 +291,7 @@ func iptMatch(r config.BypassRule, v6 bool) []string {
 	return nil
 }
 
-func renderIPT(rules []config.BypassRule, markOf map[string]uint32, mask uint32) (ipset, v4, v6 string) {
+func renderIPT(rules []config.BypassRule, markOf map[string]uint32, mask uint32, macs map[string][]string) (ipset, v4, v6 string) {
 	var s strings.Builder
 	for _, r := range rules {
 		if r.Kind == config.BypassDomain {
@@ -266,7 +308,7 @@ func renderIPT(rules []config.BypassRule, markOf map[string]uint32, mask uint32)
 		fmt.Fprintf(&b, ":%s - [0:0]\n-F %s\n", Chain, Chain)
 		fmt.Fprintf(&b, "-A %s -m mark ! --mark 0x0/%s -j RETURN\n", Chain, hex(mask))
 		for _, r := range rules {
-			for _, m := range iptMatch(r, v6) {
+			for _, m := range iptMatch(r, v6, macs) {
 				fmt.Fprintf(&b, "-A %s %s -m mark --mark 0x0/%s -m comment --comment \"tb:%s\" -j MARK --set-xmark %s/%s\n",
 					Chain, m, hex(mask), r.ID, hex(markOf[r.ID]), hex(mask))
 			}

@@ -111,7 +111,7 @@ keep_failover() {
 bypass_obj() {
 	local k v
 	json_add_object ""
-	for k in id kind match ip target wan note; do
+	for k in id kind match ip host target wan note; do
 		v="$("$1" "$k")"
 		[ -n "$v" ] && json_add_string "$k" "$v"
 	done

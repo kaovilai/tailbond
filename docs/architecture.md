@@ -313,7 +313,7 @@ Additive keys (all optional):
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;
 - `client.captive_portal_detect` (default `true`), `client.captive_probe_urls` (default: Google's `generate_204`, Firefox's `success.txt`).
 - `client.servers`: `[{"name","pairing_uri","enabled"}]`, the ordered server list (first = primary); `client.failover`: `{"policy":"prefer"|"always","server","switch_after_sec":15,"failback_after_sec":120,"probe_every_sec":10}` ([multiple servers](#multiple-servers-and-failover));
-- `client.bypass`: `[{"id","kind","match","ip","target","wan","enabled","note"}]` ([bypass rules](#bypass-rules-client-role)); `client.leases_file` (default `/tmp/dhcp.leases`); `client.bypass_mark_mask` (default `"0x07000000"`), `client.bypass_local_dns` (default `true`).
+- `client.bypass`: `[{"id","kind","match","ip","host","target","wan","enabled","note"}]` ([bypass rules](#bypass-rules-client-role)); `client.leases_file` (default `/tmp/dhcp.leases`); `client.bypass_mark_mask` (default `"0x07000000"`), `client.bypass_local_dns` (default `true`).
 
 **Migration.** A config with `client.pairing_uri` and no `client.servers`
 loads as a one-server list (`[{"name": <payload server_name>, "pairing_uri"}]`)
@@ -465,14 +465,14 @@ On the travel router, LAN traffic can skip the tunnel by rule
 
 ```json
 {"id": "b3f9", "kind": "domain", "match": "bank.example", "target": "direct", "enabled": true, "note": "Bank"}
-{"id": "c1d2", "kind": "device", "match": "aa:bb:cc:dd:ee:ff", "ip": "192.168.8.23", "target": "tunnel", "enabled": true, "note": "Work laptop"}
+{"id": "c1d2", "kind": "device", "match": "aa:bb:cc:dd:ee:ff", "ip": "192.168.8.23", "host": "work-laptop", "target": "tunnel", "enabled": true, "note": "Work laptop"}
 {"id": "e5f6", "kind": "ip", "match": "203.0.113.0/24", "target": "wan", "wan": "wwan", "enabled": true}
 {"id": "a7b8", "kind": "port", "match": "udp/4500", "target": "direct", "enabled": true, "note": "Wi-Fi calling"}
 ```
 
 - `kind`/`match`:
   - `domain`: a domain and all its subdomains (`netflix.com`; a leading `*.` is dropped);
-  - `device`: a LAN device's MAC (from `GET /api/lan-clients`), with `ip` used only when `match` is empty;
+  - `device`: a LAN device's MAC (from `GET /api/lan-clients`), with `ip` used only when `match` is empty. Optional `host`, the device's DHCP name: the rule then also covers every MAC the router currently leases under that name (checked every 30 s), so a laptop that comes back with a new private Wi-Fi address still matches. A MAC another device rule names is never taken over;
   - `ip`: an IPv4/IPv6 address or CIDR;
   - `port`: `tcp/<port>`, `udp/<port>` or a range `udp/5060-5061`.
 - `target`:

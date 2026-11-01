@@ -146,3 +146,30 @@ garbage
 		t.Fatalf("missing files: %#v", out)
 	}
 }
+
+func TestDeviceRuleFollowsLeaseName(t *testing.T) {
+	dir := t.TempDir()
+	leases := filepath.Join(dir, "dhcp.leases")
+	os.WriteFile(leases, []byte("1793000000 aa:bb:cc:dd:ee:01 192.168.8.10 work-laptop *\n"), 0o644)
+	a := clientAgent(t, func(c *config.Config) { c.Client.LeasesFile = leases })
+	w := req(t, a, "POST", "/api/bypass", lan, "", map[string]any{"kind": "device", "match": "aa:bb:cc:dd:ee:01", "host": "work-laptop", "target": "tunnel"})
+	if w.Code != 200 {
+		t.Fatalf("add: %d %s", w.Code, w.Body)
+	}
+	nft := func() string {
+		b, _ := os.ReadFile(filepath.Join(a.store.Get().StateDir, "bypass.nft"))
+		return string(b)
+	}
+	if !strings.Contains(nft(), "ether saddr aa:bb:cc:dd:ee:01 counter") {
+		t.Fatalf("nft:\n%s", nft())
+	}
+	// the laptop rejoins with a new private address under the same name
+	os.WriteFile(leases, []byte("1793000000 aa:bb:cc:dd:ee:01 192.168.8.10 work-laptop *\n1793000100 02:11:22:33:44:55 192.168.8.11 work-laptop *\n"), 0o644)
+	a.applyBypass(false)
+	if !strings.Contains(nft(), "ether saddr { aa:bb:cc:dd:ee:01, 02:11:22:33:44:55 } counter") {
+		t.Fatalf("nft after the new address:\n%s", nft())
+	}
+	if w := req(t, a, "POST", "/api/bypass", lan, "", map[string]any{"kind": "device", "match": "aa:bb:cc:dd:ee:03", "host": "bad name!", "target": "tunnel"}); w.Code != 400 {
+		t.Fatalf("bad host accepted: %d", w.Code)
+	}
+}

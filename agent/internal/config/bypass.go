@@ -28,10 +28,13 @@ const (
 )
 
 type BypassRule struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"`
-	Match  string `json:"match"`
-	IP     string `json:"ip,omitempty"` // device: used when match (the MAC) is empty
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Match string `json:"match"`
+	IP    string `json:"ip,omitempty"` // device: used when match (the MAC) is empty
+	// device: its DHCP host name; the rule also covers any address the
+	// router currently leases under that name (private/rotating MACs)
+	Host   string `json:"host,omitempty"`
 	Target string `json:"target"`
 	WAN    string `json:"wan,omitempty"`
 	// nil = enabled
@@ -45,6 +48,7 @@ var (
 	reRuleID  = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
 	reLabel   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	reWANName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)
+	reHost    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 	rePort    = regexp.MustCompile(`^(tcp|udp)/([0-9]{1,5})(-([0-9]{1,5}))?$`)
 )
 
@@ -64,7 +68,7 @@ func NormalizeBypass(r BypassRule) (BypassRule, error) {
 		if err != nil {
 			return r, err
 		}
-		r.Match, r.IP = d, ""
+		r.Match, r.IP, r.Host = d, "", ""
 	case BypassDevice:
 		if r.Match != "" {
 			hw, err := net.ParseMAC(r.Match)
@@ -80,6 +84,10 @@ func NormalizeBypass(r BypassRule) (BypassRule, error) {
 			}
 			r.IP = a.String()
 		}
+		r.Host = strings.TrimSpace(r.Host)
+		if r.Host != "" && !reHost.MatchString(r.Host) {
+			return r, fmt.Errorf("%q isn't a device name", r.Host)
+		}
 		if r.Match == "" && r.IP == "" {
 			return r, errors.New("pick a device")
 		}
@@ -88,7 +96,7 @@ func NormalizeBypass(r BypassRule) (BypassRule, error) {
 		if err != nil {
 			return r, err
 		}
-		r.Match, r.IP = p.String(), ""
+		r.Match, r.IP, r.Host = p.String(), "", ""
 	case BypassPort:
 		m := rePort.FindStringSubmatch(strings.ToLower(strings.ReplaceAll(r.Match, " ", "")))
 		if m == nil {
@@ -106,7 +114,7 @@ func NormalizeBypass(r BypassRule) (BypassRule, error) {
 		if hi != lo {
 			r.Match += "-" + strconv.Itoa(hi)
 		}
-		r.IP = ""
+		r.IP, r.Host = "", ""
 	default:
 		return r, fmt.Errorf("kind must be domain, device, ip or port, not %q", r.Kind)
 	}
