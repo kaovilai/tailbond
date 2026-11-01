@@ -686,7 +686,7 @@
           var row = function (x) {
             return h("div", { class: "tb-li", style: { padding: "8px 0" } }, [
               h("div", { class: "tb-grow" }, [h("b", x.client || "this router"), h("span", { class: "tb-muted" }, " · " + fmtWhen(x.created) + " · " + fmtBytes(x.size))]),
-              h("a", { class: "tb-btn small", attrs: { href: "/tailbond-api/backups/" + encodeURIComponent(x.name), download: x.name } }, "Download")
+              h("a", { class: "tb-btn small", attrs: { href: "/tailbond-api/backups/" + encodeURIComponent(x.name) + (x.client ? "?client=" + encodeURIComponent(x.client) : ""), download: x.name } }, "Download")
             ]);
           };
           body.push(h("div", { class: "tb-sec" }, [h("div", { class: "tb-sec-t" }, "Saved backups")].concat(this.bks.length

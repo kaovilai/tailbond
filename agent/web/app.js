@@ -1308,7 +1308,7 @@ function renderBackups() {
     const row = (x) => h('tr', {},
       h('td', {}, h('b', { text: x.client || 'this server' })),
       h('td', { text: fmtWhen(x.created) }), h('td', { class: 'muted', text: fmtBytes(x.size) }),
-      h('td', {}, h('a', { href: '/api/backups/' + encodeURIComponent(x.name), download: x.name, text: 'Download' })));
+      h('td', {}, h('a', { href: '/api/backups/' + encodeURIComponent(x.name) + (x.client ? '?client=' + encodeURIComponent(x.client) : ''), download: x.name, text: 'Download' })));
     const sec = [h('h4', { text: 'Saved backups' })];
     if (!ub.backups.length) sec.push(h('p', { class: 'muted small', text: 'None yet. Automatic backups land here, and travel routers that send theirs.' }));
     else {
