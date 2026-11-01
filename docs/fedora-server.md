@@ -35,12 +35,17 @@ The agent also serves a **phone page** on port 80 of its Tailscale IPs: typing t
 
 Optional HTTPS (`https://homebox.<tailnet>.ts.net/`): `sudo tailscale serve --bg http://100.x.y.z:80`, using this server's Tailscale IPv4, proxies only the phone page. It isn't needed (Tailscale already encrypts the connection, and phones type the plain name), and **don't** point `tailscale serve` at port 8077: every request would then arrive from tailscaled on this machine, so the dashboard would see neither the device's Tailscale identity nor its address, and pair requests would be refused.
 
-What the package changes in firewalld (the `server-up` hook, every start):
+What the package changes in firewalld (the `server-up` hook, every start, both the running and the saved configuration; `dnf remove` takes the ports and rules back out). There's nothing to do here yourself; this list is for checking:
 
 - UDP 443 (the `tailbond` service) in the zone of the interface that has the default route, the one your router's port forward arrives on (else the default zone). Check with `sudo firewall-cmd --get-active-zones` and `sudo firewall-cmd --zone=<zone> --list-services`.
 - tcp 8077 and 80 from tailnet addresses only (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), in the zone `tailscale0` is in (else the default zone): `sudo firewall-cmd --zone=<zone> --list-rich-rules`. Tailscale drops those source addresses on any other interface, so this doesn't open the ports to your LAN.
 - UDP 41641 (Tailscale's own port) in the same zone as UDP 443 when Tailscale is installed, so a forward on your router is all direct Tailscale connections need.
-- `tb0` in the `tailbond` zone, and the `tailbond-out` policy: bonded devices may use this machine's services on its tunnel address (`10.77.0.1`, e.g. the DNS forwarder), and reach the internet, your home LAN and your tailnet through it.
+- `tb0` in the `tailbond` zone, and the `tailbond-out` policy: bonded devices may use this machine's services on its tunnel address (`10.77.0.1`, e.g. the DNS forwarder; the agent answers them there only with the machine list, never the dashboard), and reach the internet, your home LAN and your tailnet through it. To keep them off your home LAN, add a rule of your own; the hook only re-adds its masquerade rules and leaves yours alone:
+
+  ```sh
+  sudo firewall-cmd --permanent --policy=tailbond-out --add-rich-rule='rule family=ipv4 destination address=192.168.1.0/24 reject'
+  sudo firewall-cmd --reload
+  ```
 
 UDP 443 is also what HTTP/3 uses: if this machine runs a web server with HTTP/3, set another port (`"server": {"port": 8443}`) and forward that one instead. SELinux needs no changes: the service runs unconfined as root, like other VPN servers.
 
@@ -50,7 +55,8 @@ Bonding needs each of the device's links to reach the server **directly over UDP
 
 1. On your home router's admin page, find **Port forwarding** (sometimes called *Virtual server* or *NAT*) and add: protocol **UDP**, port **443**, to this server's LAN address (`ip -4 addr` shows it, e.g. `192.168.1.2`). Give the server a fixed address on the same router (**DHCP reservation**, sometimes *static lease*), so the forward keeps pointing at it.
 2. Find your home's public address: the router's status page shows it (*WAN* or *Internet* IP). If your router has a **Dynamic DNS** page, a DDNS name (such as `home.example.net`) is better, since it keeps working when the address changes.
-3. Tell tailbond: type that address into the setup step at the top of the dashboard's **Devices** tab and click **Save** (the port is added for you). Or edit the config and restart:
+3. Test the forward from outside right away: on a phone with tailbond, turn Wi-Fi off; once it connects over mobile data, the dashboard's *UDP 443* health item turns green.
+4. Tell tailbond: type that address into the setup step at the top of the dashboard's **Devices** tab and click **Save** (the port is added for you). Or edit the config and restart:
 
    ```json
    "server": { "public_addr": "home.example.net", ... }
@@ -79,8 +85,9 @@ For best speed (direct Tailscale connections, the port, the route), see
 |---|---|---|
 | Carrier-grade NAT (red: stops devices connecting from away) | your provider shares your internet address | section 2, *Carrier-grade NAT* |
 | UDP 443 not confirmed from outside yet (?) | nothing has connected from away yet | none: the first device connecting from away confirms it |
-| Route 10.77.0.0/24 isn't approved yet | Tailscale machines can't reach bonded devices (devices can already reach them) | admin console → Machines → this machine → **Edit route settings** → tick it. Or approve it automatically with an ACL [`autoApprovers`](https://tailscale.com/docs/reference/syntax/policy-file#autoapprovers) entry |
+| Route 10.77.0.0/24 isn't approved yet (optional) | a choice, not a speed problem: approving exposes bonded devices to your tailnet (under your ACLs); devices already reach your machines without it | admin console → Machines → this machine → **Edit route settings** → tick it. Or approve it automatically with an ACL [`autoApprovers`](https://tailscale.com/docs/reference/syntax/policy-file#autoapprovers) entry |
 | *N* machines through a relay (slower) | Tailscale traffic between this machine and those machines goes through Tailscale's relays (DERP); only traffic to *those* machines is slower, bonding itself isn't affected | on your router, forward **UDP 41641** to this machine (this machine's firewall already allows it; see section 1). UPnP on the router also works but lets any device on your LAN open ports. Check with `tailscale ping <machine>`: "via DERP(…)" is relayed, "via <ip>:<port>" is direct. A relay can also come from the other machine's network, which you may not control |
+| Anyone on your Tailscale network can approve devices | the server is tagged (no owner account) and has no approvers or password | name approvers or set a password (Devices → Who can approve) |
 | This network makes direct connections hard ("hard NAT") | the router in front of this machine picks a new outside port for every destination | same fix as the relay item (one forward fixes both) |
 
 ## 4. Add a device
@@ -117,8 +124,11 @@ allow installs from their browser once; the page shows those prompts.
 
 - **No password (default)**: the dashboard (and so approving, adding and
   removing devices) answers the Tailscale account this server belongs to, from
-  any of its devices, and anyone logged in on this machine
-  (`http://127.0.0.1:8077`). Everyone else on your tailnet, including people
+  any device signed in to it (including a router or phone you lent to someone
+  while it's signed in to your account: sign those in with the borrower's
+  account, or tag them), and anyone with a login on this machine
+  (`http://127.0.0.1:8077`; set a password if this machine has users you
+  don't trust with that). Everyone else on your tailnet, including people
   you share this machine with, gets a short "this page is only for …" note;
   they can still **ask to connect** (that's how their phone or router gets
   added) and open the phone page. A *tagged* server has no owning account:
@@ -150,7 +160,8 @@ allow installs from their browser once; the page shows those prompts.
 
   Keep tcp 80 and 8077 to the server open for the people whose devices should
   ask to connect (the phone page and pair requests use them). A tagged server
-  has no owner, so name its approvers (or set a password).
+  has no owner, so name its approvers (or set a password) in the same step;
+  setup health warns until you do.
 
 **With a QR code** (phone and computer, or a travel router):
 
@@ -197,4 +208,7 @@ sudo systemctl disable --now tailbond
 sudo dnf remove tailbond-server
 ```
 
-The tunnel route stays advertised in Tailscale. Remove it with `tailscale set --advertise-routes=` (keeping your other routes).
+`dnf remove` closes UDP 443 and 41641, removes the tailnet rules for tcp 80
+and 8077, and the `tailbond` zone and policies. The tunnel route stays
+advertised in Tailscale: `tailscale set --advertise-routes=<your other routes,
+comma separated>` keeps the others (an empty value withdraws all of them).

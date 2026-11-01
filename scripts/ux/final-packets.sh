@@ -23,6 +23,7 @@ cp "$D/final/android-task-script.md" "$R/packet-android/task-script.md"
 cp "$D/final/android-screens.md" "$R/packet-android/screens.md"
 cp "$R"/web/web-00*.png "$R/packet-android/web/"
 cp "$R"/android/*.png "$R/packet-android/android/"
+rm -f "$R/packet-android/android/03-deeplink-confirm.png"  # same dialog as 02e
 
 cp "$D/final/fedora-task-script.md" "$R/packet-fedora/task-script.md"
 cp "$D/final/fedora-screens.md" "$R/packet-fedora/screens.md"

@@ -49,7 +49,7 @@ const webDir = `${repo}/agent/web`;
 const webTypes = { html: 'text/html', js: 'application/javascript', css: 'text/css', svg: 'image/svg+xml' };
 const fedoraSettings = { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', glinet_ipk: true, password_set: false, ...landing };
 const fedoraTs = { installed: true, running: true, self: 'homebox', dns_name: 'homebox.tail1234.ts.net', tailnet: 'alex@example.com', ips: ['100.101.1.1', 'fd7a:115c:a1e0::1'], route: '10.77.0.0/24', advertised_routes: ['10.77.0.0/24'], approved_routes: ['10.77.0.0/24'], route_advertised: true, routes_approved: true, admin_url: 'https://login.tailscale.com/admin/machines', peers: 4, peers_online: 3 };
-async function fedora(vp, name, { status = fedoraStatus, after = null, settings = {}, ts = {}, health = fedoraHealth, tab = null, click = null, full = false, waitFor = null } = {}) {
+async function fedora(vp, name, { status = fedoraStatus, after = null, settings = {}, ts = {}, health = fedoraHealth, tab = null, click = null, full = false, waitFor = null, settle = 1500 } = {}) {
   const ctx = await browser.newContext({ ...viewports[vp], locale: 'en-US', timezoneId: 'UTC' });
   const page = await ctx.newPage();
   let st = status;
@@ -77,7 +77,7 @@ async function fedora(vp, name, { status = fedoraStatus, after = null, settings 
     await page.click(`#tabs button[data-tab="${tab}"]`);
     await page.waitForTimeout(700);
   }
-  if (click) { await page.getByRole('button', { name: click }).first().click(); await page.waitForTimeout(1500); }
+  if (click) { await page.getByRole('button', { name: click }).first().click(); await page.waitForTimeout(settle); }
   await page.screenshot({ path: `${out}/${name}-${vp}.png`, fullPage: full });
   await ctx.close();
 }
@@ -87,7 +87,7 @@ async function fedoraAll(vp) {
   if (vp !== 'desktop') return;
   await fedora(vp, '14b-fedora-after-approve', { waitFor: '#pair-requests:not(.hidden)', click: 'Approve', after: fedoraStatusApproved });
   await fedora(vp, '14c-fedora-phone-request', { status: fedoraStatusPhone, waitFor: '#pair-requests:not(.hidden)' });
-  await fedora(vp, '14d-fedora-phone-approved', { status: fedoraStatusPhone, waitFor: '#pair-requests:not(.hidden)', click: 'Approve', after: fedoraStatusPhoneDone, full: true });
+  await fedora(vp, '14d-fedora-phone-approved', { status: fedoraStatusPhone, waitFor: '#pair-requests:not(.hidden)', click: 'Approve', after: fedoraStatusPhoneDone, full: true, settle: 4000 });
   await fedora(vp, '15-fedora-devices-tab', { tab: 'clients', full: true });
   await fedora(vp, '15b-fedora-tailscale-tab', { tab: 'tailscale', full: true });
   await fedora(vp, '15c-fedora-fresh-install', { status: fedoraStatusFresh, settings: { public_addr: '', effective_public_addr: '192.168.1.2:443', public_addr_guessed: true, tls: 'self-signed' },

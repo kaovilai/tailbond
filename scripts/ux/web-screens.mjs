@@ -28,6 +28,7 @@ for (const scheme of ['light', 'dark']) {
     await page.screenshot({ path: `${out}/web-00a-phone-page-first-screen.png` });
     const href = await page.getAttribute('a.btn.primary[href^="intent:"]', 'href');
     if (!href || !href.includes('scheme=tailbond')) throw new Error('no app link: ' + href);
+    if (!(await page.textContent('body')).includes('Download tailbond (')) throw new Error('no download button');
     await page.goto(landing + '#get-app');
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${out}/web-00b-phone-page-no-app-yet.png` });

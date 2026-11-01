@@ -55,7 +55,7 @@ func TestLandingPageOnPhone(t *testing.T) {
 	body := w.Body.String()
 	for _, want := range []string{
 		"Get tailbond on this phone",
-		`href="/tailbond.apk"`, "(3 MB)",
+		`href="/tailbond.apk"`, "Download tailbond (3 MB)",
 		"intent://ask?server=homebox.tail1234.ts.net#Intent;scheme=tailbond;package=dev.tailbond.app;S.browser_fallback_url=http%3A%2F%2Fhomebox.tail1234.ts.net%2F%23get-app;end",
 		"Allow from this source",
 		`href="http://homebox:8077"`,

@@ -91,3 +91,32 @@ round 1 #21), several data-saving controls (round 3 #15), short MagicDNS
 names on the travel router, per-connection graphs, billing-day resets,
 checksum of the router package, the LuCI install path (GL has no upload in
 Plug-ins).
+
+## Round 8 triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Fedora page contradicts itself on who can approve: the approval card said "tagged machine… anyone on your Tailscale network", the Devices card "alex@example.com" (F1, F2, GL B high; GL A, C, D medium) | **H** | **fix** (real bug): the approval card was drawn before settings loaded and took the "no owner" branch; it's redrawn when settings arrive, and says nothing until then |
+| 2 | Only a shared password to let someone else approve; no named approvers; tagging forces the password (F1; F2) | M | **fix**: `approvers` (Tailscale logins) next to the owner, editable on the Devices tab; on a tagged server they are the only approvers; the card says a password replaces all of it and then everyone needs it |
+| 3 | Approval banner leaves out internet/LAN/exit (F1) | M | **fix**: "use homebox's internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as homebox, under homebox's access rules" |
+| 4 | "Set a password below" on the Connections tab (F2) | M | **fix**: names the place (Devices → Who can approve) |
+| 5 | Header 1.1 down / 12 up vs the device's 12 down (GL D) | M | **fix**: the server's header, path cards and data total say "to devices / from devices" |
+| 6 | Turning off: GL may now use the phone, Backup only still selected (GL C, D) | M | **fix**: the summary and the phone's card say GL may use the phone and to unplug it (or turn tethering off) to be sure |
+| 7 | Standby "uses no data" vs GL's own checks (GL B) | M | **fix**: "tailbond sends nothing over it (GL itself may check the connection now and then, a few KB)" |
+| 8 | CGNAT: dead end; "I was told it runs over Tailscale" (GL A, B, C) | M | **partial (platform limit, stated in the UI)**: the item now says bonding needs a direct connection and can't run through Tailscale's relays (they'd be slower than one link), and gives the IPv6 route (enter the public IPv6 address) before "ask your provider". A tailnet fallback isn't possible: DERP relays carry WireGuard over TCP/HTTPS and can't carry multipath QUIC paths at useful speed |
+| 9 | "Allow 41641/udp in this machine's firewall" with no how (GL A, C; F2 zone placeholder) | M | **fix**: the Fedora package opens 41641/udp itself (WAN zone), so the fix is only the router forward; repeated fixes say "Same fix as above (one forward fixes both)" |
+| 10 | Route step: needs the admin console, reads contradictory (GL C) | M | **fix**: "Done once, by whoever manages your Tailscale account. Until then devices can still reach your machines; only the other direction waits" |
+| 11 | Can't check the UDP 443 forward from home (F2) | M | **fix**: the item says how to test now: a phone with tailbond on mobile data (Wi-Fi off) |
+| 12 | Family phone must be on my tailnet / reach tcp 80, 8077 (F1, F2) | M | **fix**: phone card and guide §4 say so (invite or share; default policy allows it) |
+| 13 | No screen confirms the family phone connected (F2) | M | **fix**: new render 14d (pixel-7a listed, connected, after Approve) |
+| 14 | Guide §4 says `homebox` without the slash (F1) | M | **fix** |
+| 15 | Hash comes from the same page; how to check; signing key (Android B) | M | **partial**: the page explains the trust root (Tailscale authenticates homebox, so nobody on the Wi-Fi or mobile network can change the file) and how to compare the hash on homebox; the signing certificate fingerprint isn't shown (debug-signed builds; release signing is future work) |
+| 16 | Always-on conflict only in Settings (Android B) | M | **fix**: the handoff dialog says to turn Tailscale's Always-on off first, and mentions the exit-node default |
+| 17 | Four prompts; Play Protect not drawn (Android C) | M | **partial (platform limit, stated)**: Play Protect's prompt is drawn too, and the page says it's Android's normal one-time check and the drawings aren't buttons. The prompts themselves can't be removed for an app outside a store |
+| 18 | Tapping "Open" after install lands on onboarding; greyed button (Android C; A low) | M | **fix**: onboarding says "Installed tailbond from your home server's page in Chrome? Easier: go back to Chrome and tap step 2"; the greyed button explains itself |
+| 19 | Switched back: "Tailscale is in charge" sounds finished (Android C) | M | **fix**: "Last step: turn Tailscale on", with Open Tailscale as the main button and what happens until then |
+| 20 | "From another screen": "Add a device" isn't on the phone page (Android A) | M | **fix**: names the dashboard's "Add a device with a code" and warns the phone page's QR only opens the install page |
+
+Lows fixed: Fedora 14 rendered whole-page; "1 day ago"; Play Protect drawing;
+03-deeplink-confirm in the manifest; health footer no longer names a file;
+"port mapping: UPnP" no longer in the all-good fixture.

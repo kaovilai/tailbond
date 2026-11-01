@@ -53,7 +53,7 @@ class Screens : UxRender() {
     @Test fun pairingError() = app(
         "02-pairing-paste-error",
         UiState(settings = AppSettings(onboarded = true), pairError = "pairing data is not base64url"),
-        tall = 1100, search = "tailbond://pair?d=eyJ2IjoxLCJuYW1lIjoicGl4ZWwt",
+        tall = 2000, search = "tailbond://pair?d=eyJ2IjoxLCJuYW1lIjoicGl4ZWwt",
     )
     // "Ask to connect" over Tailscale
     @Test fun askFromPhonePage() = app("02a-pairing-asking-from-phone-page", UiState(settings = AppSettings(onboarded = true), ask = AskState.Asking("homebox")), tall = 1100)

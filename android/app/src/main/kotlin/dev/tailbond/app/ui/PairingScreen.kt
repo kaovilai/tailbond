@@ -137,6 +137,8 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
         Text("Add this phone to your home server", style = MaterialTheme.typography.headlineSmall)
 
         AskCard(state.ask, server, { server = it }, actions)
+        // after a failed ask the field shows the asked name; the page button uses it too
+        val named = server.ifBlank { askedServer(state.ask) }
 
         // while asking, the other ways would only distract (and "go back to
         // the page" reads like a mistake to someone who just came from it)
@@ -158,11 +160,11 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
-                OutlinedButton(onClick = { actions.openHomeServerPage(server) }, enabled = server.isNotBlank()) {
+                OutlinedButton(onClick = { actions.openHomeServerPage(named) }, enabled = named.isNotBlank()) {
                     Icon(Icons.Filled.OpenInBrowser, null)
-                    Text("  Open ${server.ifBlank { "home server" }} page")
+                    Text("  Open ${named.ifBlank { "home server" }} page")
                 }
-                if (server.isBlank()) {
+                if (named.isBlank()) {
                     Text(
                         "Type the home server's name in the box above to open its page here.",
                         style = MaterialTheme.typography.bodySmall,
@@ -230,6 +232,14 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
     }
 }
 
+/** The name a finished ask was for (the field shows it again after a failure). */
+fun askedServer(ask: AskState): String = when (ask) {
+    is AskState.Failed -> ask.server
+    is AskState.Declined -> ask.server
+    is AskState.Expired -> ask.server
+    else -> ""
+}
+
 /** Title and body for an "Ask to connect" state; null when there's nothing to say. */
 fun askMessage(s: AskState): Pair<String, String>? = when (s) {
     AskState.Idle -> null
@@ -259,14 +269,7 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
 @Composable
 private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, actions: UiActions) {
     // after a failed try the field keeps (or gets back) the name that was asked
-    val server = typed.ifBlank {
-        when (ask) {
-            is AskState.Failed -> ask.server
-            is AskState.Declined -> ask.server
-            is AskState.Expired -> ask.server
-            else -> ""
-        }
-    }
+    val server = typed.ifBlank { askedServer(ask) }
     val busy = ask is AskState.Asking || ask is AskState.Waiting
     val msg = askMessage(ask)
     val bad = ask is AskState.Failed || ask is AskState.Declined || ask is AskState.Expired
@@ -328,7 +331,7 @@ fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () ->
         title = { Text(if (replacing) "Switch this phone to $server?" else "Add this phone to $server?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it.")
+                Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it; they see this phone as $server, so $server's Tailscale access rules apply (not your own account's).")
                 Text(
                     "It connects over the internet to ${p.server}, and your internet traffic goes out from home (you can change that in Settings).",
                     style = MaterialTheme.typography.bodySmall,

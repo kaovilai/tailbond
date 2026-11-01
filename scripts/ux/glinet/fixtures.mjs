@@ -100,14 +100,14 @@ const pendingReq = { id: '4b79980f2bc88e95', name: 'slate7', kind: 'router', dev
 const hc = (id, status, title, extra = {}) => ({ id, status, title, ...extra });
 const healthGood = { all_good: true, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
-  hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'no port mapping on the router' }),
+  hc('netcheck', 'ok', 'Network is friendly to direct connections'),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
   hc('cgnat', 'ok', 'Public internet address 203.0.113.7'),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 2 h ago.' }),
 ] };
 // texts as the agent's health.go writes them
-const directFix = "On the router in front of this machine, forward UDP port 41641 to it. (Turning on UPnP on that router also works, but lets any device on your network open ports.)";
-const directDetail = (m) => `Through a relay: ${m}. Only traffic between this machine and that machine is slower (including bonded devices reaching it); bonding itself doesn't go through Tailscale. To check: tailscale ping ${m} ("via DERP" means relayed).`;
+const directFix = "On your home router's admin page (Port forwarding, also called Virtual server or NAT), forward UDP port 41641 to this machine (192.168.1.2). (Turning on UPnP on that router also works, but lets any device on your network open ports.)";
+const directDetail = (m) => `Through a relay: ${m}. Only traffic between this machine and that machine is slower (including bonded devices reaching it); bonding itself doesn't go through Tailscale. The cause can also be on that machine's own network.`;
 const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: ['apple-tv'], checks: [
   hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 1 through a relay (slower)', { detail: directDetail('apple-tv'),
     fix: directFix, fix_url: 'https://tailscale.com/docs/reference/connection-types' }),
@@ -119,17 +119,17 @@ const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: [
 ] };
 const healthCgnat = { all_good: false, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
-  hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'no port mapping on the router' }),
+  hc('netcheck', 'ok', 'Network is friendly to direct connections'),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
   hc('cgnat', 'bad', 'Your internet line uses carrier-grade NAT', { detail: "This machine's internet address 100.72.3.4 is shared by your provider, so travel routers and phones away from home can't reach UDP 443 here. Bonding needs that direct connection; it can't run through Tailscale's relays (they'd make it slower than a single link).",
-    fix: "If your line has IPv6, enter this machine's public IPv6 address as the internet address (the router's status page shows it). Otherwise ask your provider for a public IPv4 address (often free or a small monthly fee).", fix_url: 'https://tailscale.com/docs/reference/device-connectivity' }),
-  hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it." }),
+    fix: "Ask your provider for a public IPv4 address (often free or a small monthly fee; say it's for reaching your home from outside). Advanced: a public IPv6 address also works, but only from networks that have IPv6 too (most mobile networks, few hotels).", fix_url: 'https://tailscale.com/docs/reference/device-connectivity' }),
+  hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute." }),
 ] };
 const healthRoute = { all_good: false, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
-  hc('route', 'warn', "Route 10.77.0.0/24 isn't approved yet", { fix: 'Approve it once in the Tailscale admin console (Machines → this machine → Edit route settings).', fix_url: 'https://tailscale.com/docs/features/subnet-routers' }),
+  hc('route', 'warn', "Route 10.77.0.0/24 isn't approved yet (optional)", { detail: 'Devices connected through tailbond reach your Tailscale machines without it. Approving it lets your Tailscale machines reach those devices too, under your access rules.', fix: 'If you want that: Tailscale admin console → Machines → this machine → Edit route settings (or an autoApprovers rule).', fix_url: 'https://tailscale.com/docs/features/subnet-routers' }),
   hc('cgnat', 'unknown', 'Behind your home router', { detail: 'Forward UDP 443 on that router to 192.168.8.1.' }),
-  hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it." }),
+  hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute." }),
 ] };
 
 export const states = {

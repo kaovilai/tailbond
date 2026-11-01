@@ -357,16 +357,21 @@ async function renderHealth() {
   const box = $('#health');
   const bad = v.checks.filter((c) => c.status === 'warn' || c.status === 'bad');
   const blocking = v.checks.filter((c) => c.status === 'bad').length;
+  // the route is a choice (tailnet → bonded devices), not a speed problem
+  const optional = bad.filter((c) => c.id === 'route').length;
+  const improve = bad.length - blocking - optional;
+  const plus = optional ? ` (and ${optional} optional)` : '';
   const headline = blocking
-    ? `Setup health: ${blocking} thing${blocking === 1 ? '' : 's'} to fix before devices can connect from away${bad.length > blocking ? `, ${bad.length - blocking} for best speed` : ''}`
-    : bad.length ? `Setup health: ${bad.length} thing${bad.length === 1 ? '' : 's'} to improve for best speed (tailbond works meanwhile)` : 'Setup health: everything is set up for best speed';
+    ? `Setup health: ${blocking} thing${blocking === 1 ? '' : 's'} to fix before devices can connect from away${improve ? `, ${improve} more to improve` : ''}${plus}`
+    : improve ? `Setup health: ${improve} thing${improve === 1 ? '' : 's'} to improve (tailbond works meanwhile)${plus}`
+    : optional ? 'Setup health: all set (1 optional item below)' : 'Setup health: everything is set up for best speed';
   const seen = new Set();
   const rows = (bad.length ? bad : v.checks).map((c) => {
     let fix = c.fix && c.status !== 'ok' ? c.fix : '';
     const again = fix && seen.has(fix);
     if (fix) seen.add(fix);
     if (again) fix = 'Same fix as above (one forward fixes both).';
-    const test = c.id === 'port' && c.status === 'unknown' ? 'Test it now: on a phone with tailbond, turn Wi-Fi off; once it connects over mobile data, this turns green.' : '';
+    const test = '';
     return h('li', { class: 'health-' + c.status },
       h('b', { text: c.title }),
       c.detail ? h('div', { class: 'muted small', text: c.detail }) : null,
@@ -376,19 +381,20 @@ async function renderHealth() {
   box.replaceChildren(...[
     h('h3', { text: headline }),
     h('ul', { class: 'health-list' }, rows),
-    bad.length ? h('p', { class: 'small', text: 'Each fix is on your home router or in the Tailscale admin console; "How to fix" opens Tailscale\'s explanation. This machine\'s own firewall is already set up by tailbond.' }) : null,
+    bad.length ? h('p', { class: 'small', text: 'Fixes are on your home router or in the Tailscale admin console ("How to fix" explains each); this machine\'s own firewall is already set up by tailbond. Not sure how? Show this card to whoever set up your internet.' }) : null,
     h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
       h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' }))].filter(Boolean));
   box.classList.remove('hidden');
   const ban = $('#health-banner');
   ban.replaceChildren();
   const addr = state.settings && state.settings.public_addr_guessed;
-  if (bad.length || addr) {
-    ban.append(addr ? 'Setup: tell devices where home is (public address). ' : '', bad.length ? headline + '. ' : '',
+  const shown = blocking + improve;
+  if (shown || addr) {
+    ban.append(addr ? 'Setup: tell devices where home is (public address). ' : '', shown ? headline + '. ' : '',
       h('a', { href: '#', text: 'Show', onclick: (e) => { e.preventDefault(); $('#tabs button[data-tab="clients"]').click(); } }));
   }
   ban.classList.toggle('blocking', !!(blocking || addr));
-  ban.classList.toggle('hidden', !(bad.length || addr) || state.tab === 'clients');
+  ban.classList.toggle('hidden', !(shown || addr) || state.tab === 'clients');
 }
 
 function serverShort() { return (state.status && state.status.tailscale && state.status.tailscale.self) || 'this server'; }
@@ -398,8 +404,8 @@ function whoApproves() {
   if (!s) return '';
   if (s.password_set) return 'Who can approve: anyone with this page\'s password (you too), from any device on your Tailscale network.';
   const names = [s.owner ? `${s.owner} (the Tailscale account ${serverShort()} belongs to)` : '', ...(s.approvers || [])].filter(Boolean);
-  if (names.length) return `Who can approve: ${names.join(', ')}, from any of their devices, and anyone using ${serverShort()} itself. Others on your Tailscale network, and people you share ${serverShort()} with, can ask to connect but can't approve.`;
-  return `Who can approve: anyone on your Tailscale network who can reach ${serverShort()} (it's a tagged machine, so it has no single owner). Name approvers or set a password under Devices → Who can approve.`;
+  if (names.length) return `Who can approve: ${names.join(', ')}, from any device signed in to that Tailscale account, and anyone logged in on ${serverShort()} itself (http://127.0.0.1:8077). Others on your Tailscale network, and people you share ${serverShort()} with, can ask to connect but can't approve.`;
+  return `Who can approve: anyone on your Tailscale network who can reach ${serverShort()} (it's a tagged machine, so it has no owner account). Name approvers or set a password in the "Who can approve and add devices" card on the Devices tab.`;
 }
 
 // Devices on the tailnet that asked to connect (POST /api/pair-requests).
@@ -408,6 +414,12 @@ function renderPairRequests(st) {
   const reqs = st.role === 'server' && Array.isArray(st.pair_requests) ? st.pair_requests : [];
   const sig = reqs.map((r) => r.id).join(',');
   box.classList.toggle('hidden', !reqs.length);
+  // on a phone with requests waiting, whoever opened this is here to approve,
+  // not to add this phone: show the requests instead of "Add this phone"
+  if (reqs.length && location.hash !== '#add-phone' && !$('#add-phone').classList.contains('hidden')) {
+    $('#add-phone').classList.add('hidden');
+    document.body.classList.remove('phone-add');
+  }
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   const who = h('p', { class: 'muted small', text: whoApproves() + ` Approving lets the device use ${serverShort()}'s internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as ${serverShort()}, under ${serverShort()}'s access rules.` });
@@ -514,7 +526,7 @@ async function loadSettings() {
     $('#ipk-yes').classList.toggle('hidden', !s.glinet_ipk);
     $('#pw-state').textContent = s.password_set
       ? 'Only people with this page\'s password, from any device on your Tailscale network. Change it, or save an empty one to remove it. Family adding a phone don\'t need it: their phone asks, you approve.'
-      : whoApproves() + ' To let someone else approve, add their Tailscale login below. A password instead replaces all this: then everyone, you included, needs it.';
+      : whoApproves() + ' A device you lend to someone while it\'s signed in to an approver\'s account can approve too. To let someone else approve, add their Tailscale login (shown in the Tailscale admin console under Users) below. A password instead replaces all this: then everyone who approves, you included, needs it; phones and routers can still ask to connect without it.';
     $('#approvers').value = (s.approvers || []).join(', ');
     $('#ipk-no').classList.toggle('hidden', !!s.glinet_ipk);
     // where phones get the app (the landing page on port 80, else /get)
@@ -540,7 +552,7 @@ async function loadSettings() {
         h('div', { class: 'row' },
           h('input', { id: 'pub-addr', placeholder: 'e.g. home.example.net or 203.0.113.7' }),
           h('button', { class: 'btn primary', type: 'button', onclick: savePublicAddr, text: 'Save' })),
-        h('p', { class: 'muted small', text: `The port (${s.port}) is added for you. If the router's own WAN address starts with 100.64–100.127, or is 10.x / 192.168.x while your public address is different, your provider shares one address between customers (carrier-grade NAT) and the forward can't work: see the guide, section 2.` }));
+        h('p', { class: 'muted small', text: `The port (${s.port}) is added for you. If your provider shares one internet address between customers (carrier-grade NAT), a forward can't work; Setup health below checks for that and says what to do.` }));
       w.classList.remove('hidden');
     } else w.classList.add('hidden');
   } else {

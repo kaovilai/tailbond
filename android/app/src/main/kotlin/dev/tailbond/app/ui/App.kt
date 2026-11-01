@@ -182,7 +182,7 @@ fun HandoffDialog(kind: Handoff, state: UiState, actions: UiActions) {
                 Text("You still reach your Tailscale machines, like your NAS, through $server. Your internet traffic goes out from $server too (like an exit node; Settings changes that).")
                 Text("Next, Android asks you to allow tailbond's connection request. Tap OK.")
                 Text(
-                    "Set Tailscale as Always-on VPN? Turn that off first (Android Settings → VPN → Tailscale's gear), or Android keeps switching back to it.",
+                    "If tailbond switches itself off right after this, Tailscale is set as Always-on VPN on this phone: turn that off in Android Settings → VPN → Tailscale's gear (or ask whoever set up the phone). Android doesn't let tailbond check this setting.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(

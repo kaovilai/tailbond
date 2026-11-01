@@ -88,7 +88,8 @@ a{color:var(--accent)}
     <h2>Install the app</h2>
     <p class="notyet warnbox">tailbond isn't on this phone yet, so step 2 brought you back here. Install it first, then tap step 2 again.</p>
     {{if .APK}}
-    <a class="btn primary" href="/tailbond.apk" download>Download tailbond for Android ({{.APKSize}})</a>
+    <p class="note"><b>Read the pictures below first</b> (or take a screenshot): once you open the file, Android's own screens cover this page.</p>
+    <a class="btn primary" href="/tailbond.apk" download>Download tailbond ({{.APKSize}})</a>
     <p>Then open the downloaded file. tailbond isn't in the Play Store: it comes from {{.Server}}, your own home server, so Android asks you to confirm a few times. That's Android's normal check for every app from outside the Play Store, and you only go through it once. Here's what you'll see (the words differ a little between phones; the pictures below are drawings, not buttons):</p>
     <div class="shots">
       <div class="shot">

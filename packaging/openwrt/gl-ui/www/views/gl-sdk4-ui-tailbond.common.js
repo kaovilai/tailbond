@@ -466,7 +466,7 @@
         var server = this.serverShort || "your home server";
         if (st.role === "server") return "";
         if (!this.paired) return "Not set up yet. Connect this router to your home server below.";
-        if (!this.isOn()) return "Devices on this router use the internet directly, without your home server, over whichever connection GL's own settings pick (INTERNET page, top of the menu). Backup only and data limits here apply only while tailbond is on, so GL may use your phone: unplug it (or turn tethering off) if you don't want that. Turn on to bond your connections again.";
+        if (!this.isOn()) return "Devices on this router use the internet directly, without your home server, over whichever connection GL's own settings pick. Turn on to bond your connections again.";
         if (st.state === "error" || (st.state === "connecting" && st.error)) return "Can't reach " + server + ". See below.";
         if (st.state === "connecting") return "Connecting to " + server + "…";
         var ws = this.wans, used = [], broken = [], saving = [];
@@ -692,6 +692,11 @@
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
 
           if (!this.paired) return out.concat(this.rSignin(h), this.rPairing(h));
+          // off: Backup only and limits don't apply, so GL may use a phone that's plugged in
+          var phones = !on ? this.wans.filter(function (w) { return w.kind === "usb" || w.kind === "cellular"; }).map(function (w) { return w.label; }) : [];
+          if (phones.length) out.push(this.alert(h, "warn", "While tailbond is off, GL may use " + phones.join(" and ") + " (your phone's data)",
+            "“Backup only” and data limits only apply while tailbond is on. To be sure the phone's data isn't used, unplug it or turn tethering off on it, or turn tailbond back on.",
+            [h("a", { class: "tb-btn small", attrs: { href: "#/internet" } }, "GL's INTERNET page")]));
 
           out = out.concat(this.rSignin(h));
           if (on && err) out.push(this.rConnError(h));
@@ -1114,7 +1119,7 @@
         whoApproves: function (h) {
           var s = this.settings || {}, ts = this.ts || {};
           var page = "http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077";
-          var grants = " Approving lets a device reach your Tailscale machines the way this router does (they see it as this router, under its access rules).";
+          var grants = " Approving lets a device use this router's internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as this router, under its access rules.";
           return h("div", { class: "tb-muted tb-small", style: { lineHeight: 1.55 } }, (s.password_set
             ? "Who can approve: anyone logged in to this admin panel, or with the tailbond password at " + page + "."
             : s.owner
