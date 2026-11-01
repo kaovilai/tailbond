@@ -44,7 +44,7 @@ echo "==> staging"
 TOP="$(mktemp -d)"
 trap 'rm -rf "$TOP"' EXIT
 SRC="$TOP/tailbond-server-$VERSION"
-mkdir -p "$SRC"/{bin,lib,hooks,firewalld,doc} "$TOP"/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+mkdir -p "$SRC"/{bin,lib,hooks,firewalld,doc,share} "$TOP"/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
 install -m 0755 "$MQ/build/mqvpn" "$SRC/bin/mqvpn"
 strip "$SRC/bin/mqvpn" 2>/dev/null || true
 install -m 0755 "$TBD" "$SRC/bin/tailbondd"
@@ -56,6 +56,16 @@ install -m 0644 "$PKG/tailbond.service" "$PKG/tailbond.json" "$SRC/"
 install -m 0644 "$ROOT/docs/fedora-server.md" "$ROOT/docs/architecture.md" "$SRC/doc/"
 install -m 0644 "$MQ/LICENSE" "$SRC/doc/LICENSE.mqvpn"
 install -m 0644 "$MQ/NOTICE" "$SRC/doc/NOTICE.mqvpn"
+# Offered for download by the agent (/usr/share/tailbond/): the Android app
+# (TAILBOND_APK, else the local debug build) and the GL router package.
+apk="${TAILBOND_APK:-$ROOT/out/android/tailbond-debug.apk}"
+if [ -f "$apk" ]; then install -m 0644 "$apk" "$SRC/share/tailbond.apk"
+else echo "note: no Android APK at $apk; the phone page won't offer the app (set TAILBOND_APK)" >&2; fi
+ipk="${TAILBOND_GLINET_IPK:-}"
+if [ -z "$ipk" ]; then
+  for f in "$ROOT"/out/ipk/tailbond_*_aarch64_cortex-a53_neon-vfpv4.ipk; do if [ -f "$f" ]; then ipk="$f"; fi; done
+fi
+if [ -n "$ipk" ]; then install -m 0644 "$ipk" "$SRC/share/tailbond-glinet.ipk"; fi
 tar -C "$TOP" -czf "$TOP/SOURCES/tailbond-server-$VERSION.tar.gz" "tailbond-server-$VERSION"
 cp "$PKG/tailbond-server.spec" "$TOP/SPECS/"
 

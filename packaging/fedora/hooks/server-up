@@ -1,10 +1,12 @@
 #!/bin/bash
 # tailbond server-up hook (Fedora). Run by tailbondd after mqvpn's server starts.
-# Env: TB_TUN TB_SUBNET TB_SUBNET6 TB_PORT TB_DNS_IP (+ TB_CONFIG TB_STATE_DIR).
+# Env: TB_TUN TB_SUBNET TB_SUBNET6 TB_PORT TB_DNS_IP TB_WEB_PORTS (+ TB_CONFIG TB_STATE_DIR).
 #
 # - firewalld running: open the UDP port, put tb0 in the "tailbond" zone and
 #   masquerade client traffic toward the internet and tailscale0
-#   (policy "tailbond-out"); tailnet peers may reach clients ("tailbond-in").
+#   (policy "tailbond-out"); tailnet peers may reach clients ("tailbond-in");
+#   tailnet sources may reach the dashboard and the phone page
+#   (TB_WEB_PORTS, e.g. "8077 80").
 # - no firewalld: mqvpn's NAT script handles internet NAT, plus iptables
 #   masquerade of the tailnet ranges out of tailscale0.
 # - Tailscale: advertise TB_SUBNET as a subnet route (approve it once in the
@@ -29,16 +31,30 @@ if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>
     firewall-cmd -q --reload
   fi
   defzone="$(firewall-cmd --get-default-zone)"
+  # UDP $TB_PORT in the zone of the interface that has the default route
+  # (where the router's port forward arrives), else the default zone.
+  wanif="$(ip -o route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')"
+  wanzone="$defzone"
+  if [ -n "$wanif" ] && z="$(firewall-cmd --get-zone-of-interface="$wanif" 2>/dev/null)"; then wanzone="$z"; fi
   if [ "$TB_PORT" = 443 ]; then
-    fw --zone="$defzone" --add-service=tailbond
+    fw --zone="$wanzone" --add-service=tailbond
   else
-    fw --zone="$defzone" --add-port="$TB_PORT/udp"
+    fw --zone="$wanzone" --add-port="$TB_PORT/udp"
   fi
   # tb0 is listed in the zone file; re-add at runtime in case it was moved.
   firewall-cmd -q --zone=tailbond --change-interface="$TB_TUN" 2>/dev/null || true
   fw --policy=tailbond-out --add-rich-rule="rule family=ipv4 source address=$TB_SUBNET masquerade"
   [ -n "${TB_SUBNET6:-}" ] && fw --policy=tailbond-out --add-rich-rule="rule family=ipv6 source address=$TB_SUBNET6 masquerade"
-  log "firewalld: udp/$TB_PORT open in zone $defzone; $TB_TUN in zone tailbond; masquerade $TB_SUBNET ${TB_SUBNET6:-}"
+  # The dashboard and the phone page (TB_WEB_PORTS, tcp) for tailnet
+  # sources only, in the zone tailscale0 is in (else the default zone).
+  # tailscaled itself drops 100.64.0.0/10 sources that don't arrive on
+  # tailscale0, so a LAN host can't spoof its way in.
+  tszone="$(firewall-cmd --get-zone-of-interface=tailscale0 2>/dev/null)" || tszone="$defzone"
+  for p in ${TB_WEB_PORTS:-8077 80}; do
+    fw --zone="$tszone" --add-rich-rule="rule family=ipv4 source address=$TAILNET4 port port=$p protocol=tcp accept"
+    fw --zone="$tszone" --add-rich-rule="rule family=ipv6 source address=$TAILNET6 port port=$p protocol=tcp accept"
+  done
+  log "firewalld: udp/$TB_PORT open in zone $wanzone; tcp ${TB_WEB_PORTS:-8077 80} from the tailnet in zone $tszone; $TB_TUN in zone tailbond; masquerade $TB_SUBNET ${TB_SUBNET6:-}"
 else
   if [ -x "$LIBDIR/mqvpn/mqvpn-server-nat.sh" ] && [ -n "${TB_CONFIG:-}" ]; then
     "$LIBDIR/mqvpn/mqvpn-server-nat.sh" setup "$TB_CONFIG" || log "mqvpn-server-nat.sh setup failed"

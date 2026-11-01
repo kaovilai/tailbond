@@ -19,6 +19,9 @@ config tailbond 'main'
 	# Client role: also serve tailbond's own page on the LAN at :8077
 	# (advanced/debug; the GL admin panel needs none of it)
 	option lan_dashboard '0'
+	# Server role: port of the phone page ("Get tailbond", http://<name>/
+	# on the Tailscale name; tailnet tcp/80 is redirected here). 0 = off.
+	option landing_port '8078'
 	# Password for the :8077 page; empty = keep the one in tailbond.json
 	option ui_password ''
 	option hooks_dir '/usr/lib/tailbond/hooks'

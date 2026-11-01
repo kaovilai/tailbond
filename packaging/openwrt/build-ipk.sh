@@ -16,6 +16,8 @@
 #   tailbondd                 built here from agent/ when it exists
 #                             (CGO_ENABLED=0 GOOS=linux GOARCH=arm64), otherwise
 #                             TAILBONDD_BIN=/path/to/linux-arm64/tailbondd
+#   out/android/tailbond-debug.apk  optional (or TAILBOND_APK): the Android
+#                             app a home server offers on its phone page
 # Env: TB_VERSION (default: git describe), TB_ARCHS (space separated).
 set -euo pipefail
 
@@ -92,6 +94,14 @@ done
 install -d -m 0755 "$data/usr/share/tailbond/pristine/etc/config" "$data/usr/share/tailbond/pristine/etc/uci-defaults"
 install -m 0600 "$PKG/files/etc/config/tailbond" "$data/usr/share/tailbond/pristine/etc/config/tailbond"
 install -m 0755 "$PKG/files/etc/uci-defaults/90-tailbond" "$data/usr/share/tailbond/pristine/etc/uci-defaults/90-tailbond"
+# The Android app, so a home server on a GL router can offer it on its
+# phone page (GET /tailbond.apk): TAILBOND_APK, else the local debug build.
+apk="${TAILBOND_APK:-$ROOT/out/android/tailbond-debug.apk}"
+if [ -f "$apk" ]; then
+    install -m 0644 "$apk" "$data/usr/share/tailbond/tailbond.apk"
+else
+    echo "note: no Android APK at $apk; the package won't offer the app (set TAILBOND_APK)" >&2
+fi
 # sysupgrade keeps the agent config and state (server users, pairing)
 echo /etc/tailbond/ >"$data/lib/upgrade/keep.d/tailbond"
 chmod 0644 "$data/lib/upgrade/keep.d/tailbond"
