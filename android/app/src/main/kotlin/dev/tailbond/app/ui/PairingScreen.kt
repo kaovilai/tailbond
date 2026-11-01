@@ -89,7 +89,8 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Get started") }
         Text(
-            "Next you'll type your home server's name (the one in the Tailscale app) and ask it to connect. If someone else set it up, they approve it.",
+            "Next you'll type your home server's name (the one in the Tailscale app) and ask it to connect. If someone else set it up, they approve it. " +
+                "Installed tailbond from your home server's page in Chrome? Easier: go back to Chrome and tap step 2 there; it fills everything in.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -161,6 +162,13 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                     Icon(Icons.Filled.OpenInBrowser, null)
                     Text("  Open ${server.ifBlank { "home server" }} page")
                 }
+                if (server.isBlank()) {
+                    Text(
+                        "Type the home server's name in the box above to open its page here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
@@ -168,7 +176,7 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("From another screen", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "If the home server's page is open on a computer, tap Add a device there and scan the code it shows.",
+                    "On a computer, open the home server's dashboard (its name and :8077, e.g. http://homebox:8077) → Devices → Add a device with a code, and scan the code it shows. (Not the code on the \"Get tailbond\" page: that one only opens the install page.)",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (scanning) {

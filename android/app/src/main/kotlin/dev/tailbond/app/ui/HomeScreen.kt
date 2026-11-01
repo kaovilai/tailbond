@@ -271,14 +271,14 @@ private fun WifiSignInCard(state: UiState, actions: UiActions) {
 private fun HandedBackCard(state: UiState, actions: UiActions) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Tailscale is in charge on this phone", style = MaterialTheme.typography.titleMedium)
+            Text("Last step: turn Tailscale on", style = MaterialTheme.typography.titleMedium)
             Text(
-                "tailbond stays off until you turn it on again. In the Tailscale app, " +
-                    "turn on its switch if it says Disconnected.",
+                "tailbond is off. Open the Tailscale app and check that it says Connected; if it says " +
+                    "Disconnected, tap its switch. Until then, your Tailscale machines aren't reachable.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (state.tailscaleInstalled) {
-                OutlinedButton(onClick = actions::switchToTailscale) { Text("Open Tailscale") }
+                Button(onClick = actions::switchToTailscale) { Text("Open Tailscale") }
             }
         }
     }
