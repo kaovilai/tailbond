@@ -89,7 +89,7 @@ a{color:var(--accent)}
     <p class="notyet warnbox">tailbond isn't on this phone yet, so step 2 brought you back here. Install it first, then tap step 2 again.</p>
     {{if .APK}}
     <a class="btn primary" href="/tailbond.apk" download>Download tailbond for Android ({{.APKSize}})</a>
-    <p>Then open the downloaded file. tailbond isn't in the Play Store: it comes from {{.Server}}, so Android asks you to confirm a few times. That's expected. Here's what you'll see (the words differ a little between phones):</p>
+    <p>Then open the downloaded file. tailbond isn't in the Play Store: it comes from {{.Server}}, your own home server, so Android asks you to confirm a few times. That's Android's normal check for every app from outside the Play Store, and you only go through it once. Here's what you'll see (the words differ a little between phones; the pictures below are drawings, not buttons):</p>
     <div class="shots">
       <div class="shot">
         <p class="cap">① Chrome checks the file. Tap <b>Download anyway</b>, then <b>Open</b>.</p>
@@ -107,15 +107,20 @@ a{color:var(--accent)}
           <div class="row"><span>Allow from this source</span><span class="tog"></span></div></div>
       </div>
       <div class="shot">
-        <p class="cap">④ Tap <b>Install</b>. If Play Protect offers to scan the app, let it (<b>Scan app</b>), then Install.</p>
+        <p class="cap">④ Tap <b>Install</b>.</p>
         <div class="dlg"><div class="t">tailbond</div><div>Do you want to install this app?</div>
           <div class="acts"><span>Cancel</span><span class="tap">Install</span></div></div>
+      </div>
+      <div class="shot">
+        <p class="cap">⑤ Sometimes Google Play Protect asks to check the app first. Tap <b>Scan app</b>; after a few seconds it says the app is fine, then tap <b>Install</b>.</p>
+        <div class="dlg"><div class="t">App scan recommended</div><div>Play Protect hasn't seen this app before. Scan it for harmful behavior?</div>
+          <div class="acts"><span>Don't scan</span><span class="tap">Scan app</span></div></div>
       </div>
     </div>
     <p class="small">When it says <b>App installed</b>, tap <b>Done</b> and come back to this page (Chrome, this tab) for step 2. You can turn <b>Allow from this source</b> off again afterwards; tailbond stays installed.</p>
     <p class="small">Chrome's <b>Open</b> message gone before you tapped it? The file is in your downloads: Chrome's menu <b>⋮ → Downloads</b>, or the <b>Files</b> app → <b>Downloads</b>. Tap <b>tailbond.apk</b>.</p>
     <p class="small muted">Stuck, or not comfortable with this? Ask whoever runs {{.Server}} to install it for you.</p>
-    <p class="small muted">This page starts with http://, but it comes to you through Tailscale, which encrypts it. To check the file: SHA-256 <code>{{.APKSHA256}}</code>. Later updates must be signed with the same key, or Android refuses them.</p>
+    <p class="small muted">Is this safe? This page starts with http://, but your phone reached it through Tailscale, which encrypts it and makes sure it really comes from {{.Server}}: nobody on the Wi-Fi or mobile network can change the file. (For the curious: SHA-256 <code>{{.APKSHA256}}</code>, the same as <code>sha256sum /usr/share/tailbond/tailbond.apk</code> on {{.Server}}.)</p>
     {{else}}
     <p class="warnbox">{{.Server}} doesn't have the app file yet. Ask whoever runs {{.Server}} to add it (they put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code>), then reload this page.</p>
     {{end}}

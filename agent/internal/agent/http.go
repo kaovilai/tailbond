@@ -448,7 +448,8 @@ type settingsView struct {
 	LandingQR    string `json:"landing_qr_svg,omitempty"`
 	// server: the Tailscale user who owns this machine (who may use the
 	// dashboard from the tailnet without a password); empty when tagged
-	Owner string `json:"owner,omitempty"`
+	Owner     string   `json:"owner,omitempty"`
+	Approvers []string `json:"approvers,omitempty"`
 }
 
 // hAPK offers the Android app to phones opening the dashboard (additive).
@@ -490,6 +491,7 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 		v.LandingURL, v.LandingTyped = a.landingURL(r.Context(), r.Host)
 		v.LandingQR, _ = pairing.QRSVG(v.LandingURL)
 		v.Owner = a.ts.Get(r.Context()).Owner
+		v.Approvers = cfg.Approvers
 	} else {
 		a.mu.Lock()
 		if p := a.client.payload; p != nil {
@@ -507,9 +509,10 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 // hSettingsPost updates the few settings the UI exposes (additive).
 func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		PublicAddr *string `json:"public_addr"`
-		UIPassword *string `json:"ui_password"`
-		Captive    *bool   `json:"captive_portal_detect"`
+		PublicAddr *string   `json:"public_addr"`
+		UIPassword *string   `json:"ui_password"`
+		Captive    *bool     `json:"captive_portal_detect"`
+		Approvers  *[]string `json:"approvers"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -523,7 +526,25 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		body.PublicAddr = &pa
 	}
+	if body.Approvers != nil {
+		var clean []string
+		for _, u := range *body.Approvers {
+			u = strings.TrimSpace(u)
+			if u == "" {
+				continue
+			}
+			if strings.ContainsAny(u, " \t,;<>\"") || len(u) > 128 {
+				httpErr(w, http.StatusBadRequest, fmt.Errorf("approvers: %q isn't a Tailscale login", u))
+				return
+			}
+			clean = append(clean, u)
+		}
+		body.Approvers = &clean
+	}
 	if _, err := a.store.Update(func(c *config.Config) error {
+		if body.Approvers != nil {
+			c.Approvers = *body.Approvers
+		}
 		if body.PublicAddr != nil {
 			c.Server.PublicAddr = *body.PublicAddr
 		}

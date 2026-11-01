@@ -58,3 +58,25 @@ func TestStatusOwner(t *testing.T) {
 		t.Fatalf("tagged: owner %q, %v", info.Owner, err)
 	}
 }
+
+func TestApproversWithoutPassword(t *testing.T) {
+	a := pairServer(t)
+	a.ts = tailscale.NewFake(&tailscale.Info{Installed: true, Running: true, Self: "homebox", Owner: "alex@example.com"})
+	if w := req(t, a, http.MethodPost, "/api/settings", "127.0.0.1:4000", "", map[string]any{"approvers": []string{"Sam@example.com", " "}}); w.Code != http.StatusOK {
+		t.Fatalf("set approvers: %d %s", w.Code, w.Body)
+	}
+	if got := a.store.Get().Approvers; len(got) != 1 || got[0] != "Sam@example.com" {
+		t.Fatalf("approvers = %v", got)
+	}
+	if w := req(t, a, http.MethodGet, "/api/status", "100.101.8.8:4000", "", nil); w.Code != http.StatusOK {
+		t.Errorf("sam as approver: %d", w.Code)
+	}
+	// a tagged server with approvers: only they
+	a.ts = tailscale.NewFake(&tailscale.Info{Installed: true, Running: true, Self: "homebox"})
+	if w := req(t, a, http.MethodGet, "/api/status", "100.101.9.9:4000", "", nil); w.Code != http.StatusForbidden {
+		t.Errorf("tagged server, alex not an approver: %d", w.Code)
+	}
+	if w := req(t, a, http.MethodPost, "/api/settings", "127.0.0.1:4000", "", map[string]any{"approvers": []string{"bad login"}}); w.Code != http.StatusBadRequest {
+		t.Errorf("bad login accepted: %d", w.Code)
+	}
+}

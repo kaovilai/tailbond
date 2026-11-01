@@ -80,7 +80,7 @@ func isPrivate(ip netip.Addr) bool {
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
 // directFix: how to get direct Tailscale connections to this machine.
-const directFix = "On the router in front of this machine, forward UDP port 41641 to it, and allow 41641/udp in this machine's firewall. " +
+const directFix = "On the router in front of this machine, forward UDP port 41641 to it. " +
 	"(Turning on UPnP on that router also works, but lets any device on your network open ports.)"
 
 func buildHealth(in healthInputs) healthView {
@@ -184,8 +184,9 @@ func buildHealth(in healthInputs) healthView {
 		switch {
 		case cgnat.Contains(ip):
 			add(healthCheck{ID: "cgnat", Status: hBad, Title: "Your internet line uses carrier-grade NAT",
-				Detail: "This machine's internet address " + ip.String() + " is shared by your provider, so travel routers can't reach UDP " + fmt.Sprint(in.Port) + " here.",
-				Fix:    "Ask your provider for a public IPv4 address (or use public IPv6).", FixURL: urlDeviceConn})
+				Detail: "This machine's internet address " + ip.String() + " is shared by your provider, so travel routers and phones away from home can't reach UDP " + fmt.Sprint(in.Port) + " here. " +
+					"Bonding needs that direct connection; it can't run through Tailscale's relays (they'd make it slower than a single link).",
+				Fix: "If your line has IPv6, enter this machine's public IPv6 address as the internet address (the router's status page shows it). Otherwise ask your provider for a public IPv4 address (often free or a small monthly fee).", FixURL: urlDeviceConn})
 		case isPrivate(ip) && pub != "":
 			add(healthCheck{ID: "cgnat", Status: hOK, Title: "Behind your home router (public address " + pub + ")",
 				Detail: "Forward UDP " + fmt.Sprint(in.Port) + " on that router to " + ip.String() + "."})

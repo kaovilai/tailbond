@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,10 +13,11 @@ import (
 
 // Without a dashboard password, a home server's admin API answers tailnet
 // devices only when they belong to the Tailscale user who owns the server
-// (people it's shared with, and other users on the tailnet, can still ask
-// to connect, but not approve themselves). Loopback and other sources are
-// unaffected; a tagged server (no owner) keeps the old rule (anyone who can
-// reach it); a password replaces the rule.
+// or to a login in "approvers" (people it's shared with, and other users on
+// the tailnet, can still ask to connect, but not approve themselves).
+// Loopback and other sources are unaffected; a tagged server (no owner)
+// with no approvers keeps the old rule (anyone who can reach it); a
+// password replaces the rule.
 
 type whoisCache struct {
 	mu sync.Mutex
@@ -50,8 +52,8 @@ func (a *Agent) requesterUser(ctx context.Context, ip string) string {
 	return user
 }
 
-// ownerOnly reports the owner who alone may use the admin API from r's
-// source, or "" when r may (see above).
+// ownerOnly reports who alone may use the admin API from r's source (the
+// owner and approvers, comma separated), or "" when r may (see above).
 func (a *Agent) ownerOnly(r *http.Request) string {
 	cfg := a.store.Get()
 	if cfg.Role != config.RoleServer || cfg.UIPassword != "" {
@@ -61,9 +63,18 @@ func (a *Agent) ownerOnly(r *http.Request) string {
 	if !ip.IsValid() || !tailscale.IsTailnetIP(ip) {
 		return ""
 	}
-	owner := a.ts.Get(r.Context()).Owner
-	if owner == "" || a.requesterUser(r.Context(), ip.String()) == owner {
+	allowed := cfg.Approvers
+	if owner := a.ts.Get(r.Context()).Owner; owner != "" {
+		allowed = append([]string{owner}, allowed...)
+	}
+	if len(allowed) == 0 {
 		return ""
 	}
-	return owner
+	user := a.requesterUser(r.Context(), ip.String())
+	for _, u := range allowed {
+		if user != "" && strings.EqualFold(user, u) {
+			return ""
+		}
+	}
+	return strings.Join(allowed, ", ")
 }

@@ -132,8 +132,11 @@ type Config struct {
 	// off); LandingPublicPort the port tailnet devices use (0 = the same;
 	// OpenWrt binds 8078 and redirects tailnet tcp/80 to it, since GL's
 	// nginx owns port 80).
-	LandingPort       int `json:"landing_port,omitempty"`
-	LandingPublicPort int `json:"landing_public_port,omitempty"`
+	LandingPort int `json:"landing_port,omitempty"`
+	// Additive (server): Tailscale logins who may use the dashboard from
+	// the tailnet without a password, besides the server's owner.
+	Approvers         []string `json:"approvers,omitempty"`
+	LandingPublicPort int      `json:"landing_public_port,omitempty"`
 }
 
 // DefaultLandingPort serves the landing page at http://<server>/.

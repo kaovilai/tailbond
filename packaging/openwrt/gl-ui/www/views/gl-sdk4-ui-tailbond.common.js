@@ -449,14 +449,14 @@
           if (w.signinUntil) return ["blue", "Signing in…", "Devices here reach this network directly until you've signed in."];
           return ["warn", "Needs sign-in", "This network shows a sign-in page first. Until you sign in, tailbond keeps it out and your other connections carry traffic."];
         }
-        if (!on) return ["", "Ready", "This choice applies when tailbond is on. While it's off, GL's own settings (INTERNET page) decide which connection devices use."];
+        if (!on) return ["", "Ready", mobile ? "This choice applies when tailbond is on. While it's off, GL's own settings decide; to be sure your phone's data isn't used, unplug the phone or turn tethering off on it." : "This choice applies when tailbond is on. While it's off, GL's own settings (INTERNET page) decide which connection devices use."];
         if (w.state === "active") {
           if (w.priority === "backup" || (mode === "failover" && w.priority !== "primary")) return ["warn", "In use · taking over", "Your main connection stopped working, so this one stepped in."];
           return ["ok", "In use", ""];
         }
         if (w.state === "pending") return ["blue", "Starting…", ""];
         if (w.state === "failed") return ["err", "Not working right now", "It's connected, but can't reach " + (this.serverShort || "your home server") + ". tailbond keeps trying; the other connections carry your traffic."];
-        if (w.priority === "backup") return ["", mobile ? "Backup · saving data" : "Backup · standing by", "Used only if your other connections stop working. Until then it isn't used at all, so it uses no data."];
+        if (w.priority === "backup") return ["", mobile ? "Backup · saving data" : "Backup · standing by", "Used only if your other connections stop working. Until then tailbond sends nothing over it (GL itself may check the connection now and then, a few KB)."];
         if (mode === "failover") return ["", mobile ? "Standing by · saving data" : "Standing by", "Save mobile data is on: used only if Ethernet and Wi-Fi stop working."];
         return ["", "Standing by", ""];
       },
@@ -466,7 +466,7 @@
         var server = this.serverShort || "your home server";
         if (st.role === "server") return "";
         if (!this.paired) return "Not set up yet. Connect this router to your home server below.";
-        if (!this.isOn()) return "Devices on this router use the internet directly, without your home server, over whichever connection GL's own settings pick (INTERNET page). Backup only and data limits here apply only while tailbond is on. Turn on to bond your connections again.";
+        if (!this.isOn()) return "Devices on this router use the internet directly, without your home server, over whichever connection GL's own settings pick (INTERNET page, top of the menu). Backup only and data limits here apply only while tailbond is on, so GL may use your phone: unplug it (or turn tethering off) if you don't want that. Turn on to bond your connections again.";
         if (st.state === "error" || (st.state === "connecting" && st.error)) return "Can't reach " + server + ". See below.";
         if (st.state === "connecting") return "Connecting to " + server + "…";
         var ws = this.wans, used = [], broken = [], saving = [];
@@ -1144,7 +1144,7 @@
           }
           if (steps.indexOf("route") >= 0) {
             items.push(this.alert(h, "", "Step " + (++n) + ": allow tailbond devices on your Tailscale network",
-              [h("div", ["In the Tailscale admin console, open ", h("b", ts.self || "this router"), ", choose ", h("b", "Edit route settings"), ", tick the one route listed (", ts.route || "10.77.0.0/24", ") and save. That lets your Tailscale machines reach devices that connect through tailbond. Devices can already reach your machines without it."])],
+              [h("div", ["In the Tailscale admin console, open ", h("b", ts.self || "this router"), ", choose ", h("b", "Edit route settings"), ", tick the one route listed (", ts.route || "10.77.0.0/24", ") and save. Done once, by whoever manages your Tailscale account. Until then, devices connected through tailbond can still reach your Tailscale machines; only the other direction (your machines reaching those devices) waits for this."])],
               [h("a", { class: "tb-btn small primary", attrs: { href: ts.admin_url || "https://login.tailscale.com/admin/machines", target: "_blank", rel: "noopener" } }, "Open admin console")]));
           }
           if (steps.indexOf("address") >= 0) {
@@ -1201,7 +1201,7 @@
           var glFix = "On this router: NETWORK → Firewall → Open Ports on Router, add UDP 41641. If another router sits in front of this one (for example your internet provider's box), also forward UDP port 41641 to this router there.";
           checks = checks.map(function (c) { return (c.id === "tailscale_direct" || c.id === "netcheck") && c.fix ? Object.assign({}, c, { fix: glFix }) : c; });
           var shown = {};
-          checks = checks.map(function (c) { if (c.fix && shown[c.fix]) return Object.assign({}, c, { fix: "Same fix as above.", fix_url: "" }); if (c.fix) shown[c.fix] = true; return c; });
+          checks = checks.map(function (c) { if (c.fix && shown[c.fix]) return Object.assign({}, c, { fix: "Same fix as above (one change fixes both).", fix_url: "" }); if (c.fix) shown[c.fix] = true; return c; });
           var bad = checks.filter(function (c) { return c.status === "warn" || c.status === "bad"; });
           var rest = checks.filter(function (c) { return bad.indexOf(c) < 0; });
           var row = function (c) {
