@@ -69,6 +69,7 @@ class Screens : UxRender() {
     @Test fun connected() = app("10-home-connected", home(UxFixtures.connectedBoth))
     @Test fun connectedDark() = app("10-home-connected-dark", home(UxFixtures.connectedBoth), dark = true)
     @Test fun connectedFull() = app("10-home-connected-full", home(UxFixtures.connectedBoth), tall = 1500)
+    @Test fun wifiSignIn() = app("16c-home-wifi-needs-sign-in", home(UxFixtures.cellOnly).copy(wifiSignIn = true), tall = 1500)
     @Test fun connecting() = app("11-home-connecting", home(UxFixtures.connecting))
     @Test fun disconnected() = app("12-home-disconnected", home(UxFixtures.disconnected), tall = 1500)
     @Test fun disconnectedDark() = app("12-home-disconnected-dark", home(UxFixtures.disconnected), dark = true)

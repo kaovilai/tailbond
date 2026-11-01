@@ -38,6 +38,8 @@ data class UiState(
     val apps: List<AppEntry> = emptyList(),
     /** "Ask to connect": a pair request to the home server over Tailscale. */
     val ask: AskState = AskState.Idle,
+    /** A Wi-Fi network wants a sign-in (captive portal). */
+    val wifiSignIn: Boolean = false,
 ) {
     val mode: Mode get() = profile?.let { TunnelPlan.effectiveMode(it, settings) } ?: (settings.mode ?: Mode.SPEED)
 
@@ -65,6 +67,9 @@ interface UiActions {
     /** Asks the home server (its Tailscale name) to pair this phone; someone approves it there. */
     fun askToConnect(server: String) {}
     fun cancelAsk() {}
+    /** Opens Android's Wi-Fi panel, where the network's sign-in page opens. */
+    fun openWifiSignIn() {}
+    fun setCaptivePrompts(on: Boolean) {}
     /** Opens http://<server>:8077/#add in the browser (works while Tailscale is still on). */
     fun openHomeServerPage(server: String) {}
     fun forgetPairing() {}

@@ -18,6 +18,7 @@ import dev.tailbond.app.model.RouteMode
 import dev.tailbond.app.pairing.Pairing
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.pairing.PairingResult
+import dev.tailbond.app.service.CaptiveWatcher
 import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.LiveState
 import dev.tailbond.app.service.TailbondVpnService
@@ -67,6 +68,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Machine list: the cached list plus the state of the last refresh. */
     val peers: StateFlow<PeersUi> = combine(repo.peers, peerStatus) { list, st -> st.copy(list = list) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, PeersUi(repo.peers.value))
+
+    private val captive = CaptiveWatcher(app).also { it.start() }
+    val wifiSignIn = CaptiveWatcher.wifiSignIn
+
+    override fun onCleared() {
+        captive.stop()
+        super.onCleared()
+    }
+
+    fun setCaptivePrompts(on: Boolean) = repo.updateSettings { it.copy(captivePrompts = on) }
 
     init {
         // refresh the machine list every 30 s while connected

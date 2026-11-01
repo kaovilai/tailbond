@@ -61,6 +61,8 @@ data class AppSettings(
     val onboarded: Boolean = false,
     /** The user handed the VPN back to Tailscale; nothing reconnects tailbond until they turn it on again. */
     val handedToTailscale: Boolean = false,
+    /** Tell the user when Wi-Fi needs a sign-in (hotel/airport portals). */
+    val captivePrompts: Boolean = true,
 ) {
     fun path(kind: PathKind): PathSetting = paths[kind] ?: DEFAULT_PATHS.getValue(kind)
 

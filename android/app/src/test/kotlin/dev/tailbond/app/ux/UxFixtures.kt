@@ -56,6 +56,7 @@ object UxFixtures {
     }
 
     val connectedBoth = connected(wifi, cell)
+    val cellOnly = connected(cellCarrying)
     val connecting = Live(state = ConnState.CONNECTING)
     val disconnected = Live()
     val errorUnreachable = Live(state = ConnState.ERROR, message = "Connection to the server failed", errorKind = ErrorKind.UNREACHABLE)
