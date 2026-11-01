@@ -141,6 +141,58 @@ LAN rules (priority 1074–1077) come before mwan3-style policy rules (1001+
 per-interface, 2001+ by fwmark, assumed the same for kmwan, **unverified**)
 only for LAN input, and mqvpn binds each path to its device.
 
+### Servers and failover
+
+The travel router can keep more than one server, for example `homebox` at
+home and a `vps` as a backup. One tunnel runs at a time; if the server in
+use stops answering for 15 s, the next one in the list takes over, and the
+first one is used again once it has answered for 2 minutes.
+
+In the panel (**Home server** card, which becomes **Servers** with two or more):
+- **Add a backup server**: ask a server found on your tailnet (it approves you,
+  like the first one), or paste a pairing link from it. It's added as a backup.
+- The list: first choice and backups, each with its state (Connected,
+  Standby, Can't reach, Connecting…, Checking…, Off) and when it last
+  answered. Arrows change the order, **Use now** switches at once (it stays
+  there while that server works), **Remove** forgets one server.
+- **When to switch**: "Prefer homebox, use vps if homebox is down" (default)
+  or "Always use vps" (never switches by itself).
+- The top card says what's happening: "Using vps (homebox is unreachable)",
+  then "Back to homebox in 1:20" while it counts down.
+
+Each server needs its own tunnel addresses. A VPS set up with
+`packaging/linux/install.sh` picks a free range by itself; a new server with
+no devices yet moves out of the way when it approves the request. Otherwise
+the panel says which server clashes: change `server.subnet` on the new one
+(for example `10.78.0.0/24`), restart tailbond there and add it again.
+Contract: [architecture.md](architecture.md#multiple-servers-and-failover).
+
+### Bypass tailbond
+
+Rules that let some traffic skip the tunnel (or never skip it):
+- **A website** (and everything under it): a bank that blocks VPNs, streaming
+  that should see where you are;
+- **A device** on the router's LAN, picked from the list (by MAC): a TV stick
+  that should use the hotel internet, or a work laptop that must **always use
+  tailbond** (that beats website rules);
+- **An address or port** (under *More*): Wi-Fi calling is UDP 500 and 4500.
+
+Each rule either uses the internet directly (GL's own multi-WAN picks the
+connection), uses only one connection (Repeater, Tethering…), or always uses
+tailbond. Quick picks: Banking, Streaming location, Wi-Fi calling, Work
+laptop. Each rule shows how many connections it has matched. Rules that
+skip tailbond keep working while the tunnel is down (kill switch or not).
+
+Website rules need **dnsmasq-full** (dnsmasq fills an nftables or ipset set
+with each address it looks up for the website). GL 4.10 on the Flint 3 and
+Slate 7 ships dnsmasq-full with nftset support and firewall4 (verified from
+the firmware images), so website rules work out of the box there. Other
+firmwares may need `opkg install dnsmasq-full`; until then the panel shows
+website rules as waiting and device, address and port rules still work.
+Devices with their own secure DNS (Private DNS on Android, Secure DNS in
+Chrome) aren't matched by website rules; use a device rule for those.
+Contract: [architecture.md](architecture.md#bypass-rules-client-role).
+
 ## Captive portals and GL's Login Mode
 
 Hotel and airport networks often show a sign-in page first. tailbond keeps

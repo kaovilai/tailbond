@@ -243,3 +243,82 @@ export const fedoraStatusPhoneDone = {
 };
 // right after dnf install + systemctl enable --now: nothing paired yet
 export const fedoraStatusFresh = { ...serverStatus({ clients: [] }), uptime_sec: 40, server: '192.168.1.2:443', clients: [], pair_requests: [], totals: { tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0 } };
+
+// ---- bypass rules and more servers (failover) on the Slate 7 ----
+// out/ux/bypass-failover/glinet/ (glinet-screens.sh bypass-failover)
+const srv = (name, role, state, active, lastOkSec, subnet, server) =>
+  ({ name, role, state, active, ...(lastOkSec == null ? {} : { last_ok: ago(lastOkSec) }), subnet, server });
+const failover = (over = {}) => ({ policy: 'prefer', server: '', switch_after_sec: 15, failback_after_sec: 120, reason: '', ...over });
+const oneServer = { servers: [srv('homebox', 'primary', 'active', true, 1, '10.77.0.0/24', 'home.example.net:443')], active_server: 'homebox', failover: failover() };
+const homeAndVps = {
+  servers: [srv('homebox', 'primary', 'active', true, 1, '10.77.0.0/24', 'home.example.net:443'), srv('vps', 'backup', 'standby', false, 5, '10.83.142.0/24', '203.0.113.9:8443')],
+  active_server: 'homebox', failover: failover(),
+};
+// homebox stopped answering 2 min ago; the vps carries the tunnel
+const onVps = {
+  server: '203.0.113.9:8443', tunnel_ip: '10.83.142.2', uptime_sec: 118,
+  servers: [srv('homebox', 'primary', 'unreachable', false, 140, '10.77.0.0/24', 'home.example.net:443'), srv('vps', 'backup', 'active', true, 1, '10.83.142.0/24', '203.0.113.9:8443')],
+  active_server: 'vps', failover: failover({ reason: 'primary_down', since: ago(125) }),
+};
+// homebox answers again: switching back after 2 min of answers
+const failingBack = {
+  ...onVps, uptime_sec: 9 * 60,
+  servers: [srv('homebox', 'primary', 'standby', false, 4, '10.77.0.0/24', 'home.example.net:443'), srv('vps', 'backup', 'active', true, 1, '10.83.142.0/24', '203.0.113.9:8443')],
+  failover: failover({ reason: 'primary_down', since: ago(9 * 60), failback_in_sec: 80 }),
+};
+const pickedVps = { ...onVps, servers: [srv('homebox', 'primary', 'standby', false, 6, '10.77.0.0/24', 'home.example.net:443'), onVps.servers[1]], failover: failover({ reason: 'manual', since: ago(600) }) };
+
+const bpWans = [{ name: 'wan', label: 'Ethernet', up: false }, { name: 'wwan', label: 'Repeater', up: true }, { name: 'tethering', label: 'Tethering', up: true }];
+const lanClients = [
+  { mac: '3c:22:fb:10:aa:01', ip: '192.168.8.23', name: 'work-laptop', online: true },
+  { mac: 'a4:83:e7:5c:21:9e', ip: '192.168.8.31', name: 'alex-iphone', online: true },
+  { mac: 'f0:27:2d:8b:44:10', ip: '192.168.8.40', name: 'Fire-TV-Stick', online: true },
+  { mac: '5e:91:0c:aa:73:2b', ip: '192.168.8.52', name: '', online: true },
+  { mac: 'b8:27:eb:12:34:56', ip: '192.168.8.60', name: 'kindle', online: false },
+];
+const bpOk = { domains: 'nftset', firewall: 'nft' };
+const bpRules = [
+  { id: 'b3f9', kind: 'domain', match: 'mybank.com', target: 'direct', enabled: true, note: 'Bank' },
+  { id: 'c1d2', kind: 'device', match: '3c:22:fb:10:aa:01', ip: '192.168.8.23', target: 'tunnel', enabled: true, note: 'work-laptop' },
+  { id: 'd4e5', kind: 'device', match: 'f0:27:2d:8b:44:10', ip: '192.168.8.40', target: 'direct', enabled: true, note: 'Fire-TV-Stick' },
+  { id: 'a7b8', kind: 'port', match: 'udp/4500', target: 'direct', enabled: true, note: 'Wi-Fi calling' },
+  { id: 'a7b9', kind: 'port', match: 'udp/500', target: 'direct', enabled: true, note: 'Wi-Fi calling' },
+];
+const bpCounters = { b3f9: { connections: 37 }, c1d2: { connections: 0 }, d4e5: { connections: 212 }, a7b8: { connections: 4 }, a7b9: { connections: 2 } };
+const bf = (statusOver = {}, api = {}) => withApi(connected(twoWans, { ...oneServer, ...statusOver }), { 'GET /api/lan-clients': lanClients, ...api });
+const bypassApi = (rules, support = bpOk, counters = {}) => ({ 'GET /api/bypass': { rules, support, wans: bpWans, counters } });
+const discoverVps = { 'GET /api/discover': { tailscale_installed: true, tailscale_running: true, self: 'slate7', checked: 5, servers: [
+  { name: 'homebox', dns_name: 'homebox.tail1234.ts.net', ip: '100.101.1.1', os: 'linux', version: '0.1.0-r42' },
+  { name: 'vps', dns_name: 'vps.tail1234.ts.net', ip: '100.101.5.5', os: 'linux', version: '0.1.0-r42' },
+] } };
+const joinVps = (over) => ({ join: { server: '100.101.5.5:8077', server_name: 'vps', id: '7d0c3e55a1b2c3d4', name: 'slate7', since: ago(15), add: true, ...over } });
+
+export const bfStates = {
+  'bypass-empty': bf({}, bypassApi([])),
+  'bypass-rules': bf({}, bypassApi(bpRules, bpOk, bpCounters)),
+  'bypass-website-rules-wait': bf({}, bypassApi([
+    { id: 'b3f9', kind: 'domain', match: 'mybank.com', target: 'direct', enabled: true, note: 'Bank' },
+    { id: 'e1f2', kind: 'domain', match: 'netflix.com', target: 'direct', enabled: true, note: 'Streaming location' },
+    bpRules[1],
+  ], { domains: 'none', firewall: 'nft', reason: "This router's DNS server (dnsmasq) can't fill nftables sets, so website rules wait. Install dnsmasq-full; device, address and port rules work now." })),
+  'servers-single-home': bf({}, discoverVps),
+  'servers-home-active-vps-standby': bf(homeAndVps),
+  'failover-using-vps-home-unreachable': bf(onVps, {}),
+  'failback-countdown': bf(failingBack, {}),
+  'failover-you-picked-vps': bf(pickedVps, {}),
+  'add-server-waiting-approval': bf(joinVps({ state: 'waiting' }), discoverVps),
+  'add-server-subnet-clash': bf(joinVps({ state: 'error', error: 'subnet_in_use' }), discoverVps),
+};
+// steps: {text} clicks the first element with that text, {click} a selector,
+// {button} a button by exact name, {fill: [selector, value]}.
+export const bfActions = {
+  'bypass-add-website-presets': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }] },
+  'bypass-add-streaming-preset': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }, { click: '.tb-dialog >> text=Streaming location' }] },
+  'bypass-add-device-picker': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }, { click: '.tb-dialog >> text=A device' }, { click: '.tb-dialog >> text=alex-iphone' }] },
+  'bypass-add-wifi-calling': { base: 'bypass-empty', steps: [{ click: '.tb-card >> text=Wi-Fi calling' }] },
+  'add-server-open': { base: 'servers-single-home', full: true, steps: [{ text: 'Add a backup server' }] },
+  'add-server-paste-clash': { base: 'servers-single-home', full: true, api: { 'POST /api/servers': { __err: 409, data: { ok: false, error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' } } },
+    steps: [{ text: 'Add a backup server' }, { text: 'No Tailscale there? Paste a pairing link from it' }, { fill: ['.tb-sec textarea', 'tailbond://pair?d=eyJ2IjoxLCJzIjoiMjAzLjAuMTEzLjk6ODQ0MyJ9'] }, { button: 'Add' }] },
+};
+// also rendered at phone width
+export const bfPhone = ['bypass-rules', 'bypass-add-device-picker', 'failover-using-vps-home-unreachable'];

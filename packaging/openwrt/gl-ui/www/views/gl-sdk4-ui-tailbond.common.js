@@ -139,6 +139,37 @@
     ".tb-steps-n{margin:6px 0 0;padding-left:22px;line-height:1.7;color:#606266;}",
     ".tb-qr{width:150px;height:150px;flex:none;background:#fff;border:1px solid #ebeef5;border-radius:8px;padding:4px;box-sizing:border-box;}.tb-qr svg{width:100%;height:100%;display:block;}",
     ".tb-foot{text-align:center;color:#c0c4cc;font-size:12px;margin:8px 0 24px;}",
+    // servers and failover
+    ".tb-srv{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #ebeef5;flex-wrap:wrap;}",
+    ".tb-srv:last-child{border-bottom:0;}",
+    ".tb-srv-ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}",
+    ".tb-btn.icon{width:28px;padding:0;}",
+    ".tb-role{font-size:12px;color:#909399;font-weight:400;margin-left:8px;}",
+    ".tb-role.first{color:#409eff;}",
+    ".tb-sec{border-top:1px solid #ebeef5;margin-top:14px;padding-top:14px;}",
+    ".tb-sec-t{font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}",
+    ".tb-label{font-size:13px;color:#606266;margin:14px 0 6px;font-weight:600;}",
+    // bypass rules
+    ".tb-rule{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #ebeef5;}",
+    ".tb-rule:last-child{border-bottom:0;}",
+    ".tb-rule.off .tb-wan-icon,.tb-rule.off .tb-grow{opacity:.5;}",
+    ".tb-tgt{font-weight:600;}",
+    ".tb-tgt.direct{color:#13a35a;}",
+    ".tb-tgt.wan{color:#b07a12;}",
+    ".tb-tgt.tunnel{color:#409eff;}",
+    ".tb-presets{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}",
+    ".tb-preset{display:inline-flex;align-items:center;gap:6px;border:1px dashed #b3d8ff;background:#f5faff;color:#409eff;border-radius:14px;height:28px;padding:0 12px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;}",
+    ".tb-preset:hover,.tb-preset.on{border-style:solid;background:#ecf5ff;}",
+    ".tb-pick{max-height:232px;overflow:auto;border:1px solid #ebeef5;border-radius:6px;}",
+    ".tb-pick-i{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f2f3f5;}",
+    ".tb-pick-i:last-child{border-bottom:0;}",
+    ".tb-pick-i:hover{background:#f5f7fa;}",
+    ".tb-pick-i.on{background:#ecf5ff;box-shadow:inset 3px 0 0 #409eff;}",
+    ".tb-dialog.wide{max-width:560px;max-height:calc(100vh - 32px);overflow:auto;}",
+    "select.tb-input{background:#fff;padding:0 8px;}",
+    ".tb-help{font-size:12px;color:#909399;margin-top:6px;line-height:1.5;}",
+    ".tb code{font-family:Menlo,Consolas,monospace;font-size:12px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px;}",
+    ".tb-empty{display:flex;gap:16px;align-items:flex-start;}",
     "@media (max-width:760px){",
     " .tb-grid{grid-template-columns:1fr;}",
     " .tb-modes,.tb-modes.three{grid-template-columns:1fr;}",
@@ -154,6 +185,9 @@
     " .tb-kv{grid-template-columns:1fr;gap:2px;}",
     " .tb-kv>div:nth-child(even){margin-bottom:8px;}",
     " .tb-hide-sm{display:none;}",
+    " .tb-srv-ctl{width:100%;padding-left:52px;}",
+    " .tb-empty .tb-wan-icon{display:none;}",
+    " .tb-dialog{padding:16px;}",
     "}"
   ].join("\n");
 
@@ -170,8 +204,21 @@
     router: "M3 13h18v6H3zM7 16h.01M11 16h.01M8 13l-2-6M16 13l2-6",
     check: "M5 12l5 5L20 7",
     warn: "M12 3l10 18H2zM12 10v5M12 18h.01",
-    off: "M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"
+    off: "M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0",
+    globe: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9M12 3c-2.4 2.6-3.6 5.6-3.6 9s1.2 6.4 3.6 9",
+    device: "M5 5h14v10H5zM2 19h20",
+    pin: "M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 10h.01",
+    port: "M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4",
+    call: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z",
+    up: "M12 19V5M6 11l6-6 6 6",
+    down: "M12 5v14M6 13l6 6 6-6",
+    trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+    skip: "M3 17h5l8-10h5M17 3l4 4-4 4M3 7h5l2.5 3M14 14l2 3h5M17 13l4 4-4 4"
   };
+
+  // "Bypass tailbond" presets (kept short; the dialog lets you edit them).
+  var STREAMING = ["netflix.com", "nflxvideo.net", "disneyplus.com", "primevideo.com", "max.com"];
+  var BP_KIND_ICON = { domain: "globe", device: "device", ip: "pin", port: "port" };
 
   function icon(h, name, size) {
     return h("svg", { attrs: { width: size || 22, height: size || 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" } },
@@ -198,6 +245,22 @@
     var d = Math.round(s / 86400);
     return d + (d === 1 ? " day ago" : " days ago");
   }
+  // "answered 5 s ago" (server checks run every 10 s, so seconds matter)
+  function fmtAgoS(t) {
+    var s = Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 1000));
+    if (s < 60) return s + " s ago";
+    return fmtAgo(t);
+  }
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2);
+  }
+  function fmtDur(sec) {
+    if (sec < 60) return sec + " s";
+    var m = Math.round(sec / 60);
+    return m + " min";
+  }
+  function words(s) { return (s || "").split(/[\s,;]+/).filter(Boolean); }
   function fmtUptime(s) {
     if (!s) return "";
     if (s < 60) return "just now";
@@ -288,14 +351,19 @@
         disc: null, discovering: false, typed: "", showOther: false, pasteUri: "", pasteErr: "",
         busy: {}, toast: "", confirm: null, capEdit: null, capValue: "",
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
-        wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false
+        wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false,
+        // client: more servers (failover) and bypass rules
+        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0,
+        bp: null, lan: null, bpEdit: null
       };
     },
     computed: {
       role: function () { return (this.st && this.st.role) || (this.info && this.info.role) || "client"; },
       paired: function () { return !!(this.st && this.st.paired); },
       join: function () { return (this.st && this.st.join) || null; },
+      servers: function () { return A(this.st && this.st.servers); },
       serverShort: function () {
+        if (this.st && this.st.active_server) return this.st.active_server;
         var s = this.settings && this.settings.paired_with;
         var n = (this.st && this.st.server) || s || "";
         return shortName(n);
@@ -326,6 +394,9 @@
       tick: function () {
         var self = this;
         return api("GET", "/api/status").then(function (st) {
+          // "Back on homebox" for a minute after an automatic failback
+          var was = self.st && self.st.failover && self.st.failover.reason;
+          if (was && st.failover && !st.failover.reason && st.state === "connected") self.backOnUntil = Date.now() + 60000;
           self.st = st; self.down = false; self.loaded = true;
           if (self.wantOn !== null && self.isOn() === self.wantOn) self.wantOn = null;
           if (st.role === "client" && !st.paired && !self.disc && !self.discovering) self.discover(false);
@@ -341,6 +412,11 @@
         if (this.st.role === "client") {
           jobs.push(api("GET", "/api/paths").then(function (p) { self.paths = A(p); }).catch(function () {}));
           if (this.st.paired && this.st.state === "connected") jobs.push(this.loadPeers());
+          if (this.st.paired) {
+            // older agents answer 404: the card stays hidden
+            jobs.push(api("GET", "/api/bypass").then(function (b) { self.bp = b; }).catch(function () { self.bp = null; }));
+            jobs.push(this.loadLan());
+          }
         } else {
           jobs.push(api("GET", "/api/tailscale").then(function (t) { self.ts = t; }).catch(function () {}));
           jobs.push(api("GET", "/api/health").then(function (hh) { self.health = hh; }).catch(function () {}));
@@ -352,6 +428,10 @@
         var self = this;
         return api("GET", "/api/peers").then(function (p) { self.peers = p; self.peersErr = null; })
           .catch(function (e) { self.peersErr = e; });
+      },
+      loadLan: function () {
+        var self = this;
+        return api("GET", "/api/lan-clients").then(function (l) { self.lan = A(l); }).catch(function () {});
       },
       discover: function (refresh) {
         var self = this;
@@ -488,7 +568,25 @@
         else if (portal.length) line += " · " + portal.join(", ") + " needs sign-in";
         if (broken.length) line += " · " + broken.join(", ") + " not working right now";
         else if (saving.length) line += " · " + saving.join(", ") + " on standby";
-        return line;
+        var fo = this.foInfo();
+        return (fo && fo.line ? fo.line + " · " : "") + line;
+      },
+      // Failover in words for the top card, or null (one server, or on the first choice).
+      foInfo: function () {
+        var st = this.st || {}, ss = this.servers, fo = st.failover || {};
+        if (ss.length < 2 || !this.isOn()) return null;
+        var act = st.active_server || this.serverShort, first = ss[0].name;
+        var back = fo.failback_in_sec !== undefined && fo.failback_in_sec !== null;
+        if (st.state === "connecting" && fo.reason === "primary_down") return { title: first + " is unreachable · switching to " + act + "…" };
+        if (st.state !== "connected") return null;
+        if (fo.reason === "primary_down") {
+          return back ? { title: "Using " + act + " (" + first + " is answering again)", line: "Back to " + first + " in " + fmtClock(fo.failback_in_sec) }
+            : { title: "Using " + act + " (" + first + " is unreachable)", line: "Goes back to " + first + " by itself once it answers again" };
+        }
+        if (fo.reason === "manual") return { title: "Using " + act + " (you picked it)", line: back ? "Back to " + first + " in " + fmtClock(fo.failback_in_sec) : "" };
+        if (fo.reason === "policy") return { title: "Always using " + act };
+        if (!fo.reason && this.backOnUntil > Date.now()) return { title: "Connected to " + act, line: "Back on " + act };
+        return null;
       },
       setPath: function (w, patch, msg) {
         var body = Object.assign({ name: w.key }, patch);
@@ -515,11 +613,13 @@
           .catch(function () { self.pasteErr = self.actErr; self.actErr = ""; });
       },
       unpair: function () {
-        var self = this;
+        var self = this, many = this.servers.length > 1;
         this.confirm = {
-          title: "Unpair from " + (this.serverShort || "the home server") + "?",
-          body: "This router stops using tailbond and forgets the home server. Devices here use the internet directly. To connect again, ask the home server again (it will need to approve).",
-          ok: "Unpair", danger: true,
+          title: many ? "Forget all servers?" : "Unpair from " + (this.serverShort || "the home server") + "?",
+          body: many
+            ? "This router stops using tailbond and forgets " + this.servers.map(function (s) { return s.name; }).join(" and ") + ". Devices here use the internet directly. To connect again, ask a server again (it will need to approve)."
+            : "This router stops using tailbond and forgets the home server. Devices here use the internet directly. To connect again, ask the home server again (it will need to approve).",
+          ok: many ? "Forget all" : "Unpair", danger: true,
           run: function () { return self.run("unpair", api("DELETE", "/api/pair"), "Unpaired").then(function () { self.disc = null; }); }
         };
       },
@@ -534,6 +634,149 @@
             return self.run("unpair", api("DELETE", "/api/pair")).then(function () { self.disc = null; if (server) return self.ask(server); });
           }
         };
+      },
+
+      // ---- more servers (client) ----
+      openAddServer: function () {
+        this.srvAdd = true; this.srvErr = null; this.srvPaste = ""; this.srvShowPaste = false;
+        if (!this.disc && !this.discovering) this.discover(false);
+      },
+      closeAddServer: function () {
+        var j = this.join;
+        this.srvAdd = false; this.srvErr = null;
+        if (j && j.add && j.state !== "asking" && j.state !== "waiting") this.run("srv-ask", api("DELETE", "/api/join")).catch(function () {});
+      },
+      askAdd: function (server) {
+        var self = this;
+        this.srvErr = null;
+        return this.run("srv-ask", api("POST", "/api/join", { server: server, add: true })).then(function () { self.srvTyped = ""; })
+          .catch(function (e) { self.srvErr = e; self.actErr = ""; });
+      },
+      pasteAdd: function () {
+        var self = this, uri = (this.srvPaste || "").trim();
+        this.srvErr = null;
+        if (uri.indexOf("tailbond://pair") !== 0) { this.srvErr = { error: "paste" }; return; }
+        return this.run("srv-paste", api("POST", "/api/servers", { uri: uri })).then(function (r) {
+          self.say(((r && r.name) || "The server") + " added as a backup");
+          self.srvPaste = ""; self.srvAdd = false;
+        }).catch(function (e) { self.srvErr = e; self.actErr = ""; });
+      },
+      // [title, body] for a server that can't be added (409 or the join error).
+      addSrvErr: function (h, code, conflict, newName, subnet) {
+        var ss = this.servers;
+        if (!conflict && ss.length === 1) conflict = ss[0].name;
+        var nn = newName || "This server";
+        if (code === "exists") return [nn + " is already in your list", conflict ? "It's listed as " + conflict + ". Nothing to add." : "Nothing to add."];
+        if (code === "subnet_in_use") {
+          return [nn + " uses the same tunnel addresses as " + (conflict || "one of your servers"), [
+            h("div", "Each server needs its own range of tunnel addresses" + (subnet ? " (" + subnet + " is taken)" : "") + ". A VPS set up with tailbond's Linux installer picks a free range by itself, so this only happens with servers set up another way."),
+            h("div", { style: { marginTop: "6px" } }, ["Fix: on " + (newName || "the new server") + ", change the setting ", h("code", "server.subnet"), " to another range, for example ", h("code", "10.78.0.0/24"), ", restart tailbond there, then try again."])
+          ]];
+        }
+        if (code === "paste") return [null, "Paste the whole link. It starts with tailbond://pair"];
+        return [null, this.humanError({ error: code })];
+      },
+      moveServer: function (i, d) {
+        var names = this.servers.map(function (s) { return s.name; }), j = i + d;
+        if (j < 0 || j >= names.length) return;
+        var t = names[i]; names[i] = names[j]; names[j] = t;
+        return this.run("srv", api("POST", "/api/servers/order", { names: names }), names[0] + " is the first choice");
+      },
+      useServer: function (s) {
+        return this.run("srv", api("POST", "/api/servers/active", { name: s.name }), "Switching to " + s.name + "…");
+      },
+      removeServer: function (s) {
+        var self = this, rest = this.servers.filter(function (x) { return x.name !== s.name; });
+        this.confirm = {
+          title: "Remove " + s.name + "?",
+          body: "This router forgets " + s.name + (s.active && rest.length ? " and switches to " + rest[0].name + " now" : "") + ". To add it back later, ask " + s.name + " again (someone approves it there).",
+          ok: "Remove", danger: true,
+          run: function () { return self.run("srv", api("DELETE", "/api/servers/" + encodeURIComponent(s.name)), s.name + " removed"); }
+        };
+      },
+      setPolicy: function (policy, server) {
+        var first = (this.servers[0] || {}).name;
+        return this.run("srv-policy", api("POST", "/api/servers/policy", policy === "always" ? { policy: "always", server: server } : { policy: "prefer" }),
+          policy === "always" ? "Always using " + server : "Prefers " + first + " again");
+      },
+
+      // ---- bypass rules (client) ----
+      lanByMac: function (mac) {
+        mac = (mac || "").toLowerCase();
+        return A(this.lan).filter(function (c) { return (c.mac || "").toLowerCase() === mac; })[0] || null;
+      },
+      wanLabel: function (name) {
+        var w = A(this.bp && this.bp.wans).filter(function (x) { return x.name === name; })[0];
+        return (w && w.label) || name;
+      },
+      // What a rule does, in words: "Uses the internet directly" etc.
+      targetWords: function (r) {
+        if (r.target === "tunnel") return "Always uses tailbond";
+        if (r.target === "wan") return "Uses only " + this.wanLabel(r.wan);
+        return "Uses the internet directly";
+      },
+      openBypass: function (preset) {
+        var e = { kind: "domain", text: "", multi: false, mac: "", ip: "", name: "", macTyped: "", addr: "", target: "direct", touched: false, note: "", preset: preset || "", err: "", more: false };
+        if (preset === "bank") e.note = "Bank";
+        if (preset === "streaming") { e.multi = true; e.text = STREAMING.join("\n"); e.note = "Streaming location"; }
+        if (preset === "wificall") { e.kind = "addr"; e.more = true; e.addr = "udp/4500, udp/500"; e.note = "Wi-Fi calling"; }
+        if (preset === "laptop") { e.kind = "device"; e.target = "tunnel"; e.note = ""; }
+        this.bpEdit = e;
+        this.loadLan();
+      },
+      bpKind: function (k) {
+        var e = this.bpEdit;
+        e.kind = k; e.err = ""; e.preset = ""; e.note = ""; e.multi = false;
+        if (k === "addr") e.more = true;
+        if (!e.touched) e.target = k === "device" ? "tunnel" : "direct";
+      },
+      bpRules: function () {
+        var e = this.bpEdit, out = [], bad = "";
+        var t = e.target.indexOf("wan:") === 0 ? { target: "wan", wan: e.target.slice(4) } : { target: e.target };
+        if (e.kind === "domain") {
+          words(e.text).forEach(function (d) {
+            d = d.toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/[\/?#].*$/, "").replace(/^\*\./, "").replace(/^www\./, "").replace(/\.$/, "");
+            if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) bad = bad || d;
+            else out.push({ kind: "domain", match: d });
+          });
+          if (bad) return "“" + bad + "” isn't a website name. Type it like mybank.com.";
+          if (!out.length) return "Type a website, like mybank.com.";
+        } else if (e.kind === "device") {
+          var mac = e.mac || (e.macTyped || "").trim().toLowerCase().replace(/-/g, ":");
+          if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return e.macTyped ? "That isn't a MAC address. It looks like aa:bb:cc:dd:ee:ff." : "Pick a device from the list.";
+          out.push({ kind: "device", match: mac, ip: e.ip || undefined, note: e.name || undefined });
+        } else {
+          words(e.addr).forEach(function (a) {
+            a = a.toLowerCase();
+            if (/^(tcp|udp)\/\d{1,5}(-\d{1,5})?$/.test(a)) out.push({ kind: "port", match: a });
+            else if (/^[0-9a-f:.]+(\/\d{1,3})?$/.test(a) && /[.:]/.test(a)) out.push({ kind: "ip", match: a });
+            else bad = bad || a;
+          });
+          if (bad) return "“" + bad + "” isn't an address or port. Use 203.0.113.9, 203.0.113.0/24 or udp/4500.";
+          if (!out.length) return "Type an address or a port.";
+        }
+        return out.map(function (r) {
+          var x = Object.assign({ enabled: true }, r, t);
+          if (e.note && !x.note) x.note = e.note.slice(0, 64);
+          return x;
+        });
+      },
+      saveBypass: function () {
+        var self = this, e = this.bpEdit, rules = this.bpRules();
+        if (typeof rules === "string") { e.err = rules; return; }
+        e.err = "";
+        var p = rules.reduce(function (acc, r) { return acc.then(function () { return api("POST", "/api/bypass", r); }); }, Promise.resolve());
+        var what = rules.length > 1 ? rules.length + " rules added" : (e.kind === "device" ? (e.name || rules[0].match) : rules[0].match) + ": " + this.targetWords(rules[0]).toLowerCase();
+        return this.run("bp-save", p, what).then(function () { self.bpEdit = null; })
+          .catch(function () { if (self.bpEdit) self.bpEdit.err = self.actErr; self.actErr = ""; });
+      },
+      toggleRules: function (rules, on) {
+        var p = Promise.all(rules.map(function (r) { return api("POST", "/api/bypass", Object.assign({}, r, { enabled: on })); }));
+        return this.run("bp-" + rules[0].id, p, on ? "Rule on" : "Rule off").catch(function () {});
+      },
+      deleteRules: function (rules, label) {
+        var p = Promise.all(rules.map(function (r) { return api("DELETE", "/api/bypass/" + encodeURIComponent(r.id)); }));
+        return this.run("bp-" + rules[0].id, p, label + " removed").catch(function () {});
       },
 
       // ---- server ----
@@ -615,6 +858,7 @@
           this.info && this.info.lan_dashboard ? h("span", [" · ", h("a", { class: "tb-link", attrs: { href: "http://" + location.hostname + ":8077/", target: "_blank", rel: "noopener" } }, "Advanced page (:8077)")]) : null
         ]));
       }
+      if (this.bpEdit) kids.push(this.rBypassDialog(h));
       if (this.confirm) kids.push(this.rConfirm(h));
       if (this.toast) kids.push(h("div", { class: "tb-toast" }, this.toast));
       return h("div", { class: "tb" }, kids);
@@ -687,6 +931,8 @@
           var title = !this.paired ? "Not connected to a home server" : !on ? "tailbond is off" :
             signingIn && st.state === "connected" ? "Router connected to " + this.serverShort + " · devices signing in" : err ? "Can't reach " + (this.serverShort || "home server") :
             st.state === "connected" ? "Connected to " + this.serverShort : "Connecting…";
+          var fo = this.paired && on && !err && !signingIn ? this.foInfo() : null;
+          if (fo) title = fo.title;
           var rates = this.paired && on && st.state === "connected" ? h("div", { class: "tb-rates" }, [
             h("span", ["↓ ", h("b", fmtRate(st.totals.rx_bps))]), h("span", ["↑ ", h("b", fmtRate(st.totals.tx_bps))]),
             h("span", { class: "tb-hide-sm" }, ["Up ", h("b", fmtUptime(st.uptime_sec))])
@@ -707,6 +953,7 @@
           out.push(this.rWans(h));
           out.push(this.rModes(h));
           out.push(this.rHome(h));
+          if (this.bp) out.push(this.rBypass(h));
           out.push(this.rMachines(h));
           return out;
         },
@@ -869,6 +1116,7 @@
 
         rHome: function (h) {
           var self = this, st = this.st, s = this.settings || {};
+          if (this.servers.length > 1) return this.rServers(h);
           var stateChip = st.state === "connected" ? ["ok", "Connected"] : !this.isOn() ? ["", "Off"] : st.state === "connecting" && !st.error ? ["blue", "Connecting…"] : ["err", "Can't reach"];
           return this.card(h, "Home server", [
             h("div", { class: "tb-row", style: { marginBottom: "14px" } }, [
@@ -879,14 +1127,313 @@
               ]),
               h("span", { class: "tb-chip " + stateChip[0] }, stateChip[1])
             ]),
-            h("div", { class: "tb-kv tb-small" }, [
-              h("div", "Connects to"), h("div", [h("span", { class: "tb-mono" }, hostOf(s.paired_with || st.server || "—")), " over the internet (UDP port " + (portOf(s.paired_with) || "443") + ")"]),
-              h("div", "Tailnet names"), h("div", "Work on every device connected to this router while tailbond is on. Use the full name, like " + this.exampleName() + "."),
-              h("div", "This router's tunnel address"), h("div", { class: "tb-mono" }, st.tunnel_ip || "—")
-            ]),
+            this.rHomeKv(h, true),
             h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
               this.btn(h, "Ask to connect again", function () { self.repair(); }, "small"),
-              this.btn(h, "Unpair", function () { self.unpair(); }, "small danger")
+              this.btn(h, "Unpair", function () { self.unpair(); }, "small danger"),
+              this.srvAdd || this.addInFlight() ? null : this.btn(h, "Add a backup server", function () { self.openAddServer(); }, "small")
+            ]),
+            this.rAddServer(h)
+          ]);
+        },
+        rHomeKv: function (h, withAddr) {
+          var st = this.st, s = this.settings || {};
+          return h("div", { class: "tb-kv tb-small" }, [
+            withAddr ? h("div", "Connects to") : null,
+            withAddr ? h("div", [h("span", { class: "tb-mono" }, hostOf(s.paired_with || st.server || "—")), " over the internet (UDP port " + (portOf(s.paired_with) || "443") + ")"]) : null,
+            h("div", "Tailnet names"), h("div", "Work on every device connected to this router while tailbond is on. Use the full name, like " + this.exampleName() + "."),
+            h("div", "This router's tunnel address"), h("div", { class: "tb-mono" }, st.tunnel_ip || "—")
+          ]);
+        },
+        addInFlight: function () {
+          var j = this.join;
+          return !!(j && j.add && (j.state === "asking" || j.state === "waiting" || j.state === "error"));
+        },
+
+        // Two or more servers: the ordered list, the switching choice, add/remove.
+        rServers: function (h) {
+          var self = this, st = this.st, ss = this.servers, fo = st.failover || {}, busy = this.busy.srv;
+          var first = ss[0].name;
+          var CHIP = { active: ["ok", "Connected"], connecting: ["blue", "Connecting…"], standby: ["", "Standby"], unreachable: ["err", "Can't reach"], unknown: ["", "Checking…"], off: ["", "Off"] };
+          var rows = ss.map(function (sv, i) {
+            var chip = !self.isOn() ? ["", "Off"] : CHIP[sv.state] || CHIP.unknown;
+            var addr = hostOf(sv.server || "");
+            var detail = sv.active && sv.state === "active" ? "Connected for " + fmtUptime(st.uptime_sec) + (addr ? " · " + addr : "")
+              : (addr ? addr + " · " : "") + (sv.last_ok ? (sv.state === "unreachable" ? "last answered " : "answered ") + fmtAgoS(sv.last_ok) : sv.state === "unknown" ? "not checked yet" : "hasn't answered yet");
+            return h("div", { class: "tb-srv" }, [
+              h("div", { class: "tb-wan-icon" }, [icon(h, "server")]),
+              h("div", { class: "tb-grow" }, [
+                h("div", { class: "tb-wan-t" }, [sv.name, h("span", { class: "tb-role" + (i === 0 ? " first" : "") }, i === 0 ? "First choice" : "Backup")]),
+                h("div", { class: "tb-muted tb-small" }, detail)
+              ]),
+              h("span", { class: "tb-chip " + chip[0] }, chip[1]),
+              h("div", { class: "tb-srv-ctl" }, [
+                h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move up", "aria-label": "Move " + sv.name + " up", disabled: i === 0 || !!busy }, on: { click: function () { self.moveServer(i, -1); } } }, [icon(h, "up", 16)]),
+                h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move down", "aria-label": "Move " + sv.name + " down", disabled: i === ss.length - 1 || !!busy }, on: { click: function () { self.moveServer(i, 1); } } }, [icon(h, "down", 16)]),
+                sv.active ? h("span", { class: "tb-btn small", style: { visibility: "hidden" }, attrs: { "aria-hidden": "true" } }, "Use now")
+                  : self.btn(h, "Use now", function () { self.useServer(sv); }, "small", busy || sv.state === "off" || !self.isOn()),
+                self.btn(h, "Remove", function () { self.removeServer(sv); }, "small text", busy)
+              ])
+            ]);
+          });
+          // the switching choice, in the servers' own names
+          var cur = fo.policy === "always" ? "always:" + fo.server : "prefer";
+          var preferLabel = ss.length === 2 ? "Prefer " + first + ", use " + ss[1].name + " if " + first + " is down" : "Prefer " + first + ", then the next one in the list that works";
+          var opts = [{ key: "prefer", t: preferLabel, b: "Switches after " + fmtDur(fo.switch_after_sec || 15) + " without an answer, and back to " + first + " once it has answered for " + fmtDur(fo.failback_after_sec || 120) + "." }]
+            .concat(ss.map(function (sv) { return { key: "always:" + sv.name, t: "Always use " + sv.name, b: "Never switches by itself, even if " + sv.name + " is down." }; }));
+          var me = this.settings && this.settings.paired_as;
+          return this.card(h, "Servers", [
+            h("div", { class: "tb-muted", style: { marginBottom: "4px" } }, "tailbond uses one server at a time. If it stops answering, the next one in the list takes over."),
+            h("div", rows),
+            h("div", { class: "tb-sec" }, [
+              h("div", { class: "tb-sec-t" }, "When to switch"),
+              h("div", { class: "tb-modes" + (opts.length === 3 ? " three" : ""), attrs: { role: "radiogroup", "aria-label": "When to switch" } }, opts.map(function (o) {
+                var on = cur === o.key;
+                return h("button", { class: "tb-mode" + (on ? " on" : ""), attrs: { type: "button", role: "radio", "aria-checked": String(on), disabled: !!self.busy["srv-policy"] }, on: { click: function () {
+                  if (on) return;
+                  if (o.key === "prefer") self.setPolicy("prefer"); else self.setPolicy("always", o.key.slice(7));
+                } } }, [h("div", { class: "tb-mode-t" }, o.t), h("div", { class: "tb-mode-b" }, o.b)]);
+              }))
+            ]),
+            h("div", { class: "tb-sec" }, [this.rHomeKv(h, false)]),
+            h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
+              this.srvAdd || this.addInFlight() ? null : this.btn(h, "Add another server", function () { self.openAddServer(); }, "small"),
+              this.btn(h, "Forget all servers", function () { self.unpair(); }, "small danger")
+            ]),
+            this.rAddServer(h)
+          ], me ? h("span", { class: "tb-muted tb-small", style: { fontWeight: 400 } }, "This router is " + me) : null);
+        },
+
+        // "Add another server": ask over Tailscale (join with add) or paste a link.
+        rAddServer: function (h) {
+          var self = this, j = this.join, d = this.disc, body = [];
+          var jAdd = j && j.add ? j : null;
+          if (!this.srvAdd && !this.addInFlight()) return null;
+          var firstName = (this.servers[0] || {}).name || this.serverShort || "your home server";
+          var have = {};
+          this.servers.forEach(function (s) { have[s.name.toLowerCase()] = true; have[hostOf(s.server || "").toLowerCase()] = true; });
+          if (this.serverShort) have[this.serverShort.toLowerCase()] = true;
+          if (jAdd && (jAdd.state === "asking" || jAdd.state === "waiting")) {
+            var srv = jAdd.server_name || shortName(jAdd.server);
+            body.push(h("div", { class: "tb-found" }, [
+              h("div", { class: "tb-spin", style: { width: "28px", height: "28px", borderWidth: "3px" } }),
+              h("div", { class: "tb-grow" }, [
+                h("div", { class: "tb-wan-t" }, jAdd.state === "asking" ? "Asking " + srv + "…" : "Waiting for approval on " + srv + "…"),
+                h("div", { class: "tb-muted", style: { marginTop: "4px", lineHeight: 1.6 } }, [
+                  "On " + srv + ", click ", h("b", "Approve"), " next to ", h("b", jAdd.name || "this router"), " (its page: ",
+                  h("a", { class: "tb-link", attrs: { href: "http://" + hostOf(jAdd.server) + ":8077/", target: "_blank", rel: "noopener" } }, "http://" + srv + ":8077"),
+                  " from any device on your Tailscale). It's added as a backup by itself; " + (this.serverShort || firstName) + " stays in use meanwhile."])
+              ]),
+              h("div", { class: "tb-actions" }, [this.btn(h, "Cancel", function () { self.run("srv-ask", api("DELETE", "/api/join")).catch(function () {}); })])
+            ]));
+          } else {
+            if (jAdd && jAdd.state === "error") {
+              // the join state carries only the code: name the clash from our list
+              var em = this.addSrvErr(h, jAdd.error, jAdd.conflict, jAdd.server_name, jAdd.subnet);
+              body.push(this.alert(h, "err", em[0] || this.joinErrTitle(jAdd), em[0] ? em[1] : this.joinErrBody(jAdd), [this.btn(h, "OK", function () { self.closeAddServer(); }, "small")]));
+            } else if (jAdd && jAdd.state === "approved") {
+              body.push(this.alert(h, "ok", (jAdd.added || jAdd.server_name || "The server") + " added as a backup", "It takes over if " + firstName + " stops answering."));
+            } else if (jAdd && jAdd.state === "declined") {
+              body.push(this.alert(h, "err", (jAdd.server_name || "The server") + " declined", "Ask whoever runs it to approve this router, then ask again."));
+            } else if (jAdd && jAdd.state === "expired") {
+              body.push(this.alert(h, "", "Nobody approved it in time", "The request expired after 10 minutes. Ask again when someone can approve it."));
+            }
+            var found = A(d && d.servers).filter(function (s) {
+              return !have[(s.name || "").toLowerCase()] && !have[shortName(s.dns_name).toLowerCase()] && !have[(s.ip || "").toLowerCase()];
+            });
+            if (this.discovering && !d) body.push(h("div", { class: "tb-row tb-muted", style: { padding: "4px 0 12px" } }, [h("div", { class: "tb-spin" }), "Looking for other tailbond servers on your tailnet…"]));
+            found.forEach(function (s) {
+              body.push(h("div", { class: "tb-found" }, [
+                h("div", { class: "tb-wan-icon" }, [icon(h, "server")]),
+                h("div", { class: "tb-grow" }, [h("div", { class: "tb-wan-t" }, "Found on your tailnet: " + s.name), h("div", { class: "tb-muted tb-small" }, (s.dns_name || "") + (s.ip ? " · " + s.ip : ""))]),
+                h("div", { class: "tb-actions" }, [self.btn(h, self.busy["srv-ask"] ? "Asking…" : "Ask to add", function () { self.askAdd(s.dns_name || s.ip); }, "primary", self.busy["srv-ask"])])
+              ]));
+            });
+            body.push(h("div", { class: "tb-label", style: { marginTop: found.length ? "4px" : "0" } }, found.length ? "Or type its name in Tailscale" : "Its name in Tailscale"));
+            body.push(h("div", { class: "tb-row" }, [
+              h("input", { class: "tb-input", attrs: { placeholder: "e.g. vps" }, domProps: { value: this.srvTyped }, on: { input: function (e) { self.srvTyped = e.target.value; }, keyup: function (e) { if (e.key === "Enter" && self.srvTyped.trim()) self.askAdd(self.srvTyped.trim()); } } }),
+              this.btn(h, "Ask to add", function () { if (self.srvTyped.trim()) self.askAdd(self.srvTyped.trim()); }, "", !this.srvTyped.trim() || this.busy["srv-ask"])
+            ]));
+            body.push(h("div", { class: "tb-small", style: { marginTop: "10px" } }, [h("a", { class: "tb-link", on: { click: function () { self.srvShowPaste = !self.srvShowPaste; } } }, this.srvShowPaste ? "Hide the link box" : "No Tailscale there? Paste a pairing link from it")]));
+            if (this.srvShowPaste) {
+              body.push(h("div", { style: { marginTop: "8px" } }, [
+                h("textarea", { class: "tb-input", attrs: { placeholder: "tailbond://pair?d=…" }, domProps: { value: this.srvPaste }, on: { input: function (e) { self.srvPaste = e.target.value; } } }),
+                h("div", { class: "tb-actions" }, [this.btn(h, this.busy["srv-paste"] ? "Adding…" : "Add", function () { self.pasteAdd(); }, "primary", this.busy["srv-paste"])])
+              ]));
+            }
+            if (this.srvErr) {
+              var e = this.srvErr, ed = e.data || {};
+              var pm = this.addSrvErr(h, e.error, ed.conflict, null, ed.subnet);
+              body.push(h("div", { style: { marginTop: "12px" } }, [this.alert(h, "err", pm[0], pm[1])]));
+            }
+          }
+          return h("div", { class: "tb-sec" }, [
+            h("div", { class: "tb-sec-t" }, ["Add another server", this.srvAdd ? h("a", { class: "tb-link tb-small", style: { fontWeight: 400 }, on: { click: function () { self.closeAddServer(); } } }, "Close") : null]),
+            h("div", { class: "tb-muted", style: { marginBottom: "12px", lineHeight: 1.55 } }, "A second tailbond server, for example a VPS, takes over when " + firstName + " can't be reached. It needs tailbond running and the same Tailscale account."),
+            h("div", body)
+          ]);
+        },
+
+        // ---- Bypass tailbond (rules by website, device, address, port) ----
+        rBypass: function (h) {
+          var self = this, b = this.bp || {}, rules = A(b.rules), sup = b.support || {}, counters = b.counters || {};
+          var ks = !(this.info && this.info.kill_switch === false);
+          var waiting = sup.domains === "none";
+          var hasDomain = rules.some(function (r) { return r.kind === "domain"; });
+          var addBtn = rules.length ? this.btn(h, "Add a rule", function () { self.openBypass(); }, "small primary") : null;
+          var presets = function (cls) {
+            return h("div", { class: "tb-presets" + (cls || "") }, [
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("bank"); } } }, [icon(h, "globe", 14), "Banking"]),
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("streaming"); } } }, [icon(h, "globe", 14), "Streaming location"]),
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("wificall"); } } }, [icon(h, "call", 14), "Wi-Fi calling"]),
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("laptop"); } } }, [icon(h, "device", 14), "Work laptop"])
+            ]);
+          };
+          if (!rules.length) {
+            return this.card(h, "Bypass tailbond", [
+              h("div", { class: "tb-empty" }, [
+                h("div", { class: "tb-wan-icon" }, [icon(h, "skip")]),
+                h("div", { class: "tb-grow" }, [
+                  h("div", { style: { lineHeight: 1.6, color: "#606266" } }, "Some things work better without tailbond: bank websites that block VPNs, streaming that should see where you really are, Wi-Fi calling on your phone. Others must never skip it, like a work laptop. Add a rule and they skip tailbond (or always use it), while everything else keeps going through " + (this.serverShort || "your home server") + "."),
+                  h("div", { class: "tb-actions", style: { marginTop: "12px", alignItems: "center" } }, [
+                    this.btn(h, "Add a rule", function () { self.openBypass(); }, "primary small"),
+                    h("span", { class: "tb-muted tb-small" }, "or start from:"),
+                    presets()
+                  ])
+                ])
+              ])
+            ]);
+          }
+          // Wi-Fi calling is two port rules; show such a pair as one row
+          var rows = [];
+          rules.forEach(function (r) {
+            var last = rows[rows.length - 1];
+            if (last && r.kind === "port" && last.kind === "port" && r.note && r.note === last.note && r.target === last.target && (r.wan || "") === (last.wan || "") && (r.enabled !== false) === last.on) last.rules.push(r);
+            else rows.push({ kind: r.kind, note: r.note, target: r.target, wan: r.wan, on: r.enabled !== false, rules: [r] });
+          });
+          var list = rows.map(function (row) {
+            var r = row.rules[0], main, sub = [];
+            if (r.kind === "domain") { main = r.match; if (r.note) sub.push(r.note); }
+            else if (r.kind === "device") {
+              var c = self.lanByMac(r.match);
+              main = (c && c.name) || r.note || r.match || r.ip;
+              sub.push(c && c.name ? (r.match || r.ip) : (r.match ? "device " + r.match : "device"));
+              if (c && !c.online) sub.push("not connected now");
+            } else if (r.kind === "ip") { main = r.match; sub.push(r.note || "address"); }
+            else {
+              var ports = row.rules.map(function (x) { return x.match.split("/")[1]; });
+              var proto = r.match.split("/")[0].toUpperCase();
+              var pw = proto + " port" + (ports.length > 1 || /-/.test(ports[0]) ? "s " : " ") + ports.join(" and ");
+              main = r.note || pw;
+              if (r.note) sub.push(pw);
+            }
+            var n = row.rules.reduce(function (t, x) { return t + ((counters[x.id] && counters[x.id].connections) || 0); }, 0);
+            if (n > 0) sub.push(n + (n === 1 ? " connection" : " connections"));
+            var label = main;
+            return h("div", { class: "tb-rule" + (row.on ? "" : " off") }, [
+              h("div", { class: "tb-wan-icon" }, [icon(h, row.note === "Wi-Fi calling" ? "call" : BP_KIND_ICON[r.kind] || "unknown")]),
+              h("div", { class: "tb-grow" }, [
+                h("div", { class: "tb-wan-t", style: { overflowWrap: "anywhere" } }, [main,
+                  r.kind === "domain" && waiting ? h("span", { class: "tb-chip warn", style: { marginLeft: "8px", verticalAlign: "1px" } }, "Waiting") : null]),
+                h("div", { class: "tb-small", style: { marginTop: "2px" } }, [
+                  h("span", { class: "tb-tgt " + (r.target || "direct") }, row.on ? self.targetWords(r) : "Off"),
+                  sub.length ? h("span", { class: "tb-muted" }, " · " + sub.join(" · ")) : null
+                ])
+              ]),
+              self.sw(h, row.on, function () { self.toggleRules(row.rules, !row.on); }, false, self.busy["bp-" + r.id], (row.on ? "Turn off: " : "Turn on: ") + label),
+              h("button", { class: "tb-btn small text icon", style: { color: "#909399" }, attrs: { type: "button", title: "Delete", "aria-label": "Delete " + label, disabled: !!self.busy["bp-" + r.id] }, on: { click: function () { self.deleteRules(row.rules, label); } } }, [icon(h, "trash", 18)])
+            ]);
+          });
+          var body = [];
+          if (waiting && sup.reason && (hasDomain || !sup.firewall)) {
+            body.push(this.alert(h, "", hasDomain ? "Website rules are waiting" : "Rules can't be applied on this router", sup.reason));
+          }
+          body.push(h("div", { class: "tb-muted", style: { marginBottom: "4px" } }, "Everything else goes through " + (this.serverShort || "your home server") + ". " + (ks ? "Rules that skip tailbond keep working while it's down." : "")));
+          body.push(h("div", list));
+          body.push(h("div", { class: "tb-sec tb-row", style: { flexWrap: "wrap" } }, [h("span", { class: "tb-muted tb-small" }, "Quick add:"), presets()]));
+          if (hasDomain) body.push(h("div", { class: "tb-help" }, "Website rules can miss devices that use their own secure DNS (for example Private DNS on Android or Secure DNS in Chrome). Use a device rule for those."));
+          return this.card(h, "Bypass tailbond", body, addBtn);
+        },
+
+        rBypassDialog: function (h) {
+          var self = this, e = this.bpEdit, b = this.bp || {}, sup = b.support || {}, rules = A(b.rules);
+          var ks = !(this.info && this.info.kill_switch === false), home = this.serverShort || "your home server";
+          var close = function () { self.bpEdit = null; };
+          var seg = [["domain", "A website"], ["device", "A device"]].concat(e.more ? [["addr", "An address or port"]] : []);
+          var titles = { bank: "Your bank skips tailbond", streaming: "Streaming sees where you are", wificall: "Wi-Fi calling skips tailbond", laptop: "A work laptop always uses tailbond" };
+          var body = [];
+          body.push(h("div", { class: "tb-presets", style: { marginBottom: "4px" } }, [
+            h("span", { class: "tb-muted tb-small" }, "Quick picks:"),
+            [["bank", "Banking", "globe"], ["streaming", "Streaming location", "globe"], ["wificall", "Wi-Fi calling", "call"], ["laptop", "Work laptop", "device"]].map(function (p) {
+              return h("button", { class: "tb-preset" + (e.preset === p[0] ? " on" : ""), attrs: { type: "button", "aria-pressed": String(e.preset === p[0]) }, on: { click: function () { self.openBypass(p[0]); } } }, [icon(h, p[2], 14), p[1]]);
+            })
+          ]));
+          body.push(h("div", { class: "tb-label" }, "What"));
+          body.push(h("div", { class: "tb-row", style: { flexWrap: "wrap" } }, [
+            h("div", { class: "tb-seg", attrs: { role: "radiogroup", "aria-label": "What" } }, seg.map(function (o) {
+              return h("button", { class: e.kind === o[0] ? "on" : "", attrs: { type: "button", role: "radio", "aria-checked": String(e.kind === o[0]) }, on: { click: function () { self.bpKind(o[0]); } } }, o[1]);
+            })),
+            e.more ? null : h("a", { class: "tb-link tb-small", on: { click: function () { self.bpKind("addr"); } } }, "More: an address or port")
+          ]));
+          if (e.kind === "domain") {
+            body.push(h("div", { class: "tb-label" }, e.multi ? "Websites, one per line (remove any you don't use)" : e.preset === "bank" ? "Your bank's website" : "Website"));
+            body.push(h(e.multi ? "textarea" : "input", { class: "tb-input", style: e.multi ? { height: "118px" } : {}, attrs: { placeholder: e.preset === "bank" ? "e.g. mybank.com" : "e.g. mybank.com", autofocus: true }, domProps: { value: e.text }, on: { input: function (ev) { e.text = ev.target.value; } } }));
+            body.push(h("div", { class: "tb-help" }, e.multi
+              ? "Each one includes all its pages and parts (www.netflix.com, api.netflix.com…)."
+              : "Includes all its pages and parts, like www.mybank.com and login.mybank.com." + (e.preset === "bank" ? " Banks that block VPNs then see this router's internet instead." : "")));
+            if (sup.domains === "none" && sup.reason) body.push(h("div", { class: "tb-alert", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [h("b", "Saved, but waits for now. "), sup.reason])]));
+            body.push(h("div", { class: "tb-help" }, "Devices that use their own secure DNS (Private DNS on Android, Secure DNS in Chrome) may not be matched."));
+          } else if (e.kind === "device") {
+            var taken = {};
+            rules.forEach(function (r) { if (r.kind === "device" && r.match) taken[r.match.toLowerCase()] = true; });
+            var lan = A(this.lan);
+            body.push(h("div", { class: "tb-label" }, "Which device"));
+            if (this.lan === null) body.push(h("div", { class: "tb-row tb-muted" }, [h("div", { class: "tb-spin" }), "Loading devices…"]));
+            else if (!lan.length) body.push(h("div", { class: "tb-muted" }, "No devices found on this router yet. Type the device's MAC address below."));
+            else body.push(h("div", { class: "tb-pick", attrs: { role: "radiogroup", "aria-label": "Devices" } }, lan.map(function (c) {
+              var on = e.mac === (c.mac || "").toLowerCase();
+              return h("div", { class: "tb-pick-i" + (on ? " on" : ""), attrs: { role: "radio", tabindex: 0, "aria-checked": String(on) }, on: { click: function () { e.mac = (c.mac || "").toLowerCase(); e.ip = c.ip || ""; e.name = c.name || ""; e.macTyped = ""; e.err = ""; } } }, [
+                h("span", { class: "tb-dot" + (c.online ? " ok" : ""), attrs: { title: c.online ? "Connected" : "Not connected now" } }),
+                h("div", { class: "tb-grow" }, [
+                  h("div", { style: { fontWeight: 600 } }, c.name || "Unnamed device"),
+                  h("div", { class: "tb-mono" }, (c.mac || "") + (c.ip ? " · " + c.ip : ""))
+                ]),
+                taken[(c.mac || "").toLowerCase()] ? h("span", { class: "tb-muted tb-small" }, "has a rule") : c.online ? null : h("span", { class: "tb-muted tb-small" }, "not connected")
+              ]);
+            })));
+            body.push(h("div", { class: "tb-label" }, "Not listed? Its MAC address"));
+            body.push(h("input", { class: "tb-input", attrs: { placeholder: "aa:bb:cc:dd:ee:ff" }, domProps: { value: e.macTyped }, on: { input: function (ev) { e.macTyped = ev.target.value; e.mac = ""; e.ip = ""; e.name = ""; } } }));
+            body.push(h("div", { class: "tb-help" }, "Phones and laptops may use a different (private) MAC address for each Wi-Fi network; pick the device while it's connected here."));
+          } else {
+            body.push(h("div", { class: "tb-label" }, "Addresses or ports"));
+            body.push(h("input", { class: "tb-input", attrs: { placeholder: "e.g. 203.0.113.9, 203.0.113.0/24, udp/4500, tcp/5060-5061" }, domProps: { value: e.addr }, on: { input: function (ev) { e.addr = ev.target.value; } } }));
+            body.push(h("div", { class: "tb-help" }, e.preset === "wificall"
+              ? "Phones place Wi-Fi calls over UDP ports 500 and 4500. Many carriers refuse them through a VPN, so these skip tailbond."
+              : "Separate several with commas. A port looks like udp/4500 or tcp/5060-5061."));
+          }
+          // where it goes
+          var wans = A(b.wans);
+          var opts = [["direct", "Use the internet directly"]].concat(wans.map(function (w) { return ["wan:" + w.name, "Use only " + (w.label || w.name) + (w.up ? "" : " (not connected now)")]; }), [["tunnel", "Always use tailbond"]]);
+          var tgt = e.target.indexOf("wan:") === 0 ? "wan" : e.target;
+          var wl = tgt === "wan" ? this.wanLabel(e.target.slice(4)) : "";
+          var help = {
+            direct: "Skips tailbond and uses this router's internet, whichever connection GL picks." + (ks ? " Keeps working while tailbond can't reach " + home + "." : ""),
+            wan: "Skips tailbond and goes out " + wl + " only.",
+            tunnel: (e.kind === "device" ? "Everything from this device goes through " + home + ", even websites or ports set to skip tailbond." : "Goes through " + home + " even if another rule says to skip tailbond.") + (ks ? " If tailbond is down, it waits rather than going around it." : "")
+          }[tgt];
+          body.push(h("div", { class: "tb-label" }, e.kind === "device" ? "This device should" : "It should"));
+          body.push(h("select", { class: "tb-input", attrs: { "aria-label": "Where it goes" }, domProps: { value: e.target }, on: { change: function (ev) { e.target = ev.target.value; e.touched = true; } } },
+            opts.map(function (o) { return h("option", { attrs: { value: o[0] }, domProps: { selected: e.target === o[0] } }, o[1]); })));
+          body.push(h("div", { class: "tb-help" }, help));
+          if (e.err) body.push(h("div", { style: { color: "#f56c6c", marginTop: "10px" } }, e.err));
+          return h("div", { class: "tb-modal", on: { click: function (ev) { if (ev.target === ev.currentTarget) close(); } } }, [
+            h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-label": "Add a rule" } }, [
+              h("div", { class: "tb-dialog-t" }, titles[e.preset] || "Add a rule"),
+              h("div", body),
+              h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, [
+                this.btn(h, "Cancel", close),
+                this.btn(h, this.busy["bp-save"] ? "Adding…" : "Add", function () { self.saveBypass(); }, "primary", this.busy["bp-save"])
+              ])
             ])
           ]);
         },
