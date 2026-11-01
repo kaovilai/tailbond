@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/config"
@@ -68,6 +70,13 @@ type Agent struct {
 	outside *outsideSeen // server: last client seen from the internet (a.mu)
 	// listIfs discovers interfaces (tests stub it).
 	listIfs func() ([]netif.Iface, error)
+	wc      whoisCache // admin requests from the tailnet: who sent them
+	apkHash struct {   // the phone page's APK checksum
+		sync.Mutex
+		key, sum string
+	}
+	// landingUp: the phone landing page listens on a Tailscale IP.
+	landingUp atomic.Bool
 	// glRead reads GL firmware's repeater portal state (tests stub it).
 	glRead func(ctx context.Context) glrepeater.State
 	// captiveDialer replaces the per-device probe dial (tests).
@@ -181,6 +190,9 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	srvErr := make(chan error, 1)
 	go func() { srvErr <- a.serveHTTP(ctx) }()
+	if cfg.Role == config.RoleServer {
+		go a.serveLanding(ctx)
+	}
 
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -319,6 +331,19 @@ func (a *Agent) markReadyLocked() {
 	}
 }
 
+// webPorts: the TCP ports the agent serves to the tailnet (dashboard and
+// the phone page's bind port), for hooks that open them to tailnet sources.
+func webPorts(cfg *config.Config) string {
+	_, port, err := net.SplitHostPort(cfg.Listen)
+	if err != nil {
+		port = strings.TrimPrefix(cfg.Listen, ":")
+	}
+	if bind, _, ok := cfg.LandingPorts(); ok {
+		port += " " + strconv.Itoa(bind)
+	}
+	return port
+}
+
 func (a *Agent) hookEnvLocked() map[string]string {
 	cfg := a.store.Get()
 	env := map[string]string{
@@ -332,6 +357,11 @@ func (a *Agent) hookEnvLocked() map[string]string {
 		env["TB_SUBNET"] = cfg.Server.Subnet
 		env["TB_SUBNET6"] = cfg.Server.Subnet6
 		env["TB_PORT"] = fmt.Sprint(cfg.Server.Port)
+		env["TB_WEB_PORTS"] = webPorts(cfg)
+		env["TB_ADVERTISE_ROUTE"] = "1"
+		if cfg.Server.NoAdvertiseRoute {
+			env["TB_ADVERTISE_ROUTE"] = "0"
+		}
 		if !cfg.Server.DisableDNS {
 			env["TB_DNS_IP"] = cfg.ServerTunnelIP()
 		} else {

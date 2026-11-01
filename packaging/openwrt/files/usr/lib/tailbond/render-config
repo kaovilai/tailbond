@@ -112,6 +112,15 @@ render() {
 	json_add_string listen "$(listen_addr "$role")"
 	json_add_string ui_password "$(keep main.ui_password @.ui_password '')"
 	json_add_string mode "$(keep main.mode @.mode speed)"
+	# Server role: the phone page (http://<name>/) binds landing_port on
+	# the Tailscale IPs; the server-up hook redirects tailnet tcp/80 to it
+	# (GL's nginx owns port 80). 0 turns it off.
+	if [ "$(cfg_or main.landing_port 8078)" = 0 ]; then
+		json_add_int landing_port -1
+	else
+		json_add_int landing_port "$(cfg_or main.landing_port 8078)"
+		json_add_int landing_public_port 80
+	fi
 
 	json_add_object server
 	json_add_int port "$(cfg_or server.port 443)"

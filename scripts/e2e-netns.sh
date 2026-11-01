@@ -236,7 +236,10 @@ for h in portal-open portal-close; do
 env | grep '^TB_' | sort > "$WORK/hook-$h.env"
 export FAKE_ROOT="$WORK/fakeroot" TB_STATE="$WORK/hookstate" TB_INITD=/nonexistent TB_LIB="$ROOT/packaging/openwrt/hooks/lib.sh"
 export PATH="$WORK/stubs:\$PATH"
-exec "$ROOT/packaging/openwrt/hooks/$h"
+rm -f "$WORK/hook-$h.done"
+"$ROOT/packaging/openwrt/hooks/$h"; rc=\$?
+touch "$WORK/hook-$h.done"  # the checks wait for the hook to finish, not just start
+exit \$rc
 EOF
   chmod +x "$WORK/hooks/$h"
 done
@@ -251,9 +254,11 @@ cat >"$WORK/srv/tailbond.json" <<EOF
   "hooks_dir": "$WORK/hooks",
   "listen": ":8077",
   "mode": "speed",
+  "android_apk": "$WORK/srv/tailbond.apk",
   "server": {"port": 443, "public_addr": "$SERVER_IP", "subnet": "10.77.0.0/24", "subnet6": "fd77:77::/112", "use_tailscale_cert": false}
 }
 EOF
+printf 'PK\003\004 e2e apk' >"$WORK/srv/tailbond.apk"
 ip netns exec "$NS_S" env PATH="$WORK/ts-srv:$PATH" "$TAILBONDD" -config "$WORK/srv/tailbond.json" >"$WORK/server.log" 2>&1 &
 SRV_PID=$!
 if wait_for 20 "server agent connected" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\" and .control_api'"; then
@@ -263,6 +268,8 @@ else
 fi
 [ -s "$WORK/hook-server-up.env" ] && grep -q '^TB_SUBNET=10.77.0.0/24' "$WORK/hook-server-up.env" && grep -q '^TB_DNS_IP=10.77.0.1' "$WORK/hook-server-up.env" \
   && ok "server-up hook ran with TB_* env" || bad "server-up hook missing or wrong env"
+grep -q '^TB_WEB_PORTS=8077 80$' "$WORK/hook-server-up.env" && ok "server-up hook told which tcp ports to open to the tailnet (8077 80)" \
+  || bad "TB_WEB_PORTS: $(grep TB_WEB_PORTS "$WORK/hook-server-up.env")"
 
 say "pairing link (POST /api/clients)"
 PAIR="$(sapi -X POST -d '{"name":"e2e-legacy"}' "http://$API/api/clients")"
@@ -297,6 +304,20 @@ capi "http://$API/api/paths" | jq -e '[.[] | select(.name == "eth0" and .kind ==
 HELLO="$(ip netns exec "$NS_C" curl -fsS -m 3 http://100.101.1.1:8077/api/hello || true)"
 jq -e '.tailbond == true and .role == "server" and .name == "homebox"' <<<"$HELLO" >/dev/null \
   && ok "GET /api/hello on the server's Tailscale IP: $HELLO" || bad "hello: $HELLO"
+say "phone page on the server's Tailscale IP, port 80 (http://homebox/)"
+if wait_for 10 "phone page" ip netns exec "$NS_C" curl -fsS -m 3 -A "Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile" -o "$WORK/landing.html" http://100.101.1.1/; then
+  grep -q 'Get tailbond on' "$WORK/landing.html" && grep -q 'href="/tailbond.apk"' "$WORK/landing.html" \
+    && grep -q 'intent://ask?server=homebox.tail1234.ts.net' "$WORK/landing.html" \
+    && ok "http://100.101.1.1/ serves the phone page (app download + ask link)" || bad "phone page content: $(head -c 300 "$WORK/landing.html")"
+else
+  bad "nothing on 100.101.1.1:80"
+fi
+[ "$(ip netns exec "$NS_C" curl -s -m 3 http://100.101.1.1/tailbond.apk)" = "$(cat "$WORK/srv/tailbond.apk")" ] \
+  && ok "the APK downloads from the phone page" || bad "APK not served on port 80"
+LCODE="$(ip netns exec "$NS_C" curl -s -m 3 -o /dev/null -w '%{http_code} %{redirect_url}' http://100.101.1.1/api/status)"
+[ "$LCODE" = "302 http://100.101.1.1/" ] && ok "port 80 serves no API (/api/status → redirect to the page)" || bad "port 80 /api/status: $LCODE"
+ip netns exec "$NS_S" curl -fsS -m 3 http://127.0.0.1:8077/api/settings | jq -e '.landing_url == "http://homebox.tail1234.ts.net/" and .landing_typed == "homebox/" and (.landing_qr_svg | startswith("<svg"))' >/dev/null \
+  && ok "settings point phones at http://homebox.tail1234.ts.net/" || bad "settings landing: $(ip netns exec "$NS_S" curl -fsS -m 3 http://127.0.0.1:8077/api/settings | jq -c '{landing_url,landing_typed}')"
 DISC="$(capi "http://$API/api/discover?refresh=1" || true)"
 jq -e '.tailscale_running and ([.servers[] | select(.name == "homebox" and .ip == "100.101.1.1")] | length == 1) and .checked == 2' <<<"$DISC" >/dev/null \
   && ok "GET /api/discover: found homebox among 2 online peers" || bad "discover: $DISC"
@@ -464,7 +485,7 @@ fi
 wait_for 30 "tunnel back on wlan0" ip netns exec "$NS_C" ping -c1 -W2 10.77.0.1 && ok "tunnel stays up on wlan0" || bad "tunnel down while eth0 captive"
 capi -X POST -d '{"name":"wan"}' "http://$API/api/captive/signin" | jq -e '.portal_url == "http://10.200.9.9/login"' >/dev/null \
   && ok "sign-in mode on (portal_url http://10.200.9.9/login)" || bad "signin failed"
-wait_for 10 "portal-open hook" test -s "$WORK/hook-portal-open.env" && grep -q '^TB_PORTAL_DEV=eth0' "$WORK/hook-portal-open.env" && grep -q '^TB_PORTAL_DNS=10.200.1.1' "$WORK/hook-portal-open.env" \
+wait_for 10 "portal-open hook" test -e "$WORK/hook-portal-open.done" && grep -q '^TB_PORTAL_DEV=eth0' "$WORK/hook-portal-open.env" && grep -q '^TB_PORTAL_DNS=10.200.1.1' "$WORK/hook-portal-open.env" \
   && ok "portal-open ran (eth0, WAN DNS 10.200.1.1)" || bad "portal-open env: $(cat "$WORK/hook-portal-open.env" 2>/dev/null)"
 ip -n "$NS_C" rule | grep -q 'iif lan0 lookup 78' && ok "rule: LAN -> table 78" || bad "no LAN rule: $(ip -n "$NS_C" rule)"
 ip -n "$NS_C" route get 198.51.100.7 from 192.168.8.100 iif lan0 2>&1 | grep -q 'dev eth0' \
@@ -478,12 +499,12 @@ if wait_for 20 "eth0 open again" sh -c "[ \"\$(ip netns exec $NS_C curl -fsS -m 
 else
   bad "eth0 still: $(path_field eth0 captive)"
 fi
-wait_for 10 "portal-close hook" test -s "$WORK/hook-portal-close.env" && ok "portal-close ran" || bad "portal-close missing"
+wait_for 10 "portal-close hook" test -e "$WORK/hook-portal-close.done" && ok "portal-close ran" || bad "portal-close missing"
 ! ip -n "$NS_C" rule | grep -q 'lookup 78' && ok "LAN rule removed" || bad "rule left: $(ip -n "$NS_C" rule)"
 fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '10.77.0.1' && ! fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '@eth0' \
   && [ "$(fuci -q get 'dhcp.@dnsmasq[0].rebind_protection')" = 1 ] && ok "dnsmasq restored" || bad "dnsmasq not restored: $(fuci show dhcp)"
 wait_for 30 "eth0 back in bonding" grep -q '^Path = eth0' "$WORK/cli/state/client.conf" && ok "eth0 rejoined bonding" || bad "eth0 not rejoined"
-rm -f "$WORK/hook-portal-open.env" "$WORK/hook-portal-close.env"
+rm -f "$WORK/hook-portal-open.env" "$WORK/hook-portal-close.env" "$WORK/hook-portal-open.done" "$WORK/hook-portal-close.done"
 
 say "captive portal on wlan0 (wwan): GL's repeater owns it"
 grep -q '^wwan /generate_204' "$WORK/portal.log" && bad "tailbond probed the GL-owned repeater" || ok "no tailbond probe over wlan0 (GL owns the repeater)"
@@ -498,7 +519,7 @@ wait_for 30 "wlan0 out of bonding" sh -c "! grep -q '^Path = wlan0' $WORK/cli/st
 [ ! -e "$WORK/hook-portal-open.env" ] && ok "no sign-in bypass before GL's Login Mode" || bad "bypass opened without Login Mode"
 capi -X POST -d '{"name":"wwan"}' "http://$API/api/captive/signin" >/dev/null 2>&1 || true
 echo '{"ssid":"Hotel-Guest","state":2,"portal":true,"portal_detecting":false,"portal_url":"http://10.200.9.9/login","bare_mode":true,"auto_portal":true}' >"$WORK/gl-repeater.json"
-wait_for 10 "portal-open (GL)" sh -c "grep -q '^TB_PORTAL_SOURCE=glinet' $WORK/hook-portal-open.env 2>/dev/null" \
+wait_for 10 "portal-open (GL)" sh -c "test -e $WORK/hook-portal-open.done && grep -q '^TB_PORTAL_SOURCE=glinet' $WORK/hook-portal-open.env 2>/dev/null" \
   && grep -q '^TB_PORTAL_DEV=wlan0' "$WORK/hook-portal-open.env" && ok "GL Login Mode on: our bypass follows it (wlan0)" || bad "portal-open env: $(cat "$WORK/hook-portal-open.env" 2>/dev/null)"
 ip -n "$NS_C" route get 198.51.100.7 from 192.168.8.100 iif lan0 2>&1 | grep -q 'dev wlan0' \
   && ok "LAN reaches the hotel portal over wlan0 during GL's Login Mode" || bad "route: $(ip -n "$NS_C" route get 198.51.100.7 from 192.168.8.100 iif lan0 2>&1)"
@@ -508,7 +529,7 @@ ip netns exec "$NS_C" curl -fsS -m 3 --interface wlan0 http://10.200.9.9/hotspot
   && tail -n1 "$WORK/portal.log" | grep -q '^wwan /hotspot-detect' && ok "GL-style check over wlan0 reaches the portal directly" || bad "GL check path: $(tail -n2 "$WORK/portal.log")"
 ip -n "$NS_C" route get 10.200.9.9 oif wlan0 2>&1 | grep -q 'dev wlan0' && ok "router traffic bound to wlan0 not hijacked by tb0" || bad "oif route"
 echo '{"ssid":"Hotel-Guest","state":2,"portal":false,"portal_detecting":false,"portal_url":"","bare_mode":false,"auto_portal":true}' >"$WORK/gl-repeater.json"
-wait_for 10 "portal-close (GL)" test -s "$WORK/hook-portal-close.env" && ok "GL left Login Mode: bypass reverted" || bad "no portal-close"
+wait_for 10 "portal-close (GL)" test -e "$WORK/hook-portal-close.done" && ok "GL left Login Mode: bypass reverted" || bad "no portal-close"
 ! ip -n "$NS_C" rule | grep -q 'lookup 78' && ok "LAN rule removed" || bad "rule left"
 wait_for 30 "wlan0 back in bonding" grep -q '^Path = wlan0' "$WORK/cli/state/client.conf" && ok "wlan0 rejoined bonding, no action in either UI" || bad "wlan0 not rejoined"
 [ "$(grep -c '^wwan /generate_204' "$WORK/portal.log")" = 0 ] && ok "still no tailbond probe over wlan0" || bad "probed wlan0"

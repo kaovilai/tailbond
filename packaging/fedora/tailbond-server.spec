@@ -49,6 +49,10 @@ install -Dpm 0644 firewalld/policy-tailbond-out.xml %{buildroot}%{_prefix}/lib/f
 install -Dpm 0644 firewalld/policy-tailbond-in.xml %{buildroot}%{_prefix}/lib/firewalld/policies/tailbond-in.xml
 install -Dpm 0600 tailbond.json %{buildroot}%{_sysconfdir}/tailbond/tailbond.json
 install -dm 0700 %{buildroot}%{_sharedstatedir}/tailbond
+# The Android app and the GL router package, offered for download (phone
+# page, Devices tab) when the build had them.
+install -dm 0755 %{buildroot}%{_datadir}/tailbond
+for f in share/*; do if [ -f "$f" ]; then install -pm 0644 "$f" %{buildroot}%{_datadir}/tailbond/; fi; done
 install -Dpm 0644 doc/fedora-server.md %{buildroot}%{_docdir}/%{name}/fedora-server.md
 install -Dpm 0644 doc/architecture.md %{buildroot}%{_docdir}/%{name}/architecture.md
 install -Dpm 0644 doc/LICENSE.mqvpn %{buildroot}%{_licensedir}/%{name}/LICENSE.mqvpn
@@ -67,7 +71,13 @@ fi
 %systemd_postun_with_restart tailbond.service
 if [ "$1" -eq 0 ] && command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
     z="$(firewall-cmd --get-default-zone 2>/dev/null)"
-    firewall-cmd -q --permanent --zone="$z" --remove-service=tailbond 2>/dev/null || :
+    for zz in $(firewall-cmd --permanent --get-zones 2>/dev/null); do
+        firewall-cmd -q --permanent --zone="$zz" --remove-service=tailbond 2>/dev/null || :
+        firewall-cmd -q --permanent --zone="$zz" --remove-port=41641/udp 2>/dev/null || :
+    done
+    tz="$(firewall-cmd --permanent --get-zone-of-interface=tailscale0 2>/dev/null)" || tz="$z"
+    firewall-cmd --permanent --zone="$tz" --list-rich-rules 2>/dev/null | grep -E 'source address="(100\.64\.0\.0/10|fd7a:115c:a1e0::/48)" port port="(80|8077)" protocol="tcp" accept' |
+        while read -r r; do firewall-cmd -q --permanent --zone="$tz" --remove-rich-rule="$r" || :; done
     firewall-cmd -q --reload || :
 fi
 
@@ -86,6 +96,7 @@ fi
 %{_prefix}/lib/firewalld/zones/tailbond.xml
 %{_prefix}/lib/firewalld/policies/tailbond-out.xml
 %{_prefix}/lib/firewalld/policies/tailbond-in.xml
+%{_datadir}/tailbond/
 %dir %attr(0755,root,root) %{_sysconfdir}/tailbond
 %config(noreplace) %attr(0600,root,root) %{_sysconfdir}/tailbond/tailbond.json
 %dir %attr(0700,root,root) %{_sharedstatedir}/tailbond

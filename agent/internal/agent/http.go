@@ -16,9 +16,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/tailbond/tailbond/agent/internal/pairing"
 	"github.com/tailbond/tailbond/agent/web"
 )
 
@@ -46,6 +48,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.hSettingsGet)
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
 	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
+	mux.HandleFunc("GET /get", a.hLanding) // the phone landing page, also on :8077
 	mux.HandleFunc("GET /tailbond-glinet.ipk", a.hIPK)
 	mux.HandleFunc("DELETE /api/pair", a.hUnpair)
 	// Pairing over Tailscale (docs/architecture.md).
@@ -79,11 +82,7 @@ func (a *Agent) Handler() http.Handler {
 
 func (a *Agent) secure(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'")
+		setSecurityHeaders(w)
 		// Bonded clients reach the server's tunnel address; there only the
 		// token-authenticated peer list exists (no UI, no admin API).
 		if a.viaTunnel(r) {
@@ -103,6 +102,12 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 			if !a.authorized(r) && !tailnetPublic(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
 				httpErr(w, http.StatusUnauthorized, errors.New("login required"))
 				return
+			}
+			if !tailnetPublic(r) && r.URL.Path != "/api/logout" {
+				if owner := a.ownerOnly(r); owner != "" {
+					writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "owner only", "owner": owner})
+					return
+				}
 			}
 			// Mutations must come from our own page (no CSRF via simple forms).
 			if r.Method != http.MethodGet && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && r.Method != http.MethodDelete {
@@ -436,6 +441,15 @@ type settingsView struct {
 	Version       string `json:"version"`
 	AndroidAPK    bool   `json:"android_apk"`
 	GLiNetIPK     bool   `json:"glinet_ipk"`
+	// server: where phones get tailbond (the landing page), what to type
+	// in a phone's browser, and a QR code of the URL
+	LandingURL   string `json:"landing_url,omitempty"`
+	LandingTyped string `json:"landing_typed,omitempty"`
+	LandingQR    string `json:"landing_qr_svg,omitempty"`
+	// server: the Tailscale user who owns this machine (who may use the
+	// dashboard from the tailnet without a password); empty when tagged
+	Owner     string   `json:"owner,omitempty"`
+	Approvers []string `json:"approvers,omitempty"`
 }
 
 // hAPK offers the Android app to phones opening the dashboard (additive).
@@ -474,6 +488,10 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 		v.PublicAddr, v.Effective, v.Guessed = cfg.Server.PublicAddr, a.publicAddr(), cfg.Server.PublicAddr == ""
 		v.Port, v.Subnet, v.TLS, v.TLSName, v.CertSHA256 = cfg.Server.Port, cfg.Server.Subnet, tls.source, tls.sni, tls.sha256
+		v.LandingURL, v.LandingTyped = a.landingURL(r.Context(), r.Host)
+		v.LandingQR, _ = pairing.QRSVG(v.LandingURL)
+		v.Owner = a.ts.Get(r.Context()).Owner
+		v.Approvers = cfg.Approvers
 	} else {
 		a.mu.Lock()
 		if p := a.client.payload; p != nil {
@@ -491,9 +509,10 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 // hSettingsPost updates the few settings the UI exposes (additive).
 func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		PublicAddr *string `json:"public_addr"`
-		UIPassword *string `json:"ui_password"`
-		Captive    *bool   `json:"captive_portal_detect"`
+		PublicAddr *string   `json:"public_addr"`
+		UIPassword *string   `json:"ui_password"`
+		Captive    *bool     `json:"captive_portal_detect"`
+		Approvers  *[]string `json:"approvers"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -507,7 +526,25 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		body.PublicAddr = &pa
 	}
+	if body.Approvers != nil {
+		var clean []string
+		for _, u := range *body.Approvers {
+			u = strings.TrimSpace(u)
+			if u == "" {
+				continue
+			}
+			if strings.ContainsAny(u, " \t,;<>\"") || len(u) > 128 {
+				httpErr(w, http.StatusBadRequest, fmt.Errorf("approvers: %q isn't a Tailscale login", u))
+				return
+			}
+			clean = append(clean, u)
+		}
+		body.Approvers = &clean
+	}
 	if _, err := a.store.Update(func(c *config.Config) error {
+		if body.Approvers != nil {
+			c.Approvers = *body.Approvers
+		}
 		if body.PublicAddr != nil {
 			c.Server.PublicAddr = *body.PublicAddr
 		}
@@ -559,12 +596,19 @@ func (a *Agent) listenAddrs(ctx context.Context) []string {
 }
 
 func (a *Agent) serveHTTP(ctx context.Context) error {
-	h := a.Handler()
+	return a.serveOn(ctx, "web UI", a.Handler(), func() []string { return a.listenAddrs(ctx) }, true, nil)
+}
+
+// serveOn keeps h served on every address addrs returns, binding new ones
+// as they appear (Tailscale and tunnel IPs come up after the agent). With
+// fatal, failing to bind anything at startup is returned as an error; up
+// (optional) is set once something is bound.
+func (a *Agent) serveOn(ctx context.Context, what string, h http.Handler, addrs func() []string, fatal bool, up *atomic.Bool) error {
 	var mu sync.Mutex
 	bound := map[string]*http.Server{}
-	errc := make(chan error, 1)
+	warned := map[string]bool{}
 	bind := func(first bool) error {
-		for _, addr := range a.listenAddrs(ctx) {
+		for _, addr := range addrs() {
 			mu.Lock()
 			_, ok := bound[addr]
 			mu.Unlock()
@@ -575,8 +619,12 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 			if err != nil {
 				// loopback/explicit failures are fatal at startup; Tailscale
 				// IPs may simply not be up yet.
-				if first && len(bound) == 0 {
+				if fatal && first && len(bound) == 0 {
 					return err
+				}
+				if !fatal && !warned[addr] && !errors.Is(err, errAddrNotAvail) {
+					warned[addr] = true
+					a.Logf("%s: can't listen on %s: %v", what, addr, err)
 				}
 				continue
 			}
@@ -584,7 +632,10 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 			mu.Lock()
 			bound[addr] = srv
 			mu.Unlock()
-			a.Logf("web UI listening on http://%s/", addr)
+			if up != nil {
+				up.Store(true)
+			}
+			a.Logf("%s listening on http://%s/", what, addr)
 			go func() {
 				if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					a.Logf("http %s: %v", addr, err)
@@ -610,8 +661,6 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 			}
 			mu.Unlock()
 			return nil
-		case err := <-errc:
-			return err
 		case <-t.C:
 			_ = bind(false)
 		}

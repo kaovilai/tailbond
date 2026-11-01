@@ -16,13 +16,16 @@ import (
 )
 
 type Info struct {
-	Installed        bool     `json:"installed"`
-	Running          bool     `json:"running"`
-	BackendState     string   `json:"backend_state,omitempty"`
-	Self             string   `json:"self"`
-	DNSName          string   `json:"dns_name,omitempty"`
-	MagicDNSSuffix   string   `json:"magic_dns_suffix,omitempty"`
-	Tailnet          string   `json:"tailnet,omitempty"`
+	Installed      bool   `json:"installed"`
+	Running        bool   `json:"running"`
+	BackendState   string `json:"backend_state,omitempty"`
+	Self           string `json:"self"`
+	DNSName        string `json:"dns_name,omitempty"`
+	MagicDNSSuffix string `json:"magic_dns_suffix,omitempty"`
+	Tailnet        string `json:"tailnet,omitempty"`
+	// Owner is the login of the user this machine belongs to; empty for a
+	// tagged machine.
+	Owner            string   `json:"owner,omitempty"`
 	IPs              []string `json:"ips,omitempty"`
 	AdvertisedRoutes []string `json:"advertised_routes"`
 	ApprovedRoutes   []string `json:"approved_routes"`
@@ -128,8 +131,11 @@ type statusJSON struct {
 		nodeJSON
 		PrimaryRoutes []string
 		AllowedIPs    []string
+		UserID        int64
+		Tags          []string
 	}
 	Peer map[string]nodeJSON
+	User map[string]struct{ LoginName string }
 }
 
 type prefsJSON struct {
@@ -238,6 +244,9 @@ func parseStatus(out []byte, route string, info *Info) error {
 		info.Self = st.Self.HostName
 		info.DNSName = strings.TrimSuffix(st.Self.DNSName, ".")
 		info.IPs = st.Self.TailscaleIPs
+		if u, ok := st.User[strconv.FormatInt(st.Self.UserID, 10)]; ok && len(st.Self.Tags) == 0 && u.LoginName != "tagged-devices" {
+			info.Owner = u.LoginName
+		}
 		approved := map[string]bool{}
 		for _, r := range append(append([]string{}, st.Self.PrimaryRoutes...), st.Self.AllowedIPs...) {
 			if pfx, err := netip.ParsePrefix(r); err == nil && pfx.Bits() < pfx.Addr().BitLen() {

@@ -83,6 +83,7 @@ async function api(method, path, body) {
   const r = await fetch(path, opts);
   if (r.status === 401) { showLogin(); throw new Error('login required'); }
   const data = await r.json().catch(() => ({}));
+  if (r.status === 403 && data.owner) { showOwnerOnly(data.owner); throw new Error('owner only'); }
   if (!r.ok || data.ok === false) throw new Error(data.error || r.statusText);
   return data;
 }
@@ -135,11 +136,15 @@ function render(st) {
 
   const [rxv, rxu] = fmtRate(st.totals.rx_bps);
   const [txv, txu] = fmtRate(st.totals.tx_bps);
-  $('#rx-val').textContent = rxv; $('#rx-unit').textContent = rxu + ' down';
-  $('#tx-val').textContent = txv; $('#tx-unit').textContent = txu + ' up';
+  // the server's rx is what devices upload, its tx what they download
+  const srv = st.role === 'server';
+  $('#rx-val').textContent = rxv; $('#rx-unit').textContent = rxu + (srv ? ' from devices' : ' down');
+  $('#tx-val').textContent = txv; $('#tx-unit').textContent = txu + (srv ? ' to devices' : ' up');
   $('#uptime').textContent = st.state === 'connected' ? fmtDur(st.uptime_sec) : '—';
   $('#tunnel-ip').textContent = st.tunnel_ip || '—';
-  $('#total-bytes').textContent = `${fmtBytes(st.totals.rx_bytes)} ↓ · ${fmtBytes(st.totals.tx_bytes)} ↑`;
+  $('#total-bytes').textContent = st.role === 'server'
+    ? `${fmtBytes(st.totals.tx_bytes)} to · ${fmtBytes(st.totals.rx_bytes)} from devices`
+    : `${fmtBytes(st.totals.rx_bytes)} ↓ · ${fmtBytes(st.totals.tx_bytes)} ↑`;
   const chip = $('#state-chip');
   chip.textContent = st.state;
   chip.className = 'state-chip s-' + st.state;
@@ -210,6 +215,10 @@ function pathCard(key) {
       <div class="stat"><dt>Loss</dt><dd class="loss"></dd></div>
     </dl>
     <div class="path-foot hidden"></div>`;
+  if (state.role === 'server') { // the server sees each device's upload as rx
+    const dts = el.querySelectorAll('.stat dt');
+    dts[0].textContent = 'From device'; dts[1].textContent = 'To device';
+  }
   state.cards.set(key, el);
   return el;
 }
@@ -347,24 +356,59 @@ async function renderHealth() {
   try { v = await api('GET', '/api/health'); } catch { return; }
   const box = $('#health');
   const bad = v.checks.filter((c) => c.status === 'warn' || c.status === 'bad');
-  const rows = (bad.length ? bad : v.checks).map((c) => h('li', { class: 'health-' + c.status },
-    h('b', { text: c.title }),
-    c.detail ? h('div', { class: 'muted small', text: c.detail }) : null,
-    c.fix && c.status !== 'ok' ? h('div', { class: 'small' }, c.fix + ' ', c.fix_url ? h('a', { href: c.fix_url, target: '_blank', rel: 'noopener', text: 'How to fix' }) : null) : null));
-  box.replaceChildren(
-    h('h3', { text: bad.length ? `Setup health: ${bad.length} to improve for best speed` : 'Setup health: everything is set up for best speed' }),
+  const blocking = v.checks.filter((c) => c.status === 'bad').length;
+  // the route is a choice (tailnet → bonded devices), not a speed problem
+  const optional = bad.filter((c) => c.id === 'route').length;
+  const security = bad.filter((c) => c.id === 'approvers').length;
+  const improve = bad.length - blocking - optional - security;
+  const plus = optional ? ` (and ${optional} optional)` : '';
+  const headline = blocking
+    ? `Setup health: ${blocking} thing${blocking === 1 ? '' : 's'} to fix before devices can connect from away${improve ? `, ${improve} more to improve` : ''}${plus}`
+    : security ? `Setup health: 1 security setting to review${improve ? `, ${improve} thing${improve === 1 ? '' : 's'} to improve` : ''}${plus}`
+    : improve ? `Setup health: ${improve} optional speed-up${improve === 1 ? '' : 's'} (tailbond works fine without ${improve === 1 ? 'it' : 'them'})${plus}`
+    : optional ? 'Setup health: nothing to fix here (1 optional item below)' : 'Setup health: everything is set up';
+  const addrTodo = state.settings && state.settings.public_addr_guessed;
+  const seen = new Set();
+  const rows = (bad.length ? bad : v.checks).map((c) => {
+    let fix = c.fix && c.status !== 'ok' ? c.fix : '';
+    const again = fix && seen.has(fix);
+    if (fix) seen.add(fix);
+    if (again) fix = 'Same fix as above (one forward fixes both).';
+    const test = '';
+    return h('li', { class: 'health-' + c.status },
+      h('b', { text: c.title }),
+      c.detail ? h('div', { class: 'muted small', text: c.detail }) : null,
+      fix ? h('div', { class: 'small' }, fix + ' ', c.fix_url && !again ? h('a', { href: c.fix_url, target: '_blank', rel: 'noopener', text: 'How to fix' }) : null) : null,
+      test ? h('div', { class: 'small', text: test }) : null);
+  });
+  box.replaceChildren(...[
+    h('h3', { text: addrTodo && !blocking ? headline + ' · finish the setup step above first' : headline }),
     h('ul', { class: 'health-list' }, rows),
-    bad.length ? h('p', { class: 'small', text: 'Not sure how? Show this card to whoever set up your internet; the links explain each fix.' }) : null,
+    bad.length ? h('p', { class: 'small', text: (security ? 'The security setting is fixed on this page (Who can approve and add devices). ' : '') + 'Router fixes are on your home router\'s admin page, route ones in the Tailscale admin console ("How to fix" explains each); this machine\'s own firewall is already set up by tailbond. Not sure how? Show this card to whoever set up your internet.' }) : null,
     h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
-      h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' })));
+      h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' }))].filter(Boolean));
   box.classList.remove('hidden');
   const ban = $('#health-banner');
   ban.replaceChildren();
-  if (bad.length) {
-    ban.append(`Setup health: ${bad.length} thing${bad.length === 1 ? '' : 's'} to improve for best speed. `,
+  const addr = state.settings && state.settings.public_addr_guessed;
+  const shown = blocking + improve + security;
+  if (shown || addr) {
+    ban.append(addr ? 'Setup: tell devices where home is (public address). ' : '', shown ? headline + '. ' : '',
       h('a', { href: '#', text: 'Show', onclick: (e) => { e.preventDefault(); $('#tabs button[data-tab="clients"]').click(); } }));
   }
-  ban.classList.toggle('hidden', !bad.length || state.tab === 'clients');
+  ban.classList.toggle('blocking', !!(blocking || addr));
+  ban.classList.toggle('hidden', !(shown || addr) || state.tab === 'clients');
+}
+
+function serverShort() { return (state.status && state.status.tailscale && state.status.tailscale.self) || 'this server'; }
+// Who may approve and add devices, in one sentence.
+function whoApproves() {
+  const s = state.settings;
+  if (!s) return '';
+  if (s.password_set) return 'Who can approve: anyone with this page\'s password (you too), from any device on your Tailscale network.';
+  const names = [s.owner ? `${s.owner} (the Tailscale account ${serverShort()} belongs to)` : '', ...(s.approvers || [])].filter(Boolean);
+  if (names.length) return `Who can approve: ${names.join(', ')}, from any device signed in to that Tailscale account, and any user or program on ${serverShort()} itself (http://127.0.0.1:8077; set a password if ${serverShort()} runs things you don't trust). Others on your Tailscale network, and people you share ${serverShort()} with, can ask to connect but can't approve.`;
+  return `Who can approve: anyone on your Tailscale network who can reach ${serverShort()} (it's a tagged machine, so it has no owner account). Name approvers below, or set a password.`;
 }
 
 // Devices on the tailnet that asked to connect (POST /api/pair-requests).
@@ -373,12 +417,16 @@ function renderPairRequests(st) {
   const reqs = st.role === 'server' && Array.isArray(st.pair_requests) ? st.pair_requests : [];
   const sig = reqs.map((r) => r.id).join(',');
   box.classList.toggle('hidden', !reqs.length);
+  // on a phone with requests waiting, whoever opened this is here to approve,
+  // not to add this phone: show the requests instead of "Add this phone"
+  if (reqs.length && location.hash !== '#add-phone' && !$('#add-phone').classList.contains('hidden')) {
+    $('#add-phone').classList.add('hidden');
+    document.body.classList.remove('phone-add');
+  }
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  const pw = state.settings && state.settings.password_set;
-  const who = h('p', { class: 'muted small', text: pw
-    ? 'Only people with this page\'s password can approve.'
-    : 'Who can approve: anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). To require a password: Devices tab → Who can approve.' });
+  const who = h('p', { class: 'muted small', text: whoApproves() + ` Approving lets the device use ${serverShort()}'s internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as ${serverShort()}: they allow it whatever they allow ${serverShort()}, which may be more than its owner's own account gets.` });
+  const approvers = new Set([state.settings && state.settings.owner, ...((state.settings && state.settings.approvers) || [])].filter(Boolean).map((x) => x.toLowerCase()));
   box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), who, ...reqs.map((r) => {
     const what = r.kind === 'router' ? 'Travel router' : r.kind === 'phone' ? 'Phone' : 'Device';
     const decide = async (action, btn) => {
@@ -394,21 +442,15 @@ function renderPairRequests(st) {
       h('div', { class: 'pair-req-text' },
         h('b', { text: r.repair ? `${r.name} is asking to connect again` : `${r.name} wants to connect` }),
         h('div', { class: 'muted small', text: `${what} on your tailnet · signed in as ${r.user || 'unknown'} · ${r.hostname ? r.hostname + ' · ' : ''}${r.ip}` }),
-        r.repair ? h('div', { class: 'small', text: 'It was connected before (reset or reinstalled). Approving gives it its old access back.' }) : null),
+        r.repair ? h('div', { class: 'small', text: 'It was connected before (reset or reinstalled). Approving gives it its old access back.' }) : null,
+        r.user && approvers.has(r.user.toLowerCase()) ? h('div', { class: 'small warn-text', text: `Signed in to ${r.user}, an account that may approve here. If this ${r.kind === 'router' ? 'router' : 'device'} stays with you, just approve. If you'll give it to someone: approve, then before handing it over sign its Tailscale in to their account (or tag it); tailbond keeps working, and until then whoever holds it could also approve devices here. Decline only refuses this request; it can ask again.` }) : null),
       h('div', { class: 'pair-req-actions' },
         h('button', { class: 'btn', type: 'button', text: 'Decline', onclick: (e) => decide('decline', e.currentTarget) }),
         h('button', { class: 'btn primary', type: 'button', text: 'Approve', onclick: (e) => decide('approve', e.currentTarget) })));
   }));
 }
 
-function inviteLink(st) {
-  const dns = st.tailscale && st.tailscale.dns_name;
-  const host = dns ? `${dns}:${location.port || 80}` : location.host;
-  return `http://${host}/#add-phone`;
-}
-
 function renderClients(st) {
-  $('#invite-link').value = inviteLink(st);
   const list = $('#clients');
   const els = [];
   for (const c of st.clients) {
@@ -436,11 +478,11 @@ function renderClients(st) {
       state.clientEls.set(c.name, el);
     }
     $('.client-name b', el).textContent = c.name;
-    $('.client-name small', el).textContent = c.connected ? `${c.endpoint} · ${c.scheduler || ''}` : 'offline';
+    $('.client-name small', el).textContent = c.connected ? `${c.endpoint} · ${c.scheduler || ''}` : 'not connected right now (approved devices connect by themselves when they\'re on and online)';
     $('.client-rates .rx', el).textContent = c.connected ? '↓ ' + rateStr(c.tx_bps) : '';
     $('.client-rates .tx', el).textContent = c.connected ? '↑ ' + rateStr(c.rx_bps) : '';
     const chip = $('.chip', el);
-    chip.textContent = c.connected ? `${c.paths.filter((p) => p.state === 'active').length} paths` : 'offline';
+    chip.textContent = c.connected ? `${c.paths.filter((p) => p.state === 'active').length} paths` : 'not connected';
     chip.className = 'chip s-' + (c.connected ? 'active' : 'off');
     $('.client-paths', el).replaceChildren(...(c.connected ? c.paths : []).map((p) =>
       h('span', { class: 'mini-path' }, h('b', { text: `#${p.id} ` }), `${p.state} · ${p.srtt_ms} ms · ${(p.loss_pct || 0).toFixed(1)}%`)));
@@ -476,6 +518,9 @@ async function loadSettings() {
   try {
     state.settings = await api('GET', '/api/settings');
   } catch { return; }
+  // the approval card's "who can approve" depends on settings: redraw it
+  $('#pair-requests').dataset.sig = '';
+  if (state.status) renderPairRequests(state.status);
   if (state.status) $('#subtitle').textContent = state.status.role === 'server'
     ? `Home server · reachable at ${state.settings.effective_public_addr || state.status.server || 'no public address'}`
     : $('#subtitle').textContent;
@@ -485,18 +530,35 @@ async function loadSettings() {
     $('#apk-no').classList.toggle('hidden', !!s.android_apk);
     $('#ipk-yes').classList.toggle('hidden', !s.glinet_ipk);
     $('#pw-state').textContent = s.password_set
-      ? 'Only people with this page\'s password. Change it, or save an empty one to remove it. Family adding their own phone then need it too.'
-      : 'Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). Set a password to require it.';
+      ? 'Only people with this page\'s password, from any device on your Tailscale network. Change it, or save an empty one to remove it. Family adding a phone don\'t need it: their phone asks, you approve.'
+      : whoApproves() + ' A device you lend to someone while it\'s signed in to an approver\'s account can approve too. To let someone else approve, add their Tailscale login (shown in the Tailscale admin console under Users) below. A password instead replaces all this: then everyone who approves, you included, needs it; phones and routers can still ask to connect without it.';
+    $('#approvers').value = (s.approvers || []).join(', ');
+    $('#approvers-label').textContent = s.owner ? 'Also allowed to approve (Tailscale logins, comma separated)' : 'Allowed to approve (Tailscale logins, comma separated; on this tagged server, only they can)';
     $('#ipk-no').classList.toggle('hidden', !!s.glinet_ipk);
+    // where phones get the app (the landing page on port 80, else /get)
+    if (s.landing_url) {
+      $('#invite-link').value = s.landing_url;
+      $('#landing-typed').textContent = s.landing_typed;
+      if (s.landing_qr_svg) {
+        const doc = new DOMParser().parseFromString(s.landing_qr_svg, 'image/svg+xml');
+        $('#landing-qr').replaceChildren(document.importNode(doc.documentElement, true));
+      }
+    }
+    $('#landing-no-apk').classList.toggle('hidden', !!s.android_apk);
     const w = $('#addr-warning');
     if (s.public_addr_guessed) {
       w.innerHTML = '';
+      const lan = (s.effective_public_addr || '').replace(/:\d+$/, '') || 'this machine';
       w.append(
-        h('b', { text: 'Public address not set. ' }),
-        `Pairing links will use ${s.effective_public_addr || 'no address'}, which is probably your LAN address. Enter your public IP or DDNS name (and forward UDP ${s.port} on your router).`,
+        h('h3', { text: 'Setup step: tell devices where home is' }),
+        h('p', { text: `Right now devices would connect to ${s.effective_public_addr || 'no address'}, an address inside your home, so they only work at home. Two things, on your home router's admin page:` }),
+        h('ol', {},
+          h('li', { text: `Forward UDP port ${s.port} to this machine (${lan}). The page is usually called Port forwarding, Virtual server or NAT. Give this machine a fixed address there too (DHCP reservation), so the forward keeps pointing at it.` }),
+          h('li', { text: 'Find your home\'s public address: the router\'s status page shows it (WAN or Internet IP). Better, a dynamic DNS name (many routers have a DDNS page) keeps working when that address changes. Type it here:' })),
         h('div', { class: 'row' },
-          h('input', { id: 'pub-addr', placeholder: `home.example.net:${s.port}` }),
-          h('button', { class: 'btn', type: 'button', onclick: savePublicAddr, text: 'Save' })));
+          h('input', { id: 'pub-addr', placeholder: 'e.g. home.example.net or 203.0.113.7' }),
+          h('button', { class: 'btn primary', type: 'button', onclick: savePublicAddr, text: 'Save' })),
+        h('p', { class: 'muted small', text: `The port (${s.port}) is added for you. If your provider shares one internet address between customers (carrier-grade NAT), a forward can't work; Setup health below checks for that and says what to do.` }));
       w.classList.remove('hidden');
     } else w.classList.add('hidden');
   } else {
@@ -680,6 +742,10 @@ function setupAddPhone() {
     btn.classList.add('hidden');
     location.href = uri; // the tailbond app handles tailbond://pair
   });
+  $('#approvers-save').addEventListener('click', async () => {
+    const list = $('#approvers').value.split(',').map((x) => x.trim()).filter(Boolean);
+    try { await api('POST', '/api/settings', { approvers: list }); toast(list.length ? 'Approvers saved' : 'Approvers removed'); loadSettings(); } catch (e) { toast(e.message, true); }
+  });
   $('#invite-copy').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('#invite-link').value); } catch { $('#invite-link').select(); document.execCommand('copy'); }
     toast('Link copied');
@@ -733,6 +799,14 @@ function setupPairing() {
   });
 }
 
+// Without a password, only the server owner's devices may use this page
+// from the tailnet; others asked to connect, or want the app.
+function showOwnerOnly(owner) {
+  const d = $('#owner-dialog');
+  $('#owner-who').textContent = owner;
+  $('#owner-get').href = '/get';
+  if (!d.open) d.showModal();
+}
 function showLogin() {
   const d = $('#login-dialog');
   if (!d.open) d.showModal();

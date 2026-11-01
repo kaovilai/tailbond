@@ -79,7 +79,7 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
         Point(
             Icons.Filled.Devices,
             "Still on your tailnet",
-            "Your home server is on Tailscale, so your NAS and other Tailscale machines stay reachable, by name or 100.x address, through it.",
+            "Your home server is on Tailscale, so your NAS and other Tailscale machines stay reachable, by name or 100.x address, through it. They see this phone as the home server.",
         )
         Point(
             Icons.Filled.SwapHoriz,
@@ -89,7 +89,8 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Get started") }
         Text(
-            "Next you'll type your home server's name (the one in the Tailscale app) and ask it to connect. If someone else set it up, they approve it.",
+            "Next you'll type your home server's name (the one in the Tailscale app) and ask it to connect. If someone else set it up, they approve it. " +
+                "Installed tailbond from your home server's page in Chrome? Easier: go back to Chrome and tap step 2 there; it fills everything in.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -136,18 +137,39 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
         Text("Add this phone to your home server", style = MaterialTheme.typography.headlineSmall)
 
         AskCard(state.ask, server, { server = it }, actions)
+        // after a failed ask the field shows the asked name; the page button uses it too
+        val named = server.ifBlank { askedServer(state.ask) }
+
+        // while asking, the other ways would only distract (and "go back to
+        // the page" reads like a mistake to someone who just came from it)
+        val asking = state.ask is AskState.Asking || state.ask is AskState.Waiting
+        if (asking) {
+            Text(
+                "Other ways to add this phone show up here again if you tap Cancel.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Or use the home server's page", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Came here from your home server's page? Go back to it in your browser and tap Add this phone.",
+                    "Came here from your home server's page? Go back to it in your browser and tap step 2, Open tailbond and ask.",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
-                OutlinedButton(onClick = { actions.openHomeServerPage(server) }, enabled = server.isNotBlank()) {
+                OutlinedButton(onClick = { actions.openHomeServerPage(named) }, enabled = named.isNotBlank()) {
                     Icon(Icons.Filled.OpenInBrowser, null)
-                    Text("  Open ${server.ifBlank { "home server" }} page")
+                    Text("  Open ${named.ifBlank { "home server" }} page")
+                }
+                if (named.isBlank()) {
+                    Text(
+                        "Type the home server's name in the box above to open its page here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -156,7 +178,7 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("From another screen", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "If the home server's page is open on a computer, tap Add a device there and scan the code it shows.",
+                    "On a computer, open the home server's dashboard (its name and :8077, e.g. http://homebox:8077) → Devices → Add a device with a code, and scan the code it shows. (Not the code on the \"Get tailbond\" page: that one only opens the install page.)",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (scanning) {
@@ -210,14 +232,22 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
     }
 }
 
+/** The name a finished ask was for (the field shows it again after a failure). */
+fun askedServer(ask: AskState): String = when (ask) {
+    is AskState.Failed -> ask.server
+    is AskState.Declined -> ask.server
+    is AskState.Expired -> ask.server
+    else -> ""
+}
+
 /** Title and body for an "Ask to connect" state; null when there's nothing to say. */
 fun askMessage(s: AskState): Pair<String, String>? = when (s) {
     AskState.Idle -> null
     is AskState.Asking -> "Asking ${s.server}…" to "Looking for ${s.server} on your Tailscale network."
     is AskState.Waiting -> "Waiting for approval on ${s.server}…" to
-        "Ask whoever runs ${s.server} to open its tailbond page (http://${s.server}:8077 on a computer, or a Flint 3's " +
-        "admin panel → VPN → tailbond) and tap Approve next to \"${s.name}\"; the request is at the top of that page, on a phone too. Keep this screen open; " +
-        "tailbond continues by itself once approved."
+        "Ask whoever runs ${s.server} to approve \"${s.name}\" on ${s.server}'s tailbond page (it's at the top of http://${s.server}:8077). " +
+        (if (s.seenAs.isNotBlank()) "There it shows as ${s.seenAs}, so they can tell it's this phone. " else "") +
+        "You can switch to another app to message them; tailbond keeps waiting for 10 minutes and carries on by itself once approved."
     is AskState.Declined -> "${s.server} said no" to "Whoever runs ${s.server} declined this phone. Ask them, then ask again."
     is AskState.Expired -> "Nobody approved it in time" to "The request ran out after 10 minutes. Ask again when someone can approve it on ${s.server}."
     is AskState.Failed -> when (s.failure) {
@@ -239,14 +269,7 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
 @Composable
 private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, actions: UiActions) {
     // after a failed try the field keeps (or gets back) the name that was asked
-    val server = typed.ifBlank {
-        when (ask) {
-            is AskState.Failed -> ask.server
-            is AskState.Declined -> ask.server
-            is AskState.Expired -> ask.server
-            else -> ""
-        }
-    }
+    val server = typed.ifBlank { askedServer(ask) }
     val busy = ask is AskState.Asking || ask is AskState.Waiting
     val msg = askMessage(ask)
     val bad = ask is AskState.Failed || ask is AskState.Declined || ask is AskState.Expired
@@ -308,7 +331,7 @@ fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () ->
         title = { Text(if (replacing) "Switch this phone to $server?" else "Add this phone to $server?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it.")
+                Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it. They see this phone as $server (not as your own phone), so they allow it whatever they allow $server.")
                 Text(
                     "It connects over the internet to ${p.server}, and your internet traffic goes out from home (you can change that in Settings).",
                     style = MaterialTheme.typography.bodySmall,

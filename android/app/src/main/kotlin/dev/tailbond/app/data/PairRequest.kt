@@ -24,7 +24,16 @@ object PairRequestClient {
     const val PORT = 8077
 
     @Serializable
-    data class Created(val id: String = "", val token: String = "", val status: String = "", val name: String = "")
+    data class Created(
+        val id: String = "",
+        val token: String = "",
+        val status: String = "",
+        val name: String = "",
+        // how the server's approval card shows this phone (additive)
+        val device: String = "",
+        val user: String = "",
+        val ip: String = "",
+    )
 
     @Serializable
     data class Polled(val status: String = "", val uri: String? = null, val name: String = "", val error: String? = null)
@@ -144,7 +153,8 @@ object PairRequestClient {
 sealed interface AskState {
     data object Idle : AskState
     data class Asking(val server: String) : AskState
-    data class Waiting(val server: String, val name: String) : AskState
+    /** [seenAs]: how the server's approval card shows this phone ("pixel-8 · sam@example.com · 100.101.8.8"). */
+    data class Waiting(val server: String, val name: String, val seenAs: String = "") : AskState
     data class Declined(val server: String) : AskState
     data class Expired(val server: String) : AskState
     data class Failed(val server: String, val failure: PairRequestClient.Failure) : AskState

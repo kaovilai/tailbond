@@ -42,17 +42,6 @@ captive portals, setup health and the VPN-menu move were added), 0 in
 rounds 5–6. Persona C (family member) had no medium in rounds 5 and 6. The
 round-6 mediums were fixed afterwards without another review (below);
 final renders: `out/ux/glinet/final/`.
-| 3 | 0 / 1 / 9 | 0 / 2 / 16 | 0 / 2 / 9 | 0 / 1 / 13 | 0 / 6 / 47 |
-| 4 | 0 / 3 / 11 | 0 / 5 / 13 | 1 / 3 / 11 | 0 / 3 / 15 | 1 / 14 / 50 |
-| 5 | 0 / 1 / 16 | 0 / 2 / 12 | 0 / 0 / 23 | 0 / 1 / 15 | 0 / 4 / 66 |
-| 6 | 0 / 1 / 12 | 0 / 3 / 13 | 0 / 0 / 16 | 0 / 1 / 14 | 0 / 5 / 55 |
-
-**Outcome: the exit condition (no medium or high from any persona) was not
-met within the 6-round cap.** Highs: 0 in rounds 1–3, 1 in round 4 (after
-captive portals, setup health and the VPN-menu move were added), 0 in
-rounds 5–6. Persona C (family member) had no medium in rounds 5 and 6. The
-round-6 mediums were fixed afterwards without another review (below);
-final renders: `out/ux/glinet/final/`.
 
 ## Round 1 triage
 
@@ -95,17 +84,6 @@ Lows fixed: server rates labelled "Sending to devices / Receiving" (D); "At the 
 Lows rejected: "Secondary" level and billing-day reset (D; Always already includes secondary), per-connection graphs (D, round 1),
 port 80 in the Fedora invite link (B: render artifact, the mock serves the page on port 80; the real one is :8077),
 who may approve on the Fedora page (B: anyone who can open its page; set `ui_password` to restrict; documented in docs/fedora-server.md).
-
-## Round 3 triage
-
-| # | Finding (personas) | Sev | Decision |
-|---|---|---|---|
-| 1 | The Flint panel has no way to download the router package (A, B, C, D) | M | **fix**: a home server on a GL router serves the package it runs: `GET /tailbond-glinet.ipk` rebuilds the installed .ipk from opkg's records, with pristine copies of the files that change after install and never anything under `/etc/tailbond/`. The panel's guide starts with **Download the router package** (same-origin through GL's nginx, GL session required). Covered by a unit test and the emulated install test |
-| 2 | Fedora Devices tab: "Add a device" next to "Add a GL.iNet travel router" invites typing the router's name (C) | M | **fix**: the router guide comes first, "(recommended)", ends with "tap Approve. Nothing to type here."; the code form is "Add a device with a code (no Tailscale on it)" and says Tailscale devices just ask |
-| 3 | Who can approve? (B) | M | **fix**: both approval cards say who can (Flint: anyone logged in to the GL panel, and anyone on the Tailscale account at `http://homebox:8077` unless it has a password; Fedora: anyone who can open the page), and the Flint panel can set that password |
-
-Lows fixed: "leave the other options as they are" for LuCI's overwrite checkbox and "the router's internet keeps working" (A, B, C); example tailnet name taken from the server's name before the machine list loads (A, B).
-Lows rejected: as in rounds 1–2 (graphs, SSID, Secondary, billing day, the Fedora phone view, port 80 in the mock).
 
 ## Round 3 triage
 
@@ -183,3 +161,9 @@ a store listing or a link from the admin: the same distribution limit as
 round 3 #5 there (**partial, stands**). After the re-run the waiting screen
 says the request shows at the top of the server's page on a phone too, and
 a failed ask keeps the name in the field.
+
+## Re-review of the round-6 fixes
+
+Round 7 of [the final loop](final-summary.md) re-reviewed these screens
+with fresh reviewers, together with the Android journey and the Fedora
+dashboard.

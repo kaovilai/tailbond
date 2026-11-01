@@ -106,4 +106,16 @@ class PairingTest {
         invalid(uri("""{"v":1,"server":"h:1","key":"k","dns":["dns.google"]}"""))
         invalid(uri("""{"v":1,"server":"bad host:1","key":"k"}"""))
     }
+
+    @Test
+    fun askLinkFromThePhonePage() {
+        assertEquals("homebox.tail1234.ts.net", Pairing.askServer("tailbond://ask?server=homebox.tail1234.ts.net"))
+        assertEquals("homebox", Pairing.askServer("tailbond://ask?server=homebox"))
+        assertEquals("100.101.1.1", Pairing.askServer("tailbond://ask?server=100.101.1.1"))
+        assertNull(Pairing.askServer("tailbond://pair?d=abc"))
+        assertNull(Pairing.askServer("tailbond://ask"))
+        assertNull(Pairing.askServer("tailbond://ask?server=evil%20host"))
+        assertNull(Pairing.askServer("tailbond://ask?server=http%3A%2F%2Fx"))
+        assertNull(Pairing.askServer("https://ask?server=homebox"))
+    }
 }

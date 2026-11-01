@@ -173,3 +173,9 @@ someone" is closed for pairing: the app now asks the server by its
 Tailscale name and someone approves it there. Re-run results and the
 remaining distribution limit (getting the APK without a store) are in
 [glinet-summary.md](glinet-summary.md#android-personas-re-run-once-on-the-new-pairing-flow).
+
+## Final loop
+
+Getting the app without a store (the phone page on the home server) and
+the re-runs of the whole phone journey are in
+[final-summary.md](final-summary.md).

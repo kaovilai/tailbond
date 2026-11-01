@@ -129,15 +129,34 @@
   </section>
 
   <section class="tab hidden" id="tab-clients">
+    <div class="card warn addr-step hidden" id="addr-warning"></div>
     <div class="card health hidden" id="health"></div>
     <form class="card" id="pw-form">
       <h3>Who can approve and add devices</h3>
       <p class="muted small" id="pw-state">Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with).</p>
-      <div class="row">
-        <input type="password" id="pw-new" placeholder="Password for this page (empty: none)" autocomplete="new-password">
-        <button class="btn" type="submit">Save</button>
-      </div>
+      <label class="field" for="approvers"><span id="approvers-label">Also allowed to approve (Tailscale logins, comma separated)</span>
+        <div class="row">
+          <input id="approvers" placeholder="e.g. sam@example.com" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <button class="btn" type="button" id="approvers-save">Save</button>
+        </div></label>
+      <label class="field" for="pw-new"><span>Or a password for this page (replaces the above; empty: none)</span>
+        <div class="row">
+          <input type="password" id="pw-new" placeholder="Password" autocomplete="new-password">
+          <button class="btn" type="submit">Save</button>
+        </div></label>
     </form>
+    <div class="card invite phone-install" id="phone-install">
+      <h3>Add an Android phone</h3>
+      <div class="phone-install-body">
+        <div class="qr qr-small" id="landing-qr"></div>
+        <div class="grow">
+          <p>On the phone, with Tailscale on: point the camera at this code, or type <b id="landing-typed">this server's name</b> into its browser (with the slash at the end, so it opens the page instead of searching). That page has the app and three short steps. The phone then asks to connect and shows up at the top of this page: tap <b>Approve</b>.</p>
+          <p class="muted small">For family: their phone needs Tailscale signed in to your Tailscale network. Simplest: invite them (Tailscale admin console → Users → Invite). Once you approve their phone here, it reaches what this server reaches, whichever way they joined. Then send them this link, or tell them what to type. The page only offers the app; nothing on it can change this server, and this dashboard only answers the approvers (see Who can approve).</p>
+          <div class="uri-row"><input id="invite-link" readonly aria-label="Link to the phone page"><button class="btn icon" type="button" id="invite-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
+          <p class="muted small hidden" id="landing-no-apk">The page can't offer the app yet: put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code> (the tailbond-server package normally does).</p>
+        </div>
+      </div>
+    </div>
     <div class="card router-guide">
       <h3>Add a GL.iNet travel router (recommended)</h3>
       <ol class="muted">
@@ -149,19 +168,13 @@
     <form class="card add-client" id="add-client">
       <div>
         <h3>Add a device with a code (no Tailscale on it)</h3>
-        <p class="muted">Routers and phones on your Tailscale account don't need this: they ask to connect and show up at the top of this page. For others: each gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link on the router's tailbond page (Other ways to connect). On the phone itself, open this page and use <b>Add this phone</b>.</p>
+        <p class="muted">Routers and phones on your Tailscale account don't need this: they ask to connect and show up at the top of this page. For others: each gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link on the router's tailbond page (Other ways to connect).</p>
       </div>
       <div class="row">
         <input id="client-name" placeholder="name, e.g. pixel" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required autocomplete="off">
         <button class="btn primary" type="submit"><svg class="ico sm"><use href="#i-plus"/></svg>Add</button>
       </div>
     </form>
-    <div class="card invite">
-      <h3>Invite someone's phone</h3>
-      <p class="muted">Send this link to a family member. They open it on their phone while Tailscale is on, and tap <b>Add this phone</b>.</p>
-      <div class="uri-row"><input id="invite-link" readonly><button class="btn icon" type="button" id="invite-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
-    </div>
-    <div class="card warn hidden" id="addr-warning"></div>
     <div class="client-list" id="clients"></div>
   </section>
 
@@ -202,6 +215,15 @@
     <div class="uri-row"><input id="qr-uri" readonly><button class="btn icon" type="button" id="qr-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
     <p class="muted small">This link contains the device's key. Share it only with that device.</p>
     <div class="row end"><button class="btn primary" value="close">Done</button></div>
+  </form>
+</dialog>
+
+<dialog id="owner-dialog">
+  <form method="dialog" class="dialog-inner">
+    <h3>This is the home server's own page</h3>
+    <p>It's only for <b id="owner-who"></b>, whose Tailscale account this server belongs to (or whoever has its password).</p>
+    <p class="muted">Want tailbond on your phone? <a id="owner-get" href="/get">Open the phone page</a>: it has the app, and your phone asks to connect from there.</p>
+    <div class="row end"><button class="btn primary" value="close">OK</button></div>
   </form>
 </dialog>
 

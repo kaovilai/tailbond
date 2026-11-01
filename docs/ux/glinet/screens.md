@@ -21,7 +21,7 @@ admin panel, VPN → tailbond. The data is a test fixture.
 | 09-turned-off | After switching tailbond off |
 | 09b-unpair-confirm | After clicking "Unpair" |
 | 10-not-running | The tailbond service isn't running |
-| 11-server-pending-request | Flint 3 (home) admin panel, VPN → tailbond, while the Slate 7 is waiting |
+| 11-server-pending-request | Flint 3 (home) admin panel, VPN → tailbond, while the Slate 7 is waiting (whole page, incl. "Add an Android phone") |
 | 12-server-approved | Flint 3, after approving |
 | 13-server-route-pending | Flint 3 freshly set up: Tailscale route not yet approved, no internet address set |
 | 14-fedora-dashboard-request | Fedora home server: its tailbond page (http://homebox:8077) while the Slate 7 is waiting |

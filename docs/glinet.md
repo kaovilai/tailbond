@@ -30,6 +30,7 @@ ar-format ipks: [Wattline notes][wl]).
 ```sh
 scripts/build-mqvpn-aarch64-musl.sh      # static mqvpn → out/aarch64/mqvpn
 packaging/openwrt/build-ipk.sh           # tailbondd (arm64) + both .ipk files → out/ipk/
+                                         # (carries out/android/tailbond-debug.apk or TAILBOND_APK when present)
 scripts/test-openwrt-ipk.sh              # emulated OpenWrt 23.05 arm64 install test (podman)
 ```
 
@@ -234,6 +235,17 @@ routing on IPQ53xx.
 3. Approve travel routers and phones as they ask; **Setup health** checks
    direct vs relayed Tailscale connections, carrier-grade NAT, the route and
    whether UDP 443 was reached from outside ([setup tips](setup-tips.md)).
+
+**Phones**: the panel's **Add an Android phone** card shows a QR code of
+`http://homebox.<tailnet>.ts.net/`; typing `homebox` into a phone's browser
+(Tailscale on) opens the same phone page: the Android app (the package
+carries it, about 27 MB, at `/usr/share/tailbond/tailbond.apk`), pictures of
+Android's install prompts, and **Open tailbond and ask homebox**. The page
+offers only that: no API, no settings. GL's nginx owns port 80, so the
+agent serves the page on `main.landing_port` (8078) of its Tailscale IPs and
+`server-up` redirects tailnet tcp/80 there (UCI `firewall.tailbond_landing`;
+GL's own admin isn't reachable from the tailnet zone by default, so nothing
+it served there is hidden). `landing_port 0` turns it off.
 
 `server-up` opens UDP 443 on the `wan` zone and TCP 8077 from the tailnet
 zone (discovery and pair requests), adds a `tailbond` zone for `tb0` with

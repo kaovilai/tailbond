@@ -11,7 +11,8 @@
 # - tailnet: forwarding tailbond <-> the zone holding tailscale0 (created as
 #   'tailbond_ts' if the firmware has none), masquerade of $TB_SUBNET toward
 #   it, and the subnet advertised with tailscale set --advertise-routes
-# - tcp/8077 (agent: discovery + pair requests) open from the tailnet zone
+# - tcp/8077 (agent: discovery + pair requests) open from the tailnet zone,
+#   and tailnet tcp/80 redirected to the phone page (main.landing_port)
 # - dnsmasq kept off $TB_TUN, so the agent's DNS forwarder can bind $TB_DNS_IP
 . "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
 
@@ -69,6 +70,27 @@ uset firewall.tailbond_api.src "$ts"
 uset firewall.tailbond_api.proto tcp
 uset firewall.tailbond_api.dest_port "$(tbcfg_or main.api_port 8077)"
 uset firewall.tailbond_api.target ACCEPT
+# The phone page: http://<this router's Tailscale name>/ from the tailnet
+# lands on the agent's landing port (GL's nginx keeps port 80 elsewhere).
+landing="$(tbcfg_or main.landing_port 8078)"
+if [ "$landing" != 0 ]; then
+	uset firewall.tailbond_landing redirect
+	uset firewall.tailbond_landing.name tailbond-phone-page
+	uset firewall.tailbond_landing.src "$ts"
+	uset firewall.tailbond_landing.proto tcp
+	uset firewall.tailbond_landing.src_dport 80
+	uset firewall.tailbond_landing.dest_port "$landing"
+	uset firewall.tailbond_landing.target DNAT
+	uset firewall.tailbond_landing_in rule
+	uset firewall.tailbond_landing_in.name tailbond-phone-page-in
+	uset firewall.tailbond_landing_in.src "$ts"
+	uset firewall.tailbond_landing_in.proto tcp
+	uset firewall.tailbond_landing_in.dest_port "$landing"
+	uset firewall.tailbond_landing_in.target ACCEPT
+else
+	udel firewall.tailbond_landing
+	udel firewall.tailbond_landing_in
+fi
 ensure_forwarding tailbond_to_ts tailbond "$ts"
 ensure_forwarding tailbond_from_ts "$ts" tailbond
 # Bonded clients are one tailnet device: NAT them to the server's tailnet IP.

@@ -41,7 +41,11 @@ data class PathSetting(val enabled: Boolean = true, val priority: Priority = Pri
 @Serializable
 enum class RouteMode(val label: String, val explain: String) {
     FULL("Through your home server", "All internet traffic leaves from home, like using an exit node"),
-    TAILNET_LAN("Only Tailscale machines", "Websites and apps use this phone's own connection; only your tailnet goes through home"),
+    TAILNET_LAN(
+        "Only Tailscale machines",
+        "Websites and apps use this phone's own connection; only your Tailscale machines (100.x addresses) go through home. " +
+            "Names are still looked up through home, so MagicDNS names work. LANs behind other subnet routers aren't reachable through tailbond.",
+    ),
 }
 
 /** Everything the user can change besides the pairing itself. Persisted as JSON. */

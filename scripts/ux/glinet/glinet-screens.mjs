@@ -3,7 +3,7 @@
 // Usage (inside the Playwright image): node glinet-screens.mjs <repo> <outdir>
 import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync } from 'node:fs';
-import { states, actions, fedoraStatus, fedoraHealth } from './fixtures.mjs';
+import { states, actions, landing, fedoraStatus, fedoraStatusApproved, fedoraStatusFresh, fedoraStatusPhone, fedoraStatusPhoneDone, fedoraHealth, fedoraHealthGood, fedoraHealthRoute } from './fixtures.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
@@ -44,18 +44,25 @@ async function shot(name, fixture, vp, act, page0) {
 }
 
 // Fedora home server: the agent's own web UI (agent/web), API answered
-// from fixtures.
+// from fixtures. One variant per situation the Fedora persona looks at.
 const webDir = `${repo}/agent/web`;
 const webTypes = { html: 'text/html', js: 'application/javascript', css: 'text/css', svg: 'image/svg+xml' };
-async function fedora(vp) {
+const fedoraSettings = { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', glinet_ipk: true, password_set: false, ...landing };
+const fedoraTs = { installed: true, running: true, self: 'homebox', dns_name: 'homebox.tail1234.ts.net', tailnet: 'alex@example.com', ips: ['100.101.1.1', 'fd7a:115c:a1e0::1'], route: '10.77.0.0/24', advertised_routes: ['10.77.0.0/24'], approved_routes: ['10.77.0.0/24'], route_advertised: true, routes_approved: true, admin_url: 'https://login.tailscale.com/admin/machines', peers: 4, peers_online: 3 };
+async function fedora(vp, name, { status = fedoraStatus, after = null, settings = {}, ts = {}, health = fedoraHealth, tab = null, click = null, full = false, waitFor = null, settle = 1500 } = {}) {
   const ctx = await browser.newContext({ ...viewports[vp], locale: 'en-US', timezoneId: 'UTC' });
   const page = await ctx.newPage();
+  let st = status;
   await page.route('http://homebox.test/**', (route) => {
-    const p = new URL(route.request().url()).pathname;
-    if (p === '/api/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fedoraStatus) });
-    if (p === '/api/settings') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ role: 'server', effective_public_addr: 'home.example.net:443', version: '0.1.0-r42', glinet_ipk: true, android_apk: true }) });
-    if (p === '/api/health') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fedoraHealth) });
-    if (p === '/api/logs') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"entries":[]}' });
+    const req = route.request();
+    const p = new URL(req.url()).pathname;
+    const json = (v) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(v) });
+    if (req.method() === 'POST' && p.startsWith('/api/pair-requests/')) { if (after) st = after; return json({ ok: true }); }
+    if (p === '/api/status') return json(st);
+    if (p === '/api/settings') return json({ ...fedoraSettings, ...settings });
+    if (p === '/api/tailscale') return json({ ...fedoraTs, ...ts });
+    if (p === '/api/health') return json(health);
+    if (p === '/api/logs') return json({ entries: [] });
     if (p.startsWith('/api/')) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"ok":false}' });
     const f = p === '/' ? 'index.html' : p.slice(1);
     try {
@@ -63,20 +70,33 @@ async function fedora(vp) {
     } catch { return route.fulfill({ status: 404, body: '' }); }
   });
   await page.goto('http://homebox.test/');
-  await page.waitForSelector('#pair-requests:not(.hidden)');
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: `${out}/14-fedora-dashboard-request-${vp}.png` });
-  if (vp === 'desktop') {
-    await page.click('#tabs button[data-tab="clients"]');
-    await page.waitForSelector('#health:not(.hidden)');
-    await page.waitForTimeout(400);
-    await page.screenshot({ path: `${out}/15-fedora-devices-tab-${vp}.png`, fullPage: true });
+  await page.waitForSelector(waitFor || '#tabs');
+  await page.waitForTimeout(600);
+  if (tab) {
+    if (vp === 'phone') { const b = await page.$('#show-dashboard'); if (b && await b.isVisible()) await b.click(); }
+    await page.click(`#tabs button[data-tab="${tab}"]`);
+    await page.waitForTimeout(700);
   }
+  if (click) { await page.getByRole('button', { name: click }).first().click(); await page.waitForTimeout(settle); }
+  await page.screenshot({ path: `${out}/${name}-${vp}.png`, fullPage: full });
   await ctx.close();
 }
 
+async function fedoraAll(vp) {
+  await fedora(vp, '14-fedora-dashboard-request', { waitFor: '#pair-requests:not(.hidden)', full: true });
+  if (vp !== 'desktop') return;
+  await fedora(vp, '14b-fedora-after-approve', { waitFor: '#pair-requests:not(.hidden)', click: 'Approve', after: fedoraStatusApproved });
+  await fedora(vp, '14c-fedora-phone-request', { status: fedoraStatusPhone, waitFor: '#pair-requests:not(.hidden)' });
+  await fedora(vp, '14d-fedora-phone-approved', { status: fedoraStatusPhone, waitFor: '#pair-requests:not(.hidden)', click: 'Approve', after: fedoraStatusPhoneDone, full: true, settle: 4000 });
+  await fedora(vp, '15-fedora-devices-tab', { tab: 'clients', full: true });
+  await fedora(vp, '15b-fedora-tailscale-tab', { tab: 'tailscale', full: true });
+  await fedora(vp, '15c-fedora-fresh-install', { status: fedoraStatusFresh, settings: { public_addr: '', effective_public_addr: '192.168.1.2:443', public_addr_guessed: true, tls: 'self-signed' },
+    ts: { routes_approved: false, approved_routes: [] }, health: fedoraHealthRoute, tab: 'clients', full: true });
+  await fedora(vp, '15d-fedora-health-all-good', { status: fedoraStatusApproved, health: fedoraHealthGood, tab: 'clients', full: true });
+}
+
 for (const vp of Object.keys(viewports)) {
-  await fedora(vp);
+  await fedoraAll(vp);
   await shot('01a-install-gl-advanced-settings', {}, vp, null, 'gl-advanced.html');
   await shot('01b-install-luci-upload', {}, vp, null, 'luci.html');
   for (const [name, fx] of Object.entries(states)) await shot(name, fx, vp);

@@ -233,6 +233,9 @@ func (a *Agent) pairReqReply(x *pairRequest, withToken bool) map[string]any {
 	out := map[string]any{"id": x.ID, "status": x.Status, "name": x.Name, "expires": x.Expires.UTC()}
 	if withToken {
 		out["token"] = x.token
+		// how the server's approval card shows the requester, so the two
+		// can be matched (it is the requester's own identity)
+		out["device"], out["user"], out["ip"] = x.Device, x.User, x.IP
 	}
 	return out
 }

@@ -56,6 +56,20 @@ First launch shows one screen for Tailscale users: tailbond replaces the
 Tailscale VPN on this phone (Android runs one VPN at a time), and the
 tailnet stays reachable through the home server. Then, in order of ease:
 
+**Getting the app** (no store listing): with Tailscale on, type the home
+server's name (`homebox`) into the phone's browser. The server's **phone
+page** (`http://homebox/`, port 80 on its Tailscale IP; also
+`http://homebox:8077/get`) offers `tailbond.apk`, shows what Android's
+install prompts look like (Chrome's "File might be harmful", *Install
+unknown apps → Allow from this source*, *Install*, Play Protect's scan),
+and then **Open tailbond and ask homebox**: an Android intent link to
+`tailbond://ask?server=homebox.<tailnet>.ts.net` that falls back to the
+page's install step when the app isn't installed yet. The app skips its intro
+and asks the server right away (step 0 below), unless it's already paired.
+The admin's dashboard and the GL panel show the page's QR code under **Add
+an Android phone**. Those prompts are Android's own and can't be removed
+for an app outside a store.
+
 0. **Ask your home server** (no link, no code): while the Tailscale app still
    runs the VPN, type the home server's Tailscale name and tap **Ask to
    connect**. The app resolves it through Tailscale (MagicDNS or a 100.x
@@ -151,11 +165,21 @@ state (`src/test/kotlin/dev/tailbond/app/ux/`), 1080x2400, light and dark:
 
 ```sh
 android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.*' -Ptailbond.uxOut=$PWD/out/ux/after
-scripts/ux/web-screens.sh   # the server page's "Add this phone" flow at phone width → out/ux/web
+scripts/ux/web-screens.sh   # the phone page + the dashboard's "Add this phone" flow → out/ux/web
 ```
 
 Without `-Ptailbond.uxOut` the render tests are skipped. The simulated user
-tests that used them are in [ux/summary.md](ux/summary.md).
+tests that used them are in [ux/summary.md](ux/summary.md) and
+[ux/final-summary.md](ux/final-summary.md).
+
+## Updates (future option)
+
+Today a new version is installed the same way (the phone page offers the
+APK the server has; Android installs it over the old one, same signing
+key). An Obtainium- or F-Droid-style update channel (a release feed the
+phone polls) would make updates automatic; nothing is published for it yet.
+Release builds would also need a stable signing key instead of the debug
+key.
 
 ## Modes
 

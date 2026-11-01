@@ -23,7 +23,7 @@ object Words {
 
     /** One line under the big switch. [server] is the home server's short name. */
     fun stateLine(live: Live, server: String, handedToTailscale: Boolean = false): String = when {
-        handedToTailscale && live.state == ConnState.DISCONNECTED -> "Stopped. Tailscale is in charge on this phone."
+        handedToTailscale && live.state == ConnState.DISCONNECTED -> "Stopped. Back to Tailscale: turn it on in its app."
         else -> stateLineFor(live, server)
     }
 

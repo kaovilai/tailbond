@@ -41,12 +41,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- tailbond://pair?d=<base64url(JSON)> -->
+            <!-- tailbond://pair?d=<base64url(JSON)>; tailbond://ask?server=<name> (the home server's phone page) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="tailbond" android:host="pair" />
+                <data android:scheme="tailbond" android:host="ask" />
             </intent-filter>
         </activity>
 

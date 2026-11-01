@@ -179,10 +179,14 @@ fun HandoffDialog(kind: Handoff, state: UiState, actions: UiActions) {
                 } else {
                     Text("Android runs one VPN at a time. If Tailscale is on, turning on tailbond turns it off.")
                 }
-                Text("You still reach your Tailscale machines, like your NAS, through $server.")
+                Text("You still reach your Tailscale machines, like your NAS, through $server. Your internet traffic goes out from $server too (like an exit node; Settings changes that).")
                 Text("Next, Android asks you to allow tailbond's connection request. Tap OK.")
                 Text(
-                    "To go back later, tap Switch back to Tailscale on the home screen.",
+                    "If tailbond switches itself off right after this, Tailscale is set as Always-on VPN on this phone: turn that off in Android Settings → VPN → Tailscale's gear (or ask whoever set up the phone). Android doesn't let tailbond check this setting.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "To go back later, tap Switch back to Tailscale on tailbond's main screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

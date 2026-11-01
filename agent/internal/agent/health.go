@@ -70,7 +70,18 @@ type healthInputs struct {
 	Port     int
 	Route    string
 	ServerTS string // client role: the paired server's tailnet name
-	Now      time.Time
+	// server: tagged (no owner), no approvers, no password
+	OpenApproval bool
+	Now          time.Time
+}
+
+// lanIP is ip when it's a home-network address (what a port forward points at).
+func lanIP(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil || !a.IsPrivate() {
+		return ""
+	}
+	return a.String()
 }
 
 func isPrivate(ip netip.Addr) bool {
@@ -78,6 +89,16 @@ func isPrivate(ip netip.Addr) bool {
 }
 
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
+// directFix: how to get direct Tailscale connections to this machine.
+func directFix(lan string) string {
+	to := "this machine"
+	if lan != "" {
+		to += " (" + lan + ")"
+	}
+	return "On your home router's admin page (Port forwarding, also called Virtual server or NAT), forward UDP port 41641 to " + to + ". " +
+		"(Turning on UPnP on that router also works, but lets any device on your network open ports.)"
+}
 
 func buildHealth(in healthInputs) healthView {
 	v := healthView{Checks: []healthCheck{}}
@@ -112,8 +133,13 @@ func buildHealth(in healthInputs) healthView {
 		case v.Relayed > 0:
 			c.Status = hWarn
 			c.Title = fmt.Sprintf("Tailscale: %s direct, %d through a relay (slower)", plural(v.Direct, "machine"), v.Relayed)
-			c.Detail = "Through a relay: " + strings.Join(relays, ", ") + ". To check one: tailscale ping " + relays[0]
-			c.Fix = "Usually fixed by forwarding UDP port 41641 to this machine, or by turning on UPnP on the router in front of it."
+			those := "that machine"
+			if v.Relayed > 1 {
+				those = "those machines"
+			}
+			c.Detail = "Through a relay: " + strings.Join(relays, ", ") + ". Only traffic between this machine and " + those +
+				" is slower (including bonded devices reaching it); bonding itself doesn't go through Tailscale. The cause can also be on that machine's own network."
+			c.Fix = directFix(lanIP(in.WANIP))
 		case v.Direct > 0:
 			c.Status, c.Title = hOK, fmt.Sprintf("Tailscale: %s direct", plural(v.Direct, "machine"))
 		default:
@@ -143,9 +169,9 @@ func buildHealth(in healthInputs) healthView {
 				Detail: pm, Fix: "Allow outbound UDP (Tailscale uses 41641 and 3478).", FixURL: urlFwPorts})
 		case n.MappingVariesByDestIP:
 			add(healthCheck{ID: "netcheck", Status: hWarn, Title: "This network makes direct Tailscale connections hard",
-				Detail: "Hard NAT (the outside port changes per destination); " + pm + ".", Fix: "Forward UDP port 41641 to this machine, or turn on UPnP on the router in front of it.", FixURL: urlFirewalls})
+				Detail: "The router in front of this machine picks a new outside port for every destination (\"hard NAT\"), so other machines can't connect straight back; " + pm + ".", Fix: directFix(lanIP(in.WANIP)), FixURL: urlFirewalls})
 		default:
-			add(healthCheck{ID: "netcheck", Status: hOK, Title: "Network is friendly to direct connections", Detail: pm})
+			add(healthCheck{ID: "netcheck", Status: hOK, Title: "Network is friendly to direct connections"})
 		}
 	}
 
@@ -156,10 +182,12 @@ func buildHealth(in healthInputs) healthView {
 
 	if ts.Running && in.Route != "" {
 		if ts.RoutesApproved {
-			add(healthCheck{ID: "route", Status: hOK, Title: "Route " + in.Route + " approved"})
+			add(healthCheck{ID: "route", Status: hOK, Title: "Optional route " + in.Route + " approved: your Tailscale machines can reach tailbond devices"})
 		} else {
-			add(healthCheck{ID: "route", Status: hWarn, Title: "Route " + in.Route + " isn't approved yet",
-				Fix: "Approve it once in the Tailscale admin console (Machines → this machine → Edit route settings).", FixURL: urlSubnetRtrs})
+			add(healthCheck{ID: "route", Status: hWarn, Title: "Route " + in.Route + " isn't approved yet (optional)",
+				Detail: "Devices connected through tailbond reach your Tailscale machines without it. Approving it lets your Tailscale machines reach those devices too, under your access rules.",
+				Fix: "If you want that: Tailscale admin console → Machines → this machine → Edit route settings (an autoApprovers rule in your policy approves it automatically). " +
+					"If you do not want it: leave it, or set \"no_advertise_route\": true in tailbond.json to stop advertising it.", FixURL: urlSubnetRtrs})
 		}
 	}
 
@@ -175,8 +203,10 @@ func buildHealth(in healthInputs) healthView {
 		switch {
 		case cgnat.Contains(ip):
 			add(healthCheck{ID: "cgnat", Status: hBad, Title: "Your internet line uses carrier-grade NAT",
-				Detail: "This machine's internet address " + ip.String() + " is shared by your provider, so travel routers can't reach UDP " + fmt.Sprint(in.Port) + " here.",
-				Fix:    "Ask your provider for a public IPv4 address (or use public IPv6).", FixURL: urlDeviceConn})
+				Detail: "This machine's internet address " + ip.String() + " is shared by your provider, so travel routers and phones away from home can't reach UDP " + fmt.Sprint(in.Port) + " here. " +
+					"Bonding needs that direct connection; it can't run through Tailscale's relays (they'd make it slower than a single link).",
+				Fix: "Ask your provider for a public IPv4 address (often free or a small monthly fee; say it's for reaching your home from outside). " +
+					"Advanced: a public IPv6 address also works, but only from networks that have IPv6 too (most mobile networks, few hotels).", FixURL: urlDeviceConn})
 		case isPrivate(ip) && pub != "":
 			add(healthCheck{ID: "cgnat", Status: hOK, Title: "Behind your home router (public address " + pub + ")",
 				Detail: "Forward UDP " + fmt.Sprint(in.Port) + " on that router to " + ip.String() + "."})
@@ -193,7 +223,12 @@ func buildHealth(in healthInputs) healthView {
 			Detail: fmt.Sprintf("%s connected from %s, %s.", o.Name, o.IP, ago(in.Now.Sub(o.At)))})
 	} else {
 		add(healthCheck{ID: "port", Status: hUnknown, Title: fmt.Sprintf("UDP %d: not confirmed from outside yet", in.Port),
-			Detail: "It can't be checked from inside your network; the first device that connects from away confirms it."})
+			Detail: "It can't be checked from inside your network; the first device that connects from away confirms it. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute."})
+	}
+	if in.OpenApproval {
+		add(healthCheck{ID: "approvers", Status: hWarn, Title: "Anyone on your Tailscale network can approve devices",
+			Detail: "This machine is tagged, so it has no owner account, and no approvers or password are set.",
+			Fix:    "Name who may approve, or set a password: Devices → Who can approve and add devices."})
 	}
 	v.OK = healthOK(v.Checks)
 	return v
@@ -282,7 +317,11 @@ func (a *Agent) hHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
 	in := healthInputs{Role: a.role, TS: a.ts.Get(r.Context()), Netcheck: a.netcheck(), Port: cfg.Server.Port, Now: time.Now()}
 	if a.role == config.RoleServer {
-		in.WANIP, in.Route = outboundIP(), cfg.Server.Subnet
+		in.WANIP = outboundIP()
+		if !cfg.Server.NoAdvertiseRoute {
+			in.Route = cfg.Server.Subnet
+		}
+		in.OpenApproval = in.TS.Running && in.TS.Owner == "" && len(cfg.Approvers) == 0 && cfg.UIPassword == ""
 		a.mu.Lock()
 		in.Outside = a.outside
 		a.mu.Unlock()

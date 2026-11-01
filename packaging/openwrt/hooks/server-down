@@ -24,7 +24,8 @@ fi
 
 if [ -n "$TB_PURGE" ]; then
 	for s in tailbond tailbond_dns tailbond_icmp tailbond_wan_in tailbond_wan tailbond_lan \
-		tailbond_ts tailbond_to_ts tailbond_from_ts tailbond_ts_nat tailbond_api; do
+		tailbond_ts tailbond_to_ts tailbond_from_ts tailbond_ts_nat tailbond_api \
+		tailbond_landing tailbond_landing_in; do
 		udel "firewall.$s"
 	done
 	commit_reload firewall firewall

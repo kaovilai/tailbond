@@ -126,7 +126,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 _ask.value = AskState.Failed(server, PairRequestClient.Failure.UNREACHABLE); return@launch
             }
-            var waiting = AskState.Waiting(server, created.name)
+            val seenAs = listOf(created.device, created.user, created.ip).filter { it.isNotBlank() }.joinToString(" · ")
+            var waiting = AskState.Waiting(server, created.name, seenAs)
             _ask.value = waiting
             val deadline = System.currentTimeMillis() + 15 * 60_000
             while (System.currentTimeMillis() < deadline) {
@@ -138,6 +139,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             _ask.value = AskState.Expired(server)
         }
+    }
+
+    /** From the home server's phone page: skip the intro and ask right away (unless already paired). */
+    fun askFromLink(server: String) {
+        if (profile.value != null) return
+        finishOnboarding()
+        askToConnect(server)
     }
 
     fun cancelAsk() {
