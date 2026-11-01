@@ -35,7 +35,7 @@ Only `arm64-v8a` is built.
 Individual steps:
 
 ```sh
-android/scripts/gradle.sh :app:testDebugUnitTest   # pairing parser, mode table, path gate
+android/scripts/gradle.sh :app:testDebugUnitTest   # pairing parser, mode table, path gate, server list, failover, website bypass
 android/scripts/gradle.sh :app:lintDebug
 android/scripts/gradle.sh :app:assembleDebug
 ```
@@ -144,15 +144,18 @@ connect). **Switch back to Tailscale** stops tailbond, remembers that choice
 (`handedToTailscale`; cleared the next time tailbond starts) and opens
 `com.tailscale.ipn` (declared in `<queries>`), or its store page.
 
-**Settings**: home server (pair again / remove), internet traffic, apps that
-skip tailbond (per-app exclude, searchable), switch back to Tailscale,
-Always-on VPN guidance (turn Tailscale's always-on off first).
+**Settings**: servers (order, pair again / remove, add another, when to
+switch; see [Servers and failover](#servers-and-failover)), internet traffic,
+apps and websites that skip tailbond ([Skipping the tunnel](#skipping-the-tunnel)),
+switch back to Tailscale, Always-on VPN guidance (turn Tailscale's always-on
+off first).
 
 **Quick settings tile** ("tailbond"): subtitle is the same wording (*Wi-Fi +
 mobile data*, *Connecting…*, *Disconnected*, *Can't connect*); tap to
 connect/disconnect. It opens the app when VPN consent or pairing is missing.
 
-**Notification**: "Connected through <server>", the connections sentence and
+**Notification**: "Connected through <server>", the failover note (when
+there is one, e.g. "homebox is unreachable"), the connections sentence and
 `↓ rate ↑ rate`, with a Disconnect action.
 
 **Always-on VPN**: supported (`SUPPORTS_ALWAYS_ON`); when the system starts the
@@ -218,14 +221,92 @@ On top of that the app gates which networks carry a path (`service/PathGate.kt`)
 
 Defaults: Wi-Fi and Ethernet primary, cellular secondary.
 
+## Servers and failover
+
+The app keeps an **ordered list of servers** (each one a pairing, all of
+them sealed together with the Keystore key, `data/Repository.kt`); the first
+is the main server. An app that had one pairing moves it into a one-server
+list on first start. Contract: [Multiple servers and
+failover](architecture.md#multiple-servers-and-failover).
+
+- **Names and subnets**: a server is called by its pairing's `server_name`,
+  else the first label of `sni`, else the host of `server`. Its tunnel subnet
+  is the pairing's `subnet`, else the /24 around its DNS address, else
+  `10.77.0.0/24`. Its DNS and machine list come from that subnet's `.1`.
+- **Add another server** (Settings): the same three ways as the first pairing
+  (ask over Tailscale, the server's page, a code or link), but the result is
+  added as a backup. Asking sends `avoid_subnets` (the subnets the phone
+  already has), so a new server without devices moves off them by itself.
+  The app refuses a server that is already in the list, or whose subnet
+  overlaps one in the list, and says which server clashes and that the new
+  one's `server.subnet` must change. A `tailbond://pair` link for a server
+  already in the list renews that server's pairing; any other link adds a
+  backup.
+- **Settings list**: each server with its state (*In use*, *Ready as
+  backup*, *Unreachable*, *Connecting…*), up/down buttons to reorder, *Use
+  this server now*, *Pair again* and *Remove*. **When to switch**: "Prefer
+  homebox, use vps if homebox is down" (default) or "Always use <server>".
+- **How it switches** (`failover/FailoverEngine.kt`, pure, tested with a fake
+  clock in `FailoverEngineTest`): the server in use works while mqvpn says
+  connected and at least one path is active. After 15 s without that, the
+  app switches to the next server in order, skipping one whose last probe
+  failed if another answered. Standby servers get one UDP packet every 10 s,
+  outside the tunnel (`service/ServerProber.kt`: a 60-byte QUIC short-header
+  packet from a `protect()`ed socket bound to each validated non-VPN network
+  in turn; any reply within 2 s counts). Once an earlier server has answered
+  every probe for 2 minutes, the app goes back to it (one missed probe starts
+  the count again); a failback that doesn't come up doubles that server's
+  wait, up to 16 times, until it has worked for 10 minutes. *Use this server
+  now* switches at once and stays there while that server works. The 15 s and
+  2 minutes are `AppSettings.switchAfterSec` / `failbackAfterSec`.
+- **A switch** ends the mqvpn session and starts one to the next server with
+  its own address, TLS name, key, DNS and routes; app and website bypass stay.
+  A server that fails before connecting (no answer, wrong certificate, key
+  refused) is retried every 3 s until the 15 s are up; when every server has
+  failed that way in a row, tailbond stops and says so, like with one server.
+- **Wording**: the home card says "Using vps (homebox is unreachable)",
+  "Back to homebox in 1:20" while counting down, and "Back on homebox" for a
+  few minutes after going back; a **Servers** section lists each server's
+  state. With one server nothing of this shows.
+
+## Skipping the tunnel
+
+Two ways to let traffic use the phone's own connection instead of tailbond:
+
+- **Apps that skip tailbond** (every Android version): the chosen apps are
+  left out of the VPN (`addDisallowedApplication`). The surest way: it covers
+  everything the app does.
+- **Websites that skip tailbond** (**Android 13 or newer** only): the app
+  looks up each website and its `www.` name through the tunnel's DNS when the
+  tunnel comes up and every 10 minutes (`data/DnsLookup.kt`), and leaves those
+  addresses out of the VPN with `VpnService.Builder.excludeRoute`. Addresses
+  in the server's subnet, its DNS and the tailnet ranges stay in the tunnel.
+  New addresses mean building the VPN interface again
+  (`MqvpnVpnService.rebuildTun`, a short break, no new QUIC connection): at
+  most once a minute, while addresses seen in the last hour stay excluded.
+  Changing the list applies at once. On Android 12 and older the page says
+  "Needs Android 13 or newer" and points to *Apps that skip tailbond*:
+  older Android can't exclude routes from a VPN.
+  Presets: **Banking** (type your bank's site), **Streaming** (adds
+  `netflix.com`, `nflxvideo.net`; for a streaming app, skip the app instead),
+  **Wi-Fi calling** (nothing to add: the phone's own Wi-Fi calling already
+  goes straight over Wi-Fi; calling apps are apps).
+  The limit, as the page says it: it goes by addresses, so parts of a site
+  loaded from other names still use tailbond, other sites on the same
+  addresses (big hosting networks) skip it too, and apps with their own
+  private DNS may not follow it. With *Internet traffic: Only Tailscale
+  machines*, websites already skip tailbond.
+
 ## Routes and DNS
 
 - **Full tunnel** (default): `0.0.0.0/0` and `::/0` (IPv6 is routed into the
   tunnel even when the server assigns no IPv6 address, so it can't leak around it).
-- **Tailnet + home LAN only**: `10.77.0.0/24` plus the pairing's
+- **Tailnet + home LAN only**: the server's tunnel subnet (`10.77.0.0/24` by default) plus the pairing's
   `tailnet_routes` (e.g. `100.64.0.0/10`, `fd7a:115c:a1e0::/48`); DNS servers
   outside those prefixes get a host route.
 - **Per-app exclude**: `addDisallowedApplication` for each chosen app.
+- **Per-website exclude** (Android 13+): `excludeRoute` for each website's
+  addresses ([Skipping the tunnel](#skipping-the-tunnel)).
 - **DNS**: the pairing's `dns` list (default `10.77.0.1`, the server's
   forwarder that resolves MagicDNS names).
 
@@ -266,6 +347,10 @@ Android's sign-in can't load, so leave it off ([setup tips](setup-tips.md)).
   byte counters), not traffic that bypasses the VPN (excluded apps, other
   profiles). It resets on the 1st of each month or manually.
 - **Mode, route and app-exclude changes reconnect** the tunnel (a short drop).
+- **Failover and website bypass are untested on a phone.** The switching
+  rules, the probe packet, the DNS parsing and the address lists are unit
+  tested; the probe reply from a real server, the switch itself, and
+  `excludeRoute` plus the in-place TUN rebuild on Android 13+ are not.
 - **The redesigned UI is verified by renders, not on a phone**: the
   handoff detection (another VPN network present), launching Tailscale, the
   browser round trip through *Add this phone* and the machine list over the
