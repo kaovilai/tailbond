@@ -43,6 +43,19 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric + Roborazzi screen renders (src/test/.../ux); see docs/ux/summary.md
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all { t ->
+            t.maxHeapSize = "1536m"
+            t.systemProperty("robolectric.graphicsMode", "NATIVE")
+            t.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+            // -Ptailbond.uxOut=<dir> renders every screen to PNGs there; unset = the render tests skip
+            project.findProperty("tailbond.uxOut")?.let {
+                t.systemProperty("tailbond.uxOut", it.toString())
+                t.systemProperty("roborazzi.test.record", "true")
+                t.outputs.upToDateWhen { false }
+            }
+        }
     }
     lint {
         abortOnError = true
@@ -77,4 +90,12 @@ dependencies {
     implementation("com.google.zxing:core:3.5.4")
 
     testImplementation("junit:junit:4.13.2")
+    // screen renders: Robolectric (native graphics) + Roborazzi
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.77.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.77.0")
+    testImplementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.test.ext:junit:1.3.0")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
