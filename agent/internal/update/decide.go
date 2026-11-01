@@ -46,6 +46,8 @@ type Decision struct {
 	Action  string // none | install | wait | blocked
 	Version string
 	Reason  string
+	// Code, for wait/blocked: busy | window | server | notify
+	Code string
 }
 
 // Decide is the whole update policy (docs/architecture.md, "Updates").
@@ -84,21 +86,21 @@ func Decide(p Policy, s Situation) Decision {
 			have = 1
 		}
 		if m.RequiresServerProtocol > have {
-			return Decision{Action: ActionBlocked, Version: target, Reason: "waiting for the server to update first"}
+			return Decision{Action: ActionBlocked, Version: target, Reason: "waiting for the server to update first", Code: "server"}
 		}
 	}
 	if s.Requested {
 		return Decision{Action: ActionInstall, Version: target, Reason: "requested"}
 	}
 	if p.Mode == PolicyNotify {
-		return Decision{Action: ActionWait, Version: target, Reason: "update available"}
+		return Decision{Action: ActionWait, Version: target, Reason: "update available", Code: "notify"}
 	}
 	if s.Server {
 		if ok, next := InWindow(p.Window, s.Now); !ok {
-			return Decision{Action: ActionWait, Version: target, Reason: "waiting for " + next}
+			return Decision{Action: ActionWait, Version: target, Reason: "waiting for " + next, Code: "window"}
 		}
 	} else if p.DeferKbps > 0 && s.TrafficKbps > p.DeferKbps && !m.Security {
-		return Decision{Action: ActionWait, Version: target, Reason: "busy: a call or a stream is using the tunnel"}
+		return Decision{Action: ActionWait, Version: target, Reason: "busy: a call or a stream is using the tunnel", Code: "busy"}
 	}
 	return Decision{Action: ActionInstall, Version: target}
 }

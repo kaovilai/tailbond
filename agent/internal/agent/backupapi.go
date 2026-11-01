@@ -279,11 +279,7 @@ func listBackups(dir, client string) []backupEntry {
 		if err != nil {
 			continue
 		}
-		name := e.Name()
-		if client != "" {
-			name = client + "/" + name
-		}
-		out = append(out, backupEntry{Name: name, Client: client, Size: info.Size(), Created: info.ModTime().UTC().Format(time.RFC3339)})
+		out = append(out, backupEntry{Name: e.Name(), Client: client, Size: info.Size(), Created: info.ModTime().UTC().Format(time.RFC3339)})
 	}
 	return out
 }
@@ -454,6 +450,7 @@ func (a *Agent) scheduledBackup(ctx context.Context) {
 	data, err := a.makeBackup(b.Passphrase)
 	if err != nil {
 		a.Logf("scheduled backup: %v", err)
+		a.noteBackup(func(s *backupStatus) { s.LastError = err.Error() })
 		return
 	}
 	_ = os.MkdirAll(dir, 0o700)
@@ -464,9 +461,13 @@ func (a *Agent) scheduledBackup(ctx context.Context) {
 	}
 	pruneBackups(dir, prefix, b.Keep)
 	a.Logf("scheduled backup %s", name)
+	a.noteBackup(func(s *backupStatus) { s.Last, s.LastError = time.Now().UTC().Format(time.RFC3339), "" })
 	if a.client != nil && *b.Push && a.Snapshot().State == status.StateConnected {
 		if err := a.pushBackup(ctx, data); err != nil {
 			a.Logf("sending the backup to the server: %v", err)
+			a.noteBackup(func(s *backupStatus) { s.LastError = "sending to the server: " + err.Error() })
+		} else {
+			a.noteBackup(func(s *backupStatus) { s.LastPush = time.Now().UTC().Format(time.RFC3339) })
 		}
 	}
 }
@@ -492,4 +493,37 @@ func (a *Agent) pushBackup(ctx context.Context, data []byte) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// backupStatus is what GET /api/settings reports as "backup".
+type backupStatus struct {
+	PassphraseSet bool   `json:"passphrase_set"`
+	EveryHours    int    `json:"every_hours"`
+	Keep          int    `json:"keep"`
+	Push          bool   `json:"push"`
+	Last          string `json:"last,omitempty"`
+	LastPush      string `json:"last_push,omitempty"`
+	LastError     string `json:"last_error,omitempty"`
+}
+
+func (a *Agent) noteBackup(fn func(s *backupStatus)) {
+	a.upd.mu.Lock()
+	fn(&a.upd.backup)
+	a.upd.mu.Unlock()
+}
+
+func (a *Agent) backupView() *backupStatus {
+	b := a.store.Get().BackupOrDefault()
+	a.upd.mu.Lock()
+	v := a.upd.backup
+	a.upd.mu.Unlock()
+	v.PassphraseSet, v.EveryHours, v.Keep, v.Push = b.Passphrase != "", b.EveryHours, b.Keep, *b.Push
+	if v.Last == "" {
+		for _, e := range listBackups(a.backupDir(), "") {
+			if !strings.HasPrefix(e.Name, "before-restore-") && e.Created > v.Last {
+				v.Last = e.Created
+			}
+		}
+	}
+	return &v
 }

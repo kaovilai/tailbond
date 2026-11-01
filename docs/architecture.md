@@ -641,6 +641,11 @@ Status (`/api/status`, additive): `protocol`, and
 - `source`: `mirror` (the home server) | `public` (update.source) | `upload` (an offline upload, server) | `cache` (server: the last good manifest, the public source being unreachable; `error` says why).
 - `outdated` (server role): registered clients whose last reported version
   is older than this server's.
+- additive: `deferred_code` (`busy` | `window` | `server` | `notify`) next
+  to the plain `deferred` text; `last_result_version`, `last_result_at`
+  (RFC 3339) for `last_result` (`ok` | `rolled_back` | `failed`); `detail`
+  (e.g. `reinstalled_after_firmware_upgrade`); `error` (the last check's
+  problem, if any).
 
 Clients report their version to their server: every request a paired
 client makes with its API token (`GET /api/peers`, `/updates/…`,
@@ -769,9 +774,9 @@ for inspection.
 | POST | `/api/restore/preview` | `{"file": "<base64>", "passphrase"}` → `{"role","host","created","agent_version","changes":[{"what","from","to"}],"warnings":[…]}` (role mismatch is an error) |
 | POST | `/api/restore` | same body plus `"confirm": true` → restores, keeps the rollback copy, restarts |
 | GET | `/api/backups` | admin: the local scheduled backups and the clients' pushed ones `[{"name","client","size","created"}]` |
-| GET | `/api/backups/{name}` | admin: download one (still encrypted) |
+| GET | `/api/backups/{name}[?client=<client>]` | admin: download one (still encrypted); `client` for a client's pushed backup (`name` is a plain file name in the list) |
 | POST | `/api/backups/push` | client token: a client's own encrypted backup |
-| POST | `/api/backup/settings` | `{"passphrase","every_hours","keep","push"}` |
+| POST | `/api/backup/settings` | `{"passphrase","every_hours","keep","push"}`: an omitted passphrase keeps the current one, `""` turns scheduled backups off. `GET /api/settings` reports `backup: {"passphrase_set","every_hours","keep","push","last","last_push","last_error"}` |
 
 Request bodies for these endpoints may be up to 2 MiB.
 

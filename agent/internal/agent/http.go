@@ -500,6 +500,8 @@ type settingsView struct {
 	// dashboard from the tailnet without a password); empty when tagged
 	Owner     string   `json:"owner,omitempty"`
 	Approvers []string `json:"approvers,omitempty"`
+	// scheduled backups (no passphrase, only whether one is set)
+	Backup *backupStatus `json:"backup,omitempty"`
 }
 
 // hAPK offers the Android app to phones opening the dashboard (additive).
@@ -531,7 +533,7 @@ func apkAvailable(path string) bool {
 
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: a.glinetIPKAvailable()}
+	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: a.glinetIPKAvailable(), Backup: a.backupView()}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo

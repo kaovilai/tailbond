@@ -59,6 +59,7 @@ type updater struct {
 	traffic   []int64 // client: tunnel bps samples, newest last
 	srvProto  int     // client: the active server's protocol
 	clients   map[string]clientVersion
+	backup    backupStatus
 	checkNow  chan struct{}
 	installNw chan string
 	// tests and the e2e
@@ -267,10 +268,10 @@ func (a *Agent) updateTick(ctx context.Context, requested string) {
 		Failed: st.Failed, ServerProtocol: a.serverProtocol(ctx), TrafficKbps: a.trafficKbps(), Requested: requested != "",
 	})
 	a.setUpdate(func(v *status.Update) {
-		v.Deferred = ""
+		v.Deferred, v.DeferredCode = "", ""
 		switch d.Action {
 		case update.ActionWait, update.ActionBlocked:
-			v.State, v.Deferred = "waiting", d.Reason
+			v.State, v.Deferred, v.DeferredCode = "waiting", d.Reason, d.Code
 		case update.ActionNone:
 			if v.State != "failed" && v.State != "rolled_back" {
 				v.State = "idle"
@@ -284,6 +285,7 @@ func (a *Agent) updateTick(ctx context.Context, requested string) {
 		a.Logf("update to %s: %v", m.Version, err)
 		a.setUpdate(func(v *status.Update) {
 			v.State, v.LastResult, v.Error = "failed", "failed", err.Error()
+			v.LastResultVersion, v.LastResultAt = m.Version, time.Now().UTC().Format(time.RFC3339)
 		})
 	}
 }
@@ -614,7 +616,7 @@ func (a *Agent) loadUpdateResult() {
 		return
 	}
 	a.setUpdate(func(v *status.Update) {
-		v.LastResult, v.Detail = r.Result, r.Detail
+		v.LastResult, v.Detail, v.LastResultVersion, v.LastResultAt = r.Result, r.Detail, r.Version, r.At
 		if r.Result == "rolled_back" {
 			v.State = "rolled_back"
 		}
@@ -636,7 +638,10 @@ func (a *Agent) trialWatch(ctx context.Context, tr update.Trial) {
 		if ok {
 			_ = a.updateStore().Commit("healthy")
 			a.Logf("update %s is healthy; keeping it", tr.Version)
-			a.setUpdate(func(v *status.Update) { v.State, v.LastResult, v.Detail = "idle", "ok", "" })
+			a.setUpdate(func(v *status.Update) {
+				v.State, v.LastResult, v.Detail = "idle", "ok", ""
+				v.LastResultVersion, v.LastResultAt = tr.Version, time.Now().UTC().Format(time.RFC3339)
+			})
 			return
 		}
 		if time.Now().After(tr.Deadline) {

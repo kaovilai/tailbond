@@ -121,23 +121,28 @@ type Status struct {
 
 // Update is the status of auto-updates on this machine.
 type Update struct {
-	Current    string        `json:"current"`
-	Available  string        `json:"available,omitempty"`
-	Policy     string        `json:"policy"`
-	Channel    string        `json:"channel"`
-	Pin        string        `json:"pin,omitempty"`
-	State      string        `json:"state"` // idle | checking | downloading | waiting | installing | trial | failed | rolled_back | off
-	Source     string        `json:"source,omitempty"`
-	LastCheck  *time.Time    `json:"last_check,omitempty"`
-	LastResult string        `json:"last_result,omitempty"`
-	Detail     string        `json:"detail,omitempty"` // last result detail, e.g. reinstalled_after_firmware_upgrade
-	NotesURL   string        `json:"notes_url,omitempty"`
-	Security   bool          `json:"security,omitempty"`
-	Deferred   string        `json:"deferred,omitempty"`
-	Window     string        `json:"window,omitempty"`
-	Error      string        `json:"error,omitempty"`
-	Mirror     *MirrorStatus `json:"mirror,omitempty"`
-	Outdated   []Outdated    `json:"outdated,omitempty"`
+	Current    string     `json:"current"`
+	Available  string     `json:"available,omitempty"`
+	Policy     string     `json:"policy"`
+	Channel    string     `json:"channel"`
+	Pin        string     `json:"pin,omitempty"`
+	State      string     `json:"state"` // idle | checking | downloading | waiting | installing | trial | failed | rolled_back | off
+	Source     string     `json:"source,omitempty"`
+	LastCheck  *time.Time `json:"last_check,omitempty"`
+	LastResult string     `json:"last_result,omitempty"`
+	Detail     string     `json:"detail,omitempty"` // last result detail, e.g. reinstalled_after_firmware_upgrade
+	// the version the last result is about, and when
+	LastResultVersion string `json:"last_result_version,omitempty"`
+	LastResultAt      string `json:"last_result_at,omitempty"`
+	NotesURL          string `json:"notes_url,omitempty"`
+	Security          bool   `json:"security,omitempty"`
+	Deferred          string `json:"deferred,omitempty"`
+	// busy | window | server | notify, while waiting
+	DeferredCode string        `json:"deferred_code,omitempty"`
+	Window       string        `json:"window,omitempty"`
+	Error        string        `json:"error,omitempty"`
+	Mirror       *MirrorStatus `json:"mirror,omitempty"`
+	Outdated     []Outdated    `json:"outdated,omitempty"`
 }
 
 // MirrorStatus: the server's update mirror.

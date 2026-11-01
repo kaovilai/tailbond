@@ -301,7 +301,7 @@ func TestBackupPush(t *testing.T) {
 	}
 	var list []backupEntry
 	decode(t, req(t, a, "GET", "/api/backups", "127.0.0.1:1", "", nil), &list)
-	if len(list) != 1 || list[0].Client != "slate7" {
+	if len(list) != 1 || list[0].Client != "slate7" || strings.Contains(list[0].Name, "/") {
 		t.Fatalf("list %+v", list)
 	}
 }
