@@ -11,6 +11,9 @@ scrolling page). `-dark` = same screen in dark theme.
 | 01-onboarding | tailbond app, very first launch |
 | 02-pairing | Next screen after the first launch |
 | 02-pairing-paste-error | Same, after pasting something wrong |
+| 02b-pairing-ask-waiting | After typing the home server's name (`homebox`) and tapping its main button |
+| 02c-pairing-ask-not-found, 02d-pairing-ask-declined | Two ways that can go wrong |
+| 02e-pairing-ask-approved-confirm | After someone approved it on the home server |
 | 03-deeplink-confirm | The app after a pairing link opened it |
 | 04-handoff-other-vpn | After tapping the switch to turn on, while another VPN app is on |
 | 05-handoff-first-permission | After tapping the switch the first time, no other VPN on |
@@ -22,6 +25,7 @@ scrolling page). `-dark` = same screen in dark theme.
 | 15-one-path-failed | Connected, one connection broken |
 | 16-save-data-standby | A data-saving setting chosen, connected |
 | 17-save-data-takeover | Same setting, Wi-Fi has dropped |
+| 16c-home-wifi-needs-sign-in | Connected; the phone joined a hotel Wi-Fi that shows a sign-in page |
 | 18-machines-search-copied | Main screen after typing in the search box and tapping a copy icon |
 | 19-machine-detail | After tapping a machine in the list |
 | 20-connections | After tapping the Connections area |

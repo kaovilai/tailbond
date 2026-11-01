@@ -216,7 +216,7 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
     is AskState.Asking -> "Asking ${s.server}…" to "Looking for ${s.server} on your Tailscale network."
     is AskState.Waiting -> "Waiting for approval on ${s.server}…" to
         "Ask whoever runs ${s.server} to open its tailbond page (http://${s.server}:8077 on a computer, or a Flint 3's " +
-        "admin panel → VPN → tailbond) and tap Approve next to \"${s.name}\". Keep this screen open; " +
+        "admin panel → VPN → tailbond) and tap Approve next to \"${s.name}\"; the request is at the top of that page, on a phone too. Keep this screen open; " +
         "tailbond continues by itself once approved."
     is AskState.Declined -> "${s.server} said no" to "Whoever runs ${s.server} declined this phone. Ask them, then ask again."
     is AskState.Expired -> "Nobody approved it in time" to "The request ran out after 10 minutes. Ask again when someone can approve it on ${s.server}."
@@ -237,7 +237,16 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
 
 /** First choice while Tailscale still has the VPN: ask the home server, approve it there. */
 @Composable
-private fun AskCard(ask: AskState, server: String, onServer: (String) -> Unit, actions: UiActions) {
+private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, actions: UiActions) {
+    // after a failed try the field keeps (or gets back) the name that was asked
+    val server = typed.ifBlank {
+        when (ask) {
+            is AskState.Failed -> ask.server
+            is AskState.Declined -> ask.server
+            is AskState.Expired -> ask.server
+            else -> ""
+        }
+    }
     val busy = ask is AskState.Asking || ask is AskState.Waiting
     val msg = askMessage(ask)
     val bad = ask is AskState.Failed || ask is AskState.Declined || ask is AskState.Expired

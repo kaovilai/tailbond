@@ -22,7 +22,8 @@ Personas:
 - **C**: less-technical family member;
 - **D**: long-time Speedify user.
 
-Renders: `out/ux/glinet/round-N/` (not committed; `out/` is ignored).
+Renders: `out/ux/glinet/round-N/` and `out/ux/glinet/final/` (not
+committed; `out/` is ignored).
 
 ## Findings per round
 
@@ -33,9 +34,25 @@ Renders: `out/ux/glinet/round-N/` (not committed; `out/` is ignored).
 | 3 | 0 / 1 / 9 | 0 / 2 / 16 | 0 / 2 / 9 | 0 / 1 / 13 | 0 / 6 / 47 |
 | 4 | 0 / 3 / 11 | 0 / 5 / 13 | 1 / 3 / 11 | 0 / 3 / 15 | 1 / 14 / 50 |
 | 5 | 0 / 1 / 16 | 0 / 2 / 12 | 0 / 0 / 23 | 0 / 1 / 15 | 0 / 4 / 66 |
+| 6 | 0 / 1 / 12 | 0 / 3 / 13 | 0 / 0 / 16 | 0 / 1 / 14 | 0 / 5 / 55 |
+
+**Outcome: the exit condition (no medium or high from any persona) was not
+met within the 6-round cap.** Highs: 0 in rounds 1–3, 1 in round 4 (after
+captive portals, setup health and the VPN-menu move were added), 0 in
+rounds 5–6. Persona C (family member) had no medium in rounds 5 and 6. The
+round-6 mediums were fixed afterwards without another review (below);
+final renders: `out/ux/glinet/final/`.
 | 3 | 0 / 1 / 9 | 0 / 2 / 16 | 0 / 2 / 9 | 0 / 1 / 13 | 0 / 6 / 47 |
 | 4 | 0 / 3 / 11 | 0 / 5 / 13 | 1 / 3 / 11 | 0 / 3 / 15 | 1 / 14 / 50 |
 | 5 | 0 / 1 / 16 | 0 / 2 / 12 | 0 / 0 / 23 | 0 / 1 / 15 | 0 / 4 / 66 |
+| 6 | 0 / 1 / 12 | 0 / 3 / 13 | 0 / 0 / 16 | 0 / 1 / 14 | 0 / 5 / 55 |
+
+**Outcome: the exit condition (no medium or high from any persona) was not
+met within the 6-round cap.** Highs: 0 in rounds 1–3, 1 in round 4 (after
+captive portals, setup health and the VPN-menu move were added), 0 in
+rounds 5–6. Persona C (family member) had no medium in rounds 5 and 6. The
+round-6 mediums were fixed afterwards without another review (below);
+final renders: `out/ux/glinet/final/`.
 
 ## Round 1 triage
 
@@ -135,3 +152,34 @@ Lows rejected: LuCI install (GL has no upload in Plug-ins), VPN vs APPLICATIONS 
 
 Lows fixed: GL Login Mode banner title ("Signing in to Repeater through GL's Login Mode", no second "click Login Mode") (A); explain why cable sign-in differs from Wi-Fi (GL covers the repeater only) (A, D); health counts match the list (B, C); "on this router's clock" (B); turned-off fixture keeps Backup only (D).
 Lows rejected: on-screen push notification for portals (D: the GL admin has no notification channel for plug-ins; the summary line and card are where GL users look), graphs, Secondary, billing day (earlier rounds), checksum (B), port 80 in the Fedora invite (render mock).
+
+## Round 6 (last round) triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Carrier-grade NAT screen: "travel routers can't reach UDP 443" next to pixel-8 connected; health card gone (A, B, D) | M | **fix, after round 6 (not re-reviewed)**: the step says devices on the home Wi-Fi still connect, from away they can't; the fixture shows pixel-8 on the home LAN and slate7 not connected; the health card stays visible when the only steps are health problems |
+| 2 | Fedora: anyone the machine is shared with can approve; a password means editing JSON (B) | M | **fix, after round 6**: Devices tab → **Who can approve and add devices** sets or removes the page password; the approval card points there |
+| 3 | GL Login Mode screen: "Connected to homebox" and Tethering in use while traffic goes out the hotel Wi-Fi (B; A, C, D low) | M | **fix, after round 6**: the card says the router itself stays connected to homebox over the other connections (that's the top card) while devices' traffic goes out the hotel Wi-Fi; the top card reads "Router connected to homebox · devices signing in" |
+
+Lows not addressed: LuCI install (GL has no upload elsewhere), graphs/Secondary/billing day (D), two sign-in flows (explained on the card: GL covers the repeater only), checksum/signature (B), short MagicDNS names (A), port 80 in the Fedora mock.
+
+## Android personas, re-run once on the new pairing flow
+
+Renders `out/ux/after-glinet/` (Roborazzi + the web page), task script and
+manifest as in [the Android loop](summary.md); raw reports in
+`after-glinet/`.
+
+| Persona | H / M / L | Task 1 (pair from the phone alone) |
+|---|---|---|
+| A (daily Tailscale user) | 1 / 1 / 9 | Pairing: yes (typed `homebox` from Tailscale's machine list → Ask to connect). High: no way to get the APK before knowing the server page's address |
+| B (homelab) | 0 / 1 / 6 | Pairing: yes, two ways. Medium: same APK question |
+| C (family) | 1 / 1 / 8 | Pairing: yes. High: same APK question; medium: "Ask again" with an empty field after a failure (render state; the field now keeps the asked name) |
+
+The discovery medium from [the Android loop](summary.md) (round 4 #1, "can't
+find the server's page or name without asking someone") is closed for
+pairing: the phone asks the server by its Tailscale name and someone
+approves it. What remains is getting the app onto the phone at all without
+a store listing or a link from the admin: the same distribution limit as
+round 3 #5 there (**partial, stands**). After the re-run the waiting screen
+says the request shows at the top of the server's page on a phone too, and
+a failed ask keeps the name in the field.

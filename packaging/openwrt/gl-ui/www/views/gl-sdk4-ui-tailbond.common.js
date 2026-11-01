@@ -677,7 +677,9 @@
           var on = this.wantOn !== null ? this.wantOn : this.isOn();
           var err = st.state === "error" || (st.state === "connecting" && !!st.error);
           var iconCls = !this.paired ? "" : !on ? "" : err ? "err" : st.state === "connected" ? "on" : "warn";
-          var title = !this.paired ? "Not connected to a home server" : !on ? "tailbond is off" : err ? "Can't reach " + (this.serverShort || "home server") :
+          var signingIn = this.wans.some(function (w) { return w.captive === "portal" && w.signinUntil; });
+          var title = !this.paired ? "Not connected to a home server" : !on ? "tailbond is off" :
+            signingIn && st.state === "connected" ? "Router connected to " + this.serverShort + " · devices signing in" : err ? "Can't reach " + (this.serverShort || "home server") :
             st.state === "connected" ? "Connected to " + this.serverShort : "Connecting…";
           var rates = this.paired && on && st.state === "connected" ? h("div", { class: "tb-rates" }, [
             h("span", ["↓ ", h("b", fmtRate(st.totals.rx_bps))]), h("span", ["↑ ", h("b", fmtRate(st.totals.tx_bps))]),
@@ -798,7 +800,7 @@
               return self.alert(h, "info", w.signinUntil ? "Signing in to " + w.label + " through GL's Login Mode" : w.label + " needs you to sign in", [
                 w.signinUntil ? null : h("div", "GL's Repeater page handles this sign-in. Open it, click " + "“Login Mode for Public Hotspots” (or “Go to Login”) and accept the hotel's terms."),
                 h("div", { style: { marginTop: "6px" } }, w.signinUntil
-                  ? "GL's Login Mode is on: all traffic from devices here goes out the hotel Wi-Fi directly (not just the sign-in page), not through your home server, so the page loads. It ends by itself once you've signed in (or click “Quit Login Mode” on GL's Repeater page); tailbond then adds " + w.label + " back to bonding."
+                  ? "GL's Login Mode is on: all traffic from devices here goes out the hotel Wi-Fi directly (not just the sign-in page), not through your home server, so the page loads. The router itself stays connected to your home server over your other connections (that's what the top card shows), so they keep being used. It ends by itself once you've signed in (or click “Quit Login Mode” on GL's Repeater page); tailbond then adds " + w.label + " back to bonding."
                   : "While you sign in, devices here use the hotel Wi-Fi directly, not through your home server. Afterwards tailbond adds " + w.label + " back to bonding by itself. Your other connections keep working meanwhile.")
               ], [h("a", { class: "tb-btn small" + (w.signinUntil ? "" : " primary"), attrs: { href: "#/internet" } }, w.signinUntil ? "Back to GL's Repeater page" : "Open GL's Repeater page")]);
             }
@@ -1146,6 +1148,7 @@
           steps.filter(function (x) { return x.indexOf("health:") === 0; }).forEach(function (x) {
             var c = A(self.health.checks).filter(function (k) { return "health:" + k.id === x; })[0];
             if (c) items.push(self.alert(h, "err", "Step " + (++n) + ": " + c.title, [h("div", c.detail || ""), c.fix ? h("div", { style: { marginTop: "4px" } }, [c.fix + " ", c.fix_url ? h("a", { class: "tb-link", attrs: { href: c.fix_url, target: "_blank", rel: "noopener" } }, "How to fix") : null]) : null,
+              c.id === "cgnat" ? h("div", { class: "tb-small", style: { marginTop: "4px" } }, "Devices on your home Wi-Fi can still connect; from away they can't until this is fixed.") : null,
               h("div", { class: "tb-small", style: { marginTop: "4px" } }, "Not sure? Show this to whoever set up your internet.")]));
           });
           if (!steps.length) {
@@ -1184,7 +1187,8 @@
           var self = this, v = this.health;
           if (!v) return null;
           var steps = this.setupSteps();
-          if (steps.length) return null; // finish the setup steps first
+          // finish the setup steps first (health problems shown as steps excepted)
+          if (steps.some(function (x) { return x.indexOf("health:") !== 0; })) return null;
           var checks = A(v.checks);
           // on the Flint, "this machine" is the router itself: say where in GL
           var glFix = "On this router: NETWORK → UPnP, turn it on. If another router sits in front of this one (for example your internet provider's box), forward UDP port 41641 to this router there.";

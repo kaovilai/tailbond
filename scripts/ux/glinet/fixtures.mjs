@@ -167,7 +167,10 @@ export const states = {
   }),
   '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed, 'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((m) => (m.hostname === 'pixel-8' ? { ...m, conn: 'relay', relay: 'fra' } : m)) } }),
   '18c-server-health-good': serverBase(),
-  '18b-server-health-cgnat': withApi(serverBase(), { 'GET /api/health': healthCgnat }),
+  '18b-server-health-cgnat': withApi(serverBase({ clients: [
+    { name: 'pixel-8', registered: true, connected: true, endpoint: '192.168.8.120:51234', connected_sec: 3 * 3600, tx_bps: 12e6, rx_bps: 1.1e6, paths: [{ state: 'active' }] },
+    { name: 'slate7', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, paths: [] },
+  ] }), { 'GET /api/health': healthCgnat }),
   // hotel: the repeater is behind a portal, GL's repeater handles it
   '16-captive-gl-repeater': connected([
     livePath('usb0', 'tethering', 'Tethering', 'usb', 'active', 21e6, 2.9e6, 48, { priority: 'secondary', data_cap_mb: 5000, used_bytes: 1.2e9 }),

@@ -377,8 +377,8 @@ function renderPairRequests(st) {
   box.dataset.sig = sig;
   const pw = state.settings && state.settings.password_set;
   const who = h('p', { class: 'muted small', text: pw
-    ? 'Only people with the tailbond password can approve.'
-    : 'Who can approve: anyone who can open this page, i.e. anyone on your Tailscale account (and anyone you shared this machine with). To require a password, set "ui_password" in /etc/tailbond/tailbond.json (see the Fedora server guide).' });
+    ? 'Only people with this page\'s password can approve.'
+    : 'Who can approve: anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). To require a password: Devices tab → Who can approve.' });
   box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), who, ...reqs.map((r) => {
     const what = r.kind === 'router' ? 'Travel router' : r.kind === 'phone' ? 'Phone' : 'Device';
     const decide = async (action, btn) => {
@@ -484,6 +484,9 @@ async function loadSettings() {
     $('#apk-yes').classList.toggle('hidden', !s.android_apk);
     $('#apk-no').classList.toggle('hidden', !!s.android_apk);
     $('#ipk-yes').classList.toggle('hidden', !s.glinet_ipk);
+    $('#pw-state').textContent = s.password_set
+      ? 'Only people with this page\'s password. Change it, or save an empty one to remove it. Family adding their own phone then need it too.'
+      : 'Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). Set a password to require it.';
     $('#ipk-no').classList.toggle('hidden', !!s.glinet_ipk);
     const w = $('#addr-warning');
     if (s.public_addr_guessed) {
@@ -609,6 +612,19 @@ function setupTabs() {
       if (state.tab === 'setup') loadSettings();
     });
   }
+}
+
+function setupPassword() {
+  $('#pw-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = $('#pw-new').value;
+    try {
+      await api('POST', '/api/settings', { ui_password: v });
+      $('#pw-new').value = '';
+      toast(v ? 'Password set: approving and adding devices now needs it' : 'Password removed');
+      await loadSettings();
+    } catch (err) { toast(err.message, true); }
+  });
 }
 
 function setupClients() {
@@ -760,6 +776,7 @@ setupModes();
 setupPower();
 setupTabs();
 setupClients();
+setupPassword();
 setupAddPhone();
 setupPairing();
 setupLogin();

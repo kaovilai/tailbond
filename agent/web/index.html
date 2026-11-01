@@ -130,6 +130,14 @@
 
   <section class="tab hidden" id="tab-clients">
     <div class="card health hidden" id="health"></div>
+    <form class="card" id="pw-form">
+      <h3>Who can approve and add devices</h3>
+      <p class="muted small" id="pw-state">Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with).</p>
+      <div class="row">
+        <input type="password" id="pw-new" placeholder="Password for this page (empty: none)" autocomplete="new-password">
+        <button class="btn" type="submit">Save</button>
+      </div>
+    </form>
     <div class="card router-guide">
       <h3>Add a GL.iNet travel router (recommended)</h3>
       <ol class="muted">
