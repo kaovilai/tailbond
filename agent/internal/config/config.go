@@ -117,10 +117,24 @@ type Config struct {
 	// Additive: Android APK the web UI offers as GET /tailbond.apk
 	// (default DefaultAndroidAPK; served only if the file exists).
 	AndroidAPK string `json:"android_apk,omitempty"`
+	// Additive: GL.iNet router package offered as GET /tailbond-glinet.ipk.
+	GLiNetIPK string `json:"glinet_ipk,omitempty"`
 }
 
 // DefaultAndroidAPK is where packages may install the Android app for download.
 const DefaultAndroidAPK = "/usr/share/tailbond/tailbond.apk"
+
+// DefaultGLiNetIPK is where packages may put the GL.iNet router package
+// (the _neon-vfpv4 .ipk) so the home server can offer it for download.
+const DefaultGLiNetIPK = "/usr/share/tailbond/tailbond-glinet.ipk"
+
+// GLiNetIPKPath is the router package to offer as GET /tailbond-glinet.ipk.
+func (c *Config) GLiNetIPKPath() string {
+	if c.GLiNetIPK != "" {
+		return c.GLiNetIPK
+	}
+	return DefaultGLiNetIPK
+}
 
 // APKPath is the Android APK to offer for download.
 func (c *Config) APKPath() string {

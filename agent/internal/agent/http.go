@@ -46,6 +46,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.hSettingsGet)
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
 	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
+	mux.HandleFunc("GET /tailbond-glinet.ipk", a.hIPK)
 	mux.HandleFunc("DELETE /api/pair", a.hUnpair)
 	// Pairing over Tailscale (docs/architecture.md).
 	mux.HandleFunc("GET /api/hello", a.hHello)
@@ -424,14 +425,25 @@ type settingsView struct {
 	PairedAs    string `json:"paired_as,omitempty"`
 	ManageRoute bool   `json:"manage_routes,omitempty"`
 	// client: the user turned tailbond off (client.disconnected)
-	Disconnected bool `json:"disconnected,omitempty"`
-	Version     string `json:"version"`
-	AndroidAPK  bool   `json:"android_apk"`
+	Disconnected bool   `json:"disconnected,omitempty"`
+	Version      string `json:"version"`
+	AndroidAPK   bool   `json:"android_apk"`
+	GLiNetIPK    bool   `json:"glinet_ipk"`
 }
 
 // hAPK offers the Android app to phones opening the dashboard (additive).
 func (a *Agent) hAPK(w http.ResponseWriter, r *http.Request) {
-	f, err := os.Open(a.store.Get().APKPath())
+	serveDownload(w, r, a.store.Get().APKPath(), "tailbond.apk", "application/vnd.android.package-archive")
+}
+
+// hIPK offers the GL.iNet router package (additive), for installing on a
+// travel router from the laptop that opened the home server's page.
+func (a *Agent) hIPK(w http.ResponseWriter, r *http.Request) {
+	serveDownload(w, r, a.store.Get().GLiNetIPKPath(), "tailbond_aarch64_cortex-a53_neon-vfpv4.ipk", "application/octet-stream")
+}
+
+func serveDownload(w http.ResponseWriter, r *http.Request, path, name, ctype string) {
+	f, err := os.Open(path)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -442,9 +454,9 @@ func (a *Agent) hAPK(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
-	w.Header().Set("Content-Disposition", `attachment; filename="tailbond.apk"`)
-	http.ServeContent(w, r, "tailbond.apk", st.ModTime(), f)
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	http.ServeContent(w, r, name, st.ModTime(), f)
 }
 
 func apkAvailable(path string) bool {
@@ -454,7 +466,7 @@ func apkAvailable(path string) bool {
 
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath())}
+	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: apkAvailable(cfg.GLiNetIPKPath())}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo

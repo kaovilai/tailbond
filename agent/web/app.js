@@ -146,7 +146,7 @@ function render(st) {
   drawSpark($('#spark-total'), push('total', st.totals.rx_bps, st.totals.tx_bps), 600, 120, { grid: true, sw: 2.2 });
 
   const sub = st.role === 'server'
-    ? `Home server · ${st.server || 'no public address'}`
+    ? `Home server · reachable at ${(state.settings && state.settings.effective_public_addr) || st.server || 'no public address'}`
     : (st.paired ? `Bonded to ${st.server}` : 'Not paired');
   $('#subtitle').textContent = sub;
   document.title = st.state === 'connected' ? `↓${rateStr(st.totals.rx_bps)} · tailbond` : 'tailbond';
@@ -186,6 +186,8 @@ function setRole(role) {
   if (phoneFlow && !state.settings) loadSettings();
   state.role = role;
   for (const b of document.querySelectorAll('#tabs button[data-role]')) b.classList.toggle('hidden', b.dataset.role !== role);
+  // each device picks its own mode; the server has none to choose
+  $('#modes').classList.toggle('hidden', role === 'server');
   if (role === 'client') loadSettings();
   if (role === 'server') loadSettings();
 }
@@ -447,6 +449,8 @@ async function loadSettings() {
   if (s.role === 'server') {
     $('#apk-yes').classList.toggle('hidden', !s.android_apk);
     $('#apk-no').classList.toggle('hidden', !!s.android_apk);
+    $('#ipk-yes').classList.toggle('hidden', !s.glinet_ipk);
+    $('#ipk-no').classList.toggle('hidden', !!s.glinet_ipk);
     const w = $('#addr-warning');
     if (s.public_addr_guessed) {
       w.innerHTML = '';

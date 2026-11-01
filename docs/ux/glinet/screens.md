@@ -6,7 +6,8 @@ admin panel, APPLICATIONS → tailbond. The data is a test fixture.
 
 | Name | Situation |
 |---|---|
-| 01-not-installed-luci-upload | Installing: GL admin → SYSTEM → Advanced Settings → Go To LuCI, then LuCI → System → Software → Upload Package… with the downloaded file picked |
+| 01a-install-gl-advanced-settings | Installing, step 1: the Slate 7's GL admin → SYSTEM → Advanced Settings (the "Go To LuCI" button) |
+| 01b-install-luci-upload | Installing, step 2: in LuCI → System → Software → Upload Package…, the downloaded file picked, LuCI's confirmation dialog |
 | 02-just-installed | Slate 7 right after installing, opening APPLICATIONS → tailbond for the first time (Tailscale on) |
 | 03-found-server | A few seconds later |
 | 03b-tailscale-off | Same, but the Slate 7's Tailscale is off |
@@ -24,3 +25,4 @@ admin panel, APPLICATIONS → tailbond. The data is a test fixture.
 | 12-server-approved | Flint 3, after approving |
 | 13-server-route-pending | Flint 3 freshly set up: Tailscale route not yet approved, no internet address set |
 | 14-fedora-dashboard-request | Fedora home server: its tailbond page (http://homebox:8077) while the Slate 7 is waiting |
+| 15-fedora-devices-tab | Fedora home server's page, Devices tab (desktop only) |

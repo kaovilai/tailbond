@@ -152,6 +152,7 @@ function M.info()
 		enabled = uci_get("main.enabled") == "1",
 		running = running,
 		lan_dashboard = uci_get("main.lan_dashboard") == "1",
+		kill_switch = uci_get("client.kill_switch") ~= "0",
 		model = (board:gsub("%s+$", "")),
 		tailscale = sh("command -v tailscale") ~= "",
 	}

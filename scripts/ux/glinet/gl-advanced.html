@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- Mock of GL 4.x SYSTEM -> Advanced Settings (the "Go To LuCI" page),
+     same shell as shell.html. For screenshots only. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GL.iNet Admin Panel</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:#f0f2f5}
+.gl{display:flex;min-height:100%}.side{width:220px;background:#1d2533;color:#c4cad6;flex:none;min-height:100vh}
+.logo{height:60px;display:flex;align-items:center;padding:0 22px;font-weight:700;font-size:20px;color:#fff;border-bottom:1px solid rgba(255,255,255,.06)}.logo span{color:#ff7a00}
+.menu{list-style:none;margin:0;padding:8px 0;font-size:13px}.menu>li>.it{display:flex;align-items:center;gap:12px;height:46px;padding:0 22px;letter-spacing:.6px;font-weight:600}
+.menu .ic{width:18px;height:18px;border:1.6px solid currentColor;border-radius:4px;opacity:.8}.menu .open>.it{color:#fff}
+.sub{list-style:none;margin:0;padding:0 0 6px;background:#161c27}.sub li{height:40px;display:flex;align-items:center;padding-left:52px;color:#a7afbd}.sub li.active{color:#fff;background:#2a74d8}
+.main{flex:1;min-width:0}.top{height:60px;background:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:0 1px 4px rgba(0,21,41,.08)}
+.crumb{font-size:14px;color:#909399}.crumb b{color:#303133}.content{padding:20px 24px}
+.card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,21,41,.08);padding:24px;max-width:760px}
+h1{font-size:20px;margin:0 0 16px;color:#303133}p{color:#606266;line-height:1.6;font-size:14px}
+.btn{display:inline-block;background:#409eff;color:#fff;border-radius:4px;padding:9px 20px;font-size:14px;box-shadow:0 0 0 3px #ffd59e}
+.burger{display:none}
+@media (max-width:760px){.side{display:none}.top{height:52px;padding:0 14px}.burger{display:inline-block;width:22px;height:14px;border-top:2px solid #303133;border-bottom:2px solid #303133;margin-right:12px;vertical-align:middle}.content{padding:14px 10px}}
+</style></head><body>
+<div class="gl"><aside class="side"><div class="logo">GL<span>·</span>iNet</div><ul class="menu">
+<li><div class="it"><i class="ic"></i>INTERNET</div></li><li><div class="it"><i class="ic"></i>WIRELESS</div></li><li><div class="it"><i class="ic"></i>CLIENTS</div></li>
+<li><div class="it"><i class="ic"></i>VPN</div></li><li><div class="it"><i class="ic"></i>APPLICATIONS</div></li><li><div class="it"><i class="ic"></i>NETWORK</div></li>
+<li class="open"><div class="it"><i class="ic"></i>SYSTEM</div><ul class="sub"><li>Overview</li><li>Upgrade</li><li>Scheduled Tasks</li><li>Time Zone</li><li>Log</li><li>Security</li><li>Reset Firmware</li><li class="active">Advanced Settings</li></ul></li>
+</ul></aside><div class="main"><div class="top"><div class="crumb"><i class="burger"></i>SYSTEM&nbsp;/&nbsp;<b>Advanced Settings</b></div><div style="font-size:13px;color:#606266">GL-BE3600</div></div>
+<div class="content"><div class="card"><h1>Advanced Settings</h1>
+<p>LuCI is OpenWrt's own web interface. Use the same admin password to log in.</p>
+<p><span class="btn">Go To LuCI</span></p>
+<p style="font-size:13px;color:#909399">http://192.168.8.1:8080/cgi-bin/luci</p></div></div></div></div>
+</body></html>

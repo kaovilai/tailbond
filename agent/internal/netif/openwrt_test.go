@@ -65,10 +65,10 @@ func TestOpenWrtWANs(t *testing.T) {
 		t.Fatalf("wans = %+v", wans)
 	}
 	for net, want := range map[string][3]string{
-		"wan":          {"eth0", KindEthernet, "Ethernet"},
-		"wwan":         {"phy0-sta0", KindWifi, "Repeater"},
-		"tethering":    {"usb0", KindUSB, "Tethering"},
-		"modem_0001":   {"wwan0", KindCellular, "Cellular"},
+		"wan":        {"eth0", KindEthernet, "Ethernet"},
+		"wwan":       {"phy0-sta0", KindWifi, "Repeater"},
+		"tethering":  {"usb0", KindUSB, "Tethering"},
+		"modem_0001": {"wwan0", KindCellular, "Cellular"},
 	} {
 		w := got[net]
 		if w.Device != want[0] || w.Kind != want[1] || w.Label != want[2] {

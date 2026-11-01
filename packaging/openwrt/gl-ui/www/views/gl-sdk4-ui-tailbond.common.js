@@ -25,14 +25,14 @@
   // GL's own names for its WAN types (Internet page).
   var KIND_LABEL = { ethernet: "Ethernet", wifi: "Repeater", usb: "Tethering", cellular: "Cellular", unknown: "Connection" };
   // Short nouns for the one-line status.
-  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Wi-Fi (repeater)", usb: "phone (USB tethering)", cellular: "cellular", unknown: "a connection" };
+  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "Tethering (phone)", cellular: "Cellular", unknown: "a connection" };
   var KIND_ORDER = { ethernet: 0, wifi: 1, usb: 2, cellular: 3, unknown: 4 };
   var NOT_CONNECTED_FIX = {
-    ethernet: "Plug a cable from the hotel or modem into the WAN port.",
-    wifi: "Join a Wi-Fi network in INTERNET → Repeater.",
-    usb: "Plug in your phone with a USB cable and turn on USB tethering on the phone.",
-    cellular: "Insert a SIM card or plug in the modem, then check INTERNET → Cellular.",
-    unknown: "Set it up on the INTERNET page."
+    ethernet: "Plug a cable from the hotel or modem into the WAN port. It's used automatically once connected.",
+    wifi: "Join a Wi-Fi network in INTERNET → Repeater. It's used automatically once connected.",
+    usb: "Plug in your phone with a USB cable and turn on USB tethering on the phone. It's used automatically once connected.",
+    cellular: "Insert a SIM card or plug in the modem, then check INTERNET → Cellular. It's used automatically once connected.",
+    unknown: "Set it up on the INTERNET page. It's used automatically once connected."
   };
 
   var CSS = [
@@ -128,6 +128,14 @@
     ".tb-dialog-t{font-size:16px;font-weight:600;margin-bottom:10px;}",
     ".tb-toast{position:fixed;left:50%;top:72px;transform:translateX(-50%);background:#f0f9eb;color:#529b2e;border:1px solid #e1f3d8;padding:10px 18px;border-radius:4px;z-index:3001;box-shadow:0 2px 12px rgba(0,0,0,.1);}",
     ".tb-link{color:#409eff;cursor:pointer;text-decoration:none;}",
+    ".tb-seg{display:inline-flex;border:1px solid #dcdfe6;border-radius:4px;overflow:hidden;}",
+    ".tb-seg button{border:0;border-left:1px solid #dcdfe6;background:#fff;color:#606266;font:inherit;font-size:13px;height:30px;padding:0 12px;cursor:pointer;white-space:nowrap;}",
+    ".tb-seg button:first-child{border-left:0;}",
+    ".tb-seg button.on{background:#409eff;color:#fff;}",
+    ".tb-seg button.on.off{background:#909399;}",
+    ".tb-seg button[disabled]{cursor:not-allowed;opacity:.6;}",
+    ".tb-nowrap{white-space:nowrap;}",
+    ".tb-steps-n{margin:6px 0 0;padding-left:22px;line-height:1.7;color:#606266;}",
     ".tb-foot{text-align:center;color:#c0c4cc;font-size:12px;margin:8px 0 24px;}",
     "@media (max-width:760px){",
     " .tb-grid{grid-template-columns:1fr;}",
@@ -198,6 +206,16 @@
   // Lists may arrive as {} when empty (Lua cjson on the router re-encodes).
   function A(x) { return Array.isArray(x) ? x : []; }
   function shortName(n) { return (n || "").split(".")[0].split(":")[0]; }
+  function hostOf(a) {
+    a = a || "";
+    var m = a.match(/^\[([^\]]+)\](?::\d+)?$/);
+    if (m) return m[1];
+    return a.split(":").length === 2 ? a.split(":")[0] : a;
+  }
+  function portOf(a) {
+    var m = (a || "").match(/:(\d+)$/);
+    return m ? m[1] : "";
+  }
   function lastSeen(p) {
     if (p.online) return "Online";
     return p.last_seen ? "Last seen " + fmtAgo(p.last_seen) : "Offline";
@@ -258,7 +276,7 @@
         disc: null, discovering: false, typed: "", showOther: false, pasteUri: "", pasteErr: "",
         busy: {}, toast: "", confirm: null, capEdit: null, capValue: "",
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
-        wantOn: null, actErr: ""
+        wantOn: null, actErr: "", showTyped: false
       };
     },
     computed: {
@@ -341,6 +359,10 @@
           throw e;
         }).then(function (r) { self.$set(self.busy, key, false); return r; }, function () { self.$set(self.busy, key, false); });
       },
+      exampleName: function () {
+        var p = this.peers || {}, first = A(p.peers)[0];
+        return (first && first.dns_name) || "nas." + (p.magic_dns_suffix || "your-tailnet.ts.net");
+      },
       say: function (msg) {
         var self = this;
         this.toast = msg;
@@ -415,7 +437,7 @@
         }
         if (w.state === "pending") return ["blue", "Starting…", ""];
         if (w.state === "failed") return ["err", "Not working right now", "It's connected, but can't reach " + (this.serverShort || "your home server") + ". tailbond keeps trying; the other connections carry your traffic."];
-        if (w.priority === "backup") return ["", mobile ? "Backup · saving data" : "Backup · standing by", "Used only if your other connections stop working."];
+        if (w.priority === "backup") return ["", mobile ? "Backup · saving data" : "Backup · standing by", "Used only if your other connections stop working. Until then it isn't used at all, so it uses no data."];
         if (mode === "failover") return ["", mobile ? "Standing by · saving data" : "Standing by", "Save mobile data is on: used only if Ethernet and Wi-Fi stop working."];
         return ["", "Standing by", ""];
       },
@@ -425,7 +447,7 @@
         var server = this.serverShort || "your home server";
         if (st.role === "server") return "";
         if (!this.paired) return "Not set up yet. Connect this router to your home server below.";
-        if (!this.isOn()) return "Off. Devices on this router use the internet directly, without your home server.";
+        if (!this.isOn()) return "Devices on this router use the internet directly, without your home server. Turn on to bond your connections again.";
         if (st.state === "error" || (st.state === "connecting" && st.error)) return "Can't reach " + server + ". See below.";
         if (st.state === "connecting") return "Connecting to " + server + "…";
         var ws = this.wans, used = [], broken = [], saving = [];
@@ -477,9 +499,9 @@
       repair: function () {
         var self = this;
         this.confirm = {
-          title: "Pair again?",
+          title: "Ask " + (this.serverShort || "the home server") + " again?",
           body: "Only needed if the home server removed this router or was reset. tailbond stops, then asks " + (this.serverShort || "the home server") + " again; someone there approves it.",
-          ok: "Pair again",
+          ok: "Ask again",
           run: function () {
             var server = self.serverShort;
             return self.run("unpair", api("DELETE", "/api/pair")).then(function () { self.disc = null; if (server) return self.ask(server); });
@@ -634,7 +656,7 @@
           var on = this.wantOn !== null ? this.wantOn : this.isOn();
           var err = st.state === "error" || (st.state === "connecting" && !!st.error);
           var iconCls = !this.paired ? "" : !on ? "" : err ? "err" : st.state === "connected" ? "on" : "warn";
-          var title = !this.paired ? "Not connected to a home server" : !on ? "Off" : err ? "Can't reach " + (this.serverShort || "home server") :
+          var title = !this.paired ? "Not connected to a home server" : !on ? "tailbond is off" : err ? "Can't reach " + (this.serverShort || "home server") :
             st.state === "connected" ? "Connected to " + this.serverShort : "Connecting…";
           var rates = this.paired && on && st.state === "connected" ? h("div", { class: "tb-rates" }, [
             h("span", ["↓ ", h("b", fmtRate(st.totals.rx_bps))]), h("span", ["↑ ", h("b", fmtRate(st.totals.tx_bps))]),
@@ -672,9 +694,14 @@
             title = "Can't reach " + server;
             body = "This router is online, but " + server + " isn't answering at " + addr + ". It may be off, or its internet connection is down. tailbond keeps trying.";
           }
+          var ks = !(this.info && this.info.kill_switch === false);
           return this.alert(h, "err", title, [h("div", body),
-            h("div", { class: "tb-small", style: { marginTop: "6px", opacity: 0.85 } }, "Still not working? Show this to whoever set up " + server + ": UDP port 443 must reach " + addr + " from the internet.")],
-            [this.btn(h, this.busy.svc ? "Trying…" : "Try again", function () { self.run("svc", rpc("service", { action: "restart" }), "Trying again…"); }, "primary", this.busy.svc)]);
+            h("div", { style: { marginTop: "8px", fontWeight: 600 } }, ks
+              ? "Meanwhile, devices on this router have no internet, so nothing goes around your home server. To use this internet directly for now, turn tailbond off."
+              : "Meanwhile, devices on this router use this internet directly."),
+            h("div", { class: "tb-small", style: { marginTop: "6px", opacity: 0.85 } }, "Still not working? Whoever set up " + server + " should check that it's on and that UDP port 443 reaches " + addr + " from the internet.")],
+            [this.btn(h, this.busy.svc ? "Trying…" : "Try again", function () { self.run("svc", rpc("service", { action: "restart" }), "Trying again…"); }, "primary", this.busy.svc),
+              ks ? this.btn(h, "Turn tailbond off", function () { self.toggle(); }, "", this.busy.power) : null]);
         },
 
         rWans: function (h) {
@@ -708,7 +735,7 @@
               }, "primary small"),
               this.btn(h, "Cancel", function () { self.capEdit = null; }, "small text")
             ]));
-            usage.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "Counts everything tailbond sends and receives over it. At the limit it pauses until next month. 0 = no limit."));
+            usage.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "Counts everything tailbond sends and receives over it. At the limit it pauses; the count restarts on the 1st of each month. 0 = no limit."));
           }
           return h("div", { class: "tb-wan" + (live ? "" : " dim") }, [
             h("div", { class: "tb-row" }, [
@@ -722,23 +749,39 @@
             s[2] ? h("div", { class: "tb-muted tb-small", style: { lineHeight: 1.5 } }, s[2]) : null,
             h("div", usage),
             h("div", { class: "tb-wan-ctl" }, [
-              h("label", { class: "tb-check" + (w.priority === "backup" ? " on" : ""), style: { opacity: w.enabled ? 1 : 0.5 },
-                on: { click: function () { if (!w.enabled || busy) return; self.setPath(w, { priority: w.priority === "backup" ? (mobile ? "secondary" : "primary") : "backup" }, w.priority === "backup" ? w.label + ": used together with the others" : w.label + ": backup only"); } } },
-                [h("i"), "Backup only"]),
-              h("div", { class: "tb-row" }, [h("span", { class: "tb-muted" }, "Use"),
-                this.sw(h, w.enabled, function () { self.setPath(w, { enabled: !w.enabled }, w.enabled ? w.label + " won't be used" : w.label + " will be used"); }, false, busy, "Use " + w.label)])
+              h("span", { class: "tb-muted" }, "Use it"),
+              this.rUseChoice(h, w, busy)
             ])
           ]);
         },
 
+        // Speedify-style priority in GL words: Use / Backup only / Off.
+        rUseChoice: function (h, w, busy) {
+          var self = this, mobile = w.kind === "usb" || w.kind === "cellular";
+          var cur = !w.enabled ? "off" : w.priority === "backup" ? "backup" : "use";
+          var opts = [
+            ["use", "Always", { enabled: true, priority: mobile ? "secondary" : "primary" }, w.label + " is used together with the others"],
+            ["backup", "Backup only", { enabled: true, priority: "backup" }, w.label + " is used only if the others stop working"],
+            ["off", "Off", { enabled: false }, "tailbond won't use " + w.label]
+          ];
+          return h("div", { class: "tb-seg", attrs: { role: "radiogroup", "aria-label": "Use " + w.label } }, opts.map(function (o) {
+            return h("button", { class: (cur === o[0] ? "on" : "") + (o[0] === "off" ? " off" : ""), attrs: { type: "button", role: "radio", "aria-checked": String(cur === o[0]), disabled: !!busy },
+              on: { click: function () { if (cur !== o[0]) self.setPath(w, o[2], o[3]); } } }, o[1]);
+          }));
+        },
+
         rModes: function (h) {
           var self = this, cur = this.st.mode;
-          return this.card(h, "How to use your connections", [
-            h("div", { class: "tb-modes" }, MODES.map(function (m) {
+          // Saving phone data is per connection ("Backup only" above); the
+          // failover mode is shown only if something else picked it.
+          var shown = MODES.filter(function (m) { return m.wire !== "failover" || cur === "failover"; });
+          return this.card(h, "Speed or reliability", [
+            h("div", { class: "tb-modes", style: { gridTemplateColumns: shown.length === 3 ? "repeat(3,minmax(0,1fr))" : "" } }, shown.map(function (m) {
               return h("button", { class: "tb-mode" + (cur === m.wire ? " on" : ""), attrs: { type: "button", title: m.wire }, on: { click: function () { self.setMode(m.wire); } } }, [
                 h("div", { class: "tb-mode-t" }, m.label), h("div", { class: "tb-mode-b" }, m.blurb)
               ]);
-            }))
+            })),
+            h("div", { class: "tb-muted tb-small", style: { marginTop: "10px" } }, "Saving your phone's data? Set Tethering or Cellular to “Backup only” under Internet connections.")
           ]);
         },
 
@@ -755,12 +798,12 @@
               h("span", { class: "tb-chip " + stateChip[0] }, stateChip[1])
             ]),
             h("div", { class: "tb-kv tb-small" }, [
-              h("div", "Address"), h("div", { class: "tb-mono" }, s.paired_with || st.server || "—"),
-              h("div", "This router's tunnel address"), h("div", { class: "tb-mono" }, st.tunnel_ip || "—"),
-              h("div", "Names like nas.…ts.net"), h("div", "Work on every device connected to this router while tailbond is on")
+              h("div", "Connects to"), h("div", [h("span", { class: "tb-mono" }, hostOf(s.paired_with || st.server || "—")), " over the internet (UDP port " + (portOf(s.paired_with) || "443") + ")"]),
+              h("div", "Tailnet names"), h("div", "Work on every device connected to this router while tailbond is on. Use the full name, like " + this.exampleName() + "."),
+              h("div", "This router's tunnel address"), h("div", { class: "tb-mono" }, st.tunnel_ip || "—")
             ]),
             h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
-              this.btn(h, "Pair again", function () { self.repair(); }, "small"),
+              this.btn(h, "Ask to connect again", function () { self.repair(); }, "small"),
               this.btn(h, "Unpair", function () { self.unpair(); }, "small danger")
             ])
           ]);
@@ -783,7 +826,7 @@
             body = [
               h("div", { class: "tb-muted", style: { marginBottom: "10px" } }, serverSide
                 ? "Devices connected through tailbond reach these machines by name or 100.x address."
-                : "Laptops and phones on this router's Wi-Fi or LAN reach these by name, e.g. " + ((A(p.peers)[0] && A(p.peers)[0].dns_name) || "nas." + (p.magic_dns_suffix || "tailnet.ts.net")) + "."),
+                : "Laptops and phones on this router's Wi-Fi or LAN reach these by their full name, e.g. " + this.exampleName() + ", or by their 100.x address."),
               A(p.peers).length > 6 ? h("input", { class: "tb-input", style: { marginBottom: "8px" }, attrs: { placeholder: "Search machines" }, domProps: { value: this.peerFilter }, on: { input: function (e) { self.peerFilter = e.target.value; } } }) : null,
               h("div", { class: "tb-list" }, list.map(function (m) {
                 var ip = A(m.tailscale_ips)[0] || "";
@@ -791,7 +834,7 @@
                   h("span", { class: "tb-dot" + (m.online ? " ok" : "") }),
                   h("div", { class: "tb-grow" }, [
                     h("div", { style: { fontWeight: 600 } }, m.hostname),
-                    h("div", { class: "tb-mono", style: { wordBreak: "break-all" } }, m.dns_name + (ip ? "  ·  " + ip : "")),
+                    h("div", { class: "tb-mono" }, [h("span", { style: { wordBreak: "break-all" } }, m.dns_name), ip ? h("span", { class: "tb-nowrap" }, "  ·  " + ip) : null]),
                     h("div", { class: "tb-muted tb-small" }, (m.os ? m.os + " · " : "") + lastSeen(m))
                   ]),
                   self.btn(h, "Copy name", function () { self.copy(m.dns_name); }, "small")
@@ -813,9 +856,12 @@
               h("div", { class: "tb-spin", style: { width: "28px", height: "28px", borderWidth: "3px" } }),
               h("div", { class: "tb-grow" }, [
                 h("div", { class: "tb-wan-t" }, j.state === "asking" ? "Asking " + srv + "…" : "Waiting for approval on " + srv + "…"),
-                h("div", { class: "tb-muted", style: { marginTop: "4px", lineHeight: 1.55 } }, [
-                  "Open " + srv + "'s tailbond page (on a Flint 3: its admin panel → APPLICATIONS → tailbond) and tap ",
-                  h("b", "Approve"), " next to ", h("b", j.name || "this router"), ". This router connects by itself once approved."
+                h("div", { class: "tb-muted", style: { marginTop: "4px", lineHeight: 1.6 } }, [
+                  "On " + srv + ", tap ", h("b", "Approve"), " next to ", h("b", j.name || "this router"), ". This router connects by itself once approved; you can close this page.",
+                  h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } }, [
+                    h("li", ["Flint 3 at home: its admin panel → APPLICATIONS → tailbond."]),
+                    h("li", ["Computer at home: open ", h("a", { class: "tb-link", attrs: { href: "http://" + hostOf(j.server) + ":8077/", target: "_blank", rel: "noopener" } }, "http://" + srv + ":8077"), " from any device on your Tailscale account (a phone works too)."])
+                  ])
                 ])
               ]),
               h("div", { class: "tb-actions" }, [this.btn(h, "Cancel", function () { self.cancelAsk(); })])
@@ -848,14 +894,19 @@
                 h("div", "Checked " + (d.checked || 0) + " online machine" + (d.checked === 1 ? "" : "s") + ". On the home server, tailbond must be installed and running, and Tailscale on. Or type its Tailscale name below.")
               ], [this.btn(h, this.discovering ? "Searching…" : "Search again", function () { self.discover(true); }, "small", this.discovering)]));
             }
-            body.push(h("div", { class: "tb-muted", style: { margin: "6px 0 6px" } }, d && A(d.servers).length ? "Not this one? Type your home server's Tailscale name:" : "Home server's Tailscale name"));
-            body.push(h("div", { class: "tb-row" }, [
-              h("input", { class: "tb-input", attrs: { placeholder: "e.g. homebox or homebox.tail1234.ts.net" }, domProps: { value: this.typed }, on: { input: function (e) { self.typed = e.target.value; }, keyup: function (e) { if (e.key === "Enter" && self.typed.trim()) self.ask(self.typed.trim()); } } }),
-              this.btn(h, "Ask to connect", function () { if (self.typed.trim()) self.ask(self.typed.trim()); }, "", !this.typed.trim() || this.busy.ask)
-            ]));
+            var found = d && A(d.servers).length;
+            if (found && !this.showTyped) {
+              body.push(h("div", { class: "tb-small" }, [h("a", { class: "tb-link", on: { click: function () { self.showTyped = true; } } }, "Not your home server? Type its name instead")]));
+            } else {
+              body.push(h("div", { class: "tb-muted", style: { margin: "6px 0 6px" } }, "Home server's name in Tailscale"));
+              body.push(h("div", { class: "tb-row" }, [
+                h("input", { class: "tb-input", attrs: { placeholder: "e.g. homebox" }, domProps: { value: this.typed }, on: { input: function (e) { self.typed = e.target.value; }, keyup: function (e) { if (e.key === "Enter" && self.typed.trim()) self.ask(self.typed.trim()); } } }),
+                this.btn(h, "Ask to connect", function () { if (self.typed.trim()) self.ask(self.typed.trim()); }, "", !this.typed.trim() || this.busy.ask)
+              ]));
+            }
           }
           out.push(this.card(h, "Connect to your home server", [
-            h("div", { class: "tb-muted", style: { marginBottom: "14px", lineHeight: 1.55 } }, "Your home server (a Fedora box or a GL Flint 3 running tailbond) must be on the same tailnet as this router. You'll approve this router there with one tap."),
+            h("div", { class: "tb-muted", style: { marginBottom: "14px", lineHeight: 1.55 } }, "Your home server (a computer or a GL Flint 3 running tailbond) must be signed in to the same Tailscale account as this router. You'll approve this router there with one tap."),
             h("div", body)
           ]));
 
@@ -873,7 +924,7 @@
             ]) : null
           ]));
           out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Is this the router at home? ", h("a", { class: "tb-link", on: { click: function () { self.setRole("server"); } } }, "Use it as your home server instead")
+            "Setting up the router that stays at home? ", h("a", { class: "tb-link", on: { click: function () { self.setRole("server"); } } }, "Make this the home server"), " (you can switch back here)"
           ]));
           return out;
         },
@@ -899,9 +950,12 @@
           var on = this.wantOn !== null ? this.wantOn : this.isOn();
           var conn = A(st.clients).filter(function (c) { return c.connected; });
           var err = st.state === "error";
+          var todo = this.setupSteps().length;
           var line = !on ? "Off. Travel routers and phones can't connect." : err ? "Couldn't start: " + (st.error || "unknown error") :
+            todo ? "Finish setup below so travel routers can connect from anywhere." :
             "Ready for travel routers and phones · " + (conn.length ? conn.length + " connected now" : "none connected right now");
-          out.push(this.hero(h, !on ? "" : err ? "err" : "on", on && !err ? "Home server is on" : on ? "Home server has a problem" : "Home server is off", line,
+          var title = !on ? "Home server is off" : err ? "Home server has a problem" : todo ? "Home server is on · " + todo + " setup step" + (todo === 1 ? "" : "s") + " left" : "Home server is on";
+          out.push(this.hero(h, !on ? "" : err ? "err" : todo ? "warn" : "on", title, line,
             this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "Home server on/off"),
             on && conn.length ? h("div", { class: "tb-rates" }, [h("span", ["↓ ", h("b", fmtRate(st.totals.rx_bps))]), h("span", ["↑ ", h("b", fmtRate(st.totals.tx_bps))])]) : null));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
@@ -927,11 +981,13 @@
             }), h("span", { class: "tb-chip warn" }, this.pending.length + " new"), "tb-pending"));
           }
 
-          out.push(this.rClients(h));
-          out.push(this.rRoute(h));
+          // unfinished setup first, else devices first
+          if (todo) out.push(this.rRoute(h), this.rClients(h));
+          else out.push(this.rClients(h), this.rRoute(h));
+          out.push(this.rRouterGuide(h));
           out.push(this.rMachines(h, true));
           out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Is this a travel router? ", h("a", { class: "tb-link", on: { click: function () { self.setRole("client"); } } }, "Use it as a travel router instead")
+            "Is this a travel router? ", h("a", { class: "tb-link", on: { click: function () { self.setRole("client"); } } }, "Use it as a travel router instead"), " (you can switch back here)"
           ]));
           return out;
         },
@@ -946,7 +1002,7 @@
               h("div", { class: "tb-grow" }, [
                 h("div", { style: { fontWeight: 600 } }, c.name),
                 h("div", { class: "tb-muted tb-small" }, c.connected
-                  ? "Connected " + fmtUptime(c.connected_sec) + " · " + n + " connection" + (n === 1 ? "" : "s") + " bonded · ↓ " + fmtRate(c.tx_bps) + " ↑ " + fmtRate(c.rx_bps)
+                  ? "Connected " + fmtUptime(c.connected_sec) + " · " + n + " connection" + (n === 1 ? "" : "s") + " bonded · downloading " + fmtRate(c.tx_bps) + " · uploading " + fmtRate(c.rx_bps)
                   : "Not connected right now")
               ]),
               self.btn(h, "Remove", function () { self.removeClient(c); }, "small text", self.busy["rm-" + c.name])
@@ -979,38 +1035,66 @@
           ]);
         },
 
+        // What's left before travel routers can connect from anywhere.
+        setupSteps: function () {
+          var ts = this.ts, s = this.settings, out = [];
+          if (!ts || !s) return out;
+          if (!ts.installed || !ts.running) out.push("tailscale");
+          else if (!ts.routes_approved) out.push("route");
+          if (s.public_addr_guessed) out.push("address");
+          return out;
+        },
+
         rRoute: function (h) {
-          var self = this, ts = this.ts || {}, s = this.settings || {};
-          var items = [];
-          if (!ts.installed || !ts.running) {
-            items.push(this.alert(h, "", "Tailscale is off on this router", "Turn it on in APPLICATIONS → Tailscale so connected devices can reach your tailnet and travel routers can find this server.",
-              [h("a", { class: "tb-btn small primary", attrs: { href: "#/tailscaleview" } }, "Open Tailscale settings")]));
-          } else if (!ts.routes_approved) {
-            items.push(this.alert(h, "", "One step left in the Tailscale admin console",
-              [h("div", ["Approve the route ", h("b", ts.route || "10.77.0.0/24"), " for " + (ts.self || "this router") + " (Machines → " + (ts.self || "this router") + " → Edit route settings). Until then, tailnet machines can't reach connected devices; devices can still reach the tailnet."])],
-              [h("a", { class: "tb-btn small primary", attrs: { href: ts.admin_url || "https://login.tailscale.com/admin/machines", target: "_blank", rel: "noopener" } }, "Open admin console")]));
-          } else {
-            items.push(this.alert(h, "ok", "Tailnet access is set up", "Route " + (ts.route || "10.77.0.0/24") + " is approved. Connected devices and your tailnet machines reach each other."));
-          }
+          var self = this, ts = this.ts || {}, s = this.settings || {}, steps = this.setupSteps(), items = [], n = 0;
           var addr = s.effective_public_addr || "";
-          items.push(h("div", { class: "tb-kv" }, [
-            h("div", "Internet address"),
-            this.addrEdit ? h("div", { class: "tb-row" }, [
-              h("input", { class: "tb-input", attrs: { placeholder: "home.example.com" }, domProps: { value: this.addrValue }, on: { input: function (e) { self.addrValue = e.target.value; } } }),
-              this.btn(h, "Save", function () { self.saveAddr(); }, "primary small", this.busy.addr),
-              this.btn(h, "Cancel", function () { self.addrEdit = false; }, "small text")
-            ]) : h("div", { class: "tb-row" }, [h("span", { class: "tb-mono" }, addr || "not set"),
-              this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")]),
-            h("div", "Tailscale name"), h("div", { class: "tb-mono" }, ts.dns_name || "—"),
-            h("div", "Secure connection"), h("div", s.tls === "tailscale" ? "Certificate from Tailscale for " + (s.tls_name || "") : "Self-signed certificate (pinned by each device)")
-          ]));
-          if (s.public_addr_guessed) {
-            items.push(h("div", { class: "tb-alert", style: { marginTop: "12px", marginBottom: 0 } }, [
-              h("div", { class: "tb-grow" }, [h("div", { class: "tb-alert-t" }, "Set this router's internet address"),
-                h("div", "Travel routers connect to " + (addr || "this address") + ", which looks like a home-network address. Enter your public IP or a dynamic DNS name (Applications → Dynamic DNS), so they can connect from anywhere.")])
-            ]));
+          if (steps.indexOf("tailscale") >= 0) {
+            items.push(this.alert(h, "", "Step " + (++n) + ": turn on Tailscale", "Turn on Tailscale on this router and sign in. Travel routers find this server through it, and connected devices reach your Tailscale machines through it.",
+              [h("a", { class: "tb-btn small primary", attrs: { href: "#/tailscaleview" } }, "Open Tailscale settings")]));
           }
-          return this.card(h, "Tailnet and internet", items);
+          if (steps.indexOf("route") >= 0) {
+            items.push(this.alert(h, "", "Step " + (++n) + ": allow tailbond devices on your Tailscale network",
+              [h("div", ["One click in the Tailscale admin console: Machines → ", h("b", ts.self || "this router"), " → Edit route settings → turn on ", h("b", ts.route || "10.77.0.0/24"), ". Until then, your Tailscale machines can't reach the devices connected through tailbond (those devices can still reach them)."])],
+              [h("a", { class: "tb-btn small primary", attrs: { href: ts.admin_url || "https://login.tailscale.com/admin/machines", target: "_blank", rel: "noopener" } }, "Open admin console")]));
+          }
+          if (steps.indexOf("address") >= 0) {
+            items.push(this.alert(h, "", "Step " + (++n) + ": tell travel routers where home is",
+              [h("div", "Travel routers connect to this router over the internet, so they need its internet address. Right now they'd use " + (addr || "a home-network address") + ", which only works at home. Enter your home's public IP address or a Dynamic DNS name (APPLICATIONS → Dynamic DNS gives you one)."),
+                this.addrEditor(h)]));
+          }
+          if (!steps.length) {
+            items.push(this.alert(h, "ok", "All set", "Travel routers and phones can connect from anywhere, and your Tailscale machines reach them."));
+          }
+          items.push(h("div", { class: "tb-kv", style: { marginTop: "4px" } }, [
+            h("div", "Internet address"),
+            steps.indexOf("address") >= 0 ? h("div", { class: "tb-muted" }, "not set yet (step above)") : (this.addrEdit ? this.addrEditor(h) : h("div", { class: "tb-row" }, [h("span", { class: "tb-mono" }, addr || "not set"),
+              this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
+            h("div", "Port"), h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "If another router sits in front of this one (for example your internet provider's box), forward UDP " + (s.port || 443) + " to this router there.")]),
+            h("div", "Tailscale name"), h("div", { class: "tb-mono" }, ts.dns_name || "—"),
+            h("div", "Secure connection"), h("div", s.tls === "tailscale" ? "Certificate from Tailscale for " + (s.tls_name || "") : "This router's own certificate, checked by each device")
+          ]));
+          return this.card(h, steps.length ? "Finish setting up" : "Internet and Tailscale", items);
+        },
+
+        addrEditor: function (h) {
+          var self = this;
+          return h("div", { class: "tb-row", style: { marginTop: "8px" } }, [
+            h("input", { class: "tb-input", attrs: { placeholder: "e.g. home.example.com" }, domProps: { value: this.addrValue }, on: { input: function (e) { self.addrValue = e.target.value; } } }),
+            this.btn(h, "Save", function () { self.saveAddr(); }, "primary small", this.busy.addr || !(this.addrValue || "").trim()),
+            this.addrEdit ? this.btn(h, "Cancel", function () { self.addrEdit = false; }, "small text") : null
+          ]);
+        },
+
+        // How to put tailbond on a GL travel router (the install itself
+        // happens on that router, which doesn't have tailbond yet).
+        rRouterGuide: function (h) {
+          return this.card(h, "Add a GL.iNet travel router", [
+            h("ol", { class: "tb-steps-n" }, [
+              h("li", ["Get the router package on your computer: the tailbond file ending in ", h("b", "_neon-vfpv4.ipk"), " (from the tailbond releases page, or from a Fedora home server's tailbond page)."]),
+              h("li", ["On the travel router's admin page: ", h("b", "SYSTEM → Advanced Settings → Go To LuCI"), " (log in with the same password), then ", h("b", "System → Software → Upload Package…"), ", pick the file and click ", h("b", "Install"), "."]),
+              h("li", ["Back on the travel router's admin page, open ", h("b", "APPLICATIONS → tailbond"), " and click ", h("b", "Ask to connect"), ". It shows up at the top of this page; click ", h("b", "Approve"), "."])
+            ])
+          ]);
         }
       }
     }]

@@ -12,6 +12,7 @@ mkdirSync(out, { recursive: true });
 const files = {
   '/shell.html': [readFileSync(`${repo}/scripts/ux/glinet/shell.html`), 'text/html'],
   '/luci.html': [readFileSync(`${repo}/scripts/ux/glinet/luci.html`), 'text/html'],
+  '/gl-advanced.html': [readFileSync(`${repo}/scripts/ux/glinet/gl-advanced.html`), 'text/html'],
   '/views/gl-sdk4-ui-tailbond.common.js': [readFileSync(`${repo}/packaging/openwrt/gl-ui/www/views/gl-sdk4-ui-tailbond.common.js`), 'application/javascript'],
   '/vendor/vue.runtime.min.js': [readFileSync(require.resolve('vue/dist/vue.runtime.min.js')), 'application/javascript'],
 };
@@ -52,7 +53,7 @@ async function fedora(vp) {
   await page.route('http://homebox.test/**', (route) => {
     const p = new URL(route.request().url()).pathname;
     if (p === '/api/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fedoraStatus) });
-    if (p === '/api/settings') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ role: 'server', effective_public_addr: 'home.example.net:443', version: '0.1.0-r42' }) });
+    if (p === '/api/settings') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ role: 'server', effective_public_addr: 'home.example.net:443', version: '0.1.0-r42', glinet_ipk: true, android_apk: true }) });
     if (p === '/api/logs') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"entries":[]}' });
     if (p.startsWith('/api/')) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"ok":false}' });
     const f = p === '/' ? 'index.html' : p.slice(1);
@@ -64,12 +65,18 @@ async function fedora(vp) {
   await page.waitForSelector('#pair-requests:not(.hidden)');
   await page.waitForTimeout(500);
   await page.screenshot({ path: `${out}/14-fedora-dashboard-request-${vp}.png` });
+  if (vp === 'desktop') {
+    await page.click('#tabs button[data-tab="clients"]');
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${out}/15-fedora-devices-tab-${vp}.png`, fullPage: true });
+  }
   await ctx.close();
 }
 
 for (const vp of Object.keys(viewports)) {
   await fedora(vp);
-  await shot('01-not-installed-luci-upload', {}, vp, null, 'luci.html');
+  await shot('01a-install-gl-advanced-settings', {}, vp, null, 'gl-advanced.html');
+  await shot('01b-install-luci-upload', {}, vp, null, 'luci.html');
   for (const [name, fx] of Object.entries(states)) await shot(name, fx, vp);
   for (const [name, act] of Object.entries(actions)) if (act) await shot(name, states[act.base], vp, act);
 }
