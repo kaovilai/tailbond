@@ -69,8 +69,7 @@ func TestRenderNft(t *testing.T) {
 		"set lan_ifs {",
 		"set bp_bank_4 {\n\t\ttype ipv4_addr",
 		"set bp_bank_6 {\n\t\ttype ipv6_addr",
-		"iifname != @lan_ifs return",
-		"ct mark & 0x07000000 != 0 meta mark set ct mark & 0x07000000 return",
+		"ct mark & 0x07000000 != 0 meta mark set ct mark & 0x07000000 return\n\t\tiifname != @lan_ifs return\n",
 		`ether saddr aa:bb:cc:dd:ee:ff counter name "c_laptop" meta mark set meta mark & 0xf8ffffff | 0x02000000 ct mark set ct mark & 0xf8ffffff | 0x02000000 accept`,
 		`ip saddr 192.168.8.40 counter name "c_tv" meta mark set meta mark & 0xf8ffffff | 0x01000000`,
 		`ip daddr 203.0.113.0/24 counter name "c_net" meta mark set meta mark & 0xf8ffffff | 0x03000000`,
@@ -123,8 +122,8 @@ func TestRenderIPTables(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"*mangle\n:tailbond_bypass - [0:0]\n-F tailbond_bypass\n",
-		"-A tailbond_bypass -m connmark ! --mark 0x0/0x07000000 -j CONNMARK --restore-mark --nfmask 0x07000000 --ctmask 0x07000000",
+		"*mangle\n:tailbond_restore - [0:0]\n-F tailbond_restore\n-A tailbond_restore -m connmark ! --mark 0x0/0x07000000 -j CONNMARK --restore-mark --nfmask 0x07000000 --ctmask 0x07000000\n",
+		":tailbond_bypass - [0:0]\n-F tailbond_bypass\n-A tailbond_bypass -m mark ! --mark 0x0/0x07000000 -j RETURN\n",
 		`-A tailbond_bypass -m mac --mac-source aa:bb:cc:dd:ee:ff -m mark --mark 0x0/0x07000000 -m comment --comment "tb:laptop" -j MARK --set-xmark 0x02000000/0x07000000`,
 		`-A tailbond_bypass -s 192.168.8.40 -m mark --mark 0x0/0x07000000 -m comment --comment "tb:tv"`,
 		`-A tailbond_bypass -p udp --dport 4500 -m mark`,

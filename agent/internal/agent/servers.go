@@ -115,6 +115,9 @@ func (a *Agent) switchServer(name, why string) {
 	running := a.sup.Active()
 	if running {
 		cs.switchPending = true
+		// the old tunnel is going away: until the new one is up, status
+		// says connecting (the down hook still gets the old env: upEnv)
+		a.rt.ready, a.rt.tunnelIP = false, ""
 	}
 	a.mu.Unlock()
 	if prev != name {
@@ -212,9 +215,25 @@ func (a *Agent) probe(ctx context.Context, server, dev string) error {
 	}, server, probeTimeout)
 }
 
-// tunnelWorking: the last status snapshot's verdict (workingFrom).
+// tunnelWorking: the last status snapshot's verdict (workingWhy); changes
+// are logged, since they drive failover.
 func (a *Agent) tunnelWorking() bool {
-	return a.workingFrom(a.Snapshot(), time.Now())
+	st := a.Snapshot()
+	ok, why := a.workingWhy(st, time.Now())
+	a.mu.Lock()
+	cs := a.client
+	changed := cs.lastWorking == nil || *cs.lastWorking != ok || cs.lastWorkingServer != cs.activeServer
+	cs.lastWorking, cs.lastWorkingServer = &ok, cs.activeServer
+	name := cs.activeServer
+	a.mu.Unlock()
+	if changed {
+		if ok {
+			a.Logf("tunnel to %s works", name)
+		} else {
+			a.Logf("tunnel to %s not working: %s", name, why)
+		}
+	}
+	return ok
 }
 
 // serversView fills the additive status fields. Caller holds no lock.

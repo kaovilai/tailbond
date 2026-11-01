@@ -170,6 +170,9 @@ type joinState struct {
 
 	Add   bool   `json:"add,omitempty"` // add as another server
 	Added string `json:"added,omitempty"`
+	// error subnet_in_use / exists: the server already in the list
+	Conflict string `json:"conflict,omitempty"`
+	Subnet   string `json:"subnet,omitempty"`
 
 	token  string
 	cancel context.CancelFunc
@@ -393,6 +396,7 @@ func (a *Agent) runJoin(ctx context.Context, addr, name string, add bool) {
 			var ae *addServerError
 			if errors.As(err, &ae) {
 				a.Logf("pairing from %s: %v", addr, err)
+				a.setJoin(func(j *joinState) { j.Conflict, j.Subnet = ae.conflict, ae.subnet })
 				a.joinFinal(ctx, joinError, ae.code)
 				return
 			}

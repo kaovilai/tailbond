@@ -236,3 +236,27 @@ func TestSingleServerNeverSwitches(t *testing.T) {
 		t.Fatalf("switches %v", s.log)
 	}
 }
+
+func TestNoPingPongBetweenDeadServers(t *testing.T) {
+	s := newSim(t, prefer(), "homebox", "vps")
+	s.up["homebox"], s.answers["homebox"] = false, false
+	s.run(16)
+	if s.m.Active() != "vps" {
+		t.Fatalf("active %s", s.m.Active())
+	}
+	// the vps is slow to come up: homebox is known dead, so stay
+	s.up["vps"] = false
+	s.run(60)
+	if s.m.Active() != "vps" || len(s.log) != 1 {
+		t.Fatalf("switched back to a dead server: %v", s.log)
+	}
+	if v := s.m.View(s.now, false); v.Servers[0].State != StateUnreachable {
+		t.Fatalf("homebox %s", v.Servers[0].State)
+	}
+	// homebox answers again but the vps is still down: failover picks it
+	s.answers["homebox"], s.up["homebox"] = true, true
+	s.run(12)
+	if s.m.Active() != "homebox" {
+		t.Fatalf("active %s, want homebox once it answers", s.m.Active())
+	}
+}

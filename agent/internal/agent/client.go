@@ -49,6 +49,9 @@ type clientState struct {
 	lastProbe     map[string]time.Time
 	probeOK       map[string]bool
 	silence       failover.Silence // control-API packet counters of the running tunnel
+	// last verdict of tunnelWorking, for logging changes
+	lastWorking       *bool
+	lastWorkingServer string
 	// bypass rules (bypass.go)
 	bypass bypassState
 }
@@ -553,24 +556,30 @@ func (a *Agent) observeSilence(now time.Time, mst *mqctl.Status) {
 // with the control API at least one path active, and the server still
 // answers on some path (failover.Silence).
 func (a *Agent) workingFrom(st *status.Status, now time.Time) bool {
+	ok, _ := a.workingWhy(st, now)
+	return ok
+}
+
+// workingWhy is workingFrom with the reason when it isn't working.
+func (a *Agent) workingWhy(st *status.Status, now time.Time) (bool, string) {
 	if st.State != status.StateConnected {
-		return false
+		return false, "mqvpn " + st.State
 	}
 	if !st.ControlAPI {
-		return true
+		return true, ""
 	}
 	a.mu.Lock()
 	silent := a.client.silence.Silent(now)
 	a.mu.Unlock()
 	if silent {
-		return false
+		return false, "no answer on any path for 5 s"
 	}
 	for _, p := range st.Paths {
 		if p.State == status.PathActive {
-			return true
+			return true, ""
 		}
 	}
-	return false
+	return false, "no active path"
 }
 
 // importPairing stores a pairing URI and (re)connects.

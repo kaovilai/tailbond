@@ -52,6 +52,7 @@ type Machine struct {
 	workingSince time.Time // start of the current working run
 	manual       bool
 	failingBack  string // the server a failback just went to, until it works
+	failed       bool   // the switch in progress leaves a server that stopped working
 
 	probes  map[string]*probe
 	penalty map[string]int
@@ -94,12 +95,18 @@ func (m *Machine) probeOf(name string) *probe {
 }
 
 // switchTo makes name active. The server left behind must prove itself
-// again with fresh probes before anything fails back to it.
+// again with fresh probes before anything fails back to it; one left
+// because it stopped working counts as unreachable until a probe answers.
 func (m *Machine) switchTo(name string, now time.Time) string {
 	if name == "" || name == m.active {
 		return ""
 	}
-	delete(m.probes, m.active)
+	if m.failed {
+		m.probes[m.active] = &probe{known: true}
+	} else {
+		delete(m.probes, m.active)
+	}
+	m.failed = false
 	delete(m.probes, name)
 	m.active, m.activeSince = name, now
 	m.lastWorking, m.workingSince = time.Time{}, time.Time{}
@@ -204,6 +211,7 @@ func (m *Machine) Step(now time.Time, working bool) string {
 		m.failingBack = ""
 		if next := m.next(); next != "" {
 			m.manual = false
+			m.failed = true
 			return m.switchTo(next, now)
 		}
 		return ""
@@ -230,8 +238,8 @@ func (m *Machine) hold(name string) time.Duration {
 }
 
 // next is the server after the active one in list order (wrapping),
-// preferring one whose last probe answered, then one not known to be
-// unreachable.
+// preferring one whose last probe answered, then one not probed yet; ""
+// when all of them are known to be unreachable.
 func (m *Machine) next() string {
 	ai := m.index(m.active)
 	var cands []string
@@ -248,9 +256,7 @@ func (m *Machine) next() string {
 			return c
 		}
 	}
-	if len(cands) > 0 {
-		return cands[0]
-	}
+	// every other server is known to be down: keep trying this one
 	return ""
 }
 

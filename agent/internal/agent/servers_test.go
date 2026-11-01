@@ -255,7 +255,7 @@ func TestJoinAddRefusesClashWhenServerHasClients(t *testing.T) {
 	srv.mu.Unlock()
 	req(t, srv, "POST", "/api/pair-requests/"+pend[0].ID+"/approve", "127.0.0.1:1", "", map[string]string{})
 	waitFor(t, func() bool { return cli.joinView().State != joinWaiting })
-	if j := cli.joinView(); j.State != joinError || j.Error != "subnet_in_use" {
+	if j := cli.joinView(); j.State != joinError || j.Error != "subnet_in_use" || j.Conflict != "homebox" || j.Subnet != "10.77.0.0/24" {
 		t.Fatalf("join %+v", j)
 	}
 	if srv.store.Get().Server.Subnet != "10.77.0.0/24" || len(cli.store.Get().Client.Servers) != 1 {
@@ -281,5 +281,27 @@ func TestStatusServersOff(t *testing.T) {
 	a.serversView(st, false)
 	if len(st.Servers) != 2 || st.Servers[1].State != "off" || st.Servers[0].State != "connecting" {
 		t.Fatalf("%+v", st.Servers)
+	}
+}
+
+func TestTunnelIPFollowsActiveServer(t *testing.T) {
+	home := pairURI(t, "203.0.113.7:443", "homebox", "10.77.0.0/24")
+	vps := pairURI(t, "198.51.100.9:8443", "vps", "10.78.0.0/24")
+	a := clientAgent(t, func(c *config.Config) {
+		c.Client.Servers = []config.ServerEntry{{Name: "homebox", PairingURI: home}, {Name: "vps", PairingURI: vps}}
+	})
+	a.onLine("TUN tb0 configured: 10.77.0.8 → 10.77.0.1 (mtu=1382)")
+	a.mu.Lock()
+	s := a.client.server("vps")
+	a.client.activeServer, a.client.payload = "vps", s.payload
+	a.rt = runtime{logPaths: map[string]logPath{}}
+	a.mu.Unlock()
+	a.onLine("TUN tb0 configured: 10.77.0.8 → 10.77.0.1 (mtu=1382)") // late line from homebox's mqvpn
+	a.onLine("[mqvpn] 09:12:04.178 [INF] TUN tb0 configured: 10.78.0.2 → 10.78.0.1 (mtu=1382)")
+	a.mu.Lock()
+	got := a.rt.tunnelIP
+	a.mu.Unlock()
+	if got != "10.78.0.2" {
+		t.Fatalf("tunnel ip %q", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -296,6 +297,17 @@ func (a *Agent) onLine(line string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if m := reClientTun.FindStringSubmatch(line); m != nil {
+		// a late line from the previous mqvpn (another server's subnet) is not ours
+		if ip, err := netip.ParseAddr(m[2]); err == nil && a.client != nil {
+			for _, s := range a.client.servers {
+				if s.name != a.client.activeServer && s.payload.TunnelSubnet().Contains(ip) {
+					return
+				}
+			}
+		}
+		if a.rt.tunnelIP != m[2] {
+			a.logs.Add("agent", "tunnel address "+m[2])
+		}
 		a.rt.tunnelIP, a.rt.peerIP = m[2], m[3]
 		return
 	}

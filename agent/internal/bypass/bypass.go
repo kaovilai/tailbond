@@ -28,8 +28,9 @@ const (
 	DefaultMask      = 0x07000000
 	DefaultTableBase = 7900
 	MaxWANs          = 5
-	Table            = "tailbond"        // nft table (inet family)
-	Chain            = "tailbond_bypass" // iptables mangle chain
+	Table            = "tailbond"         // nft table (inet family)
+	Chain            = "tailbond_bypass"  // iptables mangle chain, LAN input
+	RestoreChain     = "tailbond_restore" // every input: the connection's mark
 )
 
 // Marks within the mask: 1 = direct, 2 = tunnel, 3.. = one WAN each.
@@ -204,11 +205,13 @@ func renderNft(rules []config.BypassRule, markOf map[string]uint32, mask uint32)
 	}
 	// before GL's own policy chains (priority mangle); only our bits change
 	b.WriteString("\tchain prerouting {\n\t\ttype filter hook prerouting priority mangle - 5; policy accept;\n")
-	b.WriteString("\t\tiifname != @lan_ifs return\n")
-	fmt.Fprintf(&b, "\t\t# a connection keeps the route it started with\n")
-	// (nothing else has marked the packet yet at this priority; GL's own
-	// chains restore their bits later and keep ours)
+	// a connection keeps the route it started with, and its replies carry
+	// the mark too: with src_valid_mark the kernel's reverse-path check
+	// then uses the same rules, instead of the kill switch's blackhole.
+	// (Nothing else has marked the packet yet at this priority; GL's own
+	// chains restore their bits later and keep ours.)
 	fmt.Fprintf(&b, "\t\tct mark & %s != 0 meta mark set ct mark & %s return\n", hex(mask), hex(mask))
+	b.WriteString("\t\tiifname != @lan_ifs return\n")
 	for _, r := range rules {
 		m := markOf[r.ID]
 		for _, match := range nftMatches(r) {
@@ -257,8 +260,10 @@ func renderIPT(rules []config.BypassRule, markOf map[string]uint32, mask uint32)
 	chain := func(v6 bool) string {
 		var b strings.Builder
 		b.WriteString("*mangle\n")
+		// replies and later packets: every interface (see renderNft)
+		fmt.Fprintf(&b, ":%s - [0:0]\n-F %s\n", RestoreChain, RestoreChain)
+		fmt.Fprintf(&b, "-A %s -m connmark ! --mark 0x0/%s -j CONNMARK --restore-mark --nfmask %s --ctmask %s\n", RestoreChain, hex(mask), hex(mask), hex(mask))
 		fmt.Fprintf(&b, ":%s - [0:0]\n-F %s\n", Chain, Chain)
-		fmt.Fprintf(&b, "-A %s -m connmark ! --mark 0x0/%s -j CONNMARK --restore-mark --nfmask %s --ctmask %s\n", Chain, hex(mask), hex(mask), hex(mask))
 		fmt.Fprintf(&b, "-A %s -m mark ! --mark 0x0/%s -j RETURN\n", Chain, hex(mask))
 		for _, r := range rules {
 			for _, m := range iptMatch(r, v6) {
