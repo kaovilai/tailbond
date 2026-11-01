@@ -1,0 +1,21 @@
+tailbond Android app
+Copyright (c) 2026 tailbond contributors
+
+This product includes software developed as part of the mqvpn project
+(https://github.com/mp0rta/mqvpn), Copyright (c) 2026 mp0rta and mqvpn
+contributors, licensed under the Apache License, Version 2.0
+(mqvpn-sdk/LICENSE):
+
+  * mqvpn-sdk/sdk-native and mqvpn-sdk/sdk-core: modified copies of the mqvpn
+    Android SDK modules (changes marked "tailbond:", see mqvpn-sdk/README.md)
+  * sdk-runtime and sdk-network: used unmodified from third_party/mqvpn
+  * libmqvpn, built from third_party/mqvpn, which bundles:
+      - xquic (Apache-2.0, Copyright (c) 2022 Alibaba Group Holding Limited)
+      - BoringSSL (OpenSSL/ISC-style licenses, see its LICENSE)
+      - lwIP (BSD-3-Clause, Copyright (c) 2001, 2002 Swedish Institute of
+        Computer Science)
+
+Design ideas (no code) from smootify (https://github.com/Brazzo978/smootify,
+Apache-2.0).
+
+QR decoding uses ZXing core (Apache-2.0).

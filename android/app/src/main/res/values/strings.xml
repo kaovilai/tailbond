@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">tailbond</string>
+    <string name="notification_channel">VPN status</string>
+    <string name="state_connecting">Connecting…</string>
+    <string name="state_reconnecting">Reconnecting…</string>
+    <string name="state_connected">Connected</string>
+    <string name="state_error">Error</string>
+    <string name="tile_off">Off</string>
+    <string name="action_disconnect">Disconnect</string>
+    <string name="err_not_paired">Not paired: scan your server\'s pairing QR code first</string>
+</resources>
