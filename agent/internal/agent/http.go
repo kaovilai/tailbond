@@ -454,24 +454,31 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 
 // listenAddrs resolves the "listen" setting. With no host the server role
 // binds loopback plus its Tailscale IPs, the client role every interface.
+// The server role also binds its tunnel address (for bonded clients' GET
+// /api/peers) unless the listen host is a wildcard that already covers it.
 func (a *Agent) listenAddrs(ctx context.Context) []string {
 	cfg := a.store.Get()
 	host, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
 		host, port = "", strings.TrimPrefix(cfg.Listen, ":")
 	}
-	if host != "" {
+	if cfg.Role == config.RoleClient {
 		return []string{net.JoinHostPort(host, port)}
 	}
-	if cfg.Role == config.RoleClient {
-		return []string{net.JoinHostPort("", port)}
+	var out []string
+	switch host {
+	case "":
+		out = append(out, net.JoinHostPort("127.0.0.1", port))
+		for _, ip := range a.ts.Get(ctx).IPs {
+			out = append(out, net.JoinHostPort(ip, port))
+		}
+	case "0.0.0.0", "::":
+		return []string{net.JoinHostPort(host, port)}
+	default:
+		out = append(out, net.JoinHostPort(host, port))
 	}
-	out := []string{net.JoinHostPort("127.0.0.1", port)}
-	for _, ip := range a.ts.Get(ctx).IPs {
-		out = append(out, net.JoinHostPort(ip, port))
-	}
-	// the tunnel address, for bonded clients' GET /api/peers (it appears once mqvpn is up)
-	if ip := cfg.ServerTunnelIP(); ip != "" {
+	// appears once mqvpn is up; serveHTTP retries the bind
+	if ip := cfg.ServerTunnelIP(); ip != "" && ip != host {
 		out = append(out, net.JoinHostPort(ip, port))
 	}
 	return out

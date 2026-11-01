@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tailbond/tailbond/agent/internal/config"
@@ -97,5 +98,22 @@ func TestPeersAuthOnAdminListener(t *testing.T) {
 	// a client token is not an admin session
 	if w := do(t, a, "GET", "/api/status", lo, APIToken("pixel-key")); w.Code != http.StatusUnauthorized {
 		t.Fatalf("token for /api/status: %d, want 401", w.Code)
+	}
+}
+
+func TestListenAddrsIncludeTunnel(t *testing.T) {
+	for listen, want := range map[string][]string{
+		":8077":          {"127.0.0.1:8077", "10.77.0.1:8077"},
+		"127.0.0.1:8077": {"127.0.0.1:8077", "10.77.0.1:8077"},
+		"0.0.0.0:8077":   {"0.0.0.0:8077"},
+	} {
+		a := peersAgent(t, "")
+		if _, err := a.store.Update(func(c *config.Config) error { c.Listen = listen; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		got := a.listenAddrs(context.Background())
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("listen %q: %v, want %v", listen, got, want)
+		}
 	}
 }
