@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Assemble the OpenWrt / GL.iNet package from prebuilt static binaries.
-# No OpenWrt SDK: an .ipk is an ar archive of debian-binary,
+# No OpenWrt SDK: an OpenWrt .ipk is a gzipped tar of debian-binary,
 # control.tar.gz and data.tar.gz, and both binaries are static.
 #
 # Output (out/ipk/), same contents, two architecture names:
@@ -27,7 +27,7 @@ ARCHS="${TB_ARCHS:-aarch64_cortex-a53 aarch64_cortex-a53_neon-vfpv4}"
 
 die() { echo "build-ipk: $*" >&2; exit 1; }
 
-for c in ar tar gzip file; do
+for c in tar gzip file; do
     command -v "$c" >/dev/null || die "'$c' not found"
 done
 
@@ -122,6 +122,9 @@ for arch in $ARCHS; do
     tgz "$w/data.tar.gz" "$data"
     ipk="$OUT/tailbond_${TB_VERSION}_${arch}.ipk"
     rm -f "$ipk"
-    (cd "$w" && ar -rcD "$ipk" debian-binary control.tar.gz data.tar.gz)
+    # OpenWrt's opkg wants the outer archive as gzipped tar (as ipkg-build
+    # makes it), not the Debian-style ar archive; ar fails as "Malformed".
+    tar --format=gnu --sort=name --owner=0 --group=0 --numeric-owner --mtime="$mtime" \
+        -C "$w" -cf - ./debian-binary ./data.tar.gz ./control.tar.gz | gzip -9n >"$ipk"
     echo "Built: $ipk ($(du -h "$ipk" | cut -f1))"
 done
