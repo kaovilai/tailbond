@@ -826,7 +826,7 @@
             return self.alert(h, "", noun + " needs you to sign in", [
               w.kind === "wifi" ? null : h("div", { class: "tb-small", style: { marginBottom: "4px" } }, "GL's Login Mode covers the repeater Wi-Fi only; tailbond handles sign-in pages on other connections like this one."),
               h("div", "It shows a sign-in page before it lets anyone online. Until then tailbond keeps " + w.label + " out of bonding" + (self.wans.some(function (x) { return x !== w && x.enabled && x.usable && x.captive !== "portal"; }) ? " and your other connections carry your traffic." : ".")),
-              h("div", { class: "tb-small", style: { marginTop: "6px" } }, "Opening the sign-in page lets devices here reach " + w.label + " directly (without your home server) for up to 10 minutes, so the page can load.")
+              h("div", { class: "tb-small", style: { marginTop: "6px" } }, "While you sign in (up to 10 minutes), everything devices here do goes out " + w.label + " directly, not through your home server, and they can't reach your Tailscale machines; that's what lets the page load. This router keeps its own small link home over your other connections.")
             ], [self.btn(h, self.busy["si-" + w.key] ? "Opening…" : "Open sign-in page", function () {
               var win = window.open("about:blank", "_blank");
               self.run("si-" + w.key, api("POST", "/api/captive/signin", { name: w.key })).then(function (r) {
@@ -989,7 +989,7 @@
             }
           }
           out.push(this.card(h, "Connect to your home server", [
-            h("div", { class: "tb-muted", style: { marginBottom: "14px", lineHeight: 1.55 } }, "Your home server (a computer or a GL Flint 3 running tailbond) must be signed in to the same Tailscale account as this router. You'll approve this router there with one tap."),
+            h("div", { class: "tb-muted", style: { marginBottom: "14px", lineHeight: 1.55 } }, "Your home server (a computer or a GL Flint 3 running tailbond) must be on the same Tailscale network as this router. You'll approve this router there with one tap."),
             h("div", body)
           ]));
 
@@ -1045,6 +1045,7 @@
 
           if (this.pending.length) {
             out.push(this.card(h, "Waiting for your approval", this.pending.map(function (r) {
+              var s0 = self.settings || {};
               var what = r.kind === "router" ? "Travel router" : r.kind === "phone" ? "Phone" : "Device";
               return h("div", { class: "tb-req" }, [
                 h("div", { class: "tb-wan-icon" }, [icon(h, r.kind === "phone" ? "phone" : "router")]),
@@ -1054,7 +1055,8 @@
                     what + " " + (r.device && r.device !== r.name ? "“" + r.device + "” " : "") + "on your tailnet · signed in as " + (r.user || "unknown"),
                     h("br"), (r.hostname ? r.hostname + " · " : "") + (r.os ? r.os + " · " : "") + r.ip + " · asked " + fmtAgo(r.created)
                   ]),
-                  r.repair ? h("div", { class: "tb-small", style: { marginTop: "4px", color: "#8a5d10" } }, "It was connected before (reset or reinstalled). Approving gives it its old access back.") : null
+                  r.repair ? h("div", { class: "tb-small", style: { marginTop: "4px", color: "#8a5d10" } }, "It was connected before (reset or reinstalled). Approving gives it its old access back.") : null,
+                  r.user && s0.owner && r.user.toLowerCase() === s0.owner.toLowerCase() ? h("div", { class: "tb-small", style: { marginTop: "4px" } }, "Signed in to " + r.user + ", an account that may approve here. If this device stays with you, just approve. If you'll give it to someone: approve, then before handing it over sign its Tailscale in to their account (or tag it); tailbond keeps working, and until then whoever holds it could also approve devices here. Decline only refuses this request; it can ask again.") : null
                 ]),
                 h("div", { class: "tb-actions" }, [
                   self.btn(h, "Decline", function () { self.decide(r, false); }, "", self.busy["req-" + r.id]),
@@ -1174,7 +1176,7 @@
             h("div", "Internet address"),
             steps.indexOf("address") >= 0 ? h("div", { class: "tb-muted" }, "not set yet (step above)") : (this.addrEdit ? this.addrEditor(h) : h("div", { class: "tb-row" }, [h("span", { class: "tb-mono" }, addr || "not set"),
               this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
-            h("div", "Port"), steps.indexOf("health:cgnat") >= 0 ? h("div", "UDP " + (s.port || 443) + " is opened on this router, but your provider's shared address (step above) keeps travel routers from reaching it.") : h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "Is your internet cable plugged straight into this router? Then nothing else to do. If it's plugged into another box (your internet provider's modem-router), that box must forward UDP " + (s.port || 443) + " to this router; see the box's manual under \"port forwarding\".")]),
+            h("div", "Port"), steps.indexOf("health:cgnat") >= 0 ? h("div", "UDP " + (s.port || 443) + " is opened on this router, but your provider's shared address (step above) keeps travel routers from reaching it.") : h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "Is your internet cable plugged straight into this router? Then nothing else to do. If it's plugged into another box (your internet provider's modem-router), that box must forward UDP " + (s.port || 443) + " to this router; see the box's manual under \"port forwarding\". To test it now: turn tailbond on on a phone using mobile data (Wi-Fi off); Setup health then shows \"UDP " + (s.port || 443) + " reached from the internet\".")]),
             h("div", "Tailscale name"), h("div", { class: "tb-mono" }, ts.dns_name || "—"),
             h("div", "tailbond page password"), this.pwEdit ? h("div", { class: "tb-row" }, [
               h("input", { class: "tb-input", attrs: { type: "password", placeholder: "New password (empty: none)", autocomplete: "new-password" }, domProps: { value: this.pwValue }, on: { input: function (e) { self.pwValue = e.target.value; } } }),
@@ -1207,7 +1209,7 @@
           if (steps.some(function (x) { return x.indexOf("health:") !== 0; })) return null;
           var checks = A(v.checks);
           // on the Flint, "this machine" is the router itself: say where in GL
-          var glFix = "For whoever manages this router: NETWORK → Firewall → Open Ports on Router, add UDP 41641. If another router sits in front of this one (for example your internet provider's box), also forward UDP port 41641 to this router there.";
+          var glFix = "On this router: NETWORK → Firewall → Open Ports on Router, add UDP 41641. If another router sits in front of this one (for example your internet provider's box), also forward UDP port 41641 to this router there.";
           checks = checks.map(function (c) { return (c.id === "tailscale_direct" || c.id === "netcheck") && c.fix ? Object.assign({}, c, { fix: glFix }) : c; });
           var shown = {};
           checks = checks.map(function (c) { if (c.fix && shown[c.fix]) return Object.assign({}, c, { fix: "Same fix as above (one change fixes both).", fix_url: "" }); if (c.fix) shown[c.fix] = true; return c; });
@@ -1231,10 +1233,10 @@
           var head = blocking
             ? h("div", { style: { marginBottom: "6px", color: "#c0392b", fontWeight: 600 } }, blocking + " thing" + (blocking === 1 ? "" : "s") + " to fix before travel routers and phones can connect from away (also the setup step above)" + (bad.length > blocking ? "; " + (bad.length - blocking) + " more for best speed" : "") + ":")
             : bad.length
-            ? h("div", { style: { marginBottom: "6px", color: "#8a5d10" } }, bad.length + " thing" + (bad.length === 1 ? "" : "s") + " to improve for best speed (tailbond works meanwhile, just slower):")
+            ? h("div", { style: { marginBottom: "6px", color: "#8a5d10" } }, "Optional speed-ups (tailbond works fine without them; they only speed up reaching the machines named):")
             : h("div", { style: { marginBottom: "6px", color: "#137a46", fontWeight: 600 } }, unknown
               ? "✓ Nothing to fix. " + unknown + " check" + (unknown === 1 ? " needs" : "s need") + " a device connecting from away (marked ?)."
-              : "✓ Everything is set up for best speed");
+              : "✓ Everything is set up");
           return this.card(h, "Setup health", [head,
             h("div", { class: "tb-list" }, bad.map(row).concat(bad.length && !this.showHealthOk ? [] : rest.map(row))),
             bad.length && rest.length ? h("a", { class: "tb-link tb-small", on: { click: function () { self.showHealthOk = !self.showHealthOk; } } }, this.showHealthOk ? "Hide the rest" : "Show " + rest.length + " more check" + (rest.length === 1 ? "" : "s")) : null,

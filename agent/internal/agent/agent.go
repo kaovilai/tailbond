@@ -358,6 +358,10 @@ func (a *Agent) hookEnvLocked() map[string]string {
 		env["TB_SUBNET6"] = cfg.Server.Subnet6
 		env["TB_PORT"] = fmt.Sprint(cfg.Server.Port)
 		env["TB_WEB_PORTS"] = webPorts(cfg)
+		env["TB_ADVERTISE_ROUTE"] = "1"
+		if cfg.Server.NoAdvertiseRoute {
+			env["TB_ADVERTISE_ROUTE"] = "0"
+		}
 		if !cfg.Server.DisableDNS {
 			env["TB_DNS_IP"] = cfg.ServerTunnelIP()
 		} else {

@@ -72,7 +72,7 @@ tailbond works without Tailscale. With Tailscale running on the server (`sudo ta
 
 - **Tailnet access for bonded devices.** Traffic from the tunnel (`10.77.0.0/24`) to `100.64.0.0/10` and `fd7a:115c:a1e0::/48` leaves through `tailscale0` with masquerade. To the tailnet it looks like it comes from the server, so bonded devices don't show up as extra machines.
 - **MagicDNS for bonded devices.** The agent answers DNS on `10.77.0.1`: `*.ts.net` and your tailnet's MagicDNS names go to `100.100.100.100`, everything else to the server's normal resolver.
-- **Reaching bonded devices from the tailnet (optional).** The `server-up` hook runs `tailscale set --advertise-routes=10.77.0.0/24` and keeps any routes you already advertise. Bonded devices reach your tailnet without it; approve it only if your Tailscale machines should reach the bonded devices (it exposes them to your tailnet, under your ACLs). **To approve it:** open the [admin console](https://login.tailscale.com/admin/machines), find this machine, choose **Edit route settings**, and enable `10.77.0.0/24`. The dashboard's **Tailscale** tab shows whether the route is advertised and approved.
+- **Reaching bonded devices from the tailnet (optional).** The `server-up` hook runs `tailscale set --advertise-routes=10.77.0.0/24` and keeps any routes you already advertise. Bonded devices reach your tailnet without it; approve it only if your Tailscale machines should reach the bonded devices (it exposes them to your tailnet, under your ACLs). An `autoApprovers` rule in your policy approves it without asking. To not advertise it at all, set `"no_advertise_route": true` under `"server"` in `tailbond.json`. **To approve it:** open the [admin console](https://login.tailscale.com/admin/machines), find this machine, choose **Edit route settings**, and enable `10.77.0.0/24`. The dashboard's **Tailscale** tab shows whether the route is advertised and approved.
 - **A real TLS certificate.** If HTTPS certificates are enabled for your tailnet (admin console → DNS → HTTPS Certificates), the agent runs `tailscale cert` for `<server>.<tailnet>.ts.net`. mqvpn then uses that certificate, and devices check it by name even though they connect to your public address. Without it, the agent creates a self-signed certificate, and its SHA-256 fingerprint goes into every pairing link.
 
 If you switch between the self-signed and the Tailscale certificate (by turning tailnet HTTPS on or off), pair your devices again: the old links pin the old certificate.
@@ -102,8 +102,10 @@ with the router's Tailscale identity; tap **Approve**.
 See [who can approve](#who-can-approve-and-what-an-approved-device-reaches) below.
 
 **An Android phone that runs Tailscale.** The phone must be on your
-Tailscale network: the person signed in to your tailnet (invite them in the
-admin console), or this machine shared with their account; and allowed to
+Tailscale network: simplest, invite the person (admin console → Users →
+Invite); sharing just this machine with their account works too, but once
+you approve their phone it reaches what this server reaches either way. It
+must also be allowed to
 reach this machine on tcp 80 and 8077 (Tailscale's default policy allows
 it). On the phone, with Tailscale on, open the browser and type the
 server's name with a slash (`homebox/`; without it the browser searches), or scan the QR code
@@ -127,8 +129,8 @@ allow installs from their browser once; the page shows those prompts.
   any device signed in to it (including a router or phone you lent to someone
   while it's signed in to your account: sign those in with the borrower's
   account, or tag them), and anyone with a login on this machine
-  (`http://127.0.0.1:8077`; set a password if this machine has users you
-  don't trust with that). Everyone else on your tailnet, including people
+  (`http://127.0.0.1:8077`): any local user or program can use it without
+  a password, so set one if this machine runs things you don't trust. Everyone else on your tailnet, including people
   you share this machine with, gets a short "this page is only for …" note;
   they can still **ask to connect** (that's how their phone or router gets
   added) and open the phone page. A *tagged* server has no owning account:

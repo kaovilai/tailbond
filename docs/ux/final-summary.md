@@ -150,3 +150,47 @@ Lows fixed: the download button no longer wraps; 02-pairing-paste-error is
 rendered tall enough to show the error; the 14d toast no longer covers the
 cards; 03-deeplink-confirm (a duplicate of 02e) dropped from the packet;
 "tailscale ping" gone from the dashboards.
+
+## Round 10 triage
+
+No highs. Mediums by surface: GL 6, Android 3, Fedora 11.
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Flint: the tunnel route is a numbered setup step, sends a GL user to the admin console (GL A; C low) | M | **fix**: an *Optional* item, not counted in "setup steps left": "Skip this unless you want your Tailscale machines … to open something on a device behind a travel router"; "Setup done" no longer claims the reverse direction without it |
+| 2 | Screen 08 (on, can't reach home): cards say "While it's off…", and "Turn tailbond off" doesn't warn about phone data (GL D) | M | **fix** (real bug): cards say they're used once tailbond reaches home again; the off advice says GL may then use the phone's data |
+| 3 | Waiting screen doesn't say who approves (GL C) | M | **fix**: "Not you? Ask whoever runs your home server to approve it" |
+| 4 | Login Mode: "the top card" unclear; Tethering "In use" (GL C) | M | **fix**: no card reference; the other link's chip reads "Router's link only · almost no data" while devices sign in |
+| 5 | Relay fix is beyond a family member (GL C) | M | **partial**: the fix line starts "For whoever manages this router:"; with the hand-off line, a family member's job is to pass it on. Changing router settings stays an admin task |
+| 6 | Before Login Mode, "Your other connections keep working meanwhile" hides that devices bypass home (GL B) | M | **fix**: the first card already says all device traffic goes out the hotel Wi-Fi for up to 10 minutes and doesn't reach Tailscale machines |
+| 7 | ACL identity explained too late, in jargon (Android A, B) | M | **fix**: the phone page's step 3, the first app screen, the confirm dialog and This device all say "They see this phone as homebox … so they allow it whatever they allow homebox" |
+| 8 | The download button is above the pictures it says to read first (Android C; A low) | M | **fix**: the button moved below the five pictures |
+| 9 | "Setup health: all set (1 optional)" right under the public-address setup step (F1, F2) | M | **fix**: "nothing to fix here … · finish the setup step above first" |
+| 10 | Guide §3 says "Approve the route once" vs "(optional)" (F1) | M | **fix**: §3 calls it optional and says what it exposes |
+| 11 | Guide: test the forward before telling tailbond the address, with no device yet (F1, F2) | M | **fix**: the test is step 4, "once a phone is paired" |
+| 12 | A request signed in to the owner's account: whoever holds that router can approve (F1, F2) | M | **fix**: the request card says so and what to do (sign it in to the borrower's account first) |
+| 13 | "as homebox, under its access rules" reads like a limit, is an escalation (F1) | M | **fix**: "they allow it whatever they allow homebox, which may be more than its owner's own account gets"; the guide's ACL example stays the way to narrow it |
+| 14 | Tagged server: field says "Also allowed"; guide ordering leaves a window (F1) | M | **fix**: on a tagged server the field reads "Allowed to approve (… only they can)"; the guide says to add approvers *before* tagging, and that the grants only narrow once allow-all is removed |
+| 15 | Approved slate7 shows only "offline" (F2) | M | **fix**: "not connected right now (approved devices connect by themselves when they're on and online)" |
+| 16 | Invite vs share for family isn't explained (F2) | M | **fix**: the phone card says what each does, where it is in the admin console, and that shared users type the full name |
+
+## Round 11 triage
+
+No highs. Mediums: GL 8, Android 4 (persona A: none), Fedora 8.
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | The "signed in to an approver's account" note reads like an alarm; no "if it's yours, approve"; missing on the Flint (GL A, B, C; F1, F2) | M | **fix**: "If this device stays with you, just approve. If you'll give it to someone: approve, then switch its Tailscale account (or tag it) before handing it over … Decline only refuses this request"; the same note on the Flint's request card |
+| 2 | Relay fix "For whoever manages this router" while I am that person; worth it? (GL A, C; D low) | M | **fix**: "On this router: …"; the card heads warn-only items "Optional speed-ups (tailbond works fine without them; they only speed up reaching the machines named)" |
+| 3 | Flint: the UDP 443 forward can't be checked from home (GL A) | M | **fix**: the Port row says how to test now (a phone on mobile data) |
+| 4 | Route "optional" on 13 but "approved" under "set up for best speed" on 12/18c (GL D; B, C low) | M | **fix**: the OK item reads "Optional route … approved: your Tailscale machines can reach tailbond devices"; all-good says "Everything is set up" |
+| 5 | Slate says the server must be on "the same Tailscale account" (GL B) | M | **fix**: "the same Tailscale network" |
+| 6 | Ethernet sign-in: before clicking, it sounds like it only adds access (GL B) | M | **fix**: the first card says all device traffic goes out the cable for up to 10 minutes and can't reach Tailscale machines |
+| 7 | Phone page invites the requesting phone to approve itself (Android B) | M | **fix**: "Is homebox yours? Then you approve it yourself … Nobody else on your Tailscale network can approve from there unless you named them" |
+| 8 | Who can open connections to 10.77.0.2 (Android B) | M | **fix**: "only if homebox's tailbond route is approved in the Tailscale admin console (your access rules apply)" |
+| 9 | "Only Tailscale machines": subnet routers' LANs, DNS (Android B) | M | **partial (stated limit)**: the option says names are still looked up through home (MagicDNS works) and that LANs behind other subnet routers aren't reachable through tailbond (the server doesn't accept other routers' routes; kept out of scope since the Android loop, round 1 #14) |
+| 10 | Five Android prompts to remember (Android C) | M | **partial (platform limit, stated)**: a one-line "In short: Download anyway → Open → Settings → Allow from this source → back → Install (→ Scan app)" to screenshot; dashed rings and "they're drawings" make the pictures read as guidance. Android shows its own screens over the page; that can't be changed |
+| 11 | Route advertised automatically, no opt-out; autoApprovers (F1) | M | **fix**: `"server": {"no_advertise_route": true}` (hook env `TB_ADVERTISE_ROUTE=0`); the route item and guide mention it and autoApprovers |
+| 12 | "Share just this machine" sounds limited, but an approved phone reaches what homebox reaches (F1, F2) | M | **fix**: the card recommends inviting and says an approved phone reaches what the server reaches whichever way they joined; the guide says the same |
+| 13 | "anyone logged in on homebox itself" is really any local program (F1) | M | **fix**: "any user or program on homebox itself … set a password if it runs things you don't trust" (card and guide). Loopback stays trusted, like most local admin pages |
+| 14 | Tagged-server warning shown as "to improve (tailbond works meanwhile)" with router boilerplate (F1) | M | **fix**: its own headline "1 security setting to review" and footer "fixed on this page"; speed items read "optional speed-ups" |

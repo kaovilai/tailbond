@@ -182,11 +182,12 @@ func buildHealth(in healthInputs) healthView {
 
 	if ts.Running && in.Route != "" {
 		if ts.RoutesApproved {
-			add(healthCheck{ID: "route", Status: hOK, Title: "Route " + in.Route + " approved"})
+			add(healthCheck{ID: "route", Status: hOK, Title: "Optional route " + in.Route + " approved: your Tailscale machines can reach tailbond devices"})
 		} else {
 			add(healthCheck{ID: "route", Status: hWarn, Title: "Route " + in.Route + " isn't approved yet (optional)",
 				Detail: "Devices connected through tailbond reach your Tailscale machines without it. Approving it lets your Tailscale machines reach those devices too, under your access rules.",
-				Fix:    "If you want that: Tailscale admin console → Machines → this machine → Edit route settings (or an autoApprovers rule).", FixURL: urlSubnetRtrs})
+				Fix: "If you want that: Tailscale admin console → Machines → this machine → Edit route settings (an autoApprovers rule in your policy approves it automatically). " +
+					"If you do not want it: leave it, or set \"no_advertise_route\": true in tailbond.json to stop advertising it.", FixURL: urlSubnetRtrs})
 		}
 	}
 
@@ -316,7 +317,10 @@ func (a *Agent) hHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
 	in := healthInputs{Role: a.role, TS: a.ts.Get(r.Context()), Netcheck: a.netcheck(), Port: cfg.Server.Port, Now: time.Now()}
 	if a.role == config.RoleServer {
-		in.WANIP, in.Route = outboundIP(), cfg.Server.Subnet
+		in.WANIP = outboundIP()
+		if !cfg.Server.NoAdvertiseRoute {
+			in.Route = cfg.Server.Subnet
+		}
 		in.OpenApproval = in.TS.Running && in.TS.Owner == "" && len(cfg.Approvers) == 0 && cfg.UIPassword == ""
 		a.mu.Lock()
 		in.Outside = a.outside

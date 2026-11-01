@@ -101,7 +101,7 @@ const hc = (id, status, title, extra = {}) => ({ id, status, title, ...extra });
 const healthGood = { all_good: true, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
   hc('netcheck', 'ok', 'Network is friendly to direct connections'),
-  hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
+  hc('route', 'ok', 'Optional route 10.77.0.0/24 approved: your Tailscale machines can reach tailbond devices'),
   hc('cgnat', 'ok', 'Public internet address 203.0.113.7'),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 2 h ago.' }),
 ] };
@@ -113,21 +113,21 @@ const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: [
     fix: directFix, fix_url: 'https://tailscale.com/docs/reference/connection-types' }),
   hc('netcheck', 'warn', 'This network makes direct Tailscale connections hard', { detail: 'The router in front of this machine picks a new outside port for every destination ("hard NAT"), so other machines can\'t connect straight back; no port mapping on the router.',
     fix: directFix, fix_url: 'https://tailscale.com/docs/integrations/firewalls' }),
-  hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
+  hc('route', 'ok', 'Optional route 10.77.0.0/24 approved: your Tailscale machines can reach tailbond devices'),
   hc('cgnat', 'ok', 'Behind your home router (public address 203.0.113.7)', { detail: 'Forward UDP 443 on that router to 192.168.1.2.' }),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 3 h ago.' }),
 ] };
 const healthCgnat = { all_good: false, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
   hc('netcheck', 'ok', 'Network is friendly to direct connections'),
-  hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
+  hc('route', 'ok', 'Optional route 10.77.0.0/24 approved: your Tailscale machines can reach tailbond devices'),
   hc('cgnat', 'bad', 'Your internet line uses carrier-grade NAT', { detail: "This machine's internet address 100.72.3.4 is shared by your provider, so travel routers and phones away from home can't reach UDP 443 here. Bonding needs that direct connection; it can't run through Tailscale's relays (they'd make it slower than a single link).",
     fix: "Ask your provider for a public IPv4 address (often free or a small monthly fee; say it's for reaching your home from outside). Advanced: a public IPv6 address also works, but only from networks that have IPv6 too (most mobile networks, few hotels).", fix_url: 'https://tailscale.com/docs/reference/device-connectivity' }),
   hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute." }),
 ] };
 const healthRoute = { all_good: false, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
-  hc('route', 'warn', "Route 10.77.0.0/24 isn't approved yet (optional)", { detail: 'Devices connected through tailbond reach your Tailscale machines without it. Approving it lets your Tailscale machines reach those devices too, under your access rules.', fix: 'If you want that: Tailscale admin console → Machines → this machine → Edit route settings (or an autoApprovers rule).', fix_url: 'https://tailscale.com/docs/features/subnet-routers' }),
+  hc('route', 'warn', "Route 10.77.0.0/24 isn't approved yet (optional)", { detail: 'Devices connected through tailbond reach your Tailscale machines without it. Approving it lets your Tailscale machines reach those devices too, under your access rules.', fix: 'If you want that: Tailscale admin console → Machines → this machine → Edit route settings (an autoApprovers rule in your policy approves it automatically). If you do not want it: leave it, or set "no_advertise_route": true in tailbond.json to stop advertising it.', fix_url: 'https://tailscale.com/docs/features/subnet-routers' }),
   hc('cgnat', 'unknown', 'Behind your home router', { detail: 'Forward UDP 443 on that router to 192.168.8.1.' }),
   hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute." }),
 ] };
@@ -197,11 +197,12 @@ export const states = {
     livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'standby', 0, 0, 0, { captive: 'portal', portal_url: 'http://portal.hotel.example/login', captive_source: 'tailbond' }),
     livePath('usb0', 'tethering', 'Tethering', 'usb', 'standby', 0, 0, 0, { priority: 'backup', data_cap_mb: 5000, used_bytes: 1.2e9 }),
   ], { totals: { tx_bps: 3.9e6, rx_bps: 36e6 } }, { wan: { carrier: true, addrs: ['10.8.1.23/24'] }, tethering: { priority: 'backup', in_use: false } }),
+  // devices go out the hotel cable directly meanwhile: the tunnel carries only the router's trickle
   '17b-captive-own-signing-in': connected([
-    livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 36e6, 3.9e6, 25),
+    livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 0.011e6, 0.007e6, 25),
     livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'standby', 0, 0, 0, { captive: 'portal', portal_url: 'http://portal.hotel.example/login', captive_source: 'tailbond', signin_until: new Date(now + 560e3).toISOString() }),
     livePath('usb0', 'tethering', 'Tethering', 'usb', 'standby', 0, 0, 0, { priority: 'backup', data_cap_mb: 5000, used_bytes: 1.2e9 }),
-  ], { totals: { tx_bps: 3.9e6, rx_bps: 36e6 } }, { wan: { carrier: true, addrs: ['10.8.1.23/24'] }, tethering: { priority: 'backup', in_use: false } }),
+  ], { totals: { tx_bps: 0.007e6, rx_bps: 0.011e6 } }, { wan: { carrier: true, addrs: ['10.8.1.23/24'] }, tethering: { priority: 'backup', in_use: false } }),
   '13-server-route-pending': withApi(serverBase({ clients: [] }, { routes_approved: false }, { public_addr: '', effective_public_addr: '192.168.8.1:443', public_addr_guessed: true, tls: 'self-signed' }), { 'GET /api/health': healthRoute }),
 };
 

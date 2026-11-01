@@ -74,6 +74,9 @@ type Server struct {
 	Users []User `json:"users,omitempty"`
 	// Additive: disable the DNS forwarder on the tunnel IP.
 	DisableDNS bool `json:"disable_dns,omitempty"`
+	// Additive: don't advertise the tunnel subnet to the tailnet (default:
+	// advertise it; hooks get TB_ADVERTISE_ROUTE=0).
+	NoAdvertiseRoute bool `json:"no_advertise_route,omitempty"`
 }
 
 type PathSetting struct {

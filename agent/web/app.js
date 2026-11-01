@@ -359,12 +359,14 @@ async function renderHealth() {
   const blocking = v.checks.filter((c) => c.status === 'bad').length;
   // the route is a choice (tailnet → bonded devices), not a speed problem
   const optional = bad.filter((c) => c.id === 'route').length;
-  const improve = bad.length - blocking - optional;
+  const security = bad.filter((c) => c.id === 'approvers').length;
+  const improve = bad.length - blocking - optional - security;
   const plus = optional ? ` (and ${optional} optional)` : '';
   const headline = blocking
     ? `Setup health: ${blocking} thing${blocking === 1 ? '' : 's'} to fix before devices can connect from away${improve ? `, ${improve} more to improve` : ''}${plus}`
-    : improve ? `Setup health: ${improve} thing${improve === 1 ? '' : 's'} to improve (tailbond works meanwhile)${plus}`
-    : optional ? 'Setup health: nothing to fix here (1 optional item below)' : 'Setup health: everything is set up for best speed';
+    : security ? `Setup health: 1 security setting to review${improve ? `, ${improve} thing${improve === 1 ? '' : 's'} to improve` : ''}${plus}`
+    : improve ? `Setup health: ${improve} optional speed-up${improve === 1 ? '' : 's'} (tailbond works fine without ${improve === 1 ? 'it' : 'them'})${plus}`
+    : optional ? 'Setup health: nothing to fix here (1 optional item below)' : 'Setup health: everything is set up';
   const addrTodo = state.settings && state.settings.public_addr_guessed;
   const seen = new Set();
   const rows = (bad.length ? bad : v.checks).map((c) => {
@@ -382,14 +384,14 @@ async function renderHealth() {
   box.replaceChildren(...[
     h('h3', { text: addrTodo && !blocking ? headline + ' · finish the setup step above first' : headline }),
     h('ul', { class: 'health-list' }, rows),
-    bad.length ? h('p', { class: 'small', text: 'Fixes are on your home router or in the Tailscale admin console ("How to fix" explains each); this machine\'s own firewall is already set up by tailbond. Not sure how? Show this card to whoever set up your internet.' }) : null,
+    bad.length ? h('p', { class: 'small', text: (security ? 'The security setting is fixed on this page (Who can approve and add devices). ' : '') + 'Router fixes are on your home router\'s admin page, route ones in the Tailscale admin console ("How to fix" explains each); this machine\'s own firewall is already set up by tailbond. Not sure how? Show this card to whoever set up your internet.' }) : null,
     h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
       h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' }))].filter(Boolean));
   box.classList.remove('hidden');
   const ban = $('#health-banner');
   ban.replaceChildren();
   const addr = state.settings && state.settings.public_addr_guessed;
-  const shown = blocking + improve;
+  const shown = blocking + improve + security;
   if (shown || addr) {
     ban.append(addr ? 'Setup: tell devices where home is (public address). ' : '', shown ? headline + '. ' : '',
       h('a', { href: '#', text: 'Show', onclick: (e) => { e.preventDefault(); $('#tabs button[data-tab="clients"]').click(); } }));
@@ -405,7 +407,7 @@ function whoApproves() {
   if (!s) return '';
   if (s.password_set) return 'Who can approve: anyone with this page\'s password (you too), from any device on your Tailscale network.';
   const names = [s.owner ? `${s.owner} (the Tailscale account ${serverShort()} belongs to)` : '', ...(s.approvers || [])].filter(Boolean);
-  if (names.length) return `Who can approve: ${names.join(', ')}, from any device signed in to that Tailscale account, and anyone logged in on ${serverShort()} itself (http://127.0.0.1:8077). Others on your Tailscale network, and people you share ${serverShort()} with, can ask to connect but can't approve.`;
+  if (names.length) return `Who can approve: ${names.join(', ')}, from any device signed in to that Tailscale account, and any user or program on ${serverShort()} itself (http://127.0.0.1:8077; set a password if ${serverShort()} runs things you don't trust). Others on your Tailscale network, and people you share ${serverShort()} with, can ask to connect but can't approve.`;
   return `Who can approve: anyone on your Tailscale network who can reach ${serverShort()} (it's a tagged machine, so it has no owner account). Name approvers below, or set a password.`;
 }
 
@@ -441,7 +443,7 @@ function renderPairRequests(st) {
         h('b', { text: r.repair ? `${r.name} is asking to connect again` : `${r.name} wants to connect` }),
         h('div', { class: 'muted small', text: `${what} on your tailnet · signed in as ${r.user || 'unknown'} · ${r.hostname ? r.hostname + ' · ' : ''}${r.ip}` }),
         r.repair ? h('div', { class: 'small', text: 'It was connected before (reset or reinstalled). Approving gives it its old access back.' }) : null,
-        r.user && approvers.has(r.user.toLowerCase()) ? h('div', { class: 'small warn-text', text: `It's signed in to ${r.user}, an account that may approve here: whoever holds this ${r.kind === 'router' ? 'router' : 'device'} can also open this dashboard and approve devices. If it's for someone else, sign it in to their own Tailscale account first, then let it ask again.` }) : null),
+        r.user && approvers.has(r.user.toLowerCase()) ? h('div', { class: 'small warn-text', text: `Signed in to ${r.user}, an account that may approve here. If this ${r.kind === 'router' ? 'router' : 'device'} stays with you, just approve. If you'll give it to someone: approve, then before handing it over sign its Tailscale in to their account (or tag it); tailbond keeps working, and until then whoever holds it could also approve devices here. Decline only refuses this request; it can ask again.` }) : null),
       h('div', { class: 'pair-req-actions' },
         h('button', { class: 'btn', type: 'button', text: 'Decline', onclick: (e) => decide('decline', e.currentTarget) }),
         h('button', { class: 'btn primary', type: 'button', text: 'Approve', onclick: (e) => decide('approve', e.currentTarget) })));

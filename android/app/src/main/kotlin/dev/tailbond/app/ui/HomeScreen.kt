@@ -393,7 +393,7 @@ private fun ThisDevice(state: UiState) {
                 )
                 Text(
                     if (ip != null) "Not a Tailscale address: your Tailscale machines see this phone as ${state.serverName} and allow it whatever they allow ${state.serverName}. " +
-                        "They can reach the phone at this address through ${state.serverName}."
+                        "They can open connections to the phone at this address only if ${state.serverName}'s tailbond route is approved in the Tailscale admin console (your access rules apply)."
                     else "This phone reaches your tailnet through ${state.serverName}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
