@@ -382,8 +382,12 @@ advertise it to the tailnet, and a server switch would keep stale routes).
   `server.subnet` on the new one.
 
 **Health.** The active server is working while mqvpn reports the
-connection established and (with the control API) at least one path
-`active`. Standby servers are checked every `probe_every_sec` (10 s) with
+connection established and, with the control API, at least one path is
+`active` and the server still answers: the mqvpn client sends keep-alive
+PINGs, so on a live path `pkt_recv` moves whenever `pkt_sent` does. When
+every path has had sends go unanswered for 5 s, the tunnel counts as down
+(mqvpn itself would only give up after its 120 s idle timeout). Without the
+control API (unpatched mqvpn) only the connection state counts. Standby servers are checked every `probe_every_sec` (10 s) with
 one UDP datagram to their mqvpn port, sent outside the tunnel (router: bound
 to a WAN; Android: on the underlying network): a 60-byte QUIC short-header
 packet with a random connection ID, which any QUIC server answers with a

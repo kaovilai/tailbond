@@ -17,6 +17,7 @@ import (
 	"github.com/tailbond/tailbond/agent/internal/config"
 	"github.com/tailbond/tailbond/agent/internal/failover"
 	"github.com/tailbond/tailbond/agent/internal/mqconf"
+	"github.com/tailbond/tailbond/agent/internal/mqctl"
 	"github.com/tailbond/tailbond/agent/internal/netif"
 	"github.com/tailbond/tailbond/agent/internal/pairing"
 	"github.com/tailbond/tailbond/agent/internal/status"
@@ -47,6 +48,7 @@ type clientState struct {
 	probing       map[string]bool
 	lastProbe     map[string]time.Time
 	probeOK       map[string]bool
+	silence       failover.Silence // control-API packet counters of the running tunnel
 	// bypass rules (bypass.go)
 	bypass bypassState
 }
@@ -58,7 +60,8 @@ type usageFile struct {
 
 func newClientState() *clientState {
 	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState(),
-		probing: map[string]bool{}, lastProbe: map[string]time.Time{}, probeOK: map[string]bool{}}
+		probing: map[string]bool{}, lastProbe: map[string]time.Time{}, probeOK: map[string]bool{},
+		silence: failover.Silence{After: 5 * time.Second}}
 }
 
 func (a *Agent) usagePath() string { return filepath.Join(a.store.Get().StateDir, "usage.json") }
@@ -326,6 +329,9 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	if p == nil {
 		return errors.New("not paired")
 	}
+	a.mu.Lock()
+	a.client.silence.Reset()
+	a.mu.Unlock()
 	ifs, _ := a.listIfs()
 	a.mu.Lock()
 	a.client.remember(ifs)
@@ -421,6 +427,7 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	running := a.sup.Info().State == supervisor.Running
 	if running {
 		if mst, err := a.ctl.Status(ctx); err == nil {
+			a.observeSilence(now, mst)
 			st.ControlAPI = true
 			var connected bool
 			var up uint64
@@ -524,17 +531,46 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	if j := a.joinView(); j.State != joinIdle {
 		st.Join = j
 	}
-	working := st.State == status.StateConnected
-	if working && st.ControlAPI {
-		working = false
-		for _, p := range st.Paths {
-			if p.State == status.PathActive {
-				working = true
-			}
+	a.serversView(st, a.workingFrom(st, now))
+	return st
+}
+
+// observeSilence feeds the control API's per-path packet counters to the
+// silence check (failover.Silence). Caller holds no lock.
+func (a *Agent) observeSilence(now time.Time, mst *mqctl.Status) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(mst.Clients) == 0 {
+		return
+	}
+	for _, p := range mst.Clients[0].Paths {
+		a.client.silence.Observe(now, p.PathID, p.PktSent, p.PktRecv)
+	}
+	a.client.silence.Forget(now)
+}
+
+// workingFrom: the active tunnel works when mqvpn reports it connected,
+// with the control API at least one path active, and the server still
+// answers on some path (failover.Silence).
+func (a *Agent) workingFrom(st *status.Status, now time.Time) bool {
+	if st.State != status.StateConnected {
+		return false
+	}
+	if !st.ControlAPI {
+		return true
+	}
+	a.mu.Lock()
+	silent := a.client.silence.Silent(now)
+	a.mu.Unlock()
+	if silent {
+		return false
+	}
+	for _, p := range st.Paths {
+		if p.State == status.PathActive {
+			return true
 		}
 	}
-	a.serversView(st, working)
-	return st
+	return false
 }
 
 // importPairing stores a pairing URI and (re)connects.

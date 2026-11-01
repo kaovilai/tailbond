@@ -212,22 +212,9 @@ func (a *Agent) probe(ctx context.Context, server, dev string) error {
 	}, server, probeTimeout)
 }
 
-// tunnelWorking: mqvpn says the connection is established and, with the
-// control API, at least one path is active.
+// tunnelWorking: the last status snapshot's verdict (workingFrom).
 func (a *Agent) tunnelWorking() bool {
-	st := a.Snapshot()
-	if st.State != status.StateConnected {
-		return false
-	}
-	if !st.ControlAPI {
-		return true
-	}
-	for _, p := range st.Paths {
-		if p.State == status.PathActive {
-			return true
-		}
-	}
-	return false
+	return a.workingFrom(a.Snapshot(), time.Now())
 }
 
 // serversView fills the additive status fields. Caller holds no lock.
