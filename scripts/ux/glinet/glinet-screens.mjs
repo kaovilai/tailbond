@@ -3,7 +3,7 @@
 // Usage (inside the Playwright image): node glinet-screens.mjs <repo> <outdir>
 import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync } from 'node:fs';
-import { states, actions, fedoraStatus } from './fixtures.mjs';
+import { states, actions, fedoraStatus, fedoraHealth } from './fixtures.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
@@ -54,6 +54,7 @@ async function fedora(vp) {
     const p = new URL(route.request().url()).pathname;
     if (p === '/api/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fedoraStatus) });
     if (p === '/api/settings') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ role: 'server', effective_public_addr: 'home.example.net:443', version: '0.1.0-r42', glinet_ipk: true, android_apk: true }) });
+    if (p === '/api/health') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fedoraHealth) });
     if (p === '/api/logs') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"entries":[]}' });
     if (p.startsWith('/api/')) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"ok":false}' });
     const f = p === '/' ? 'index.html' : p.slice(1);

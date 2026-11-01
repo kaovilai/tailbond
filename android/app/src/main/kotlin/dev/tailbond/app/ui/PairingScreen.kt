@@ -216,7 +216,7 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
     is AskState.Asking -> "Asking ${s.server}…" to "Looking for ${s.server} on your Tailscale network."
     is AskState.Waiting -> "Waiting for approval on ${s.server}…" to
         "Ask whoever runs ${s.server} to open its tailbond page (http://${s.server}:8077 on a computer, or a Flint 3's " +
-        "admin panel → APPLICATIONS → tailbond) and tap Approve next to \"${s.name}\". Keep this screen open; " +
+        "admin panel → VPN → tailbond) and tap Approve next to \"${s.name}\". Keep this screen open; " +
         "tailbond continues by itself once approved."
     is AskState.Declined -> "${s.server} said no" to "Whoever runs ${s.server} declined this phone. Ask them, then ask again."
     is AskState.Expired -> "Nobody approved it in time" to "The request ran out after 10 minutes. Ask again when someone can approve it on ${s.server}."

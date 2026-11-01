@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Screenshots of the GL.iNet admin panel view (Applications -> tailbond) in
+# Screenshots of the GL.iNet admin panel view (VPN -> tailbond) in
 # a mock GL 4.x admin shell, every state in fixtures.mjs, desktop 1280x800
 # and phone 390x844 → out/ux/glinet/<name>/ (default name: latest).
 #

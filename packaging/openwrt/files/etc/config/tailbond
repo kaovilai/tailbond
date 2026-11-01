@@ -1,6 +1,6 @@
 # tailbond: WAN bonding to your own home server (mqvpn + tailbondd)
 #
-# Normally set from the GL admin panel (Applications -> tailbond). After
+# Normally set from the GL admin panel (VPN -> tailbond). After
 # editing by hand: /etc/init.d/tailbond restart. Empty options keep the
 # value already in /etc/tailbond/tailbond.json (what the panel saved).
 

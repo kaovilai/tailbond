@@ -1,12 +1,14 @@
 {
-    "index": 102,
+    "index": 70,
     "view": "tailbond",
     "level": 2,
     "title": "tailbond",
-    "parent": "applications",
-    "parent_icon": "application",
-    "parent_index": 55,
+    "parent": "vpn",
+    "parent_index": 40,
     "show_mode": [
         "router"
+    ],
+    "disables": [
+        "portal"
     ]
 }

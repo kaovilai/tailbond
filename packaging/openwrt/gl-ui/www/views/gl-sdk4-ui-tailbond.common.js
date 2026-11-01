@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// GL.iNet 4.x admin panel ("oui") view: Applications -> tailbond.
+// GL.iNet 4.x admin panel ("oui") view: VPN -> tailbond.
 //
 // GL's admin app fetches /views/gl-sdk4-ui-<view>.common.js and eval()s it
 // (menu entry: /usr/share/oui/menu.d/tailbond.json); the value of this file
@@ -286,7 +286,7 @@
         disc: null, discovering: false, typed: "", showOther: false, pasteUri: "", pasteErr: "",
         busy: {}, toast: "", confirm: null, capEdit: null, capValue: "",
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
-        wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: ""
+        wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false
       };
     },
     computed: {
@@ -341,6 +341,7 @@
           if (this.st.paired && this.st.state === "connected") jobs.push(this.loadPeers());
         } else {
           jobs.push(api("GET", "/api/tailscale").then(function (t) { self.ts = t; }).catch(function () {}));
+          jobs.push(api("GET", "/api/health").then(function (hh) { self.health = hh; }).catch(function () {}));
           jobs.push(this.loadPeers());
         }
         return Promise.all(jobs);
@@ -731,6 +732,9 @@
           return this.card(h, "Internet connections", [
             h("div", { class: "tb-muted", style: { marginBottom: "12px" } }, "tailbond uses every connection the router is online with. Turn one off, or keep it as a backup."),
             h("div", { class: "tb-grid" }, cards),
+            this.info && this.info.acceleration === "on" ? h("div", { class: "tb-muted tb-small", style: { marginTop: "12px", lineHeight: 1.5 } }, [
+              "GL's Network Acceleration is on. tailbond works with it; connections that were open before tailbond connected may keep going around it until they end. ",
+              h("a", { class: "tb-link", attrs: { href: "#/acceleration" } }, "NETWORK → Network Acceleration")]) : null,
             h("div", { class: "tb-row", style: { marginTop: "14px", borderTop: "1px solid #ebeef5", paddingTop: "12px" } }, [
               h("div", { class: "tb-grow" }, [h("div", "Check for sign-in pages (hotel, airport Wi-Fi)"),
                 h("div", { class: "tb-muted tb-small" }, "A connection that needs a sign-in is kept out until you've signed in, so it can't stall the others.")]),
@@ -897,7 +901,8 @@
                     h("div", { style: { fontWeight: 600 } }, m.hostname),
                     h("div", { class: "tb-mono" }, dotBreaks(h, m.dns_name)),
                     ip ? h("div", { class: "tb-mono tb-nowrap" }, ip) : null,
-                    h("div", { class: "tb-muted tb-small" }, (m.os ? m.os + " · " : "") + lastSeen(m))
+                    h("div", { class: "tb-muted tb-small" }, [(m.os ? m.os + " · " : "") + lastSeen(m),
+                      m.conn === "relay" ? h("span", { style: { color: "#c88a1a" } }, " · via relay (slower)") : m.conn === "direct" ? " · direct" : null])
                   ]),
                   self.btn(h, "Copy name", function () { self.copy(m.dns_name); }, "small")
                 ]);
@@ -921,7 +926,7 @@
                 h("div", { class: "tb-muted", style: { marginTop: "4px", lineHeight: 1.6 } }, [
                   "On " + srv + ", tap ", h("b", "Approve"), " next to ", h("b", j.name || "this router"), ". This router connects by itself once approved; you can close this page.",
                   h("div", { style: { marginTop: "6px" } }, ["From anywhere: open ", h("a", { class: "tb-link", attrs: { href: "http://" + hostOf(j.server) + ":8077/", target: "_blank", rel: "noopener" } }, "http://" + srv + ":8077"),
-                    " on any device signed in to your Tailscale account (a phone works too). At home with a Flint 3, its admin panel → APPLICATIONS → tailbond works as well."])
+                    " on any device signed in to your Tailscale account (a phone works too). At home with a Flint 3, its admin panel → VPN → tailbond works as well."])
                 ])
               ]),
               h("div", { class: "tb-actions" }, [this.btn(h, "Cancel", function () { self.cancelAsk(); })])
@@ -1044,6 +1049,7 @@
           // unfinished setup first, else devices first
           if (todo) out.push(this.rRoute(h), this.rClients(h));
           else out.push(this.rClients(h), this.rRoute(h));
+          out.push(this.rHealth(h));
           out.push(this.rRouterGuide(h));
           out.push(this.rMachines(h, true));
           out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
@@ -1068,7 +1074,7 @@
               self.btn(h, "Remove", function () { self.removeClient(c); }, "small text", self.busy["rm-" + c.name])
             ]);
           });
-          if (!rows.length) rows = [h("div", { class: "tb-muted", style: { padding: "8px 0" } }, "No devices yet. On a travel router, open APPLICATIONS → tailbond and tap Ask to connect; it shows up above for approval.")];
+          if (!rows.length) rows = [h("div", { class: "tb-muted", style: { padding: "8px 0" } }, "No devices yet. On a travel router, open VPN → tailbond and tap Ask to connect; it shows up above for approval.")];
           var add = [];
           if (this.added) {
             add.push(h("div", { class: "tb-row", style: { alignItems: "flex-start", gap: "16px", marginTop: "12px", flexWrap: "wrap" } }, [
@@ -1159,6 +1165,40 @@
           ]);
         },
 
+        // Setup health: green when all good, else one line per problem with
+        // a "How to fix" link to Tailscale's docs. Items the setup steps
+        // card already shows (Tailscale off, route) are left out here.
+        rHealth: function (h) {
+          var self = this, v = this.health;
+          if (!v) return null;
+          var steps = this.setupSteps();
+          var checks = A(v.checks).filter(function (c) { return !(c.id === "route" || c.id === "tailscale") || !steps.length; });
+          var bad = checks.filter(function (c) { return c.status === "warn" || c.status === "bad"; });
+          var rest = checks.filter(function (c) { return bad.indexOf(c) < 0; });
+          var row = function (c) {
+            var color = c.status === "ok" ? "#13a35a" : c.status === "bad" ? "#f56c6c" : c.status === "warn" ? "#c88a1a" : "#909399";
+            var mark = c.status === "ok" ? "✓" : c.status === "unknown" ? "?" : "!";
+            return h("div", { class: "tb-li", style: { alignItems: "flex-start" } }, [
+              h("span", { style: { color: color, fontWeight: 700, width: "16px", flex: "none", textAlign: "center" } }, mark),
+              h("div", { class: "tb-grow" }, [
+                h("div", { style: { fontWeight: c.status === "ok" ? 400 : 600 } }, c.title),
+                c.detail ? h("div", { class: "tb-muted tb-small" }, c.detail) : null,
+                c.fix && c.status !== "ok" ? h("div", { class: "tb-small", style: { marginTop: "2px" } }, [c.fix + " ",
+                  c.fix_url ? h("a", { class: "tb-link", attrs: { href: c.fix_url, target: "_blank", rel: "noopener" } }, "How to fix") : null]) : null
+              ])
+            ]);
+          };
+          var head = bad.length
+            ? h("div", { style: { marginBottom: "6px", color: "#8a5d10" } }, bad.length + " thing" + (bad.length === 1 ? "" : "s") + " to improve for best speed:")
+            : h("div", { style: { marginBottom: "6px", color: "#137a46", fontWeight: 600 } }, "✓ Everything is set up for best speed");
+          return this.card(h, "Setup health", [head,
+            h("div", { class: "tb-list" }, bad.map(row).concat(bad.length && !this.showHealthOk ? [] : rest.map(row))),
+            bad.length && rest.length ? h("a", { class: "tb-link tb-small", on: { click: function () { self.showHealthOk = !self.showHealthOk; } } }, this.showHealthOk ? "Hide the rest" : "Show " + rest.length + " more check" + (rest.length === 1 ? "" : "s")) : null,
+            h("div", { class: "tb-muted tb-small", style: { marginTop: "8px" } }, ["Direct connections are faster than relayed ones. ",
+              h("a", { class: "tb-link", attrs: { href: "https://tailscale.com/docs/reference/connection-types", target: "_blank", rel: "noopener" } }, "About Tailscale connection types")])
+          ], v.ok ? h("span", { class: "tb-chip ok" }, "All good") : h("span", { class: "tb-chip warn" }, bad.length + " to improve"));
+        },
+
         // How to put tailbond on a GL travel router (the install itself
         // happens on that router, which doesn't have tailbond yet).
         rRouterGuide: function (h) {
@@ -1169,7 +1209,7 @@
                 ? [h("a", { class: "tb-btn small primary", attrs: { href: "/tailbond-glinet.ipk", download: "tailbond_aarch64_cortex-a53_neon-vfpv4.ipk" } }, "Download the router package"), " to this computer. It's the same tailbond this router runs."]
                 : ["Get the router package on your computer: the tailbond file ending in ", h("b", "_neon-vfpv4.ipk"), "."]),
               h("li", ["On the travel router's admin page: ", h("b", "SYSTEM → Advanced Settings → Go To LuCI"), " (log in with the same password), then ", h("b", "System → Software → Upload Package…"), ", pick the file and click ", h("b", "Install"), " (leave the other options as they are). The router's internet keeps working."]),
-              h("li", ["Back on the travel router's admin page, open ", h("b", "APPLICATIONS → tailbond"), " and click ", h("b", "Ask to connect"), ". It shows up at the top of this page; click ", h("b", "Approve"), "."])
+              h("li", ["Back on the travel router's admin page, open ", h("b", "VPN → tailbond"), " and click ", h("b", "Ask to connect"), ". It shows up at the top of this page; click ", h("b", "Approve"), "."])
             ])
           ]);
         }

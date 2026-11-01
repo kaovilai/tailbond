@@ -28,6 +28,13 @@ Tasks:
 6. Turn tailbond off.
 7. On the home side (Flint 3 admin panel, or the Fedora server's tailbond
    page), approve the new travel router.
+8. At a hotel with a sign-in page on the Wi-Fi: GL's repeater page says
+   this hotel network needs sign-in. Complete it with tailbond on, get
+   online and bonded again.
+9. Another hotel has a sign-in page on its Ethernet cable: get it into
+   bonding.
+10. At home, make sure everything is set up for best speed (Flint 3 panel
+    or the Fedora page).
 
 For each task report:
 - where you would click (refer to the screenshot file and the on-screen

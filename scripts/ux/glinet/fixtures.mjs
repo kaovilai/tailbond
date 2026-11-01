@@ -9,9 +9,9 @@ const peers = {
   server: 'homebox', tailnet: 'alex@example.com', magic_dns_suffix: 'tail1234.ts.net', tailscale_running: true, client: 'slate7',
   self: { hostname: 'homebox', dns_name: 'homebox.tail1234.ts.net', tailscale_ips: ['100.101.1.1'], os: 'linux', online: true },
   peers: [
-    { hostname: 'nas', dns_name: 'nas.tail1234.ts.net', tailscale_ips: ['100.101.2.2', 'fd7a:115c:a1e0::2'], os: 'linux', online: true },
-    { hostname: 'apple-tv', dns_name: 'apple-tv.tail1234.ts.net', tailscale_ips: ['100.101.4.4'], os: 'tvOS', online: true },
-    { hostname: 'pixel-8', dns_name: 'pixel-8.tail1234.ts.net', tailscale_ips: ['100.101.8.8'], os: 'android', online: true },
+    { hostname: 'nas', dns_name: 'nas.tail1234.ts.net', tailscale_ips: ['100.101.2.2', 'fd7a:115c:a1e0::2'], os: 'linux', online: true, conn: 'direct' },
+    { hostname: 'apple-tv', dns_name: 'apple-tv.tail1234.ts.net', tailscale_ips: ['100.101.4.4'], os: 'tvOS', online: true, conn: 'direct' },
+    { hostname: 'pixel-8', dns_name: 'pixel-8.tail1234.ts.net', tailscale_ips: ['100.101.8.8'], os: 'android', online: true, conn: 'relay', relay: 'fra' },
     { hostname: 'work-laptop', dns_name: 'work-laptop.tail1234.ts.net', tailscale_ips: ['100.101.3.3'], os: 'macOS', online: false, last_seen: ago(26 * 3600) },
   ],
 };
@@ -82,11 +82,47 @@ const serverBase = (statusOver = {}, tsOver = {}, setOver = {}) => ({
     'GET /api/status': serverStatus(statusOver),
     'GET /api/settings': { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', glinet_ipk: true, ...setOver },
     'GET /api/tailscale': { installed: true, running: true, self: 'homebox', dns_name: 'homebox.tail1234.ts.net', tailnet: 'alex@example.com', route: '10.77.0.0/24', route_advertised: true, routes_approved: true, admin_url: 'https://login.tailscale.com/admin/machines', ...tsOver },
-    'GET /api/peers': { ...peers, client: '' },
+    'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((p) => p.hostname === 'work-laptop' ? p : p) },
+    'GET /api/health': healthGood,
   },
 });
 
+const withApi = (fx, api) => ({ ...fx, api: { ...fx.api, ...api } });
+
 const pendingReq = { id: '4b79980f2bc88e95', name: 'slate7', kind: 'router', device: 'slate7', dns_name: 'slate7.tail1234.ts.net', hostname: 'GL-BE3600', os: 'linux', user: 'alex@example.com', ip: '100.101.9.9', status: 'pending', created: ago(40), expires: new Date(now + 560e3).toISOString() };
+
+// GET /api/health on the Flint 3
+const hc = (id, status, title, extra = {}) => ({ id, status, title, ...extra });
+const healthGood = { ok: true, direct: 4, relayed: 0, checks: [
+  hc('tailscale_direct', 'ok', 'Tailscale: 4 machines direct'),
+  hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'port mapping: UPnP' }),
+  hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
+  hc('cgnat', 'ok', 'Public internet address 203.0.113.7'),
+  hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'slate7 connected from 198.51.100.9, 2 h ago.' }),
+] };
+const healthRelayed = { ok: false, direct: 2, relayed: 2, relayed_peers: ['slate7', 'work-laptop'], checks: [
+  hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 2 via relay (slower)', { detail: 'Via relay: slate7, work-laptop. Check with: tailscale ping slate7',
+    fix: 'Let Tailscale connect directly: forward UDP 41641 to this machine or turn on UPnP/NAT-PMP on your router, and avoid double NAT.', fix_url: 'https://tailscale.com/docs/reference/connection-types' }),
+  hc('netcheck', 'warn', 'Hard NAT on this network: direct Tailscale connections often fail', { detail: 'no port mapping on the router',
+    fix: 'Forward UDP 41641 to this machine, or turn on UPnP/NAT-PMP on the router.', fix_url: 'https://tailscale.com/docs/integrations/firewalls' }),
+  hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
+  hc('cgnat', 'ok', 'Behind your home router (public address 203.0.113.7)', { detail: 'Forward UDP 443 on that router to 192.168.1.2.' }),
+  hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 3 h ago.' }),
+] };
+const healthCgnat = { ok: false, direct: 3, relayed: 0, checks: [
+  hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
+  hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'no port mapping on the router' }),
+  hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
+  hc('cgnat', 'bad', 'Your internet line uses carrier-grade NAT', { detail: "This machine's internet address 100.72.3.4 is shared by your provider, so travel routers can't reach UDP 443 here.",
+    fix: 'Ask your provider for a public IPv4 address (or use public IPv6).', fix_url: 'https://tailscale.com/docs/reference/device-connectivity' }),
+  hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it." }),
+] };
+const healthRoute = { ok: false, direct: 3, relayed: 0, checks: [
+  hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
+  hc('route', 'warn', "Route 10.77.0.0/24 isn't approved yet", { fix: 'Approve it once in the Tailscale admin console (Machines → this machine → Edit route settings).', fix_url: 'https://tailscale.com/docs/features/subnet-routers' }),
+  hc('cgnat', 'unknown', 'Behind your home router', { detail: 'Forward UDP 443 on that router to 192.168.8.1.' }),
+  hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it." }),
+] };
 
 export const states = {
   // 02: right after install from LuCI; Tailscale on; the panel is looking.
@@ -129,7 +165,31 @@ export const states = {
       { name: 'ipad', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, paths: [] },
     ],
   }),
-  '13-server-route-pending': serverBase({ clients: [] }, { routes_approved: false }, { public_addr: '', effective_public_addr: '192.168.8.1:443', public_addr_guessed: true, tls: 'self-signed' }),
+  '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed }),
+  '18b-server-health-cgnat': withApi(serverBase(), { 'GET /api/health': healthCgnat }),
+  // hotel: the repeater is behind a portal, GL's repeater handles it
+  '16-captive-gl-repeater': connected([
+    livePath('usb0', 'tethering', 'Tethering', 'usb', 'active', 21e6, 2.9e6, 48, { priority: 'secondary', data_cap_mb: 5000, used_bytes: 1.2e9 }),
+    livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'standby', 0, 0, 0, { captive: 'portal', portal_url: 'http://10.20.0.1/login', captive_source: 'glinet' }),
+    livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'failed', 0, 0, 0),
+  ], { totals: { tx_bps: 2.9e6, rx_bps: 21e6 } }),
+  '16b-captive-gl-login-mode': connected([
+    livePath('usb0', 'tethering', 'Tethering', 'usb', 'active', 21e6, 2.9e6, 48, { priority: 'secondary', data_cap_mb: 5000, used_bytes: 1.2e9 }),
+    livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'standby', 0, 0, 0, { captive: 'portal', portal_url: 'http://10.20.0.1/login', captive_source: 'glinet', signin_until: new Date(now + 540e3).toISOString() }),
+    livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'failed', 0, 0, 0),
+  ], { totals: { tx_bps: 2.9e6, rx_bps: 21e6 } }),
+  // a hotel cable (Ethernet) with a sign-in page: tailbond's own sign-in
+  '17-captive-own': connected([
+    livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 36e6, 3.9e6, 25),
+    livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'standby', 0, 0, 0, { captive: 'portal', portal_url: 'http://portal.hotel.example/login', captive_source: 'tailbond' }),
+    livePath('usb0', 'tethering', 'Tethering', 'usb', 'standby', 0, 0, 0, { priority: 'backup', data_cap_mb: 5000, used_bytes: 1.2e9 }),
+  ], { totals: { tx_bps: 3.9e6, rx_bps: 36e6 } }, { wan: { carrier: true, addrs: ['10.8.1.23/24'] }, tethering: { priority: 'backup', in_use: false } }),
+  '17b-captive-own-signing-in': connected([
+    livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 36e6, 3.9e6, 25),
+    livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'standby', 0, 0, 0, { captive: 'portal', portal_url: 'http://portal.hotel.example/login', captive_source: 'tailbond', signin_until: new Date(now + 560e3).toISOString() }),
+    livePath('usb0', 'tethering', 'Tethering', 'usb', 'standby', 0, 0, 0, { priority: 'backup', data_cap_mb: 5000, used_bytes: 1.2e9 }),
+  ], { totals: { tx_bps: 3.9e6, rx_bps: 36e6 } }, { wan: { carrier: true, addrs: ['10.8.1.23/24'] }, tethering: { priority: 'backup', in_use: false } }),
+  '13-server-route-pending': withApi(serverBase({ clients: [] }, { routes_approved: false }, { public_addr: '', effective_public_addr: '192.168.8.1:443', public_addr_guessed: true, tls: 'self-signed' }), { 'GET /api/health': healthRoute }),
 };
 
 // Interactions after mount, for states that show a dialog or an open panel.
@@ -149,3 +209,4 @@ export const fedoraStatus = {
     { name: 'ipad', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0, paths: [] },
   ],
 };
+export const fedoraHealth = healthRelayed;

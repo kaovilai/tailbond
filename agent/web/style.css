@@ -326,3 +326,10 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
 @media (max-width: 560px) { .pair-req { flex-direction: column; align-items: stretch; } .pair-req-actions .btn { flex: 1; justify-content: center; } }
 .router-guide ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.6; }
 .router-guide .btn.small { padding: 4px 10px; font-size: 13px; }
+.health-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 8px; }
+.health-list li { padding-left: 22px; position: relative; }
+.health-list li::before { position: absolute; left: 0; font-weight: 700; }
+.health-ok::before { content: '✓'; color: var(--good, #16a34a); }
+.health-warn::before, .health-bad::before { content: '!'; color: var(--warn); }
+.health-bad::before { color: var(--bad); }
+.health-unknown::before { content: '?'; color: var(--muted, #64748b); }

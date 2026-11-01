@@ -21,7 +21,7 @@ paired_and_on() {
 
 start_service() {
 	[ "$(uci -q get tailbond.main.enabled)" = 1 ] || {
-		echo "tailbond is turned off (Applications -> tailbond in the admin panel)"
+		echo "tailbond is turned off (VPN -> tailbond in the admin panel)"
 		return 0
 	}
 	/usr/lib/tailbond/render-config || return 1

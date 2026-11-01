@@ -95,7 +95,7 @@ install -m 0755 "$PKG/files/etc/uci-defaults/90-tailbond" "$data/usr/share/tailb
 # sysupgrade keeps the agent config and state (server users, pairing)
 echo /etc/tailbond/ >"$data/lib/upgrade/keep.d/tailbond"
 chmod 0644 "$data/lib/upgrade/keep.d/tailbond"
-# GL.iNet 4.x admin panel (Applications -> tailbond): menu entry, the view,
+# GL.iNet 4.x admin panel (VPN -> tailbond): menu entry, the view,
 # its /rpc backend object "tailbond" + argument validator, and a same-origin
 # nginx fallback (docs/glinet.md, "Admin panel")
 install -m 0644 "$PKG/gl-ui/usr/share/oui/menu.d/tailbond.json" "$data/usr/share/oui/menu.d/"

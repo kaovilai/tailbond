@@ -141,6 +141,18 @@ local function uci_get(opt)
 	return sh("uci -q get tailbond." .. opt)
 end
 
+-- GL's "Network Acceleration" (NETWORK -> Network Acceleration): MediaTek
+-- hardware NAT (mtkhnat), Qualcomm ECM/SFE (ecm), or generic flow
+-- offloading. Read only: tailbond doesn't need it off (docs/glinet.md).
+local function acceleration()
+	local mtk = sh("uci -q get mtkhnat.global.enable")
+	if mtk ~= "" then return mtk == "1" and "on" or "off" end
+	local ecm = sh("uci -q show ecm | sed -n \"s/.*acceleration_engine=.\\(.*\\)./\\1/p\" | head -n1")
+	if ecm ~= "" then return ecm ~= "none" and "on" or "off" end
+	if sh("uci -q get firewall.@defaults[0].flow_offloading") == "1" then return "on" end
+	return "off"
+end
+
 function M.info()
 	local running = sh("pgrep -x tailbondd") ~= "" or sh("pidof tailbondd") ~= ""
 	local ver = sh("opkg status tailbond | sed -n 's/^Version: //p'")
@@ -153,6 +165,7 @@ function M.info()
 		running = running,
 		lan_dashboard = uci_get("main.lan_dashboard") == "1",
 		kill_switch = uci_get("client.kill_switch") ~= "0",
+		acceleration = acceleration(),
 		model = (board:gsub("%s+$", "")),
 		tailscale = sh("command -v tailscale") ~= "",
 	}

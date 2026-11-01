@@ -340,6 +340,25 @@ function renderServerPaths(st) {
 }
 
 // the page's MagicDNS address works on any tailnet phone; fall back to how we were reached
+// Setup health (GET /api/health): green when all good, else one line per
+// problem with a "How to fix" link to Tailscale's docs.
+async function renderHealth() {
+  let v;
+  try { v = await api('GET', '/api/health'); } catch { return; }
+  const box = $('#health');
+  const bad = v.checks.filter((c) => c.status === 'warn' || c.status === 'bad');
+  const rows = (bad.length ? bad : v.checks).map((c) => h('li', { class: 'health-' + c.status },
+    h('b', { text: c.title }),
+    c.detail ? h('div', { class: 'muted small', text: c.detail }) : null,
+    c.fix && c.status !== 'ok' ? h('div', { class: 'small' }, c.fix + ' ', c.fix_url ? h('a', { href: c.fix_url, target: '_blank', rel: 'noopener', text: 'How to fix' }) : null) : null));
+  box.replaceChildren(
+    h('h3', { text: bad.length ? `Setup health: ${bad.length} to improve for best speed` : 'Setup health: everything is set up for best speed' }),
+    h('ul', { class: 'health-list' }, rows),
+    h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
+      h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' })));
+  box.classList.remove('hidden');
+}
+
 // Devices on the tailnet that asked to connect (POST /api/pair-requests).
 function renderPairRequests(st) {
   const box = $('#pair-requests');
@@ -578,7 +597,7 @@ function setupTabs() {
       for (const s of document.querySelectorAll('.tab')) s.classList.toggle('hidden', s.id !== 'tab-' + state.tab);
       if (state.tab === 'tailscale') renderTailscale();
       if (state.tab === 'logs') pollLogs();
-      if (state.tab === 'clients' && state.status) { loadSettings(); renderClients(state.status); }
+      if (state.tab === 'clients' && state.status) { loadSettings(); renderClients(state.status); renderHealth(); }
       if (state.tab === 'setup') loadSettings();
     });
   }
@@ -738,4 +757,4 @@ setupPairing();
 setupLogin();
 connect();
 setInterval(pollLogs, 2000);
-setInterval(() => { if (state.tab === 'tailscale') renderTailscale(); }, 15000);
+setInterval(() => { if (state.tab === 'tailscale') renderTailscale(); if (state.tab === 'clients') renderHealth(); }, 15000);
