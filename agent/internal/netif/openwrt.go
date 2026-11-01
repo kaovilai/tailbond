@@ -22,6 +22,7 @@ type WAN struct {
 	Up      bool
 	Kind    string
 	Label   string
+	DNS     []string // the network's own DNS servers (DHCP), for captive probes
 }
 
 // run executes a command (tests replace it).
@@ -36,11 +37,12 @@ var lookPath = func(name string) bool { _, err := exec.LookPath(name); return er
 
 type ifDump struct {
 	Interface []struct {
-		Interface string `json:"interface"`
-		Up        bool   `json:"up"`
-		Proto     string `json:"proto"`
-		L3Device  string `json:"l3_device"`
-		Device    string `json:"device"`
+		Interface string   `json:"interface"`
+		Up        bool     `json:"up"`
+		Proto     string   `json:"proto"`
+		L3Device  string   `json:"l3_device"`
+		Device    string   `json:"device"`
+		DNSServer []string `json:"dns-server"`
 	} `json:"interface"`
 }
 
@@ -162,7 +164,7 @@ func OpenWrtWANs() (wans []WAN, ok bool) {
 		if kind == "" {
 			kind, label = KindOf(dev), name
 		}
-		w := WAN{Network: name, Device: dev, Proto: it.Proto, Up: it.Up, Kind: kind, Label: label}
+		w := WAN{Network: name, Device: dev, Proto: it.Proto, Up: it.Up, Kind: kind, Label: label, DNS: it.DNSServer}
 		if i, dup := byDev[dev]; dup {
 			// keep the one that's up (e.g. modem_0001 vs modem_0001_4)
 			if !wans[i].Up && w.Up {
@@ -184,7 +186,7 @@ func annotate(ifs []Iface, wans []WAN) []Iface {
 	}
 	for i := range ifs {
 		if w, ok := byDev[ifs[i].Name]; ok {
-			ifs[i].Network, ifs[i].Label, ifs[i].Kind, ifs[i].WAN = w.Network, w.Label, w.Kind, true
+			ifs[i].Network, ifs[i].Label, ifs[i].Kind, ifs[i].WAN, ifs[i].DNS = w.Network, w.Label, w.Kind, true, w.DNS
 		}
 	}
 	return ifs

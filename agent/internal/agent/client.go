@@ -36,6 +36,7 @@ type clientState struct {
 	ifs      map[string]netif.Iface // last discovery, by device
 	peers    []byte                 // server's GET /api/peers, cached
 	peersAt  time.Time
+	cap      *captiveState
 }
 
 type usageFile struct {
@@ -44,7 +45,7 @@ type usageFile struct {
 }
 
 func newClientState() *clientState {
-	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}}
+	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState()}
 }
 
 func (a *Agent) usagePath() string { return filepath.Join(a.store.Get().StateDir, "usage.json") }
@@ -68,6 +69,7 @@ func (a *Agent) startClient(ctx context.Context) {
 		}
 	}
 	go a.pathWatcher(ctx)
+	go a.captiveWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
 	} else if !a.paired() {
@@ -130,12 +132,15 @@ func effectiveSetting(cfg *config.Config, i netif.Iface) (config.PathSetting, bo
 // exist right now and returns the devices to bind. Failover keeps only the
 // best tier that has a usable link; the bonding modes use primary+secondary
 // and add backup paths only when none of those is usable.
-func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.PathSetting) bool) []string {
+// blocked (may be nil) holds WANs back that sit behind a captive portal:
+// not bonded, and not counted as usable, so failover moves on instead of
+// flapping.
+func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.PathSetting) bool, blocked func(netif.Iface) bool) []string {
 	tiers := [3][]string{}
 	usable := [3]bool{}
 	for _, it := range ifs {
 		p, ok := effectiveSetting(cfg, it)
-		if !ok || !p.Enabled || capReached(p) {
+		if !ok || !p.Enabled || capReached(p) || (blocked != nil && blocked(it)) {
 			continue
 		}
 		r := priorityRank(p.Priority)
@@ -251,7 +256,7 @@ func (a *Agent) saveUsage() {
 // or loses one by policy (failover tier change, data cap). Interfaces that
 // vanish are left to mqvpn's own path handling. immediate skips the debounce.
 func (a *Agent) reconcilePaths(immediate bool) {
-	ifs, err := netif.Discover()
+	ifs, err := a.listIfs()
 	if err != nil {
 		return
 	}
@@ -269,7 +274,7 @@ func (a *Agent) reconcilePaths(immediate bool) {
 	a.mu.Lock()
 	cs := a.client
 	cs.remember(ifs)
-	want := desiredPaths(cfg, ifs, cs.capReached)
+	want := desiredPaths(cfg, ifs, cs.capReached, cs.captiveBlocked)
 	active := cs.active
 	change := false
 	for _, w := range want {
@@ -312,10 +317,10 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	if p == nil {
 		return errors.New("not paired")
 	}
-	ifs, _ := netif.Discover()
+	ifs, _ := a.listIfs()
 	a.mu.Lock()
 	a.client.remember(ifs)
-	paths := desiredPaths(cfg, ifs, a.client.capReached)
+	paths := desiredPaths(cfg, ifs, a.client.capReached, a.client.captiveBlocked)
 	a.mu.Unlock()
 
 	host, _, _ := net.SplitHostPort(p.Server)
@@ -494,6 +499,10 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 			p.CapReached = ps.DataCapMB > 0 && p.UsedBytes >= uint64(ps.DataCapMB)<<20
 		}
 	}
+	a.annotateCaptive(st.Paths)
+	if running {
+		a.markFailedPaths(st.Paths)
+	}
 	st.State, st.Error = a.supState(ready)
 	if payload == nil {
 		st.State = status.StateDisconnected
@@ -515,7 +524,7 @@ func (a *Agent) importPairing(uri string) (*pairing.Payload, error) {
 	if err != nil {
 		return nil, err
 	}
-	ifs, _ := netif.Discover()
+	ifs, _ := a.listIfs()
 	if _, err := a.store.Update(func(c *config.Config) error {
 		c.Client.PairingURI = uri
 		if p.Mode != "" && config.ValidMode(p.Mode) {
@@ -587,7 +596,7 @@ type pathView struct {
 
 func (a *Agent) listPaths() ([]pathView, error) {
 	cfg := a.store.Get()
-	ifs, err := netif.Discover()
+	ifs, err := a.listIfs()
 	if err != nil {
 		return nil, err
 	}

@@ -94,7 +94,15 @@ type Client struct {
 	NoDNS bool `json:"no_dns,omitempty"`
 	// Additive: user pressed "disconnect"; persisted so a reboot keeps it off.
 	Disconnected bool `json:"disconnected,omitempty"`
+	// Additive: probe each WAN for a captive portal and keep portal WANs
+	// out of bonding until signed in (default on); probe URLs (default:
+	// captive.DefaultProbes).
+	CaptivePortalDetect *bool    `json:"captive_portal_detect,omitempty"`
+	CaptiveProbeURLs    []string `json:"captive_probe_urls,omitempty"`
 }
+
+// CaptiveDetect reports whether captive-portal detection is on (default).
+func (c *Client) CaptiveDetect() bool { return c.CaptivePortalDetect == nil || *c.CaptivePortalDetect }
 
 func (c *Client) RoutesManaged() bool { return c.ManageRoutes == nil || *c.ManageRoutes }
 

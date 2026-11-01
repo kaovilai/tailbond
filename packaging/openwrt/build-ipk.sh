@@ -82,7 +82,7 @@ install -m 0755 "$PKG/files/etc/uci-defaults/90-tailbond" "$data/etc/uci-default
 install -m 0755 "$PKG/files/usr/lib/tailbond/render-config" "$data/usr/lib/tailbond/render-config"
 install -m 0755 "$PKG/files/etc/hotplug.d/iface/90-tailbond" "$data/etc/hotplug.d/iface/90-tailbond"
 install -m 0644 "$PKG/hooks/lib.sh" "$data/usr/lib/tailbond/hook-lib.sh"
-for h in client-up client-down server-up server-down; do
+for h in client-up client-down server-up server-down portal-open portal-close; do
     install -m 0755 "$PKG/hooks/$h" "$data/usr/lib/tailbond/hooks/$h"
 done
 # Pristine copies of files that change after install (edited config, the

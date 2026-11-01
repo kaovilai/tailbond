@@ -52,6 +52,14 @@ type Path struct {
 	// modem_0001...) and a plain label for it (Ethernet, Repeater, ...).
 	Network string `json:"network,omitempty"`
 	Label   string `json:"label,omitempty"`
+	// Captive portal check (client role, additive): open | portal | offline;
+	// portal_url for a portal; signin_until while sign-in mode is on.
+	Captive     string     `json:"captive,omitempty"`
+	PortalURL   string     `json:"portal_url,omitempty"`
+	SigninUntil *time.Time `json:"signin_until,omitempty"`
+	// "glinet" when GL's own repeater portal handling owns this WAN's
+	// sign-in (the panel then points to GL's Repeater page), else "tailbond".
+	CaptiveSource string `json:"captive_source,omitempty"`
 }
 
 // Client is one registered or connected client in the server role (additive shape).

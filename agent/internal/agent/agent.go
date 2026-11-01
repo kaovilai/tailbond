@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,8 +17,10 @@ import (
 	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/tailbond/tailbond/agent/internal/glrepeater"
 	"github.com/tailbond/tailbond/agent/internal/hooks"
 	"github.com/tailbond/tailbond/agent/internal/mqctl"
+	"github.com/tailbond/tailbond/agent/internal/netif"
 	"github.com/tailbond/tailbond/agent/internal/status"
 	"github.com/tailbond/tailbond/agent/internal/supervisor"
 	"github.com/tailbond/tailbond/agent/internal/tailscale"
@@ -61,6 +64,12 @@ type Agent struct {
 	apiPort string
 	disc    discoveryCache
 	rescan  chan struct{}
+	// listIfs discovers interfaces (tests stub it).
+	listIfs func() ([]netif.Iface, error)
+	// glRead reads GL firmware's repeater portal state (tests stub it).
+	glRead func(ctx context.Context) glrepeater.State
+	// captiveDialer replaces the per-device probe dial (tests).
+	captiveDialer func(ctx context.Context, dev, addr string) (net.Conn, error)
 }
 
 // runtime is reset every time mqvpn starts.
@@ -112,6 +121,8 @@ func New(store *config.Store, opts Options) *Agent {
 	a.ts = &tailscale.CLI{Disabled: cfg.DisableTailscale, Route: cfg.Server.Subnet}
 	a.whois = a.ts.Whois
 	a.hello = a.fetchHello
+	a.glRead = glrepeater.Read
+	a.listIfs = netif.Discover
 	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
 	a.sup = supervisor.New(supervisor.Spec{
 		Bin:      cfg.MqvpnBin,
@@ -133,6 +144,9 @@ func (a *Agent) Rescan() {
 	select {
 	case a.rescan <- struct{}{}:
 	default:
+	}
+	if a.client != nil {
+		a.pokeCaptive("")
 	}
 }
 

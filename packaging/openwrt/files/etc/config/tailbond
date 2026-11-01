@@ -53,6 +53,16 @@ config client 'client'
 	option rule_priority '1077'
 	# Routing table for LAN traffic through the tunnel
 	option route_table '77'
+	# Captive portals (hotel/airport Wi-Fi, hotspots that want a sign-in):
+	# check each WAN, keep one behind a portal out of bonding until signed
+	# in, and offer a sign-in mode in the panel. On the repeater, GL's own
+	# portal detection (Login Mode for Public Hotspots) is used when present.
+	option captive_portal_detect '1'
+	# Check URLs (plain http); default: Google's generate_204, then
+	# Firefox's success.txt
+	#list captive_probe_url 'http://connectivitycheck.gstatic.com/generate_204'
+	# Routing table used while signing in to a portal
+	option portal_table '78'
 
 # WANs need no configuration: every network in the firewall's wan zone
 # (GL: wan, wwan = repeater, tethering, modem_* = cellular, secondwan) is

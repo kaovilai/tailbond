@@ -126,6 +126,14 @@ render() {
 	json_add_string pairing_uri "$(keep client.pairing_uri @.client.pairing_uri '')"
 	# Routing, NAT and the kill switch belong to the OpenWrt hooks.
 	json_add_boolean manage_routes 0
+	json_add_boolean captive_portal_detect "$(bool "$(cfg_or client.captive_portal_detect 1)")"
+	local urls
+	urls="$(cfg client.captive_probe_url)"
+	if [ -n "$urls" ]; then
+		json_add_array captive_probe_urls
+		for u in $urls; do json_add_string "" "$u"; done
+		json_close_array
+	fi
 	[ "$(old @.client.disconnected)" = true ] && json_add_boolean disconnected 1
 	json_add_array paths
 	# config_foreach without /lib/functions.sh: walk anonymous 'path' sections.

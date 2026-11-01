@@ -1,0 +1,66 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# portal-open: sign-in mode for one WAN behind a captive portal (CLIENT
+# role). LAN devices reach that WAN directly so someone can sign in; the
+# portal sees the router's MAC (NAT), so signing in authorises the router.
+# Env: TB_PORTAL_DEV (device), TB_PORTAL_NET (network or device),
+#      TB_PORTAL_DNS (the WAN's DHCP DNS servers, comma separated),
+#      TB_PORTAL_URL, TB_PORTAL_SOURCE (tailbond | glinet).
+#
+# - table $ptable: default via the WAN's gateway; rule "iif <lan> lookup
+#   $ptable" just before the tunnel rules, so the tunnel route and the kill
+#   switch (client-down's blackhole) don't apply to LAN traffic meanwhile.
+#   The router's own traffic (GL's portal check, mqvpn's paths) is untouched:
+#   these rules match LAN input only.
+# - dnsmasq: the WAN's own DNS servers, bound to the WAN (server=IP@dev),
+#   instead of the tunnel DNS, and DNS rebind protection off (portals often
+#   answer with private addresses). portal-close restores both.
+# Idempotent: running it twice changes nothing more.
+. "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
+
+dev="${TB_PORTAL_DEV:-}"
+[ -n "$dev" ] || { log "portal-open: no TB_PORTAL_DEV"; exit 1; }
+ptable="$(tbcfg_or client.portal_table 78)"
+prio="$(tbcfg_or client.rule_priority 1077)"
+lans="$(tbcfg client.lan_network)"
+[ -n "$lans" ] || lans=lan
+
+gw="$(ip -4 route show default dev "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
+if [ -n "$gw" ]; then
+	ip -4 route replace default via "$gw" dev "$dev" table "$ptable"
+else
+	ip -4 route replace default dev "$dev" table "$ptable"
+fi
+for lan in $lans; do
+	ldev="$(net_device "$lan")"
+	[ -n "$ldev" ] || continue
+	rule_ensure -4 iif "$ldev" lookup "$ptable" priority $((prio - 3))
+done
+echo "$dev" >"$TB_STATE/portal_dev"
+
+# DNS through the WAN while signing in.
+if [ ! -f "$TB_STATE/portal_dns_saved" ]; then
+	{
+		echo "rebind=$(uci -q get 'dhcp.@dnsmasq[0].rebind_protection')"
+		echo "noresolv=$(uci -q get 'dhcp.@dnsmasq[0].noresolv')"
+		echo "servers=$(uci -q get 'dhcp.@dnsmasq[0].server')"
+	} >"$TB_STATE/portal_dns_saved"
+fi
+tunnel_dns="$(tbcfg_or client.tunnel_dns_ip 10.77.0.1)"
+udel_list 'dhcp.@dnsmasq[0].server' "$tunnel_dns"
+for s in $(split_list "$TB_PORTAL_DNS"); do
+	ulist 'dhcp.@dnsmasq[0].server' "$s@$dev"
+	echo "$s@$dev" >>"$TB_STATE/portal_dns_added"
+done
+if [ -n "$TB_PORTAL_DNS" ]; then
+	uset 'dhcp.@dnsmasq[0].noresolv' 1
+else
+	# no known WAN DNS: let dnsmasq use the WAN's resolv file
+	uset 'dhcp.@dnsmasq[0].noresolv' 0
+fi
+uset 'dhcp.@dnsmasq[0].rebind_protection' 0
+commit_reload dhcp dnsmasq
+
+log "portal-open: LAN ($lans) reaches $dev directly for sign-in (${TB_PORTAL_SOURCE:-tailbond}${TB_PORTAL_URL:+, $TB_PORTAL_URL})"
+exit 0

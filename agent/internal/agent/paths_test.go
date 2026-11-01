@@ -20,34 +20,41 @@ func TestDesiredPathsOpenWrtKeys(t *testing.T) {
 	cfg.Role = config.RoleClient
 	none := func(config.PathSetting) bool { return false }
 
-	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"eth1", "phy0-sta0"}) {
+	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"eth1", "phy0-sta0"}) {
 		t.Fatalf("unconfigured WANs: %v", got)
 	}
 	// Save mobile data: the phone (secondary by default) stands by
 	cfg.Mode = config.ModeFailover
-	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"phy0-sta0"}) {
+	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"phy0-sta0"}) {
 		t.Fatalf("failover default: %v", got)
 	}
 	cfg.Mode = config.ModeSpeed
 	// "Backup only" on the phone: stays out while the hotel Wi-Fi works
 	cfg.Client.Paths = []config.PathSetting{{Iface: "tethering", Enabled: true, Priority: config.PriorityBackup}}
-	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"phy0-sta0"}) {
+	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"phy0-sta0"}) {
 		t.Fatalf("backup tethering: %v", got)
 	}
 	ifs[0].Carrier = false // hotel Wi-Fi drops
-	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"eth1", "phy0-sta0"}) {
+	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"eth1", "phy0-sta0"}) {
 		t.Fatalf("backup steps in: %v", got)
 	}
 	// data cap reached: out even as the only backup
 	capped := func(p config.PathSetting) bool { return p.Iface == "tethering" }
 	cfg.Client.Paths[0].DataCapMB = 100
-	if got := desiredPaths(cfg, ifs, capped); slices.Contains(got, "eth1") {
+	if got := desiredPaths(cfg, ifs, capped, nil); slices.Contains(got, "eth1") {
 		t.Fatalf("capped path used: %v", got)
+	}
+	// behind a captive portal: held back, and the phone (backup) steps in
+	// because the hotel Wi-Fi isn't usable for bonding
+	portal := func(i netif.Iface) bool { return i.Network == "wwan" }
+	cfg.Client.Paths[0].DataCapMB = 0
+	if got := desiredPaths(cfg, ifs, none, portal); !slices.Equal(got, []string{"eth1"}) {
+		t.Fatalf("captive wwan: %v", got)
 	}
 	// "Use" off
 	ifs[0].Carrier = true
 	cfg.Client.Paths = []config.PathSetting{{Iface: "wwan", Enabled: false, Priority: config.PriorityPrimary}}
-	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"eth1"}) {
+	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"eth1"}) {
 		t.Fatalf("wwan off: %v", got)
 	}
 }

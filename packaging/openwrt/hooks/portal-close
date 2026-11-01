@@ -1,0 +1,39 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# portal-close: end sign-in mode (signed in, timed out, or turned off).
+# Removes portal-open's rule and table and restores dnsmasq as portal-open
+# found it. Same env as portal-open; safe to run when nothing is open.
+. "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
+
+ptable="$(tbcfg_or client.portal_table 78)"
+prio="$(tbcfg_or client.rule_priority 1077)"
+lans="$(tbcfg client.lan_network)"
+[ -n "$lans" ] || lans=lan
+
+for lan in $lans; do
+	ldev="$(net_device "$lan")"
+	[ -n "$ldev" ] || continue
+	rule_del_all -4 iif "$ldev" lookup "$ptable" priority $((prio - 3))
+done
+ip -4 route flush table "$ptable" 2>/dev/null
+rm -f "$TB_STATE/portal_dev"
+
+if [ -f "$TB_STATE/portal_dns_added" ]; then
+	while read -r s; do udel_list 'dhcp.@dnsmasq[0].server' "$s"; done <"$TB_STATE/portal_dns_added"
+	rm -f "$TB_STATE/portal_dns_added"
+fi
+if [ -f "$TB_STATE/portal_dns_saved" ]; then
+	rebind="" noresolv="" servers=""
+	while IFS='=' read -r k v; do
+		case "$k" in rebind) rebind="$v" ;; noresolv) noresolv="$v" ;; servers) servers="$v" ;; esac
+	done <"$TB_STATE/portal_dns_saved"
+	for s in $servers; do ulist 'dhcp.@dnsmasq[0].server' "$s"; done
+	if [ -n "$rebind" ]; then uset 'dhcp.@dnsmasq[0].rebind_protection' "$rebind"; else uci -q delete 'dhcp.@dnsmasq[0].rebind_protection'; fi
+	if [ -n "$noresolv" ]; then uset 'dhcp.@dnsmasq[0].noresolv' "$noresolv"; else uci -q delete 'dhcp.@dnsmasq[0].noresolv'; fi
+	rm -f "$TB_STATE/portal_dns_saved"
+	commit_reload dhcp dnsmasq
+fi
+
+log "portal-close: LAN ($lans) back on tailbond's routing"
+exit 0

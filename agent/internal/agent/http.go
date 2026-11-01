@@ -58,6 +58,10 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/join", a.hJoinGet)
 	mux.HandleFunc("POST /api/join", a.hJoin)
 	mux.HandleFunc("DELETE /api/join", a.hJoinCancel)
+	// Captive portals (client role)
+	mux.HandleFunc("POST /api/captive/signin", a.hCaptiveSignin)
+	mux.HandleFunc("DELETE /api/captive/signin", a.hCaptiveSigninEnd)
+	mux.HandleFunc("POST /api/captive/check", a.hCaptiveCheck)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpErr(w, http.StatusNotFound, errNotFound) })
 
 	var assets fs.FS = web.FS
@@ -425,10 +429,12 @@ type settingsView struct {
 	PairedAs    string `json:"paired_as,omitempty"`
 	ManageRoute bool   `json:"manage_routes,omitempty"`
 	// client: the user turned tailbond off (client.disconnected)
-	Disconnected bool   `json:"disconnected,omitempty"`
-	Version      string `json:"version"`
-	AndroidAPK   bool   `json:"android_apk"`
-	GLiNetIPK    bool   `json:"glinet_ipk"`
+	Disconnected bool `json:"disconnected,omitempty"`
+	// client: captive-portal detection on (client.captive_portal_detect)
+	CaptiveDetect *bool  `json:"captive_portal_detect,omitempty"`
+	Version       string `json:"version"`
+	AndroidAPK    bool   `json:"android_apk"`
+	GLiNetIPK     bool   `json:"glinet_ipk"`
 }
 
 // hAPK offers the Android app to phones opening the dashboard (additive).
@@ -475,6 +481,8 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 		v.ManageRoute = cfg.Client.RoutesManaged()
 		v.Disconnected = cfg.Client.Disconnected
+		on := cfg.Client.CaptiveDetect()
+		v.CaptiveDetect = &on
 	}
 	writeJSON(w, http.StatusOK, v)
 }
@@ -484,6 +492,7 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PublicAddr *string `json:"public_addr"`
 		UIPassword *string `json:"ui_password"`
+		Captive    *bool   `json:"captive_portal_detect"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -503,6 +512,10 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.UIPassword != nil {
 			c.UIPassword = *body.UIPassword
+		}
+		if body.Captive != nil {
+			v := *body.Captive
+			c.Client.CaptivePortalDetect = &v
 		}
 		return nil
 	}); err != nil {

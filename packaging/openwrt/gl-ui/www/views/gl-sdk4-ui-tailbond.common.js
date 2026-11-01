@@ -418,6 +418,7 @@
             present: v.present, usable: v.present && v.up && v.carrier && A(v.addrs).length > 0,
             enabled: v.enabled, priority: v.priority, cap: v.data_cap_mb || 0, used: v.used_bytes || p.used_bytes || 0,
             state: p.state || (v.in_use ? "active" : "standby"), capReached: !!p.cap_reached,
+            captive: p.captive || "", portalUrl: p.portal_url || "", signinUntil: p.signin_until || "", captiveSource: p.captive_source || "tailbond",
             rx: p.rx_bps || 0, tx: p.tx_bps || 0, rtt: p.srtt_ms || 0, addr: A(v.addrs)[0] || ""
           });
         });
@@ -428,7 +429,7 @@
           seen[key] = true;
           out.push({ key: key, dev: p.iface, kind: p.kind, label: p.label || KIND_LABEL[p.kind] || p.iface, present: p.state !== "failed",
             usable: p.state !== "failed", enabled: p.enabled, priority: p.priority, cap: p.data_cap_mb || 0, used: p.used_bytes || 0,
-            state: p.state, capReached: !!p.cap_reached, rx: p.rx_bps || 0, tx: p.tx_bps || 0, rtt: p.srtt_ms || 0, addr: "" });
+            state: p.state, capReached: !!p.cap_reached, captive: p.captive || "", portalUrl: p.portal_url || "", signinUntil: p.signin_until || "", captiveSource: p.captive_source || "tailbond", rx: p.rx_bps || 0, tx: p.tx_bps || 0, rtt: p.srtt_ms || 0, addr: "" });
         });
         out.sort(function (a, b) { return (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || a.label.localeCompare(b.label); });
         return out;
@@ -441,6 +442,10 @@
         if (!w.enabled) return ["", "Not used", "tailbond leaves this connection alone."];
         if (!w.usable) return ["", "Not connected", NOT_CONNECTED_FIX[w.kind] || NOT_CONNECTED_FIX.unknown];
         if (w.capReached) return ["err", "Paused · monthly limit reached", "Used again next month, or raise the limit."];
+        if (w.captive === "portal") {
+          if (w.signinUntil) return ["blue", "Signing in…", "Devices here reach this network directly until you've signed in."];
+          return ["warn", "Needs sign-in", "This network shows a sign-in page first. Until you sign in, tailbond keeps it out and your other connections carry traffic."];
+        }
         if (!on) return ["", "Ready", "Used when tailbond is on."];
         if (w.state === "active") {
           if (w.priority === "backup" || (mode === "failover" && w.priority !== "primary")) return ["warn", "In use · taking over", "Your main connection stopped working, so this one stepped in."];
@@ -470,6 +475,8 @@
           else if (/saving data|Backup/.test(s)) saving.push(KIND_NOUN[w.kind] || w.label);
         });
         var line = used.length ? "Using " + used.join(" + ") : "Connected, waiting for a connection to carry traffic";
+        var portal = ws.filter(function (w) { return w.enabled && w.captive === "portal"; }).map(function (w) { return KIND_NOUN[w.kind] || w.label; });
+        if (portal.length) line += " · " + portal.join(", ") + " needs sign-in";
         if (broken.length) line += " · " + broken.join(", ") + " not working right now";
         else if (saving.length) line += " · " + saving.join(", ") + " on standby";
         return line;
@@ -677,8 +684,9 @@
             this.paired ? this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "tailbond on/off") : null, rates));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
 
-          if (!this.paired) return out.concat(this.rPairing(h));
+          if (!this.paired) return out.concat(this.rSignin(h), this.rPairing(h));
 
+          out = out.concat(this.rSignin(h));
           if (on && err) out.push(this.rConnError(h));
           out.push(this.rWans(h));
           out.push(this.rModes(h));
@@ -719,9 +727,15 @@
           var self = this, ws = this.wans;
           var cards = ws.map(function (w) { return self.rWan(h, w); });
           if (!cards.length) cards = [h("div", { class: "tb-muted" }, "No internet connections found yet. Set one up on the INTERNET page: cable, Repeater, Tethering or Cellular.")];
+          var s = this.settings || {}, capOn = s.captive_portal_detect !== false, self2 = this;
           return this.card(h, "Internet connections", [
             h("div", { class: "tb-muted", style: { marginBottom: "12px" } }, "tailbond uses every connection the router is online with. Turn one off, or keep it as a backup."),
-            h("div", { class: "tb-grid" }, cards)
+            h("div", { class: "tb-grid" }, cards),
+            h("div", { class: "tb-row", style: { marginTop: "14px", borderTop: "1px solid #ebeef5", paddingTop: "12px" } }, [
+              h("div", { class: "tb-grow" }, [h("div", "Check for sign-in pages (hotel, airport Wi-Fi)"),
+                h("div", { class: "tb-muted tb-small" }, "A connection that needs a sign-in is kept out until you've signed in, so it can't stall the others.")]),
+              this.sw(h, capOn, function () { self2.run("cap", api("POST", "/api/settings", { captive_portal_detect: !capOn }), capOn ? "Sign-in page check off" : "Sign-in page check on"); }, false, this.busy.cap, "Check for sign-in pages")
+            ])
           ]);
         },
 
@@ -764,6 +778,42 @@
               this.rUseChoice(h, w, busy)
             ])
           ]);
+        },
+
+        // A WAN behind a captive portal: one card per WAN, either our own
+        // sign-in mode or, on the repeater when GL handles it, GL's page.
+        rSignin: function (h) {
+          var self = this;
+          return this.wans.filter(function (w) { return w.enabled && w.captive === "portal"; }).map(function (w) {
+            var noun = w.kind === "wifi" ? "This hotel or airport Wi-Fi" : w.label;
+            var until = w.signinUntil ? new Date(w.signinUntil) : null;
+            var hhmm = until ? ("0" + until.getHours()).slice(-2) + ":" + ("0" + until.getMinutes()).slice(-2) : "";
+            if (w.captiveSource === "glinet") {
+              return self.alert(h, "info", w.label + " needs you to sign in", [
+                h("div", "GL's Repeater page handles this sign-in. Open it, click " + "“Login Mode for Public Hotspots” (or “Go to Login”) and accept the hotel's terms."),
+                h("div", { style: { marginTop: "6px" } }, w.signinUntil
+                  ? "Signing in through GL's Login Mode now: tailbond is letting devices here reach the sign-in page directly."
+                  : "tailbond steps aside while you sign in, and adds " + w.label + " back to bonding by itself afterwards. Your other connections keep working meanwhile.")
+              ], [h("a", { class: "tb-btn small primary", attrs: { href: "#/internet" } }, "Open GL's Repeater page")]);
+            }
+            if (w.signinUntil) {
+              return self.alert(h, "info", "Signing in to " + w.label + "…", [
+                h("div", ["Sign in on the page that opened (accept the terms, enter the room number…). Until " + hhmm + ", devices here use " + w.label + " directly, without your home server. tailbond adds it back by itself once you're signed in."])
+              ], [self.btn(h, "Open the sign-in page again", function () { window.open(w.portalUrl || "http://neverssl.com/", "_blank", "noopener"); }, "small primary"),
+                self.btn(h, "I've signed in, check now", function () { self.run("chk-" + w.key, api("POST", "/api/captive/check", { name: w.key }), "Checking…"); }, "small"),
+                self.btn(h, "Stop", function () { self.run("si-" + w.key, api("DELETE", "/api/captive/signin"), "Sign-in stopped"); }, "small text")]);
+            }
+            return self.alert(h, "", noun + " needs you to sign in", [
+              h("div", "It shows a sign-in page before it lets anyone online. Until then tailbond keeps " + w.label + " out of bonding" + (self.wans.some(function (x) { return x !== w && x.enabled && x.usable && x.captive !== "portal"; }) ? " and your other connections carry your traffic." : ".")),
+              h("div", { class: "tb-small", style: { marginTop: "6px" } }, "Opening the sign-in page lets devices here reach " + w.label + " directly (without your home server) for up to 10 minutes, so the page can load.")
+            ], [self.btn(h, self.busy["si-" + w.key] ? "Opening…" : "Open sign-in page", function () {
+              var win = window.open("about:blank", "_blank");
+              self.run("si-" + w.key, api("POST", "/api/captive/signin", { name: w.key })).then(function (r) {
+                var u = (r && r.portal_url) || w.portalUrl || "http://neverssl.com/";
+                if (win) win.location = u; else window.open(u, "_blank", "noopener");
+              }).catch(function () { if (win) win.close(); });
+            }, "primary", self.busy["si-" + w.key])]);
+          });
         },
 
         // Speedify-style priority in GL words: Use / Backup only / Off.

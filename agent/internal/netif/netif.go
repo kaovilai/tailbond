@@ -30,9 +30,10 @@ type Iface struct {
 	Driver  string   `json:"driver,omitempty"`
 	// OpenWrt: the network this device carries and its plain label; WAN
 	// means it is in the firewall's wan zone (used without configuration).
-	Network string `json:"network,omitempty"`
-	Label   string `json:"label,omitempty"`
-	WAN     bool   `json:"wan,omitempty"`
+	Network string   `json:"network,omitempty"`
+	Label   string   `json:"label,omitempty"`
+	WAN     bool     `json:"wan,omitempty"`
+	DNS     []string `json:"-"`
 }
 
 // Key is what path settings and data usage are keyed by: the OpenWrt
