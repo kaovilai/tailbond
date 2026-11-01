@@ -165,3 +165,11 @@ The redesign (commit `bdb3fc9`, agent `cc24a66`, web `68cfd1f`):
 | Errors | `out/ux/before/13-error-unreachable.png`, `14-error-cert.png` | `out/ux/after-final/13-error-unreachable.png`, `14-error-cert.png` |
 | Web "Add this phone" | (none) | `out/ux/web/web-01-add-this-phone.png`, `web-02-after-tap.png`, `web-03-devices-scan-code.png` |
 
+
+## Re-run after pairing over Tailscale (GL work)
+
+The round-4 medium "can't find the server's page or name without asking
+someone" is closed for pairing: the app now asks the server by its
+Tailscale name and someone approves it there. Re-run results and the
+remaining distribution limit (getting the APK without a store) are in
+[glinet-summary.md](glinet-summary.md#android-personas-re-run-once-on-the-new-pairing-flow).

@@ -108,6 +108,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Android's own sign-in for a captive Wi-Fi: the internet panel (or Wi-Fi
+     * settings) lists the network as "Sign in to network"; tapping it opens
+     * the system's portal login, which uses the Wi-Fi directly, past our VPN.
+     */
+    private fun openWifiSignIn() {
+        val panel = if (android.os.Build.VERSION.SDK_INT >= 29) Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY) else Intent(Settings.ACTION_WIFI_SETTINGS)
+        try {
+            startActivity(panel)
+        } catch (_: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+        }
+    }
+
     private fun openHomeServerPage(server: String) {
         val host = server.trim().removePrefix("http://").removePrefix("https://").substringBefore('/')
         if (host.isEmpty()) return
@@ -127,6 +141,10 @@ class MainActivity : ComponentActivity() {
         override fun dismissPairing() = vm.dismissPairing()
         override fun clearPairError() = vm.clearPairError()
         override fun openHomeServerPage(server: String) = this@MainActivity.openHomeServerPage(server)
+        override fun askToConnect(server: String) = vm.askToConnect(server)
+        override fun cancelAsk() = vm.cancelAsk()
+        override fun openWifiSignIn() = this@MainActivity.openWifiSignIn()
+        override fun setCaptivePrompts(on: Boolean) = vm.setCaptivePrompts(on)
         override fun forgetPairing() = vm.forgetPairing()
         override fun setMode(m: Mode) = vm.setMode(m)
         override fun setPath(kind: PathKind, s: PathSetting) = vm.setPath(kind, s)
@@ -156,6 +174,8 @@ class MainActivity : ComponentActivity() {
             handoff = vm.handoff.collectAsStateWithLifecycle().value,
             tailscaleInstalled = tailscaleInstalled,
             apps = vm.apps.collectAsStateWithLifecycle().value,
+            ask = vm.ask.collectAsStateWithLifecycle().value,
+            wifiSignIn = vm.wifiSignIn.collectAsStateWithLifecycle().value,
         )
         TailbondApp(state, actions)
     }

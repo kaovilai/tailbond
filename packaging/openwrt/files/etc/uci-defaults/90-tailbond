@@ -1,8 +1,18 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-# First boot after install/upgrade: render /etc/tailbond/tailbond.json from
-# UCI. Removed by the system once it exits 0.
+# After install/upgrade (and on first boot of an image): pick the role once
+# by router model, then render /etc/tailbond/tailbond.json from UCI.
+# Removed by the system once it exits 0.
 mkdir -p /etc/tailbond/state
 chmod 700 /etc/tailbond /etc/tailbond/state
+if [ ! -f /etc/tailbond/state/role-chosen ]; then
+	model="$(cat /tmp/sysinfo/model /tmp/sysinfo/board_name 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+	case "$model" in
+	*be9300* | *"flint 3"* | *flint3*)
+		# GL-BE9300 (Flint 3): the home router in this setup
+		uci -q set tailbond.main.role=server && uci -q commit tailbond ;;
+	esac
+	touch /etc/tailbond/state/role-chosen
+fi
 /usr/lib/tailbond/render-config --force || exit 1
 exit 0

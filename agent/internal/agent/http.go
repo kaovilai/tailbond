@@ -46,6 +46,23 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.hSettingsGet)
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
 	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
+	mux.HandleFunc("GET /tailbond-glinet.ipk", a.hIPK)
+	mux.HandleFunc("DELETE /api/pair", a.hUnpair)
+	// Pairing over Tailscale (docs/architecture.md).
+	mux.HandleFunc("GET /api/hello", a.hHello)
+	mux.HandleFunc("POST /api/pair-requests", a.hPairRequestCreate)
+	mux.HandleFunc("GET /api/pair-requests", a.hPairRequestList)
+	mux.HandleFunc("GET /api/pair-requests/{id}", a.hPairRequestPoll)
+	mux.HandleFunc("POST /api/pair-requests/{id}/{action}", a.hPairRequestDecide)
+	mux.HandleFunc("GET /api/discover", a.hDiscover)
+	mux.HandleFunc("GET /api/join", a.hJoinGet)
+	mux.HandleFunc("POST /api/join", a.hJoin)
+	mux.HandleFunc("DELETE /api/join", a.hJoinCancel)
+	mux.HandleFunc("GET /api/health", a.hHealth)
+	// Captive portals (client role)
+	mux.HandleFunc("POST /api/captive/signin", a.hCaptiveSignin)
+	mux.HandleFunc("DELETE /api/captive/signin", a.hCaptiveSigninEnd)
+	mux.HandleFunc("POST /api/captive/check", a.hCaptiveCheck)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpErr(w, http.StatusNotFound, errNotFound) })
 
 	var assets fs.FS = web.FS
@@ -83,7 +100,7 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" {
-			if !a.authorized(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
+			if !a.authorized(r) && !tailnetPublic(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
 				httpErr(w, http.StatusUnauthorized, errors.New("login required"))
 				return
 			}
@@ -95,6 +112,21 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// tailnetPublic: the requests a device on the tailnet makes before it is
+// paired. Their handlers check the source and identity themselves.
+func tailnetPublic(r *http.Request) bool {
+	p := r.URL.Path
+	switch {
+	case p == "/api/hello" && r.Method == http.MethodGet:
+		return true
+	case p == "/api/pair-requests" && r.Method == http.MethodPost:
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "/api/pair-requests/"):
+		return !strings.Contains(strings.TrimPrefix(p, "/api/pair-requests/"), "/")
+	}
+	return false
 }
 
 func (a *Agent) authorized(r *http.Request) bool {
@@ -397,13 +429,22 @@ type settingsView struct {
 	PairedWith  string `json:"paired_with,omitempty"`
 	PairedAs    string `json:"paired_as,omitempty"`
 	ManageRoute bool   `json:"manage_routes,omitempty"`
-	Version     string `json:"version"`
-	AndroidAPK  bool   `json:"android_apk"`
+	// client: the user turned tailbond off (client.disconnected)
+	Disconnected bool `json:"disconnected,omitempty"`
+	// client: captive-portal detection on (client.captive_portal_detect)
+	CaptiveDetect *bool  `json:"captive_portal_detect,omitempty"`
+	Version       string `json:"version"`
+	AndroidAPK    bool   `json:"android_apk"`
+	GLiNetIPK     bool   `json:"glinet_ipk"`
 }
 
 // hAPK offers the Android app to phones opening the dashboard (additive).
 func (a *Agent) hAPK(w http.ResponseWriter, r *http.Request) {
-	f, err := os.Open(a.store.Get().APKPath())
+	serveDownload(w, r, a.store.Get().APKPath(), "tailbond.apk", "application/vnd.android.package-archive")
+}
+
+func serveDownload(w http.ResponseWriter, r *http.Request, path, name, ctype string) {
+	f, err := os.Open(path)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -414,9 +455,9 @@ func (a *Agent) hAPK(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
-	w.Header().Set("Content-Disposition", `attachment; filename="tailbond.apk"`)
-	http.ServeContent(w, r, "tailbond.apk", st.ModTime(), f)
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	http.ServeContent(w, r, name, st.ModTime(), f)
 }
 
 func apkAvailable(path string) bool {
@@ -426,7 +467,7 @@ func apkAvailable(path string) bool {
 
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath())}
+	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: a.glinetIPKAvailable()}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo
@@ -440,6 +481,9 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 		}
 		a.mu.Unlock()
 		v.ManageRoute = cfg.Client.RoutesManaged()
+		v.Disconnected = cfg.Client.Disconnected
+		on := cfg.Client.CaptiveDetect()
+		v.CaptiveDetect = &on
 	}
 	writeJSON(w, http.StatusOK, v)
 }
@@ -449,6 +493,7 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PublicAddr *string `json:"public_addr"`
 		UIPassword *string `json:"ui_password"`
+		Captive    *bool   `json:"captive_portal_detect"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -468,6 +513,10 @@ func (a *Agent) hSettingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.UIPassword != nil {
 			c.UIPassword = *body.UIPassword
+		}
+		if body.Captive != nil {
+			v := *body.Captive
+			c.Client.CaptivePortalDetect = &v
 		}
 		return nil
 	}); err != nil {

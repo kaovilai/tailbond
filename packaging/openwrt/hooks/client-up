@@ -66,6 +66,7 @@ fi
 if is_true "$(tbcfg_or client.tunnel_dns 1)"; then
 	dns="$(tbcfg_or client.tunnel_dns_ip 10.77.0.1)"
 	[ -f "$TB_STATE/dns_saved" ] || {
+		# shellcheck disable=SC2005 # echo: always one line, even when unset
 		echo "$(uci -q get 'dhcp.@dnsmasq[0].noresolv')" >"$TB_STATE/dns_saved"
 		echo "$dns" >>"$TB_STATE/dns_saved"
 	}

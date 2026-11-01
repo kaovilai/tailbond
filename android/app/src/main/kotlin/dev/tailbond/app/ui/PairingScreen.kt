@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -51,6 +52,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import dev.tailbond.app.data.AskState
+import dev.tailbond.app.data.PairRequestClient
 import dev.tailbond.app.model.serverShortName
 import dev.tailbond.app.pairing.PairingPayload
 
@@ -86,7 +89,7 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Get started") }
         Text(
-            "You'll need your home server's name or the link to its page. If someone else set it up, ask them for it.",
+            "Next you'll type your home server's name (the one in the Tailscale app) and ask it to connect. If someone else set it up, they approve it.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -132,37 +135,20 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
     ) {
         Text("Add this phone to your home server", style = MaterialTheme.typography.headlineSmall)
 
+        AskCard(state.ask, server, { server = it }, actions)
+
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("On this phone (easiest)", style = MaterialTheme.typography.titleMedium)
+                Text("Or use the home server's page", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Came here from your home server's page? Go back to it in your browser and tap Add this phone.",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
-                Text(
-                    "Keep Tailscale on for now. Open your home server's page, tap Add this phone, and tailbond opens with everything filled in.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                OutlinedTextField(
-                    value = server,
-                    onValueChange = { server = it.trim() },
-                    label = { Text("Home server's Tailscale name") },
-                    placeholder = { Text("e.g. homebox or homebox.tail1234.ts.net") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(onClick = { actions.openHomeServerPage(server) }, enabled = server.isNotBlank()) {
+                OutlinedButton(onClick = { actions.openHomeServerPage(server) }, enabled = server.isNotBlank()) {
                     Icon(Icons.Filled.OpenInBrowser, null)
-                    Text("  Open home server page")
+                    Text("  Open ${server.ifBlank { "home server" }} page")
                 }
-                Text(
-                    "It's the machine that runs tailbond, listed in the Tailscale app's Machines. " +
-                        "Not sure which one? Ask whoever set it up for the name, or for a link to its page.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
 
@@ -219,6 +205,94 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                     }
                     Button(onClick = { actions.offerPairing(text) }, enabled = text.isNotBlank()) { Text("Add") }
                 }
+            }
+        }
+    }
+}
+
+/** Title and body for an "Ask to connect" state; null when there's nothing to say. */
+fun askMessage(s: AskState): Pair<String, String>? = when (s) {
+    AskState.Idle -> null
+    is AskState.Asking -> "Asking ${s.server}…" to "Looking for ${s.server} on your Tailscale network."
+    is AskState.Waiting -> "Waiting for approval on ${s.server}…" to
+        "Ask whoever runs ${s.server} to open its tailbond page (http://${s.server}:8077 on a computer, or a Flint 3's " +
+        "admin panel → VPN → tailbond) and tap Approve next to \"${s.name}\"; the request is at the top of that page, on a phone too. Keep this screen open; " +
+        "tailbond continues by itself once approved."
+    is AskState.Declined -> "${s.server} said no" to "Whoever runs ${s.server} declined this phone. Ask them, then ask again."
+    is AskState.Expired -> "Nobody approved it in time" to "The request ran out after 10 minutes. Ask again when someone can approve it on ${s.server}."
+    is AskState.Failed -> when (s.failure) {
+        PairRequestClient.Failure.NOT_FOUND -> "Can't find ${s.server}" to
+            "Check that the Tailscale app says Connected, and that the name matches the one in its list of machines."
+        PairRequestClient.Failure.NOT_TAILNET -> "${s.server} isn't on your Tailscale network" to
+            "Use the home server's name from the Tailscale app's list of machines."
+        PairRequestClient.Failure.UNREACHABLE -> "${s.server} doesn't answer" to
+            "Is tailbond running on ${s.server}, and does the Tailscale app on this phone say Connected?"
+        PairRequestClient.Failure.NOT_SERVER -> "${s.server} isn't a tailbond home server" to
+            "Pick the machine that runs tailbond as the home server."
+        PairRequestClient.Failure.REFUSED -> "${s.server} didn't accept the request" to
+            "Make sure the Tailscale app on this phone says Connected, then ask again."
+        PairRequestClient.Failure.TOO_MANY -> "Too many requests" to "Wait 10 minutes, then ask again."
+    }
+}
+
+/** First choice while Tailscale still has the VPN: ask the home server, approve it there. */
+@Composable
+private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, actions: UiActions) {
+    // after a failed try the field keeps (or gets back) the name that was asked
+    val server = typed.ifBlank {
+        when (ask) {
+            is AskState.Failed -> ask.server
+            is AskState.Declined -> ask.server
+            is AskState.Expired -> ask.server
+            else -> ""
+        }
+    }
+    val busy = ask is AskState.Asking || ask is AskState.Waiting
+    val msg = askMessage(ask)
+    val bad = ask is AskState.Failed || ask is AskState.Declined || ask is AskState.Expired
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Ask your home server", style = MaterialTheme.typography.titleMedium)
+            if (!busy) {
+                Text(
+                    "Keep Tailscale on for now. Type your home server's name as it appears in the Tailscale app, " +
+                        "and tap Ask to connect. Someone approves this phone on the home server; that's it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = server,
+                    onValueChange = { onServer(it.trim()) },
+                    label = { Text("Home server's name in Tailscale") },
+                    placeholder = { Text("e.g. homebox") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (msg != null) {
+                Row(verticalAlignment = Alignment.Top) {
+                    if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                    else Icon(Icons.Filled.Warning, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(msg.first, style = MaterialTheme.typography.titleSmall, color = if (bad) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                        Text(msg.second, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (busy) {
+                OutlinedButton(onClick = actions::cancelAsk) { Text("Cancel") }
+            } else {
+                Button(onClick = { actions.askToConnect(server) }, enabled = server.isNotBlank()) {
+                    Icon(Icons.Filled.Devices, null)
+                    Text(if (bad) "  Ask again" else "  Ask to connect")
+                }
+                Text(
+                    "Not sure of the name? It's the machine that runs tailbond, in the Tailscale app's list of machines. " +
+                        "Or ask whoever set it up.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

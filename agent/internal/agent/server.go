@@ -199,7 +199,14 @@ func (a *Agent) serverStatus(ctx context.Context) *status.Status {
 	a.rater.Begin()
 	st.Clients, st.Totals, st.UptimeSec = status.Server(a.rater, time.Now(), mst, mstats, names)
 	a.rater.End()
+	a.noteOutside(st.Clients)
 	st.Tailscale = a.tsStatus(ctx)
+	a.mu.Lock()
+	a.pairReqs.gc(time.Now())
+	if pend := a.pairReqs.pending(); len(pend) > 0 {
+		st.PairRequests = pend
+	}
+	a.mu.Unlock()
 	st.Server = a.publicAddr()
 	if tls.source == "tailscale" {
 		st.Server = tls.sni
@@ -276,6 +283,12 @@ func (a *Agent) pairingFor(u config.User) (*pairResult, error) {
 }
 
 func (a *Agent) addClient(ctx context.Context, name string) (*pairResult, error) {
+	return a.addClientNode(ctx, name, "")
+}
+
+// addClientNode registers a client; nodeID is the Tailscale node that asked
+// for it (pair requests), "" otherwise.
+func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairResult, error) {
 	if !mqconf.ValidUserName(name) {
 		return nil, errors.New("name must be 1-63 characters: letters, digits, '.', '_' or '-'")
 	}
@@ -283,7 +296,7 @@ func (a *Agent) addClient(ctx context.Context, name string) (*pairResult, error)
 	if err != nil {
 		return nil, err
 	}
-	u := config.User{Name: name, Key: key, Created: time.Now().Unix()}
+	u := config.User{Name: name, Key: key, Created: time.Now().Unix(), TSNode: nodeID}
 	if _, err := a.store.Update(func(c *config.Config) error {
 		for _, x := range c.Server.Users {
 			if x.Name == name {

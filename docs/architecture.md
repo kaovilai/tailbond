@@ -13,7 +13,7 @@ Every component below MUST follow this document. Change it here first.
 | `tailbondd` agent + web UI | `agent/` (Go, UI embedded) | Fedora (x86_64/aarch64), GL.iNet (aarch64 musl) | supervises mqvpn, serves dashboard + API, Tailscale glue |
 | mqvpn patches | `patches/mqvpn/*.patch` | all | client-side control API (see below) |
 | Fedora package | `packaging/fedora/` | Fedora 43+ | RPM: `tailbond-server` (mqvpn + tailbondd + units + firewalld service) |
-| OpenWrt / GL.iNet package | `packaging/openwrt/` | Flint 3 (GL-BE9300), Slate 7 (GL-BE3600), any aarch64_cortex-a53 OpenWrt | `.ipk` with static musl mqvpn + tailbondd, init.d, UCI |
+| OpenWrt / GL.iNet package | `packaging/openwrt/` | Flint 3 (GL-BE9300), Slate 7 (GL-BE3600), any aarch64_cortex-a53 OpenWrt | `.ipk` with static musl mqvpn + tailbondd, init.d, UCI, GL admin panel (VPN → tailbond: oui view + `/rpc` Lua object, [glinet.md](glinet.md)) |
 | Android app | `android/` | Android 8+ arm64 | fork of mqvpn's Android app, rebranded `dev.tailbond.app` |
 
 Roles of `tailbondd` (`--role` / config `role`):
@@ -100,8 +100,21 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/peers` | server, additive: the tailnet machines bonded clients reach (below). Auth: client API token, or an admin session |
 | GET | `/api/clients/{name}` | server, additive: re-issue `{"uri","qr_svg"}` for an existing client |
 | GET | `/api/logs?since=<seq>&limit=<n>` | additive: `{"entries":[{"seq","t","src":"agent\|mqvpn\|hook","line"}]}` ring buffer |
-| GET/POST | `/api/settings` | additive: read role/TLS/pairing info; set `public_addr`, `ui_password` |
+| GET/POST | `/api/settings` | additive: read role/TLS/pairing info; set `public_addr`, `ui_password`, `captive_portal_detect` (client) |
 | POST | `/api/logout` | additive |
+| GET | `/api/hello` | additive, **unauthenticated**: `{"tailbond":true,"name","version","role"}` ([pairing over Tailscale](#pairing-over-tailscale)) |
+| POST | `/api/pair-requests` | server, additive, **tailnet sources only**: `{"name","kind":"router"\|"phone"}` → 202 `{"id","token","status":"pending","name","expires"}` |
+| GET | `/api/pair-requests/{id}` | server, additive: the requester polls with `Authorization: Bearer <token>` from the same address → `{"id","status","name","expires"}`, plus `"uri"` once approved |
+| GET | `/api/pair-requests` | server, additive (admin): every live request `{"id","name","kind","device","dns_name","hostname","os","user","user_name","ip","status","created","expires","client","repair"}` |
+| POST | `/api/pair-requests/{id}/approve`, `/decline` | server, additive (admin): body `{"name"}` optional. Refused (403) from the requesting address |
+| GET | `/api/discover?refresh=1` | client, additive: tailbond servers among online tailnet peers `{"tailscale_installed","tailscale_running","self","tailnet","servers":[{"name","dns_name","ip","os","version"}],"checked","at"}` |
+| GET/POST/DELETE | `/api/join` | client, additive: ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel |
+| DELETE | `/api/pair` | client, additive: forget the pairing (tunnel stops, LAN back on the WANs) |
+| GET | `/api/peers` | client, additive: the server's list (below), fetched through the tunnel with this client's token, cached 20 s |
+| POST/DELETE | `/api/captive/signin` | client, additive: `{"name": <network or device>}` sign-in mode on a WAN behind a portal (409 otherwise) / off ([captive portals](#captive-portals)) |
+| POST | `/api/captive/check` | client, additive: `{"name"}` re-check now (`""` = all) |
+| GET | `/api/health` | additive: [setup health](#setup-health) |
+| GET | `/tailbond-glinet.ipk` | additive: the GL router package, from `glinet_ipk` (default `/usr/share/tailbond/tailbond-glinet.ipk`) or rebuilt from opkg's records of the installed package |
 
 ### Client API token and `GET /api/peers`
 
@@ -133,7 +146,8 @@ it is not an admin session. Test vector: key `test-key-123` →
 ```
 
 `dns_name` has no trailing dot; `last_seen` is omitted when Tailscale reports
-none. With Tailscale disabled or down, `peers` is `[]` and
+none. Additive per machine: `conn` (`"direct"` when Tailscale has a
+`CurAddr`, `"relay"` when only a DERP `Relay`), `relay` (the DERP region). With Tailscale disabled or down, `peers` is `[]` and
 `tailscale_running` is `false`. The Android app polls
 `http://10.77.0.1:8077/api/peers` every 30 s while connected (cleartext is
 allowed for that address only; the request travels inside the tunnel).
@@ -163,6 +177,9 @@ Additive fields (consumers must ignore unknown keys):
 - top level: `error` (last mqvpn failure), `control_api` (live per-path stats available), `paired` (client), `version`;
 - path: `data_cap_mb`, `used_bytes` (this month), `cap_reached`;
 - `tailscale`: `installed`, `dns_name`, `ips`;
+- `pair_requests` (server): the pending requests, same shape as `GET /api/pair-requests`;
+- `join` (client): the `GET /api/join` object while not idle;
+- path (client): `network` and `label` (OpenWrt: `wan`/"Ethernet", `wwan`/"Repeater", `tethering`/"Tethering", `modem_*`/"Cellular"), `captive` (`open`\|`portal`\|`offline`), `portal_url`, `signin_until`, `captive_source` (`tailbond`\|`glinet`); a WAN held back behind a portal has `state: standby`, not `failed`;
 - `clients[]` (server role), one per registered or connected client:
   `{"name","registered","connected","endpoint","scheduler","connected_sec","tx_bps","rx_bps","tx_bytes","rx_bytes","paths":[path…]}`.
   Server-side paths have no `iface` (mqvpn's server doesn't know it) and `kind` is `unknown`.
@@ -201,7 +218,9 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 | `server-up` | after mqvpn server starts | env `TB_TUN`, `TB_SUBNET`, `TB_SUBNET6`, `TB_PORT`, `TB_DNS_IP` |
 | `server-down` | after mqvpn server stops | same |
 | `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES` |
-| `client-down` | tunnel down | same |
+| `client-down` | tunnel down | same; `TB_RELEASE=1` when the user turned tailbond off or unpaired (the LAN goes back to the WANs whatever the kill switch says) |
+| `portal-open` | sign-in mode on for one WAN (client) | env `TB_PORTAL_DEV`, `TB_PORTAL_NET`, `TB_PORTAL_DNS` (the WAN's DHCP DNS, comma separated), `TB_PORTAL_URL`, `TB_PORTAL_SOURCE` (`tailbond`\|`glinet`) |
+| `portal-close` | sign-in mode off (open, timeout, stopped, shutdown) | same |
 
 Every hook also gets `TB_ROLE`, `TB_MODE`, `TB_STATE_DIR` and `TB_CONFIG` (path of the generated mqvpn INI). Besides `<hooks_dir>/<hook>`, executables in `<hooks_dir>/<hook>.d/` run in lexical order.
 
@@ -234,6 +253,99 @@ Additive keys (all optional):
 - `server.disable_dns`: no DNS forwarder (the pairing payload then has no `dns`);
 - `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic);
 - `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`;
-- `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing).
+- `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing);
+- `glinet_ipk`: router package offered as `GET /tailbond-glinet.ipk`;
+- `server.users[].ts_node`: the Tailscale stable node ID that asked to pair (re-asking re-issues this user's key);
+- `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;
+- `client.captive_portal_detect` (default `true`), `client.captive_probe_urls` (default: Google's `generate_204`, Firefox's `success.txt`).
+
+## Pairing over Tailscale
+
+Both ends are on one tailnet; no link to copy.
+
+1. **Discovery.** Every tailbond agent answers `GET /api/hello`
+   (unauthenticated, minimal; servers bind 127.0.0.1 + their Tailscale IP, and
+   the OpenWrt server hook opens tcp/8077 from the tailnet zone). A client
+   agent (`GET /api/discover`) lists online peers from `tailscale status --json`
+   (at most 64) and probes `http://<peer 100.x>:8077/api/hello`; servers
+   answer `"role":"server"`. Phones skip discovery: the user types the name,
+   the phone resolves it through Tailscale (MagicDNS or 100.x) and refuses
+   anything that isn't a Tailscale address.
+2. **Request.** `POST /api/pair-requests` is accepted only from a tailnet
+   source address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), not over the
+   bonded tunnel, and only if `tailscale whois --json <ip>` knows the device
+   (a spoofed 100.x on the LAN fails here). The request records the device's
+   tailnet name, OS hostname and login. One live request per device (asking
+   again returns the same one), at most 3 new requests per device per
+   10 minutes and 16 pending in total (429). Requests are in memory: a
+   restart drops them and the device simply asks again.
+3. **Approval.** The admin sees pending requests in the dashboard, the GL
+   panel and `pair_requests` in `/api/status`, and approves or declines with
+   one tap (not from the requesting address). Approval creates a client
+   (`POST /api/clients` semantics) under a free name, or, if this Tailscale
+   node was paired before (`users[].ts_node`), re-issues its credential.
+   Who can approve is whoever has admin access to the dashboard (no
+   `ui_password`: anyone who can reach it, i.e. the tailnet, subject to your
+   ACLs).
+4. **Pick-up.** The requester polls `GET /api/pair-requests/{id}` every 3 s
+   with the token from step 2 and from the same address; once approved the
+   reply carries the usual `tailbond://pair` URI, which the client imports
+   (Android: the normal confirm dialog). Pending requests expire after 10
+   minutes, approved ones are served for 10 minutes, declined/expired ones
+   stay listed for an hour.
+
+## Captive portals
+
+Client role (travel router). Each usable WAN is checked for a sign-in page;
+one behind a portal is kept out of mqvpn's paths and out of failover's
+usable tiers until it's open, so it neither stalls bonding nor makes
+failover flap; the other WANs keep the tunnel up.
+
+- **Check** (`internal/captive`): an HTTP GET bound to the WAN's device
+  (`SO_BINDTODEVICE`), resolved through the WAN's own DHCP DNS (bound too).
+  204 / the expected body → `open`; a redirect, another 200 or 511 →
+  `portal` (`portal_url` from `Location`, meta refresh or JS, else the probe
+  URL); no answer → `offline` (not held back). On link up, hotplug (SIGHUP),
+  a failed mqvpn path, every 60 s while `portal`/`offline`, every 5 s in
+  sign-in mode, every 10 minutes otherwise.
+- **GL repeater** (`internal/glrepeater`, one-file adapter): when `ubus call
+  repeater status` reports GL's portal handling on, GL is the source of
+  truth for the `wwan` network (no probe of ours there; `captive_source:
+  glinet`), and its Login Mode (`bare_mode`) opens our sign-in mode for wwan,
+  even with `captive_portal_detect` off. See [glinet.md](glinet.md#captive-portals-and-gls-login-mode).
+- **Sign-in mode**: `POST /api/captive/signin` (or GL's Login Mode) runs the
+  `portal-open` hook: LAN devices reach that WAN directly, past the tunnel
+  and the kill switch, with DNS through the WAN's own servers. It ends with
+  `portal-close` when the WAN checks open (or GL leaves Login Mode), after
+  10 minutes, on `DELETE /api/captive/signin`, or when the agent stops; the
+  WAN then rejoins bonding by itself.
+- **Android**: mqvpn's network monitor only uses validated networks; the
+  app shows "Wi-Fi needs sign-in" for a Wi-Fi with
+  `NET_CAPABILITY_CAPTIVE_PORTAL` (or unvalidated for 10 s) and opens
+  Android's own sign-in ([android.md](android.md#wi-fi-sign-in-pages-captive-portals)).
+
+## Setup health
+
+`GET /api/health` (both roles, admin):
+
+```json
+{"all_good": false, "direct": 2, "relayed": 1, "relayed_peers": ["pixel-8"],
+ "netcheck": {"udp": true, "ipv4": true, "ipv6": false, "global_v4": "203.0.113.7:41641",
+              "mapping_varies_by_dest_ip": true, "upnp": false, "pmp": false, "pcp": false, "preferred_derp": 4},
+ "checks": [{"id": "tailscale_direct", "status": "warn", "title": "Tailscale: 2 machines direct, 1 through a relay (slower)",
+             "detail": "...", "fix": "...", "fix_url": "https://tailscale.com/docs/reference/connection-types"}]}
+```
+
+`status` is `ok` | `warn` | `bad` | `unknown`; `all_good` means no `warn`/`bad`.
+Check ids: `tailscale` (off), `tailscale_direct` (online peers with a
+`CurAddr` are direct, with only a `Relay` relayed; the client role counts
+only its home server), `netcheck` (`tailscale netcheck --format=json`,
+cached 10 minutes: UDP blocked, hard NAT = `MappingVariesByDestIP`, UPnP /
+NAT-PMP / PCP), and on the server `route` (the tunnel subnet approved),
+`cgnat` (this machine's internet-facing address in `100.64.0.0/10` =
+carrier-grade NAT; private = behind a router, with the public address from
+netcheck), `port` (UDP `server.port` confirmed by a client last seen from a
+public address; `unknown` until then, since it can't be checked from
+inside). Fix links point to Tailscale's docs ([setup tips](setup-tips.md)).
 
 Mode table details: `Reorder on (Profile = fiber_lte)` is rendered as `[Reorder] Enabled = true` plus a `[ReorderRule]` for UDP 443 with `fiber_lte` and one for UDP 53 with `default_udp`. The server always enables `[Hybrid]`, `[Reorder]` and `AllowClientScheduler`, so each client's mode takes effect. Failover keeps only the best usable priority tier in the client's `Path` list. The bonding modes use primary and secondary paths, and add backup paths only when no primary or secondary path is usable. Paths over their monthly `data_cap_mb` drop out.

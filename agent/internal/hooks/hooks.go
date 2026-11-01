@@ -18,6 +18,10 @@ const (
 	ServerDown = "server-down"
 	ClientUp   = "client-up"
 	ClientDown = "client-down"
+	// Captive portal sign-in on one WAN (client role): LAN devices reach
+	// that WAN directly until the portal lets the router through.
+	PortalOpen  = "portal-open"
+	PortalClose = "portal-close"
 )
 
 type Logger func(src, line string)

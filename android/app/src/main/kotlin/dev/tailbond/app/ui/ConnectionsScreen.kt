@@ -57,7 +57,7 @@ fun ConnectionsScreen(state: UiState, actions: UiActions, modifier: Modifier = M
         Card(Modifier.fillMaxWidth().padding(16.dp)) {
             Column(Modifier.padding(16.dp)) {
                 Text(
-                    Words.connectionsSummary(live, state.settings, state.mode, state.capReached),
+                    Words.connectionsSummary(live, state.settings, state.mode, state.capReached, state.wifiSignIn),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 if (on) {
@@ -130,7 +130,7 @@ private fun Rate(label: String, bps: Long, modifier: Modifier) {
 private fun LinkCard(kind: PathKind, state: UiState, actions: UiActions, advanced: Boolean) {
     val live = state.live
     val setting = state.settings.path(kind)
-    val st = Words.linkStatus(kind, live, state.settings, state.mode, state.capReached)
+    val st = Words.linkStatus(kind, live, state.settings, state.mode, state.capReached, state.wifiSignIn)
     val sample = Words.sampleFor(live, kind)
     val on = live.state == ConnState.CONNECTED || live.state == ConnState.RECONNECTING
     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {

@@ -146,7 +146,7 @@ function render(st) {
   drawSpark($('#spark-total'), push('total', st.totals.rx_bps, st.totals.tx_bps), 600, 120, { grid: true, sw: 2.2 });
 
   const sub = st.role === 'server'
-    ? `Home server · ${st.server || 'no public address'}`
+    ? `Home server · reachable at ${(state.settings && state.settings.effective_public_addr) || st.server || 'no public address'}`
     : (st.paired ? `Bonded to ${st.server}` : 'Not paired');
   $('#subtitle').textContent = sub;
   document.title = st.state === 'connected' ? `↓${rateStr(st.totals.rx_bps)} · tailbond` : 'tailbond';
@@ -167,9 +167,10 @@ function render(st) {
     for (const b of document.querySelectorAll('#modes button')) b.setAttribute('aria-checked', String(b.dataset.mode === st.mode));
   }
 
+  renderPairRequests(st);
   if (st.role === 'client') renderClientPaths(st); else renderServerPaths(st);
   if (st.role === 'server' && state.tab === 'clients') renderClients(st);
-  $('#foot').textContent = `tailbondd ${st.version || ''} · ${st.control_api ? 'live path stats' : 'basic stats (mqvpn control API unavailable)'}`;
+  $('#foot').textContent = `tailbond ${st.version || ''} · ${st.control_api ? 'live path stats' : 'basic stats (mqvpn control API unavailable)'}`;
   // forget sparkline history for series that disappeared
   for (const [k, s] of state.hist) if (Date.now() - s.seen > 120000) state.hist.delete(k);
 }
@@ -185,8 +186,10 @@ function setRole(role) {
   if (phoneFlow && !state.settings) loadSettings();
   state.role = role;
   for (const b of document.querySelectorAll('#tabs button[data-role]')) b.classList.toggle('hidden', b.dataset.role !== role);
+  // each device picks its own mode; the server has none to choose
+  $('#modes').classList.toggle('hidden', role === 'server');
   if (role === 'client') loadSettings();
-  if (role === 'server') loadSettings();
+  if (role === 'server') { loadSettings(); renderHealth(); }
 }
 
 function pathCard(key) {
@@ -337,6 +340,67 @@ function renderServerPaths(st) {
 }
 
 // the page's MagicDNS address works on any tailnet phone; fall back to how we were reached
+// Setup health (GET /api/health): green when all good, else one line per
+// problem with a "How to fix" link to Tailscale's docs.
+async function renderHealth() {
+  let v;
+  try { v = await api('GET', '/api/health'); } catch { return; }
+  const box = $('#health');
+  const bad = v.checks.filter((c) => c.status === 'warn' || c.status === 'bad');
+  const rows = (bad.length ? bad : v.checks).map((c) => h('li', { class: 'health-' + c.status },
+    h('b', { text: c.title }),
+    c.detail ? h('div', { class: 'muted small', text: c.detail }) : null,
+    c.fix && c.status !== 'ok' ? h('div', { class: 'small' }, c.fix + ' ', c.fix_url ? h('a', { href: c.fix_url, target: '_blank', rel: 'noopener', text: 'How to fix' }) : null) : null));
+  box.replaceChildren(
+    h('h3', { text: bad.length ? `Setup health: ${bad.length} to improve for best speed` : 'Setup health: everything is set up for best speed' }),
+    h('ul', { class: 'health-list' }, rows),
+    bad.length ? h('p', { class: 'small', text: 'Not sure how? Show this card to whoever set up your internet; the links explain each fix.' }) : null,
+    h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
+      h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' })));
+  box.classList.remove('hidden');
+  const ban = $('#health-banner');
+  ban.replaceChildren();
+  if (bad.length) {
+    ban.append(`Setup health: ${bad.length} thing${bad.length === 1 ? '' : 's'} to improve for best speed. `,
+      h('a', { href: '#', text: 'Show', onclick: (e) => { e.preventDefault(); $('#tabs button[data-tab="clients"]').click(); } }));
+  }
+  ban.classList.toggle('hidden', !bad.length || state.tab === 'clients');
+}
+
+// Devices on the tailnet that asked to connect (POST /api/pair-requests).
+function renderPairRequests(st) {
+  const box = $('#pair-requests');
+  const reqs = st.role === 'server' && Array.isArray(st.pair_requests) ? st.pair_requests : [];
+  const sig = reqs.map((r) => r.id).join(',');
+  box.classList.toggle('hidden', !reqs.length);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  const pw = state.settings && state.settings.password_set;
+  const who = h('p', { class: 'muted small', text: pw
+    ? 'Only people with this page\'s password can approve.'
+    : 'Who can approve: anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). To require a password: Devices tab → Who can approve.' });
+  box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), who, ...reqs.map((r) => {
+    const what = r.kind === 'router' ? 'Travel router' : r.kind === 'phone' ? 'Phone' : 'Device';
+    const decide = async (action, btn) => {
+      btn.disabled = true;
+      try {
+        await api('POST', `/api/pair-requests/${r.id}/${action}`, {});
+        toast(action === 'approve' ? `${r.name} can connect now. It connects by itself in a few seconds.` : 'Declined');
+        box.dataset.sig = '';
+        pollOnce();
+      } catch (e) { btn.disabled = false; toast(e.message, true); }
+    };
+    return h('div', { class: 'pair-req' },
+      h('div', { class: 'pair-req-text' },
+        h('b', { text: r.repair ? `${r.name} is asking to connect again` : `${r.name} wants to connect` }),
+        h('div', { class: 'muted small', text: `${what} on your tailnet · signed in as ${r.user || 'unknown'} · ${r.hostname ? r.hostname + ' · ' : ''}${r.ip}` }),
+        r.repair ? h('div', { class: 'small', text: 'It was connected before (reset or reinstalled). Approving gives it its old access back.' }) : null),
+      h('div', { class: 'pair-req-actions' },
+        h('button', { class: 'btn', type: 'button', text: 'Decline', onclick: (e) => decide('decline', e.currentTarget) }),
+        h('button', { class: 'btn primary', type: 'button', text: 'Approve', onclick: (e) => decide('approve', e.currentTarget) })));
+  }));
+}
+
 function inviteLink(st) {
   const dns = st.tailscale && st.tailscale.dns_name;
   const host = dns ? `${dns}:${location.port || 80}` : location.host;
@@ -412,10 +476,18 @@ async function loadSettings() {
   try {
     state.settings = await api('GET', '/api/settings');
   } catch { return; }
+  if (state.status) $('#subtitle').textContent = state.status.role === 'server'
+    ? `Home server · reachable at ${state.settings.effective_public_addr || state.status.server || 'no public address'}`
+    : $('#subtitle').textContent;
   const s = state.settings;
   if (s.role === 'server') {
     $('#apk-yes').classList.toggle('hidden', !s.android_apk);
     $('#apk-no').classList.toggle('hidden', !!s.android_apk);
+    $('#ipk-yes').classList.toggle('hidden', !s.glinet_ipk);
+    $('#pw-state').textContent = s.password_set
+      ? 'Only people with this page\'s password. Change it, or save an empty one to remove it. Family adding their own phone then need it too.'
+      : 'Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). Set a password to require it.';
+    $('#ipk-no').classList.toggle('hidden', !!s.glinet_ipk);
     const w = $('#addr-warning');
     if (s.public_addr_guessed) {
       w.innerHTML = '';
@@ -536,10 +608,23 @@ function setupTabs() {
       for (const s of document.querySelectorAll('.tab')) s.classList.toggle('hidden', s.id !== 'tab-' + state.tab);
       if (state.tab === 'tailscale') renderTailscale();
       if (state.tab === 'logs') pollLogs();
-      if (state.tab === 'clients' && state.status) { loadSettings(); renderClients(state.status); }
+      if (state.tab === 'clients' && state.status) { loadSettings(); renderClients(state.status); renderHealth(); }
       if (state.tab === 'setup') loadSettings();
     });
   }
+}
+
+function setupPassword() {
+  $('#pw-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = $('#pw-new').value;
+    try {
+      await api('POST', '/api/settings', { ui_password: v });
+      $('#pw-new').value = '';
+      toast(v ? 'Password set: approving and adding devices now needs it' : 'Password removed');
+      await loadSettings();
+    } catch (err) { toast(err.message, true); }
+  });
 }
 
 function setupClients() {
@@ -691,9 +776,10 @@ setupModes();
 setupPower();
 setupTabs();
 setupClients();
+setupPassword();
 setupAddPhone();
 setupPairing();
 setupLogin();
 connect();
 setInterval(pollLogs, 2000);
-setInterval(() => { if (state.tab === 'tailscale') renderTailscale(); }, 15000);
+setInterval(() => { if (state.tab === 'tailscale') renderTailscale(); if (state.role === 'server') renderHealth(); }, 15000);

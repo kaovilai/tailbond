@@ -57,6 +57,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	a := agent.New(store, agent.Options{Version: version, WebDir: *webDir, Echo: !*quiet})
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		for range hup {
+			a.Rescan()
+		}
+	}()
 	if err := a.Run(ctx); err != nil {
 		fatal(err)
 	}

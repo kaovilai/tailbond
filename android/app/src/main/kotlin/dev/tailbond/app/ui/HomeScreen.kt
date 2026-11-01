@@ -88,6 +88,7 @@ fun HomeScreen(
     LazyColumn(modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
         item { StatusCard(state, actions) }
         if (live.state == ConnState.ERROR) item { ErrorCard(state, actions, onRepair) }
+        if (state.wifiSignIn && state.settings.captivePrompts && state.settings.path(PathKind.WIFI).enabled) item { WifiSignInCard(state, actions) }
         if (state.settings.handedToTailscale && live.state == ConnState.DISCONNECTED) {
             item { HandedBackCard(state, actions) }
         } else {
@@ -243,6 +244,29 @@ private fun ErrorCard(state: UiState, actions: UiActions, onRepair: () -> Unit) 
     }
 }
 
+/** A Wi-Fi with a sign-in page: what tailbond does meanwhile, and the way to sign in. */
+@Composable
+private fun WifiSignInCard(state: UiState, actions: UiActions) {
+    val on = state.live.state == ConnState.CONNECTED || state.live.state == ConnState.RECONNECTING
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Wi-Fi needs sign-in", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "This Wi-Fi shows a sign-in page before it lets you online. " +
+                    (if (on) "tailbond keeps you connected over mobile data meanwhile, and adds Wi-Fi by itself once you're signed in."
+                    else "Sign in first; tailbond uses Wi-Fi once Android says it's online."),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Tap the Wi-Fi network (it says \"Sign in to network\") to open the page. Android's sign-in page uses the Wi-Fi directly, so you don't need to turn tailbond off.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = actions::openWifiSignIn) { Text("Sign in to Wi-Fi") }
+        }
+    }
+}
+
 @Composable
 private fun HandedBackCard(state: UiState, actions: UiActions) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -306,13 +330,13 @@ private fun ConnectionsSummary(state: UiState, onOpen: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            Words.connectionsSummary(live, state.settings, state.mode, state.capReached),
+            Words.connectionsSummary(live, state.settings, state.mode, state.capReached, state.wifiSignIn),
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.Medium,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (kind in listOf(PathKind.WIFI, PathKind.CELLULAR)) {
-                val st = Words.linkStatus(kind, live, state.settings, state.mode, state.capReached)
+                val st = Words.linkStatus(kind, live, state.settings, state.mode, state.capReached, state.wifiSignIn)
                 val sample = Words.sampleFor(live, kind)
                 Card(Modifier.weight(1f)) {
                     Column(Modifier.padding(12.dp)) {

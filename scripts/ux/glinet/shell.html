@@ -1,0 +1,115 @@
+<!doctype html>
+<!-- Mock of the GL.iNet 4.x admin shell (left menu, header) for screenshots.
+     It loads the real panel view exactly as GL's app does: GET
+     /views/gl-sdk4-ui-tailbond.common.js, eval() it, mount the component.
+     window.$rpcRequest is a stub answering from window.__TB (fixtures.mjs). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GL.iNet Admin Panel</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:#f0f2f5}
+  .gl{display:flex;min-height:100%}
+  .side{width:220px;background:#1d2533;color:#c4cad6;flex:none;min-height:100vh}
+  .logo{height:60px;display:flex;align-items:center;padding:0 22px;font-weight:700;font-size:20px;color:#fff;letter-spacing:.5px;border-bottom:1px solid rgba(255,255,255,.06)}
+  .logo span{color:#ff7a00}
+  .menu{list-style:none;margin:0;padding:8px 0;font-size:13px}
+  .menu>li>.it{display:flex;align-items:center;gap:12px;height:46px;padding:0 22px;letter-spacing:.6px;font-weight:600}
+  .menu .ic{width:18px;height:18px;border:1.6px solid currentColor;border-radius:4px;opacity:.8}
+  .menu .open>.it{color:#fff}
+  .sub{list-style:none;margin:0;padding:0 0 6px;background:#161c27}
+  .sub li{height:40px;display:flex;align-items:center;padding-left:52px;font-size:13px;color:#a7afbd}
+  .sub li.active{color:#fff;background:#2a74d8;border-radius:0}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .top{height:60px;background:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:0 1px 4px rgba(0,21,41,.08);flex:none}
+  .crumb{font-size:14px;color:#909399}.crumb b{color:#303133;font-weight:600}
+  .tr{display:flex;align-items:center;gap:20px;font-size:13px;color:#606266}
+  .tr .model{background:#f4f4f5;border-radius:12px;padding:3px 10px}
+  .content{padding:20px 24px}
+  .ptitle{font-size:20px;font-weight:600;color:#303133;margin:0 0 4px}
+  .psub{color:#909399;font-size:13px;margin:0 0 16px}
+  .burger{display:none}
+  @media (max-width:760px){
+    .side{display:none}
+    .top{height:52px;padding:0 14px}
+    .burger{display:block;width:22px;height:14px;border-top:2px solid #303133;border-bottom:2px solid #303133;position:relative;margin-right:12px}
+    .burger:after{content:'';position:absolute;left:0;right:0;top:4px;border-top:2px solid #303133}
+    .crumb{display:flex;align-items:center}
+    .tr .lang,.tr .model{display:none}
+    .content{padding:14px 10px}
+    .ptitle{font-size:18px;margin-left:4px}.psub{margin-left:4px}
+  }
+</style>
+</head>
+<body>
+<div class="gl">
+  <aside class="side">
+    <div class="logo">GL<span>·</span>iNet</div>
+    <ul class="menu">
+      <li><div class="it"><i class="ic"></i>INTERNET</div></li>
+      <li><div class="it"><i class="ic"></i>WIRELESS</div></li>
+      <li><div class="it"><i class="ic"></i>CLIENTS</div></li>
+      <li class="open"><div class="it"><i class="ic"></i>VPN</div>
+        <ul class="sub">
+          <li>VPN Dashboard</li><li>OpenVPN Client</li><li>WireGuard Client</li><li>OpenVPN Server</li><li>WireGuard Server</li>
+          <li class="active" id="menu-tb">tailbond</li>
+        </ul>
+      </li>
+      <li><div class="it"><i class="ic"></i>APPLICATIONS</div></li>
+      <li><div class="it"><i class="ic"></i>NETWORK</div></li>
+      <li><div class="it"><i class="ic"></i>SYSTEM</div></li>
+    </ul>
+  </aside>
+  <div class="main">
+    <div class="top">
+      <div class="crumb"><i class="burger"></i><span>VPN&nbsp;/&nbsp;</span><b>tailbond</b></div>
+      <div class="tr"><span class="model" id="model">GL-BE3600</span><span class="lang">English ▾</span><span>⎋</span></div>
+    </div>
+    <div class="content">
+      <h1 class="ptitle">tailbond</h1>
+      <p class="psub">Bond this router's internet connections into one tunnel to your home server.</p>
+      <div id="view"></div>
+    </div>
+  </div>
+</div>
+<script src="/vendor/vue.runtime.min.js"></script>
+<script>
+(function () {
+  var F = window.__TB || {};
+  document.getElementById("model").textContent = F.model || "GL-BE3600";
+  function key(m, p) { return m + " " + p; }
+  window.__calls = [];
+  // GL's helper: resolves to `result`, rejects with {type} on RPC errors.
+  window.$rpcRequest = function (method, params) {
+    var obj = params[1], fn = params[2], args = params[3] || {};
+    window.__calls.push([obj, fn, args]);
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        if (fn === "info") return resolve(F.info || { installed: true, version: "0.1.0-r42", role: F.role || "client", enabled: true, running: true });
+        if (fn === "service" || fn === "set_role") return resolve({ ok: true });
+        if (fn === "status") args = { method: "GET", path: "/api/status" };
+        var path = args.path, m = (args.method || "GET").toUpperCase();
+        if (F.down) return resolve({ ok: false, code: 0, error: "agent_down" });
+        if ((F.hang || []).indexOf(key(m, path)) >= 0) return; // still running
+        var r = (F.api || {})[key(m, path)];
+        if (r === undefined && m !== "GET") r = { ok: true };
+        if (r === undefined) return resolve({ ok: false, code: 404, data: { error: "not found" } });
+        if (r && r.__err) return resolve({ ok: false, code: r.__err, data: { error: r.msg } });
+        resolve({ ok: true, code: 200, data: r });
+      }, 5);
+    });
+  };
+  Vue.prototype.$rpcRequest = window.$rpcRequest;
+  fetch("/views/gl-sdk4-ui-tailbond.common.js").then(function (r) { return r.text(); }).then(function (src) {
+    var module = { exports: {} };
+    var component = eval(src);
+    if (!component || !component.render) component = module.exports;
+    window.__vm = new Vue({ render: function (h) { return h(component); } }).$mount("#view");
+    window.__mounted = true;
+  });
+})();
+</script>
+</body>
+</html>

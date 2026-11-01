@@ -48,6 +48,18 @@ type Path struct {
 	DataCapMB  int64  `json:"data_cap_mb,omitempty"`
 	UsedBytes  uint64 `json:"used_bytes,omitempty"` // counted against data_cap_mb
 	CapReached bool   `json:"cap_reached,omitempty"`
+	// OpenWrt: the network the device belongs to (wan, wwan, tethering,
+	// modem_0001...) and a plain label for it (Ethernet, Repeater, ...).
+	Network string `json:"network,omitempty"`
+	Label   string `json:"label,omitempty"`
+	// Captive portal check (client role, additive): open | portal | offline;
+	// portal_url for a portal; signin_until while sign-in mode is on.
+	Captive     string     `json:"captive,omitempty"`
+	PortalURL   string     `json:"portal_url,omitempty"`
+	SigninUntil *time.Time `json:"signin_until,omitempty"`
+	// "glinet" when GL's own repeater portal handling owns this WAN's
+	// sign-in (the panel then points to GL's Repeater page), else "tailbond".
+	CaptiveSource string `json:"captive_source,omitempty"`
 }
 
 // Client is one registered or connected client in the server role (additive shape).
@@ -90,6 +102,10 @@ type Status struct {
 	ControlAPI bool   `json:"control_api"` // live per-path stats from mqvpn
 	Paired     bool   `json:"paired,omitempty"`
 	Version    string `json:"version,omitempty"`
+	// Server role: pending pair requests. Client role: asking a server to
+	// pair (state of POST /api/join).
+	PairRequests any `json:"pair_requests,omitempty"`
+	Join         any `json:"join,omitempty"`
 }
 
 // MapPathState turns mqvpn path labels (control API state_label or the client

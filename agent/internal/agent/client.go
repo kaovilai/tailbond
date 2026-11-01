@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,6 +33,10 @@ type clientState struct {
 	usage    usageFile
 	lastCtr  map[string][2]uint64
 	dirty    bool
+	ifs      map[string]netif.Iface // last discovery, by device
+	peers    []byte                 // server's GET /api/peers, cached
+	peersAt  time.Time
+	cap      *captiveState
 }
 
 type usageFile struct {
@@ -39,7 +45,7 @@ type usageFile struct {
 }
 
 func newClientState() *clientState {
-	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}}
+	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState()}
 }
 
 func (a *Agent) usagePath() string { return filepath.Join(a.store.Get().StateDir, "usage.json") }
@@ -63,6 +69,7 @@ func (a *Agent) startClient(ctx context.Context) {
 		}
 	}
 	go a.pathWatcher(ctx)
+	go a.captiveWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
 	} else if !a.paired() {
@@ -92,24 +99,52 @@ func (cs *clientState) capReached(p config.PathSetting) bool {
 	return p.DataCapMB > 0 && cs.usage.Bytes[p.Iface] >= uint64(p.DataCapMB)<<20
 }
 
-// desiredPaths applies priorities, mode and data caps to the interfaces that
-// exist right now. Failover keeps only the best tier that has a usable link;
-// the bonding modes use primary+secondary and add backup paths only when none
-// of those is usable.
-func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.PathSetting) bool) []string {
-	byName := map[string]netif.Iface{}
-	for _, i := range ifs {
-		byName[i.Name] = i
+// settingFor finds the path setting for a discovered interface: by its
+// OpenWrt network name first, then by device. ok is false when there is none.
+func settingFor(cfg *config.Config, i netif.Iface) (config.PathSetting, bool) {
+	if i.Network != "" {
+		if ps, ok := cfg.PathSetting(i.Network); ok {
+			return ps, true
+		}
 	}
+	return cfg.PathSetting(i.Name)
+}
+
+// effectiveSetting is the setting a discovered interface runs with: its
+// own, or for an unconfigured WAN (OpenWrt) the default "use it": primary
+// for Ethernet and Wi-Fi, secondary for tethering and cellular, so that
+// "Save mobile data" (failover) keeps those on standby.
+func effectiveSetting(cfg *config.Config, i netif.Iface) (config.PathSetting, bool) {
+	if ps, ok := settingFor(cfg, i); ok {
+		return ps, true
+	}
+	if i.WAN {
+		prio := config.PriorityPrimary
+		if i.Kind == netif.KindCellular || i.Kind == netif.KindUSB {
+			prio = config.PrioritySecondary
+		}
+		return config.PathSetting{Iface: i.Key(), Enabled: true, Priority: prio}, true
+	}
+	return config.PathSetting{}, false
+}
+
+// desiredPaths applies priorities, mode and data caps to the interfaces that
+// exist right now and returns the devices to bind. Failover keeps only the
+// best tier that has a usable link; the bonding modes use primary+secondary
+// and add backup paths only when none of those is usable.
+// blocked (may be nil) holds WANs back that sit behind a captive portal:
+// not bonded, and not counted as usable, so failover moves on instead of
+// flapping.
+func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.PathSetting) bool, blocked func(netif.Iface) bool) []string {
 	tiers := [3][]string{}
 	usable := [3]bool{}
-	for _, p := range cfg.Client.Paths {
-		it, ok := byName[p.Iface]
-		if !ok || !p.Enabled || capReached(p) {
+	for _, it := range ifs {
+		p, ok := effectiveSetting(cfg, it)
+		if !ok || !p.Enabled || capReached(p) || (blocked != nil && blocked(it)) {
 			continue
 		}
 		r := priorityRank(p.Priority)
-		tiers[r] = append(tiers[r], p.Iface)
+		tiers[r] = append(tiers[r], it.Name)
 		if it.Usable() {
 			usable[r] = true
 		}
@@ -135,8 +170,25 @@ func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.
 			out = append(out, tiers[2]...)
 		}
 	}
+	out = slices.Clone(out)
 	sort.Strings(out)
 	return out
+}
+
+// remember stores the latest discovery. Caller holds a.mu.
+func (cs *clientState) remember(ifs []netif.Iface) {
+	cs.ifs = make(map[string]netif.Iface, len(ifs))
+	for _, i := range ifs {
+		cs.ifs[i.Name] = i
+	}
+}
+
+// keyOf maps a device to its settings/usage key. Caller holds a.mu.
+func (cs *clientState) keyOf(dev string) string {
+	if i, ok := cs.ifs[dev]; ok {
+		return i.Key()
+	}
+	return dev
 }
 
 // pathWatcher re-evaluates the path set every 5 s and tracks data usage.
@@ -150,6 +202,8 @@ func (a *Agent) pathWatcher(ctx context.Context) {
 			a.saveUsage()
 			return
 		case <-t.C:
+		case <-a.rescan:
+			a.Logf("network change: re-checking connections")
 		}
 		a.accountUsage()
 		if time.Since(lastSave) > time.Minute {
@@ -181,7 +235,7 @@ func (a *Agent) accountUsage() {
 		if !had || !tunUp || tx < prev[0] || rx < prev[1] {
 			continue
 		}
-		cs.usage.Bytes[iface] += (tx - prev[0]) + (rx - prev[1])
+		cs.usage.Bytes[cs.keyOf(iface)] += (tx - prev[0]) + (rx - prev[1])
 		cs.dirty = true
 	}
 }
@@ -202,21 +256,25 @@ func (a *Agent) saveUsage() {
 // or loses one by policy (failover tier change, data cap). Interfaces that
 // vanish are left to mqvpn's own path handling. immediate skips the debounce.
 func (a *Agent) reconcilePaths(immediate bool) {
-	if !a.sup.Active() {
-		return
-	}
-	cfg := a.store.Get()
-	ifs, err := netif.Discover()
+	ifs, err := a.listIfs()
 	if err != nil {
 		return
 	}
+	if !a.sup.Active() {
+		a.mu.Lock()
+		a.client.remember(ifs)
+		a.mu.Unlock()
+		return
+	}
+	cfg := a.store.Get()
 	present := map[string]bool{}
 	for _, i := range ifs {
 		present[i.Name] = true
 	}
 	a.mu.Lock()
 	cs := a.client
-	want := desiredPaths(cfg, ifs, cs.capReached)
+	cs.remember(ifs)
+	want := desiredPaths(cfg, ifs, cs.capReached, cs.captiveBlocked)
 	active := cs.active
 	change := false
 	for _, w := range want {
@@ -259,9 +317,10 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	if p == nil {
 		return errors.New("not paired")
 	}
-	ifs, _ := netif.Discover()
+	ifs, _ := a.listIfs()
 	a.mu.Lock()
-	paths := desiredPaths(cfg, ifs, a.client.capReached)
+	a.client.remember(ifs)
+	paths := desiredPaths(cfg, ifs, a.client.capReached, a.client.captiveBlocked)
 	a.mu.Unlock()
 
 	host, _, _ := net.SplitHostPort(p.Server)
@@ -300,11 +359,18 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	return nil
 }
 
-// pathMeta returns kind, priority and enabled for an interface.
+// pathMeta returns kind, priority and enabled for a device.
 func (a *Agent) pathMeta(cfg *config.Config) status.PathMeta {
+	a.mu.Lock()
+	ifs := maps.Clone(a.client.ifs)
+	a.mu.Unlock()
 	return func(iface string) (string, string, bool) {
-		ps, ok := cfg.PathSetting(iface)
-		kind := netif.KindOf(iface)
+		it, known := ifs[iface]
+		if !known {
+			it = netif.Iface{Name: iface, Kind: netif.KindOf(iface)}
+		}
+		ps, ok := effectiveSetting(cfg, it)
+		kind := it.Kind
 		if ok && ps.Kind != "" {
 			kind = ps.Kind
 		}
@@ -384,30 +450,58 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	}
 	a.rater.End()
 
-	// Configured paths that mqvpn is not using: standby (by policy) or
-	// failed (link gone).
+	// Known WANs and configured paths that mqvpn is not using: standby (by
+	// policy, or not connected yet) or failed (link gone or down).
+	a.mu.Lock()
+	ifs := maps.Clone(cs.ifs)
+	a.mu.Unlock()
 	seen := map[string]bool{}
 	for _, p := range st.Paths {
 		seen[p.Iface] = true
 	}
+	devs := slices.Sorted(maps.Keys(ifs))
+	keyed := map[string]bool{}
+	for _, dev := range devs {
+		it := ifs[dev]
+		if _, ok := effectiveSetting(cfg, it); ok {
+			keyed[it.Key()], keyed[it.Name] = true, true
+		} else {
+			continue
+		}
+		if seen[dev] {
+			continue
+		}
+		kind, prio, en := meta(dev)
+		state := status.PathStandby
+		if !it.Usable() {
+			state = status.PathFailed
+		}
+		st.Paths = append(st.Paths, status.Path{ID: 1000 + uint64(len(st.Paths)), Iface: dev, Kind: kind, Priority: prio, Enabled: en, State: state})
+		seen[dev] = true
+	}
 	for _, ps := range cfg.Client.Paths {
-		if seen[ps.Iface] {
+		if seen[ps.Iface] || keyed[ps.Iface] {
 			continue
 		}
 		kind, prio, en := meta(ps.Iface)
-		state := status.PathStandby
-		if _, err := net.InterfaceByName(ps.Iface); err != nil {
-			state = status.PathFailed
-		}
-		st.Paths = append(st.Paths, status.Path{ID: 1000 + uint64(len(st.Paths)), Iface: ps.Iface, Kind: kind, Priority: prio, Enabled: en, State: state})
+		st.Paths = append(st.Paths, status.Path{ID: 1000 + uint64(len(st.Paths)), Iface: ps.Iface, Kind: kind, Priority: prio, Enabled: en, State: status.PathFailed})
 	}
 	for i := range st.Paths {
 		p := &st.Paths[i]
-		if ps, ok := cfg.PathSetting(p.Iface); ok {
+		it, ok := ifs[p.Iface]
+		if !ok {
+			it = netif.Iface{Name: p.Iface}
+		}
+		p.Network, p.Label = it.Network, it.Label
+		if ps, ok := effectiveSetting(cfg, it); ok {
 			p.DataCapMB = ps.DataCapMB
-			p.UsedBytes = usage[p.Iface]
+			p.UsedBytes = usage[it.Key()]
 			p.CapReached = ps.DataCapMB > 0 && p.UsedBytes >= uint64(ps.DataCapMB)<<20
 		}
+	}
+	a.annotateCaptive(st.Paths)
+	if running {
+		a.markFailedPaths(st.Paths)
 	}
 	st.State, st.Error = a.supState(ready)
 	if payload == nil {
@@ -418,6 +512,9 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 		st.Totals.TxBps, st.Totals.RxBps = 0, 0
 	}
 	st.Tailscale = a.tsStatus(ctx)
+	if j := a.joinView(); j.State != joinIdle {
+		st.Join = j
+	}
 	return st
 }
 
@@ -427,15 +524,16 @@ func (a *Agent) importPairing(uri string) (*pairing.Payload, error) {
 	if err != nil {
 		return nil, err
 	}
-	ifs, _ := netif.Discover()
+	ifs, _ := a.listIfs()
 	if _, err := a.store.Update(func(c *config.Config) error {
 		c.Client.PairingURI = uri
 		if p.Mode != "" && config.ValidMode(p.Mode) {
 			c.Mode = p.Mode
 		}
 		c.Client.Disconnected = false
-		// First pairing: offer every usable uplink as a primary path.
-		if !anyPresent(c.Client.Paths, ifs) {
+		// First pairing: offer every usable uplink as a primary path (on
+		// OpenWrt the WAN zone is used without configuration).
+		if !anyPresent(c.Client.Paths, ifs) && !anyWAN(ifs) {
 			c.Client.Paths = nil
 			for _, i := range ifs {
 				if i.Usable() {
@@ -449,16 +547,26 @@ func (a *Agent) importPairing(uri string) (*pairing.Payload, error) {
 	}
 	a.mu.Lock()
 	a.client.payload = p
+	a.userStop = false
 	a.mu.Unlock()
 	a.Logf("paired with %s as %s", p.Server, p.User)
 	a.sup.Restart()
 	return p, nil
 }
 
+func anyWAN(ifs []netif.Iface) bool {
+	for _, i := range ifs {
+		if i.WAN {
+			return true
+		}
+	}
+	return false
+}
+
 func anyPresent(ps []config.PathSetting, ifs []netif.Iface) bool {
 	for _, p := range ps {
 		for _, i := range ifs {
-			if i.Name == p.Iface {
+			if i.Name == p.Iface || (i.Network != "" && i.Network == p.Iface) {
 				return true
 			}
 		}
@@ -480,31 +588,38 @@ type pathView struct {
 	UsedBytes  uint64   `json:"used_bytes"`
 	InUse      bool     `json:"in_use"`
 	Configured bool     `json:"configured"`
+	// OpenWrt: settings are keyed by network; send it as "name" to update.
+	Network string `json:"network,omitempty"`
+	Label   string `json:"label,omitempty"`
+	WAN     bool   `json:"wan,omitempty"`
 }
 
 func (a *Agent) listPaths() ([]pathView, error) {
 	cfg := a.store.Get()
-	ifs, err := netif.Discover()
+	ifs, err := a.listIfs()
 	if err != nil {
 		return nil, err
 	}
 	a.mu.Lock()
+	a.client.remember(ifs)
 	active := slices.Clone(a.client.active)
-	usage := a.client.usage.Bytes
-	used := func(n string) uint64 { return usage[n] }
-	defer a.mu.Unlock()
+	usage := maps.Clone(a.client.usage.Bytes)
+	a.mu.Unlock()
 	out := []pathView{}
 	seen := map[string]bool{}
 	for _, i := range ifs {
-		v := pathView{Name: i.Name, Kind: i.Kind, Up: i.Up, Carrier: i.Carrier, Addrs: i.Addrs, Present: true, Priority: config.PriorityPrimary}
-		if ps, ok := cfg.PathSetting(i.Name); ok {
-			v.Configured, v.Enabled, v.Priority, v.DataCapMB = true, ps.Enabled, ps.Priority, ps.DataCapMB
-			if ps.Kind != "" {
-				v.Kind = ps.Kind
+		v := pathView{Name: i.Name, Kind: i.Kind, Up: i.Up, Carrier: i.Carrier, Addrs: i.Addrs, Present: true,
+			Priority: config.PriorityPrimary, Network: i.Network, Label: i.Label, WAN: i.WAN}
+		_, configured := settingFor(cfg, i)
+		if eff, ok := effectiveSetting(cfg, i); ok {
+			v.Enabled, v.Priority, v.DataCapMB = eff.Enabled, eff.Priority, eff.DataCapMB
+			if eff.Kind != "" {
+				v.Kind = eff.Kind
 			}
 		}
-		v.UsedBytes, v.InUse = used(i.Name), slices.Contains(active, i.Name)
-		seen[i.Name] = true
+		v.Configured = configured
+		v.UsedBytes, v.InUse = usage[i.Key()], slices.Contains(active, i.Name)
+		seen[i.Name], seen[i.Key()] = true, true
 		out = append(out, v)
 	}
 	for _, ps := range cfg.Client.Paths {
@@ -512,7 +627,7 @@ func (a *Agent) listPaths() ([]pathView, error) {
 			continue
 		}
 		out = append(out, pathView{Name: ps.Iface, Kind: netif.KindOf(ps.Iface), Addrs: []string{}, Configured: true,
-			Enabled: ps.Enabled, Priority: ps.Priority, DataCapMB: ps.DataCapMB, UsedBytes: used(ps.Iface)})
+			Enabled: ps.Enabled, Priority: ps.Priority, DataCapMB: ps.DataCapMB, UsedBytes: usage[ps.Iface]})
 	}
 	return out, nil
 }
@@ -567,6 +682,7 @@ func (a *Agent) updatePath(u pathUpdate) error {
 	if u.ResetUsage {
 		a.mu.Lock()
 		delete(a.client.usage.Bytes, u.Name)
+		delete(a.client.usage.Bytes, a.client.keyOf(u.Name))
 		a.client.dirty = true
 		a.mu.Unlock()
 		a.saveUsage()
@@ -582,6 +698,9 @@ func (a *Agent) connect() error {
 	if _, err := a.store.Update(func(c *config.Config) error { c.Client.Disconnected = false; return nil }); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	a.userStop = false
+	a.mu.Unlock()
 	a.sup.Start()
 	return nil
 }
@@ -590,6 +709,36 @@ func (a *Agent) disconnect() error {
 	if _, err := a.store.Update(func(c *config.Config) error { c.Client.Disconnected = true; return nil }); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	a.userStop = true
+	a.mu.Unlock()
 	a.sup.Stop()
 	return nil
+}
+
+// hUnpair forgets the pairing (DELETE /api/pair, additive): the tunnel
+// stops and the LAN goes back to the WANs.
+func (a *Agent) hUnpair(w http.ResponseWriter, r *http.Request) {
+	if a.role != config.RoleClient {
+		httpErr(w, http.StatusBadRequest, errClientOnly)
+		return
+	}
+	if _, err := a.store.Update(func(c *config.Config) error {
+		c.Client.PairingURI, c.Client.Disconnected = "", false
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	a.mu.Lock()
+	a.client.payload = nil
+	a.userStop = true
+	if a.join.cancel != nil {
+		a.join.cancel()
+	}
+	a.join = &joinState{State: joinIdle}
+	a.mu.Unlock()
+	a.sup.Stop()
+	a.Logf("pairing removed")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

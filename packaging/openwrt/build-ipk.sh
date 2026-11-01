@@ -70,7 +70,8 @@ data="$stage/data"
 install -d -m 0755 "$data"/usr/bin "$data"/usr/lib/tailbond/hooks \
     "$data"/etc/init.d "$data"/etc/config "$data"/etc/uci-defaults \
     "$data"/lib/upgrade/keep.d \
-    "$data"/usr/share/oui/menu.d "$data"/www/views \
+    "$data"/usr/share/oui/menu.d "$data"/www/views "$data"/etc/hotplug.d/iface \
+    "$data"/usr/lib/oui-httpd/rpc "$data"/usr/share/gl-validator.d "$data"/etc/nginx/gl-conf.d \
     "$data"/usr/share/luci/menu.d "$data"/usr/share/rpcd/acl.d \
     "$data"/www/luci-static/resources/view
 install -m 0755 "$MQVPN_BIN" "$data/usr/bin/mqvpn"
@@ -79,15 +80,28 @@ install -m 0755 "$PKG/files/etc/init.d/tailbond" "$data/etc/init.d/tailbond"
 install -m 0600 "$PKG/files/etc/config/tailbond" "$data/etc/config/tailbond"
 install -m 0755 "$PKG/files/etc/uci-defaults/90-tailbond" "$data/etc/uci-defaults/90-tailbond"
 install -m 0755 "$PKG/files/usr/lib/tailbond/render-config" "$data/usr/lib/tailbond/render-config"
+install -m 0755 "$PKG/files/etc/hotplug.d/iface/90-tailbond" "$data/etc/hotplug.d/iface/90-tailbond"
 install -m 0644 "$PKG/hooks/lib.sh" "$data/usr/lib/tailbond/hook-lib.sh"
-for h in client-up client-down server-up server-down; do
+for h in client-up client-down server-up server-down portal-open portal-close; do
     install -m 0755 "$PKG/hooks/$h" "$data/usr/lib/tailbond/hooks/$h"
 done
+# Pristine copies of files that change after install (edited config, the
+# uci-defaults script removes itself): a home server on a GL router serves
+# the package it runs as GET /tailbond-glinet.ipk, rebuilt from opkg's file
+# list, and uses these instead of the live files.
+install -d -m 0755 "$data/usr/share/tailbond/pristine/etc/config" "$data/usr/share/tailbond/pristine/etc/uci-defaults"
+install -m 0600 "$PKG/files/etc/config/tailbond" "$data/usr/share/tailbond/pristine/etc/config/tailbond"
+install -m 0755 "$PKG/files/etc/uci-defaults/90-tailbond" "$data/usr/share/tailbond/pristine/etc/uci-defaults/90-tailbond"
 # sysupgrade keeps the agent config and state (server users, pairing)
 echo /etc/tailbond/ >"$data/lib/upgrade/keep.d/tailbond"
 chmod 0644 "$data/lib/upgrade/keep.d/tailbond"
-# GL.iNet 4.x admin panel entry (Applications -> tailbond)
+# GL.iNet 4.x admin panel (VPN -> tailbond): menu entry, the view,
+# its /rpc backend object "tailbond" + argument validator, and a same-origin
+# nginx fallback (docs/glinet.md, "Admin panel")
 install -m 0644 "$PKG/gl-ui/usr/share/oui/menu.d/tailbond.json" "$data/usr/share/oui/menu.d/"
+install -m 0644 "$PKG/gl-ui/usr/lib/oui-httpd/rpc/tailbond" "$data/usr/lib/oui-httpd/rpc/tailbond"
+install -m 0644 "$PKG/gl-ui/usr/share/gl-validator.d/tailbond.lua" "$data/usr/share/gl-validator.d/"
+install -m 0644 "$PKG/gl-ui/etc/nginx/gl-conf.d/tailbond.conf" "$data/etc/nginx/gl-conf.d/"
 gzip -9n -c "$PKG/gl-ui/www/views/gl-sdk4-ui-tailbond.common.js" \
     >"$data/www/views/gl-sdk4-ui-tailbond.common.js.gz"
 chmod 0644 "$data/www/views/gl-sdk4-ui-tailbond.common.js.gz"
@@ -99,7 +113,7 @@ install -m 0644 "$PKG/luci/www/luci-static/resources/view/tailbond.js" "$data/ww
 # Reproducible tarballs: fixed owner, mtime and order.
 mtime="@$(git -C "$ROOT" log -1 --format=%ct 2>/dev/null || echo 0)"
 tgz() { # tgz OUT DIR
-    tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="$mtime" \
+    tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner --mtime="$mtime" \
         -C "$2" -cf - . | gzip -9n >"$1"
 }
 
@@ -113,6 +127,7 @@ for arch in $ARCHS; do
     install -m 0644 "$PKG/control/conffiles" "$ctl/conffiles"
     install -m 0755 "$PKG/control/postinst" "$ctl/postinst"
     install -m 0755 "$PKG/control/prerm" "$ctl/prerm"
+    install -m 0755 "$PKG/control/postrm" "$ctl/postrm"
     chmod 0644 "$ctl/control"
 
     w="$stage/ipk-$arch"
@@ -123,8 +138,10 @@ for arch in $ARCHS; do
     ipk="$OUT/tailbond_${TB_VERSION}_${arch}.ipk"
     rm -f "$ipk"
     # OpenWrt's opkg wants the outer archive as gzipped tar (as ipkg-build
-    # makes it), not the Debian-style ar archive; ar fails as "Malformed".
-    tar --format=gnu --sort=name --owner=0 --group=0 --numeric-owner --mtime="$mtime" \
+    # makes it), not the Debian-style ar archive; ar fails as "Malformed"
+    # (GL's opkg reportedly crashes on it). ustar, not pax/gnu, for the same
+    # reason.
+    tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner --mtime="$mtime" \
         -C "$w" -cf - ./debian-binary ./data.tar.gz ./control.tar.gz | gzip -9n >"$ipk"
     echo "Built: $ipk ($(du -h "$ipk" | cut -f1))"
 done

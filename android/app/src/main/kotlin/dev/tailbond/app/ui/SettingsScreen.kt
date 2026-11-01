@@ -1,5 +1,7 @@
 package dev.tailbond.app.ui
 
+import androidx.compose.material3.Switch
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -89,6 +91,14 @@ fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(top = 8.dp))
+        ListItem(
+            headlineContent = { Text("Tell me when Wi-Fi needs a sign-in") },
+            supportingContent = {
+                Text("Hotel and airport Wi-Fi often show a sign-in page first. tailbond never bonds over a Wi-Fi until Android says it's online.")
+            },
+            leadingContent = { Icon(Icons.Filled.Wifi, null) },
+            trailingContent = { Switch(checked = state.settings.captivePrompts, onCheckedChange = actions::setCaptivePrompts) },
+        )
         ListItem(
             headlineContent = { Text("Apps that skip tailbond") },
             supportingContent = {

@@ -56,6 +56,16 @@ First launch shows one screen for Tailscale users: tailbond replaces the
 Tailscale VPN on this phone (Android runs one VPN at a time), and the
 tailnet stays reachable through the home server. Then, in order of ease:
 
+0. **Ask your home server** (no link, no code): while the Tailscale app still
+   runs the VPN, type the home server's Tailscale name and tap **Ask to
+   connect**. The app resolves it through Tailscale (MagicDNS or a 100.x
+   address; anything that isn't a Tailscale address is refused), checks
+   `GET /api/hello`, sends `POST /api/pair-requests` and polls until someone
+   approves it on the server; the usual confirm dialog then shows the
+   pairing ([contract](architecture.md#pairing-over-tailscale)). The request
+   is plain HTTP inside Tailscale's encrypted tunnel, over a raw socket
+   (`data/PairRequest.kt`), because the app's network security config allows
+   cleartext only to the tunnel address.
 1. **On this phone** (no QR code): while Tailscale is still on, open the home
    server's page (`http://<server>:8077`, the app's *Open home server page*
    button does it from the server's Tailscale name). On a phone the page shows
@@ -194,6 +204,23 @@ Defaults: Wi-Fi and Ethernet primary, cellular secondary.
 - **Per-app exclude**: `addDisallowedApplication` for each chosen app.
 - **DNS**: the pairing's `dns` list (default `10.77.0.1`, the server's
   forwarder that resolves MagicDNS names).
+
+## Wi-Fi sign-in pages (captive portals)
+
+mqvpn's network monitor (`sdk-network`) only offers networks Android has
+validated (`NET_CAPABILITY_VALIDATED`), so a hotel Wi-Fi behind a sign-in
+page is never bonded; mobile data keeps the tunnel up. tailbond watches
+Wi-Fi networks itself (`service/CaptiveWatcher.kt`): one with
+`NET_CAPABILITY_CAPTIVE_PORTAL`, or still unvalidated after 10 s, shows
+**Wi-Fi needs sign-in** on the home screen and the Wi-Fi card. **Sign in to
+Wi-Fi** opens Android's internet panel, where the network offers "Sign in to
+network". Android's captive portal login app binds itself to that Wi-Fi
+network (not the default route), so tailbond's VPN doesn't intercept it and
+you don't turn tailbond off. Once Android validates the Wi-Fi, the monitor
+offers it and it joins the bond by itself. The prompt can be turned off in
+Settings (**Tell me when Wi-Fi needs a sign-in**); bonding never uses an
+unvalidated Wi-Fi either way. With "Block connections without VPN" on,
+Android's sign-in can't load, so leave it off ([setup tips](setup-tips.md)).
 
 ## Known limitations
 

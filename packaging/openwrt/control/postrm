@@ -1,0 +1,9 @@
+#!/bin/sh
+[ -n "$IPKG_INSTROOT" ] && exit 0
+# The /rpc module and the nginx fallback location are gone: reload nginx
+# so GL's admin panel forgets them.
+if [ -x /etc/init.d/nginx ] && nginx -t >/dev/null 2>&1; then
+	/etc/init.d/nginx reload >/dev/null 2>&1
+fi
+rm -f /tmp/luci-indexcache* 2>/dev/null
+exit 0

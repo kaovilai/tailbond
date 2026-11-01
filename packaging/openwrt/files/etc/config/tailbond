@@ -1,20 +1,25 @@
 # tailbond: WAN bonding to your own home server (mqvpn + tailbondd)
 #
-# Edit, then: /etc/init.d/tailbond restart
-# The init script re-renders /etc/tailbond/tailbond.json whenever this file
-# changes. Empty options keep the value already in tailbond.json (e.g. what
-# the web UI on :8077 saved there).
+# Normally set from the GL admin panel (VPN -> tailbond). After
+# editing by hand: /etc/init.d/tailbond restart. Empty options keep the
+# value already in /etc/tailbond/tailbond.json (what the panel saved).
 
 config tailbond 'main'
-	# 'client' (travel router, e.g. Slate 7) or 'server' (home, e.g. Flint 3)
+	# 'client' (travel router, e.g. Slate 7) or 'server' (home, e.g. Flint 3).
+	# First install picks 'server' on a Flint 3 (GL-BE9300), else 'client'.
 	option role 'client'
-	option enabled '0'
+	# The agent runs right after install so the admin panel can pair; the
+	# tunnel itself starts once paired.
+	option enabled '1'
 	# speed | streaming | redundant | failover
 	option mode 'speed'
-	# Web UI / API listen address. Client role: the LAN. Server role: see
-	# docs/glinet.md (127.0.0.1 + the Tailscale IP is the agent default).
-	option listen ':8077'
-	# Web UI password; empty = keep the one in tailbond.json (none by default)
+	# Agent listen address. Empty: client role 127.0.0.1:8077 (the GL panel
+	# talks to it locally), server role 127.0.0.1 + its Tailscale IP.
+	option listen ''
+	# Client role: also serve tailbond's own page on the LAN at :8077
+	# (advanced/debug; the GL admin panel needs none of it)
+	option lan_dashboard '0'
+	# Password for the :8077 page; empty = keep the one in tailbond.json
 	option ui_password ''
 	option hooks_dir '/usr/lib/tailbond/hooks'
 	option state_dir '/etc/tailbond/state'
@@ -37,8 +42,8 @@ config server 'server'
 config client 'client'
 	# tailbond://pair?d=... from the server; empty = keep the imported one
 	option pairing_uri ''
-	# Block LAN traffic while the tunnel is down instead of falling back to
-	# the WANs (kill switch)
+	# Block LAN traffic while the tunnel drops instead of falling back to
+	# the WANs (kill switch). Turning tailbond off always releases the LAN.
 	option kill_switch '1'
 	# LAN networks routed through the tunnel
 	list lan_network 'lan'
@@ -48,26 +53,27 @@ config client 'client'
 	option rule_priority '1077'
 	# Routing table for LAN traffic through the tunnel
 	option route_table '77'
+	# Captive portals (hotel/airport Wi-Fi, hotspots that want a sign-in):
+	# check each WAN, keep one behind a portal out of bonding until signed
+	# in, and offer a sign-in mode in the panel. On the repeater, GL's own
+	# portal detection (Login Mode for Public Hotspots) is used when present.
+	option captive_portal_detect '1'
+	# Check URLs (plain http); default: Google's generate_204, then
+	# Firefox's success.txt
+	#list captive_probe_url 'http://connectivitycheck.gstatic.com/generate_204'
+	# Routing table used while signing in to a portal
+	option portal_table '78'
 
-# One section per WAN to bond. 'iface' is a Linux device (eth0, wwan0, usb0)
-# or an OpenWrt network name (wan, wwan, tethering), resolved to its device
-# when the config is rendered. See docs/glinet.md for the Slate 7 mapping.
-config path
-	option iface 'wan'
-	option enabled '1'
-	# primary | secondary | backup
-	option priority 'primary'
-	# backup paths drop out after this many MB (0 = no cap)
-	option data_cap_mb '0'
-
-config path
-	option iface 'wwan'
-	option enabled '1'
-	option priority 'secondary'
-	option data_cap_mb '0'
-
-config path
-	option iface 'tethering'
-	option enabled '1'
-	option priority 'secondary'
-	option data_cap_mb '0'
+# WANs need no configuration: every network in the firewall's wan zone
+# (GL: wan, wwan = repeater, tethering, modem_* = cellular, secondwan) is
+# detected and used. The panel saves per-WAN choices (use, backup only,
+# monthly data limit) in tailbond.json. To pin them here instead, add one
+# section per OpenWrt network name, e.g.:
+#
+# config path
+#	option iface 'tethering'
+#	option enabled '1'
+#	# primary | secondary | backup
+#	option priority 'backup'
+#	# backup paths drop out after this many MB a month (0 = no cap)
+#	option data_cap_mb '5000'

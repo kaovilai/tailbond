@@ -1,0 +1,203 @@
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- GL.iNet 4.x admin panel backend for tailbond (object "tailbond").
+-- The panel (www/views/gl-sdk4-ui-tailbond.common.js) calls it with GL's
+-- own session:
+--   POST /rpc {"method":"call","params":[sid,"tailbond","<method>",{...}]}
+-- GL's oui-httpd checks the sid (admin sessions only) before these run,
+-- then dofile()s this file and calls the method with the args table.
+-- tailbondd listens on 127.0.0.1:8077; this module is the only way the
+-- panel reaches it, so the :8077 page needs no password of its own.
+--
+-- Methods:
+--   status()                          GET /api/status
+--   api{method, path, body}           any /api/... call (allowlisted paths)
+--   info()                            package, service and router facts
+--   service{action}                   start | restart | stop the service
+--   set_role{role}                    client | server, then restart
+--
+-- Outside nginx (tests, `lua` on the router) the HTTP call goes through
+-- busybox nc instead of an ngx cosocket.
+
+local cjson = require "cjson"
+-- keep [] as [] when GL re-encodes the result (lua-cjson >= 2.1.0.6);
+-- the panel also accepts {} for an empty list
+pcall(cjson.decode_array_with_array_mt, true)
+
+local M = {}
+
+local HOST, PORT = "127.0.0.1", 8077
+local INIT = "/etc/init.d/tailbond"
+
+local function sh(cmd)
+	local f = io.popen(cmd .. " 2>/dev/null")
+	if not f then return "" end
+	local out = f:read("*a") or ""
+	f:close()
+	return (out:gsub("%s+$", ""))
+end
+
+local function readfile(p)
+	local f = io.open(p, "r")
+	if not f then return nil end
+	local s = f:read("*a")
+	f:close()
+	return s
+end
+
+local function build_request(method, path, payload)
+	local req = method .. " " .. path .. " HTTP/1.0\r\nHost: " .. HOST .. "\r\nConnection: close\r\n"
+	if payload then
+		req = req .. "Content-Type: application/json\r\nContent-Length: " .. #payload .. "\r\n"
+	end
+	return req .. "\r\n" .. (payload or "")
+end
+
+local function parse_response(raw)
+	if not raw or raw == "" then return nil end
+	local code = tonumber(raw:match("^HTTP/%d%.%d (%d+)"))
+	local body = raw:match("\r\n\r\n(.*)$") or ""
+	return code, body
+end
+
+local function exchange_ngx(req)
+	local sock = ngx.socket.tcp()
+	sock:settimeout(8000)
+	local ok = sock:connect(HOST, PORT)
+	if not ok then return nil end
+	sock:send(req)
+	local raw = sock:receive("*a")
+	sock:close()
+	return raw
+end
+
+local function exchange_nc(req)
+	local tmp = os.tmpname()
+	local f = io.open(tmp, "w")
+	if not f then return nil end
+	f:write(req)
+	f:close()
+	-- busybox nc on OpenWrt is the minimal one (no -w); the agent closes
+	-- the connection after an HTTP/1.0 reply, which ends it
+	local raw = sh("nc " .. HOST .. " " .. PORT .. " < " .. tmp)
+	os.remove(tmp)
+	return raw
+end
+
+-- http(method, path, body_table) -> code, decoded_body | nil, "agent_down"
+local function http(method, path, body)
+	local payload
+	if body ~= nil then payload = cjson.encode(body) end
+	local req = build_request(method, path, payload)
+	local raw
+	if ngx and ngx.socket and ngx.socket.tcp then
+		raw = exchange_ngx(req)
+	else
+		raw = exchange_nc(req)
+	end
+	local code, text = parse_response(raw)
+	if not code then return nil, "agent_down" end
+	local ok, data = pcall(cjson.decode, text)
+	if not ok then data = { raw = text } end
+	return code, data
+end
+
+local METHODS = { GET = true, POST = true, DELETE = true }
+
+-- Only the agent's API, no login (the GL session is the login here).
+local function allowed(path)
+	if type(path) ~= "string" or #path > 200 then return false end
+	if not path:match("^/api/[%w%-%._/]*$") and not path:match("^/api/[%w%-%._/]*%?[%w%-%._=&]*$") then
+		return false
+	end
+	if path:find("%.%.") then return false end
+	return path ~= "/api/login" and path ~= "/api/logout" and path ~= "/api/events"
+end
+
+local function result(code, data)
+	if not code then
+		return { ok = false, code = 0, error = "agent_down" }
+	end
+	return { ok = code >= 200 and code < 300, code = code, data = data }
+end
+
+function M.status()
+	return result(http("GET", "/api/status"))
+end
+
+function M.api(params)
+	params = params or {}
+	local method = (params.method or "GET"):upper()
+	if not METHODS[method] or not allowed(params.path) then
+		return { ok = false, code = 400, error = "not_allowed" }
+	end
+	local body = params.body
+	if method ~= "GET" and body == nil then body = {} end
+	if method == "GET" or method == "DELETE" then body = nil end
+	return result(http(method, params.path, body))
+end
+
+local function uci_get(opt)
+	return sh("uci -q get tailbond." .. opt)
+end
+
+-- GL's "Network Acceleration" (NETWORK -> Network Acceleration): MediaTek
+-- hardware NAT (mtkhnat), Qualcomm ECM/SFE (ecm), or generic flow
+-- offloading. Read only: tailbond doesn't need it off (docs/glinet.md).
+local function acceleration()
+	local mtk = sh("uci -q get mtkhnat.global.enable")
+	if mtk ~= "" then return mtk == "1" and "on" or "off" end
+	local ecm = sh("uci -q show ecm | sed -n \"s/.*acceleration_engine=.\\(.*\\)./\\1/p\" | head -n1")
+	if ecm ~= "" then return ecm ~= "none" and "on" or "off" end
+	if sh("uci -q get firewall.@defaults[0].flow_offloading") == "1" then return "on" end
+	return "off"
+end
+
+function M.info()
+	local running = sh("pgrep -x tailbondd") ~= "" or sh("pidof tailbondd") ~= ""
+	local ver = sh("opkg status tailbond | sed -n 's/^Version: //p'")
+	local board = readfile("/tmp/sysinfo/model") or readfile("/tmp/sysinfo/board_name") or ""
+	return {
+		installed = true,
+		version = ver,
+		role = uci_get("main.role"),
+		enabled = uci_get("main.enabled") == "1",
+		running = running,
+		lan_dashboard = uci_get("main.lan_dashboard") == "1",
+		kill_switch = uci_get("client.kill_switch") ~= "0",
+		acceleration = acceleration(),
+		model = (board:gsub("%s+$", "")),
+		tailscale = sh("command -v tailscale") ~= "",
+	}
+end
+
+local ACTIONS = { start = true, restart = true, stop = true }
+
+function M.service(params)
+	local action = params and params.action
+	if not ACTIONS[action] then
+		return { ok = false, error = "bad_action" }
+	end
+	if action == "stop" then
+		os.execute(INIT .. " stop >/dev/null 2>&1")
+		return { ok = true }
+	end
+	os.execute("uci -q set tailbond.main.enabled=1 && uci -q commit tailbond")
+	os.execute(INIT .. " enable >/dev/null 2>&1")
+	os.execute(INIT .. " " .. action .. " >/dev/null 2>&1")
+	return { ok = true }
+end
+
+function M.set_role(params)
+	local role = params and params.role
+	if role ~= "client" and role ~= "server" then
+		return { ok = false, error = "bad_role" }
+	end
+	os.execute("uci -q set tailbond.main.role=" .. role .. " && uci -q set tailbond.main.enabled=1 && uci -q commit tailbond")
+	os.execute(INIT .. " enable >/dev/null 2>&1")
+	-- render + restart in the background: the agent restarts under us
+	os.execute("(/usr/lib/tailbond/render-config --force; " .. INIT .. " restart) >/dev/null 2>&1 &")
+	return { ok = true, role = role }
+end
+
+return M

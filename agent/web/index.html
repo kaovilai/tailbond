@@ -49,6 +49,8 @@
 
 <main>
   <!-- server role, on a phone (or opened from the app as #add-phone): one tap pairs this phone -->
+  <section class="card pair-requests hidden" id="pair-requests" aria-label="Waiting for your approval"></section>
+
   <section class="card add-phone hidden" id="add-phone" aria-labelledby="add-phone-title">
     <div class="add-phone-head"><svg class="ico"><use href="#i-device"/></svg><h2 id="add-phone-title">Add this phone</h2></div>
     <p class="muted">This is your home server's page. Two steps, then tailbond takes over from Tailscale on this phone. No code to scan.</p>
@@ -105,13 +107,14 @@
     <div class="banner hidden" id="error-banner"></div>
   </section>
 
-  <section class="modes" role="radiogroup" aria-label="Bonding mode" id="modes">
+  <section class="modes" data-role="client" role="radiogroup" aria-label="Bonding mode" id="modes">
     <button role="radio" data-mode="speed" title="speed"><svg class="ico"><use href="#i-speed"/></svg><span><b>Fastest</b><small>All links together</small></span></button>
     <button role="radio" data-mode="streaming" title="streaming"><svg class="ico"><use href="#i-streaming"/></svg><span><b>Smooth calls</b><small>Calls and video stay up</small></span></button>
     <button role="radio" data-mode="redundant" title="redundant"><svg class="ico"><use href="#i-redundant"/></svg><span><b>Most reliable</b><small>Every packet twice</small></span></button>
     <button role="radio" data-mode="failover" title="failover"><svg class="ico"><use href="#i-failover"/></svg><span><b>Save mobile data</b><small>Backup only on failure</small></span></button>
   </section>
 
+  <div class="banner hidden" id="health-banner"></div>
   <nav class="tabs" id="tabs">
     <button data-tab="connections" class="active">Connections</button>
     <button data-tab="clients" data-role="server">Devices</button>
@@ -126,10 +129,27 @@
   </section>
 
   <section class="tab hidden" id="tab-clients">
+    <div class="card health hidden" id="health"></div>
+    <form class="card" id="pw-form">
+      <h3>Who can approve and add devices</h3>
+      <p class="muted small" id="pw-state">Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with).</p>
+      <div class="row">
+        <input type="password" id="pw-new" placeholder="Password for this page (empty: none)" autocomplete="new-password">
+        <button class="btn" type="submit">Save</button>
+      </div>
+    </form>
+    <div class="card router-guide">
+      <h3>Add a GL.iNet travel router (recommended)</h3>
+      <ol class="muted">
+        <li><span id="ipk-yes" class="hidden"><a class="btn small" href="/tailbond-glinet.ipk" download>Download the router package</a> to this computer.</span><span id="ipk-no">Get the router package (the file ending in <b>_neon-vfpv4.ipk</b>) from whoever set up tailbond.</span></li>
+        <li>On the travel router's admin page: <b>SYSTEM → Advanced Settings → Go To LuCI</b>, then <b>System → Software → Upload Package…</b>, pick the file, <b>Install</b>.</li>
+        <li>Back in the router's admin page, open <b>VPN → tailbond</b> and tap <b>Ask to connect</b>. Approve it here when it shows up at the top.</li>
+      </ol>
+    </div>
     <form class="card add-client" id="add-client">
       <div>
-        <h3>Add a device</h3>
-        <p class="muted">Each phone or travel router gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link into the router's Setup tab. On the phone itself, open this page and use <b>Add this phone</b>.</p>
+        <h3>Add a device with a code (no Tailscale on it)</h3>
+        <p class="muted">Routers and phones on your Tailscale account don't need this: they ask to connect and show up at the top of this page. For others: each gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link on the router's tailbond page (Other ways to connect). On the phone itself, open this page and use <b>Add this phone</b>.</p>
       </div>
       <div class="row">
         <input id="client-name" placeholder="name, e.g. pixel" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required autocomplete="off">

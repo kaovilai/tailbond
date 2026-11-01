@@ -28,6 +28,21 @@ type Iface struct {
 	Addrs   []string `json:"addrs"`
 	MAC     string   `json:"mac,omitempty"`
 	Driver  string   `json:"driver,omitempty"`
+	// OpenWrt: the network this device carries and its plain label; WAN
+	// means it is in the firewall's wan zone (used without configuration).
+	Network string   `json:"network,omitempty"`
+	Label   string   `json:"label,omitempty"`
+	WAN     bool     `json:"wan,omitempty"`
+	DNS     []string `json:"-"`
+}
+
+// Key is what path settings and data usage are keyed by: the OpenWrt
+// network name when known (stable across devices), else the device.
+func (i Iface) Key() string {
+	if i.Network != "" {
+		return i.Network
+	}
+	return i.Name
 }
 
 // Facts are what Classify looks at; split out so the heuristic is testable.
@@ -145,22 +160,44 @@ func Discover() ([]Iface, error) {
 		if typ != 1 && typ != 519 && typ != 530 && !strings.HasPrefix(ni.Name, "rmnet") && !strings.HasPrefix(ni.Name, "wwan") {
 			continue
 		}
-		f := facts(ni.Name)
-		it := Iface{
-			Name: ni.Name, Kind: Classify(f), Up: ni.Flags&net.FlagUp != 0,
-			Carrier: readTrim(filepath.Join(dir, "carrier")) == "1", Driver: f.Driver,
-			MAC: ni.HardwareAddr.String(), Addrs: []string{},
+		out = append(out, describe(ni))
+	}
+	if wans, ok := OpenWrtWANs(); ok {
+		// WAN devices the generic filter skipped (e.g. a bridged WAN port)
+		have := map[string]bool{}
+		for _, it := range out {
+			have[it.Name] = true
 		}
-		if addrs, err := ni.Addrs(); err == nil {
-			for _, a := range addrs {
-				if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLinkLocalUnicast() {
-					it.Addrs = append(it.Addrs, ipn.String())
-				}
+		for _, w := range wans {
+			if have[w.Device] {
+				continue
+			}
+			if ni, err := net.InterfaceByName(w.Device); err == nil {
+				out = append(out, describe(*ni))
+				have[w.Device] = true
 			}
 		}
-		out = append(out, it)
+		out = annotate(out, wans)
 	}
 	return out, nil
+}
+
+func describe(ni net.Interface) Iface {
+	dir := filepath.Join(SysfsRoot, ni.Name)
+	f := facts(ni.Name)
+	it := Iface{
+		Name: ni.Name, Kind: Classify(f), Up: ni.Flags&net.FlagUp != 0,
+		Carrier: readTrim(filepath.Join(dir, "carrier")) == "1", Driver: f.Driver,
+		MAC: ni.HardwareAddr.String(), Addrs: []string{},
+	}
+	if addrs, err := ni.Addrs(); err == nil {
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLinkLocalUnicast() {
+				it.Addrs = append(it.Addrs, ipn.String())
+			}
+		}
+	}
+	return it
 }
 
 // Usable reports whether a path can carry traffic right now.

@@ -52,6 +52,7 @@ object Words {
         WEAK("Struggling", false),
         NOT_WORKING("Not working right now", false),
         CAP_REACHED("Paused · monthly limit reached", false),
+        NEEDS_SIGN_IN("Needs sign-in · not used yet", false),
         OFF("Not used by tailbond", null),
         UNAVAILABLE("Not available", null),
         IDLE("Ready", null),
@@ -70,9 +71,12 @@ object Words {
     fun sampleFor(live: Live, kind: PathKind): PathSample? =
         live.paths.filter { it.kind == kind }.minByOrNull { rank(it.status) }
 
-    fun linkStatus(kind: PathKind, live: Live, settings: AppSettings, mode: Mode, capReached: Boolean): LinkStatus {
+    fun linkStatus(kind: PathKind, live: Live, settings: AppSettings, mode: Mode, capReached: Boolean, wifiSignIn: Boolean = false): LinkStatus {
         val setting = settings.path(kind)
         if (!setting.enabled) return LinkStatus.OFF
+        if (kind == PathKind.WIFI && wifiSignIn && settings.captivePrompts &&
+            sampleFor(live, kind)?.status != PathGate.STATUS_ACTIVE
+        ) return LinkStatus.NEEDS_SIGN_IN
         val on = live.state == ConnState.CONNECTED || live.state == ConnState.RECONNECTING
         if (!on) return LinkStatus.IDLE
         if (kind == PathKind.CELLULAR && capReached) return LinkStatus.CAP_REACHED
@@ -93,13 +97,13 @@ object Words {
     }
 
     /** One sentence answering "is it using both?". */
-    fun connectionsSummary(live: Live, settings: AppSettings, mode: Mode, capReached: Boolean): String {
+    fun connectionsSummary(live: Live, settings: AppSettings, mode: Mode, capReached: Boolean, wifiSignIn: Boolean = false): String {
         val on = live.state == ConnState.CONNECTED || live.state == ConnState.RECONNECTING
         if (!on) return when (mode) {
             Mode.FAILOVER -> "Will use Wi-Fi first and keep mobile data as backup"
             else -> "Will use Wi-Fi and mobile data together"
         }
-        val wifi = linkStatus(PathKind.WIFI, live, settings, mode, capReached)
+        val wifi = linkStatus(PathKind.WIFI, live, settings, mode, capReached, wifiSignIn)
         val cell = linkStatus(PathKind.CELLULAR, live, settings, mode, capReached)
         val wifiUsed = wifi == LinkStatus.IN_USE || wifi == LinkStatus.TAKING_OVER
         val cellUsed = cell == LinkStatus.IN_USE || cell == LinkStatus.TAKING_OVER
@@ -108,6 +112,8 @@ object Words {
             wifiUsed && cell == LinkStatus.SAVING -> "Using Wi-Fi · saving mobile data (backup only)"
             wifiUsed && cell == LinkStatus.CAP_REACHED -> "Using Wi-Fi only · mobile data limit reached"
             wifiUsed -> "Using Wi-Fi only"
+            cellUsed && wifi == LinkStatus.NEEDS_SIGN_IN -> "Wi-Fi needs sign-in · using mobile data"
+            wifi == LinkStatus.NEEDS_SIGN_IN -> "Wi-Fi needs sign-in"
             cellUsed && wifi == LinkStatus.NOT_WORKING -> "Wi-Fi isn't working · using mobile data"
             cellUsed -> "Using mobile data only"
             else -> "No connection is carrying traffic yet"
