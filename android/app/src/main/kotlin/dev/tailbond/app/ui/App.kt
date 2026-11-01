@@ -2,6 +2,7 @@ package dev.tailbond.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -191,14 +192,29 @@ fun TailbondApp(
         state.serverProblem?.let { (name, check) ->
             Words.addProblem(name, check)?.let { (title, body) ->
                 val clash = check as? dev.tailbond.app.model.AddCheck.SubnetClash
+                val free = dev.tailbond.app.model.ServerList.freeSubnet(state.servers.map { it.subnet } + listOfNotNull(clash?.subnet))
                 AlertDialog(
                     onDismissRequest = actions::dismissServerProblem,
                     title = { Text(title) },
-                    text = { Text(body) },
+                    text = {
+                        Column(
+                            Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(body)
+                            if (clash != null) {
+                                Text("If you run $name yourself", style = MaterialTheme.typography.titleSmall)
+                                Words.clashSelfSteps(name, free).forEachIndexed { i, step ->
+                                    Text("${i + 1}. $step", style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Text("Someone else runs $name? Copy a message to send them.", style = MaterialTheme.typography.titleSmall)
+                            }
+                        }
+                    },
                     confirmButton = { TextButton(onClick = actions::dismissServerProblem) { Text("OK") } },
                     dismissButton = clash?.let { c ->
                         {
-                            TextButton(onClick = { copyAs(Words.clashMessage(name, c.existing, c.subnet), "Message copied: paste it into a chat with whoever runs $name") }) { Text("Copy a message to send them") }
+                            TextButton(onClick = { copyAs(Words.clashMessage(name, c.existing, c.subnet, free), "Message copied: paste it into a chat with whoever runs $name") }) { Text("Copy a message to send them") }
                         }
                     },
                 )

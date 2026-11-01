@@ -118,10 +118,10 @@ class WordsTest {
         val counting = note(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 80_000))!!
         assertEquals("Using vps (homebox is answering again)", counting.line)
         assertTrue(counting.detail!!.startsWith("Back to homebox in 1:20"))
-        assertEquals(Words.NoteAction("Stay on vps", "v"), counting.action)
+        assertEquals(Words.NoteAction("Stay on vps until you pick homebox or vps stops working", "v"), counting.action)
         assertTrue(note(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 400))!!.detail!!.startsWith("Back to homebox in 0:01"))
         assertEquals(
-            "Using vps (homebox is answering again) · Back to homebox in 1:20",
+            "Using vps (homebox is answering again) · Back to homebox in 1:20 · Still protected, nothing to do",
             Words.serverNoteShort(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 80_000), names),
         )
 
@@ -134,7 +134,7 @@ class WordsTest {
         assertNull(note(view("h", ServerState.CONNECTING, ServerState.STANDBY, FailoverReason.NONE, last = back)))
 
         val manual = note(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.MANUAL))!!
-        assertEquals("Using vps (you picked it)", manual.line)
+        assertEquals("Using vps (picked by hand)", manual.line)
         assertEquals("Stays on vps until you pick homebox or vps stops working.", manual.detail)
         assertEquals(Words.NoteAction("Go back to homebox", "h", filled = true), manual.action)
         assertEquals("Always using vps", note(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.POLICY))?.line)
@@ -144,6 +144,9 @@ class WordsTest {
         assertTrue(note(switching)!!.action!!.vpnSettings)
         assertFalse(counting.action!!.filled) // the countdown is the message; staying is a quiet option
         assertNull(Words.serverNote(null, names))
+        // no "nothing to do" while it's still switching, nor on the main server
+        assertFalse(Words.serverNoteShort(switching, names)!!.contains(Words.STILL_PROTECTED))
+        assertTrue(Words.serverNoteShort(since, names)!!.endsWith(Words.STILL_PROTECTED))
     }
 
     @Test fun internetTrafficNamesTheServerInUse() {
@@ -172,6 +175,8 @@ class WordsTest {
         assertTrue(clash.second.contains("homebox keeps working"))
         assertTrue(clash.second.contains("10.77.0.0/24"))
         assertTrue(clash.second.contains("no devices yet moves to a free range by itself"))
+        val steps = Words.clashSelfSteps("vps", Cidr("10.78.0.0", 24))
+        assertTrue(steps.first().contains("sudo ./install.sh --subnet 10.78.0.0/24"))
         val msg = Words.clashMessage("vps", "homebox", Cidr("10.77.0.0", 24))
         assertTrue(msg.contains("--subnet 10.78.0.0/24"))
         assertTrue(msg.contains("uci set tailbond.server.subnet=10.78.0.0/24"))
@@ -203,7 +208,7 @@ class WordsTest {
         assertEquals(emptyList<SwitchRecord>(), SwitchLog.fromJson("nope"))
         assertEquals("homebox → vps: homebox stopped answering", Words.switchText(SwitchRecord(0, "homebox", "vps", SwitchLog.DOWN)))
         assertEquals("vps → homebox: homebox was working again", Words.switchText(SwitchRecord(0, "vps", "homebox", SwitchLog.BACK)))
-        assertEquals("homebox → vps: you picked vps", Words.switchText(SwitchRecord(0, "homebox", "vps", SwitchLog.PICKED)))
+        assertEquals("homebox → vps: vps picked by hand", Words.switchText(SwitchRecord(0, "homebox", "vps", SwitchLog.PICKED)))
         val zone = java.time.ZoneId.systemDefault()
         val day = java.time.LocalDate.of(2026, 10, 21)
         val t = day.atTime(14, 2).atZone(zone).toInstant().toEpochMilli()

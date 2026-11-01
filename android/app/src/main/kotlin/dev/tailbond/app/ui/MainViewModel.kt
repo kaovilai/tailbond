@@ -29,6 +29,8 @@ import dev.tailbond.app.service.LiveState
 import dev.tailbond.app.service.TailbondVpnService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -200,6 +202,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_target.value != t) cancelAsk()
         _target.value = t
         _pairError.value = null
+        if (t == PairTarget.Add) findServers() else { suggestJob?.cancel(); _suggestions.value = emptyList() }
+    }
+
+    private val _suggestions = MutableStateFlow<List<String>>(emptyList())
+    /** Tailnet machines that answered as tailbond servers ("Add another server" suggestions). */
+    val serverSuggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
+    private var suggestJob: Job? = null
+
+    /**
+     * Asks every online machine in the tailnet list the app already has
+     * (through the server in use) whether it's a tailbond server, in parallel
+     * with a short timeout; only those that say so are offered.
+     */
+    private fun findServers() {
+        suggestJob?.cancel()
+        _suggestions.value = emptyList()
+        val known = servers.value.map { it.name.lowercase() }.toSet()
+        val candidates = repo.peers.value?.peers.orEmpty()
+            .filter { it.online && it.hostname.isNotBlank() && it.hostname.lowercase() !in known && it.ipv4 != null }
+            .take(32)
+        if (candidates.isEmpty()) return
+        suggestJob = viewModelScope.launch {
+            _suggestions.value = withContext(Dispatchers.IO) {
+                candidates.map { n ->
+                    async { n.hostname.takeIf { runCatching { PairRequestClient.isServer(java.net.InetAddress.getByName(n.ipv4)) }.getOrDefault(false) } }
+                }.awaitAll().filterNotNull().sortedBy { it.lowercase() }
+            }
+        }
     }
 
     /** Returns true when [text] parsed; the payload then waits in [pending] (or [serverProblem] says why it can't be added). */

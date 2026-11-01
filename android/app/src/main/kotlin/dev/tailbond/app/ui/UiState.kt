@@ -59,6 +59,8 @@ data class UiState(
     val pairTarget: PairTarget? = null,
     /** Where [pending] goes once confirmed (null = first pairing). */
     val pendingTarget: PairTarget? = null,
+    /** Tailnet machines that answered as tailbond servers (one-tap "Add another server"). */
+    val serverSuggestions: List<String> = emptyList(),
     /** A server that can't be added: its name and why. */
     val serverProblem: Pair<String, AddCheck>? = null,
     /** The last server switches, newest first. */

@@ -50,6 +50,12 @@ class ServerListTest {
         assertEquals("10.78.5.1", ServerList.serverTunnelIp(home.copy(dns = emptyList(), subnet = "10.78.5.0/24")))
     }
 
+    @Test fun freeSubnetForAClash() {
+        assertEquals(Cidr("10.78.0.0", 24), ServerList.freeSubnet(listOf(Cidr("10.77.0.0", 24))))
+        assertEquals(Cidr("10.78.1.0", 24), ServerList.freeSubnet(listOf(Cidr("10.77.0.0", 24), Cidr("10.78.0.0", 24))))
+        assertEquals(Cidr("10.79.0.0", 24), ServerList.freeSubnet(listOf(Cidr("10.78.0.0", 16))))
+    }
+
     @Test fun overlap() {
         assertTrue(ServerList.overlaps(Cidr("10.77.0.0", 24), Cidr("10.77.0.0", 24)))
         assertTrue(ServerList.overlaps(Cidr("10.77.0.0", 16), Cidr("10.77.9.0", 24)))

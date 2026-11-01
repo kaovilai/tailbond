@@ -141,7 +141,7 @@ fun ServersSection(state: UiState, actions: UiActions, onRepair: (String) -> Uni
         if (on && s.failoverPolicy == FailoverPolicy.PREFER && f?.reason == FailoverReason.MANUAL) {
             val picked = state.serverNames[f.activeId] ?: "a server"
             Row(Modifier.padding(start = 56.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Paused: you picked $picked", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                Text("Paused: $picked picked by hand", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 TextButton(onClick = actions::resumeAutomatic) { Text("Go back to automatic") }
             }
         }

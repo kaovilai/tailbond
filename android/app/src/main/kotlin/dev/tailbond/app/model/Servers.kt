@@ -78,6 +78,18 @@ object ServerList {
         return Cidr(intToV4(v4ToInt(c.address) and mask), c.prefix)
     }
 
+    /** The first /24 from 10.78.0.0/24 up that overlaps none of [used] (what to suggest for a clash). */
+    fun freeSubnet(used: List<Cidr>): Cidr {
+        var n = v4ToInt("10.78.0.0")
+        val last = v4ToInt("10.99.255.0")
+        while (n <= last) {
+            val c = Cidr(intToV4(n), 24)
+            if (used.none { overlaps(it, c) }) return c
+            n += 256
+        }
+        return Cidr("10.78.0.0", 24)
+    }
+
     /** Two IPv4 prefixes overlap when they agree on the shorter prefix. */
     fun overlaps(a: Cidr, b: Cidr): Boolean {
         if (a.isV6 || b.isV6) return false

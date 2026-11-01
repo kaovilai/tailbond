@@ -158,12 +158,8 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             )
         }
 
-        // machines the phone already knows from the server in use (its tailnet list), as one-tap suggestions
-        val known = state.servers.map { it.name.lowercase() }.toSet()
-        val suggestions = if (!adding) emptyList() else state.peers.list?.peers.orEmpty()
-            .filter { it.online && it.hostname.isNotBlank() && it.hostname.lowercase() !in known }
-            .sortedWith(compareBy({ it.os.lowercase() != "linux" }, { it.hostname.lowercase() }))
-            .take(8).map { it.hostname }
+        // tailnet machines that answered as tailbond servers (probed by the view model)
+        val suggestions = if (adding) state.serverSuggestions else emptyList()
         AskCard(state.ask, server, { server = it }, actions, adding, primary, suggestions)
         // after a failed ask the field shows the asked name; the page button uses it too
         val named = server.ifBlank { askedServer(state.ask) }
@@ -334,7 +330,7 @@ private fun AskCard(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (suggestions.isNotEmpty()) {
-                    Text("Or tap one of your Tailscale machines to ask it:", style = MaterialTheme.typography.labelLarge)
+                    Text("Found on your Tailscale (tap to ask):", style = MaterialTheme.typography.labelLarge)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         suggestions.forEach { name ->
                             AssistChip(onClick = { onServer(name); actions.askToConnect(name) }, label = { Text(name) })

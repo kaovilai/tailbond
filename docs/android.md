@@ -155,8 +155,9 @@ mobile data*, *Connecting…*, *Disconnected*, *Can't connect*); tap to
 connect/disconnect. It opens the app when VPN consent or pairing is missing.
 
 **Notification**: "Connected through <server>", the failover note (when
-there is one, e.g. "homebox is unreachable"), the connections sentence and
-`↓ rate ↑ rate`, with a Disconnect action.
+there is one, e.g. "homebox is unreachable", and on a backup "Still
+protected, nothing to do"), the connections sentence and `↓ rate ↑ rate`,
+with a Disconnect action.
 
 **Always-on VPN**: supported (`SUPPORTS_ALWAYS_ON`); when the system starts the
 service it uses the stored pairing and settings.
@@ -235,11 +236,15 @@ failover](architecture.md#multiple-servers-and-failover).
   `10.77.0.0/24`. Its DNS and machine list come from that subnet's `.1`.
 - **Add another server** (Settings): the same three ways as the first pairing
   (ask over Tailscale, the server's page, a code or link), but the result is
-  added as a backup. Asking sends `avoid_subnets` (the subnets the phone
-  already has), so a new server without devices moves off them by itself.
-  The app refuses a server that is already in the list, or whose subnet
-  overlaps one in the list, and says which server clashes and that the new
-  one's `server.subnet` must change. A `tailbond://pair` link for a server
+  added as a backup. The page offers the tailnet machines that answer
+  `GET /api/hello` as a tailbond server (asked through the tunnel, 1.5 s
+  each); otherwise type the name. Asking sends `avoid_subnets` (the subnets
+  the phone already has), so a new server without devices moves off them by
+  itself. The app refuses a server that is already in the list, or whose
+  subnet overlaps one in the list. For a clash it says which server clashes,
+  shows the steps for someone who runs the new server (`install.sh --subnet`
+  with a free /24, or the GL panel), then offers a message to copy for
+  whoever does. A `tailbond://pair` link for a server
   already in the list renews that server's pairing; any other link adds a
   backup.
 - **Settings list**: each server with its state (*In use*, *Ready as
@@ -272,10 +277,11 @@ failover](architecture.md#multiple-servers-and-failover).
   and handing the VPN back to Tailscale, so turn it off for those.
 - **Recent switches**: the app keeps the last 20 (time, from, to, why) and
   lists them under the servers in Settings. After *Use this server now*,
-  "When to switch" shows "Paused: you picked vps" with *Go back to automatic*.
+  "When to switch" shows "Paused: vps picked by hand" with *Go back to automatic*.
 - **Wording**: the home card says "Using vps since 14:02 (homebox is
   unreachable)", "Back to homebox in 1:20" while counting down (with **Stay
-  on vps**), "Using vps since 15:10 (you picked it)" (with **Go back to
+  on vps until you pick homebox or vps stops working**), "Using vps since
+  15:10 (picked by hand)" (with **Go back to
   homebox**), and "Back on homebox since 14:20" for a few minutes after going
   back; a **Servers** section lists each server's state. *Use this server
   now* isn't offered for a server that doesn't answer. With backups, the

@@ -197,6 +197,7 @@ class MainActivity : ComponentActivity() {
             servers = vm.servers.collectAsStateWithLifecycle().value,
             switches = vm.switches.collectAsStateWithLifecycle().value,
             pairTarget = vm.pairTarget.collectAsStateWithLifecycle().value,
+            serverSuggestions = vm.serverSuggestions.collectAsStateWithLifecycle().value,
             pendingTarget = vm.pendingTarget.collectAsStateWithLifecycle().value,
             serverProblem = vm.serverProblem.collectAsStateWithLifecycle().value,
             sdkInt = Build.VERSION.SDK_INT,

@@ -227,7 +227,7 @@ object Words {
         }
         return when (f.reason) {
             FailoverReason.MANUAL -> ServerNote(
-                "Using $active$since (you picked it)",
+                "Using $active$since (picked by hand)",
                 "Stays on $active until you pick $primary or $active stops working.",
                 NoteAction("Go back to $primary", primaryId, filled = true),
             )
@@ -238,7 +238,7 @@ object Words {
                     ServerNote(
                         "Using $active$since (${n(fb)} is answering again)",
                         "Back to ${n(fb)} in ${mmss(f.failbackInMs)}. Calls may pause for a few seconds then. Nothing to do.",
-                        NoteAction("Stay on $active", f.activeId),
+                        NoteAction("Stay on $active until you pick $primary or $active stops working", f.activeId),
                     )
                 } else {
                     val why = when (f.state(primaryId)) {
@@ -256,8 +256,13 @@ object Words {
     fun serverNoteShort(f: FailoverView?, names: Map<String, String>): String? {
         val note = serverNote(f, names) ?: return null
         val countdown = note.detail?.takeIf { it.startsWith("Back to ") }?.substringBefore('.')
-        return listOfNotNull(note.line, countdown).joinToString(" · ")
+        // on a backup and connected: say plainly that nothing needs doing
+        val calm = if (f != null && f.activeId != f.primaryId && f.state(f.activeId) == ServerState.ACTIVE) STILL_PROTECTED else null
+        return listOfNotNull(note.line, countdown, calm).joinToString(" · ")
     }
+
+    const val STILL_PROTECTED = "Still protected, nothing to do"
+
 
     /** Status of one server in the lists, and its dot: green, red, grey (null). */
     fun serverStatus(id: String, f: FailoverView?, on: Boolean, isPrimary: Boolean): Pair<String, Boolean?> {
@@ -301,17 +306,24 @@ object Words {
         is AddCheck.SubnetClash -> "$newName uses the same addresses as ${c.existing}" to
             "${c.existing} keeps working; nothing changed on this phone. Both servers use ${c.subnet} inside the tunnel, so " +
             "tailbond can't switch between them. A new server with no devices yet moves to a free range by itself when you " +
-            "ask it over Tailscale. $newName didn't (it already has devices, or it came from a link or code), so whoever runs " +
-            "$newName needs to change its range, then you add it again. Copy a message to send them."
+            "ask it over Tailscale. $newName didn't (it already has devices, or it came from a link or code), so its range " +
+            "has to change on $newName, then you add it again."
     }
 
     /** The message "Copy a message to send them" puts on the clipboard for a subnet clash. */
-    fun clashMessage(newName: String, existing: String, subnet: Cidr): String =
+    fun clashMessage(newName: String, existing: String, subnet: Cidr, free: Cidr = Cidr("10.78.0.0", 24)): String =
         "Hi! Could you change tailbond's tunnel range on $newName? It uses $subnet, the same as $existing, so my phone " +
-            "can't use both. Pick a free range such as 10.78.0.0/24: on a VPS installed with install.sh, run it again with " +
-            "--subnet 10.78.0.0/24; on a GL.iNet router, use the tailbond panel or " +
-            "uci set tailbond.server.subnet=10.78.0.0/24; otherwise set \"subnet\" under \"server\" in " +
+            "can't use both. Pick a free range such as $free: on a VPS installed with install.sh, run it again with " +
+            "--subnet $free; on a GL.iNet router, use the tailbond panel or " +
+            "uci set tailbond.server.subnet=$free; otherwise set \"subnet\" under \"server\" in " +
             "/etc/tailbond/tailbond.json. Then restart tailbond there. Thanks!"
+
+    /** The clash dialog's steps for someone who runs [newName] themselves. */
+    fun clashSelfSteps(newName: String, free: Cidr): List<String> = listOf(
+        "On $newName, run the installer again with a free range: sudo ./install.sh --subnet $free (it keeps the rest of its settings).",
+        "On a GL.iNet router instead: the tailbond panel's tunnel range, or uci set tailbond.server.subnet=$free and restart tailbond.",
+        "Devices already paired with $newName pair again; then add $newName here again.",
+    )
 
     // --- recent switches ---
 
@@ -328,7 +340,7 @@ object Words {
     fun switchText(r: SwitchRecord): String = "${r.from} → ${r.to}: " + when (r.reason) {
         SwitchLog.DOWN -> "${r.from} stopped answering"
         SwitchLog.BACK -> "${r.to} was working again"
-        SwitchLog.PICKED -> "you picked ${r.to}"
+        SwitchLog.PICKED -> "${r.to} picked by hand"
         else -> "your setting changed"
     }
 
@@ -336,7 +348,8 @@ object Words {
 
     /** Settings: what Android's "Block connections without VPN" does here. */
     fun blockAdvice(multi: Boolean): String =
-        if (multi) "Recommended with backup servers: also turn on \"Block connections without VPN\". Then apps wait instead of " +
+        if (multi) "Recommended with backup servers: also turn on \"Block connections without VPN\" (an Android setting tailbond " +
+            "can't turn on for you). Then apps wait instead of " +
             "using the phone's normal internet for the few seconds tailbond switches servers, or while it can't reach any. " +
             "With it on, hotel Wi-Fi sign-in pages can't open and you can't hand the VPN back to Tailscale: turn it off for those."
         else "\"Block connections without VPN\" keeps apps off the phone's normal internet whenever tailbond isn't connected. " +

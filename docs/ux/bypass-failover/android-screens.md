@@ -67,3 +67,12 @@ clash dialog explains who fixes it and copies a message to send them; the
 add-server page suggests tailnet machines and says who approves where; the
 route approval is optional; the notification is rendered; one consistent
 timeline.
+
+Changes after round 3 ([triage](round-3/triage.md), Android items M2–M5,
+M7–M10; not re-reviewed): the clash dialog shows "If you run vps yourself"
+steps first (`install.sh --subnet` with a free /24), then the copy-a-message
+button; the add-server suggestions are only machines that answer as tailbond
+servers; the Banking pick asks for the bank's site in the field; "picked by
+hand"; the notification says "Still protected, nothing to do" on a backup;
+"Stay on vps until you pick homebox or vps stops working"; the phone's tunnel
+addresses are 10.77.0.3 (homebox) and 10.78.0.3 (vps, now on 10.78.0.0/24).

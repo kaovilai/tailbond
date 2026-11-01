@@ -39,6 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -171,6 +172,9 @@ fun AddWebsiteDialog(
         typed?.let { add(it) }
     }.distinct()
     val bad = text.isNotBlank() && typed == null
+    // a preset with nothing to add (Banking) asks for the site: focus the field
+    val askForSite = preset != null && preset.domains.isEmpty() && preset.note.isNotEmpty()
+    val field = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
     val title: @Composable () -> Unit = { Text("Add a website") }
     val body: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -178,27 +182,33 @@ fun AddWebsiteDialog(
                 value = text,
                 onValueChange = { text = it },
                 label = { Text("Website") },
-                placeholder = { Text("e.g. mybank.com") },
+                placeholder = { Text(if (askForSite) "Your bank's website, e.g. mybank.com" else "e.g. mybank.com") },
                 singleLine = true,
                 isError = bad,
                 supportingText = {
                     Text(
                         when {
                             bad -> "Type a website name like mybank.com"
+                            askForSite && typed == null -> "Type your bank's website here: tailbond can't guess it"
                             typed != null -> "Covers ${Words.websiteCovers(typed)}"
                             else -> "Covers the name and its usual names (www., login., secure., my., app. …)"
                         },
                     )
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().focusRequester(field),
             )
             Text("Or pick one:", style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 WebsiteBypass.PRESETS.forEach { p ->
                     FilterChip(
                         selected = presetTitle == p.title,
-                        onClick = { presetTitle = if (presetTitle == p.title) null else p.title },
+                        onClick = {
+                            presetTitle = if (presetTitle == p.title) null else p.title
+                            if (presetTitle == p.title && p.domains.isEmpty() && p.note.isNotEmpty() && !inline) {
+                                runCatching { field.requestFocus() }
+                            }
+                        },
                         label = { Text(p.title) },
                     )
                 }
