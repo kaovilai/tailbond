@@ -34,6 +34,8 @@ type clientState struct {
 	lastCtr  map[string][2]uint64
 	dirty    bool
 	ifs      map[string]netif.Iface // last discovery, by device
+	peers    []byte                 // server's GET /api/peers, cached
+	peersAt  time.Time
 }
 
 type usageFile struct {
@@ -107,13 +109,19 @@ func settingFor(cfg *config.Config, i netif.Iface) (config.PathSetting, bool) {
 }
 
 // effectiveSetting is the setting a discovered interface runs with: its
-// own, or for an unconfigured WAN (OpenWrt) the default "use it".
+// own, or for an unconfigured WAN (OpenWrt) the default "use it": primary
+// for Ethernet and Wi-Fi, secondary for tethering and cellular, so that
+// "Save mobile data" (failover) keeps those on standby.
 func effectiveSetting(cfg *config.Config, i netif.Iface) (config.PathSetting, bool) {
 	if ps, ok := settingFor(cfg, i); ok {
 		return ps, true
 	}
 	if i.WAN {
-		return config.PathSetting{Iface: i.Key(), Enabled: true, Priority: config.PriorityPrimary}, true
+		prio := config.PriorityPrimary
+		if i.Kind == netif.KindCellular || i.Kind == netif.KindUSB {
+			prio = config.PrioritySecondary
+		}
+		return config.PathSetting{Iface: i.Key(), Enabled: true, Priority: prio}, true
 	}
 	return config.PathSetting{}, false
 }

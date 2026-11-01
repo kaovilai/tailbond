@@ -11,6 +11,7 @@
 # - tailnet: forwarding tailbond <-> the zone holding tailscale0 (created as
 #   'tailbond_ts' if the firmware has none), masquerade of $TB_SUBNET toward
 #   it, and the subnet advertised with tailscale set --advertise-routes
+# - tcp/8077 (agent: discovery + pair requests) open from the tailnet zone
 # - dnsmasq kept off $TB_TUN, so the agent's DNS forwarder can bind $TB_DNS_IP
 . "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
 
@@ -60,6 +61,14 @@ ts="$(zone_of_network tailscale0)" || ts="$(zone_of_network tailscale)" || {
 	uset firewall.tailbond_ts.output ACCEPT
 	uset firewall.tailbond_ts.forward REJECT
 }
+# Routers and phones on the tailnet find this server and ask to pair on
+# the agent's port (GET /api/hello, POST /api/pair-requests).
+uset firewall.tailbond_api rule
+uset firewall.tailbond_api.name tailbond-pairing
+uset firewall.tailbond_api.src "$ts"
+uset firewall.tailbond_api.proto tcp
+uset firewall.tailbond_api.dest_port "$(tbcfg_or main.api_port 8077)"
+uset firewall.tailbond_api.target ACCEPT
 ensure_forwarding tailbond_to_ts tailbond "$ts"
 ensure_forwarding tailbond_from_ts "$ts" tailbond
 # Bonded clients are one tailnet device: NAT them to the server's tailnet IP.

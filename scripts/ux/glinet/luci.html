@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- Mock of OpenWrt LuCI (bootstrap theme) System -> Software with the
+     "Upload Package..." dialog, the no-SSH install path on GL 4.x
+     (SYSTEM -> Advanced Settings -> Go To LuCI). For screenshots only. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GL-BE3600 - Software - LuCI</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:"Microsoft Yahei","WenQuanYi Micro Hei",sans-serif,Arial;font-size:13px;color:#404040;background:#fff}
+header{background:#00468c;color:#fff;height:44px;display:flex;align-items:center;padding:0 18px;gap:24px}
+header b{font-size:16px}header nav{display:flex;gap:18px;color:#c9daf0}header nav span.on{color:#fff}
+.wrap{max-width:1100px;margin:0 auto;padding:18px}
+h2{font-weight:normal;font-size:22px;margin:0 0 12px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid #ddd;margin:12px 0}
+.tabs span{padding:6px 12px;border:1px solid transparent}.tabs span.on{border-color:#ddd #ddd #fff;border-radius:4px 4px 0 0;background:#fff;margin-bottom:-1px}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.btn{display:inline-block;padding:5px 12px;border:1px solid #ccc;border-radius:3px;background:linear-gradient(#fff,#e6e6e6);color:#333;font-size:13px}
+.btn.primary{background:linear-gradient(#0088cc,#0044cc);color:#fff;border-color:#0044cc}
+input{border:1px solid #ccc;border-radius:3px;padding:5px 8px;font-size:13px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding-top:90px}
+.modal{background:#fff;border-radius:6px;width:560px;max-width:94vw;padding:16px 18px;box-shadow:0 3px 7px rgba(0,0,0,.3)}
+.modal h4{font-size:16px;margin:0 0 12px;font-weight:normal}
+.file{border:1px solid #ccc;border-radius:3px;padding:8px;background:#f7f7f7}
+.note{color:#666;margin:10px 0 14px;line-height:1.5}
+.right{text-align:right;margin-top:12px}
+@media (max-width:600px){header nav{display:none}.modal-bg{padding-top:40px}}
+</style></head><body>
+<header><b>GL-BE3600</b><nav><span>Status</span><span class="on">System</span><span>Services</span><span>Network</span><span>Logout</span></nav></header>
+<div class="wrap">
+<h2>Software</h2>
+<div class="row"><span>Free space: 61% (153 MiB)</span></div>
+<div class="row"><span class="btn">Update lists…</span><span class="btn primary">Upload Package…</span><span class="btn">Configure opkg…</span></div>
+<div class="row">Filter: <input value="" placeholder="Type to filter…"></div>
+<div class="tabs"><span class="on">Available</span><span>Installed</span><span>Updates</span></div>
+</div>
+<div class="modal-bg"><div class="modal">
+<h4>Manually install package</h4>
+<div class="note">Upload the tailbond package you downloaded (for GL.iNet routers the file ends in <b>_aarch64_cortex-a53_neon-vfpv4.ipk</b>).</div>
+<div class="file">tailbond_0.1.0-r42_aarch64_cortex-a53_neon-vfpv4.ipk &nbsp; <span style="color:#888">(6.1 MB)</span></div>
+<div class="row" style="margin-top:12px"><label><input type="checkbox" checked disabled> Allow overwriting conflicting package files</label></div>
+<div class="right"><span class="btn">Cancel</span> <span class="btn primary">Install</span></div>
+</div></div>
+</body></html>

@@ -423,6 +423,8 @@ type settingsView struct {
 	PairedWith  string `json:"paired_with,omitempty"`
 	PairedAs    string `json:"paired_as,omitempty"`
 	ManageRoute bool   `json:"manage_routes,omitempty"`
+	// client: the user turned tailbond off (client.disconnected)
+	Disconnected bool `json:"disconnected,omitempty"`
 	Version     string `json:"version"`
 	AndroidAPK  bool   `json:"android_apk"`
 }
@@ -466,6 +468,7 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 		}
 		a.mu.Unlock()
 		v.ManageRoute = cfg.Client.RoutesManaged()
+		v.Disconnected = cfg.Client.Disconnected
 	}
 	writeJSON(w, http.StatusOK, v)
 }

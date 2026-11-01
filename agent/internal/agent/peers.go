@@ -1,15 +1,20 @@
 package agent
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/config"
 	"github.com/tailbond/tailbond/agent/internal/tailscale"
@@ -86,8 +91,8 @@ type peersView struct {
 // hPeers lists the tailnet machines bonded clients reach through this server
 // (a summary of `tailscale status --json`).
 func (a *Agent) hPeers(w http.ResponseWriter, r *http.Request) {
-	if a.role != config.RoleServer {
-		httpErr(w, http.StatusBadRequest, errServerOnly)
+	if a.role == config.RoleClient {
+		a.hPeersViaServer(w, r)
 		return
 	}
 	ti := a.ts.Get(r.Context())
@@ -107,4 +112,52 @@ func (a *Agent) hPeers(w http.ResponseWriter, r *http.Request) {
 		v.Peers = []tailscale.Node{}
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+// hPeersViaServer: on the client role (travel router), GET /api/peers is
+// the server's list, fetched through the tunnel with this router's client
+// token (what LAN devices can reach). Cached for 20 s.
+func (a *Agent) hPeersViaServer(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	p := a.client.payload
+	ready := a.rt.ready
+	cached, at := a.client.peers, a.client.peersAt
+	a.mu.Unlock()
+	if p == nil {
+		httpErr(w, http.StatusConflict, errors.New("not paired"))
+		return
+	}
+	if cached != nil && time.Since(at) < 20*time.Second {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(cached)
+		return
+	}
+	if !ready {
+		httpErr(w, http.StatusServiceUnavailable, errors.New("not connected"))
+		return
+	}
+	host := config.Default().ServerTunnelIP()
+	if len(p.DNS) > 0 {
+		host = p.DNS[0]
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(host, a.apiPort)+"/api/peers", nil)
+	req.Header.Set("Authorization", "Bearer "+APIToken(p.Key))
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		httpErr(w, http.StatusBadGateway, errors.New("home server didn't answer"))
+		return
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		httpErr(w, http.StatusBadGateway, fmt.Errorf("home server: HTTP %d", resp.StatusCode))
+		return
+	}
+	a.mu.Lock()
+	a.client.peers, a.client.peersAt = b, time.Now()
+	a.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(b)
 }

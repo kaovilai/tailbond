@@ -10,7 +10,9 @@
 # Empty UCI strings keep the value already in tailbond.json, so what the web
 # UI saved there (UI password, imported pairing) survives a re-render; so do
 # the agent-managed server.users and client.disconnected. Path sections in
-# UCI replace client.paths; with none, the current paths are kept.
+# UCI replace client.paths; with none (the default), the paths the panel
+# saved are kept. Path names are OpenWrt network names (wan, wwan,
+# tethering, modem_0001) or devices; the agent resolves them at runtime.
 # Env (tests): TB_CONF (default /etc/tailbond/tailbond.json), TB_JSHN.
 
 . "${TB_JSHN:-/usr/share/libubox/jshn.sh}"
@@ -38,25 +40,17 @@ bool() {
 	case "$1" in 1 | on | true | yes | enabled) echo 1 ;; *) echo 0 ;; esac
 }
 
-# A network name (wan, wwan, tethering) -> its Linux device; devices pass through.
-resolve_iface() {
-	local n="$1" dev
-	[ -e "/sys/class/net/$n" ] && { echo "$n"; return; }
-	dev="$(ifstatus "$n" 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null)"
-	[ -n "$dev" ] || dev="$(uci -q get "network.$n.device")"
-	[ -n "$dev" ] || dev="$(uci -q get "network.$n.ifname")"
-	echo "${dev:-$n}"
-}
-
 # Re-add the current tailbond.json's server.users (agent-managed credentials).
 keep_users() {
-	local i=0 name
+	local i=0 name node
 	json_add_array users
 	while name="$(old "@.server.users[$i].name")" && [ -n "$name" ]; do
 		json_add_object ""
 		json_add_string name "$name"
 		json_add_string key "$(old "@.server.users[$i].key")"
 		json_add_int created "$(old "@.server.users[$i].created" || echo 0)"
+		node="$(old "@.server.users[$i].ts_node")"
+		[ -n "$node" ] && json_add_string ts_node "$node"
 		json_close_object
 		i=$((i + 1))
 	done
@@ -65,13 +59,15 @@ keep_users() {
 
 # Re-add the current client.paths (when UCI has no path sections).
 keep_paths() {
-	local i=0 iface
+	local i=0 iface kind
 	while iface="$(old "@.client.paths[$i].iface")" && [ -n "$iface" ]; do
 		json_add_object ""
 		json_add_string iface "$iface"
 		json_add_boolean enabled "$(bool "$(old "@.client.paths[$i].enabled")")"
 		json_add_string priority "$(old "@.client.paths[$i].priority" || echo primary)"
 		json_add_int data_cap_mb "$(old "@.client.paths[$i].data_cap_mb" || echo 0)"
+		kind="$(old "@.client.paths[$i].kind")"
+		[ -n "$kind" ] && json_add_string kind "$kind"
 		json_close_object
 		i=$((i + 1))
 	done
@@ -82,11 +78,26 @@ add_path() {
 	iface="$(uci -q get "tailbond.$s.iface")"
 	[ -n "$iface" ] || return 0
 	json_add_object ""
-	json_add_string iface "$(resolve_iface "$iface")"
+	json_add_string iface "$iface"
 	json_add_boolean enabled "$(bool "$(uci -q get "tailbond.$s.enabled" || echo 1)")"
 	json_add_string priority "$(uci -q get "tailbond.$s.priority" || echo primary)"
 	json_add_int data_cap_mb "$(uci -q get "tailbond.$s.data_cap_mb" || echo 0)"
 	json_close_object
+}
+
+# The agent's listen address. Client role: loopback only (the GL panel
+# reaches it through GL's /rpc), unless main.lan_dashboard is on. Server
+# role: host-less, so the agent binds 127.0.0.1 + its Tailscale IPs.
+listen_addr() {
+	local l
+	l="$(cfg main.listen)"
+	if [ -n "$l" ]; then
+		echo "$l"
+	elif [ "$1" = client ] && [ "$(bool "$(cfg main.lan_dashboard)")" = 0 ]; then
+		echo 127.0.0.1:8077
+	else
+		echo :8077
+	fi
 }
 
 render() {
@@ -98,7 +109,7 @@ render() {
 	json_add_string mqvpn_bin /usr/bin/mqvpn
 	json_add_string state_dir "$(cfg_or main.state_dir /etc/tailbond/state)"
 	json_add_string hooks_dir "$(cfg_or main.hooks_dir /usr/lib/tailbond/hooks)"
-	json_add_string listen "$(cfg_or main.listen :8077)"
+	json_add_string listen "$(listen_addr "$role")"
 	json_add_string ui_password "$(keep main.ui_password @.ui_password '')"
 	json_add_string mode "$(keep main.mode @.mode speed)"
 

@@ -14,16 +14,29 @@ HOOKS=/usr/lib/tailbond/hooks
 
 role() { uci -q get tailbond.main.role || echo client; }
 
+paired_and_on() {
+	[ -n "$(jsonfilter -i "$CONF" -e '@.client.pairing_uri' 2>/dev/null)" ] &&
+		[ "$(jsonfilter -i "$CONF" -e '@.client.disconnected' 2>/dev/null)" != true ]
+}
+
 start_service() {
 	[ "$(uci -q get tailbond.main.enabled)" = 1 ] || {
-		echo "tailbond is disabled (uci set tailbond.main.enabled=1)"
+		echo "tailbond is turned off (Applications -> tailbond in the admin panel)"
 		return 0
 	}
 	/usr/lib/tailbond/render-config || return 1
 	mkdir -p "$(uci -q get tailbond.main.state_dir || echo /etc/tailbond/state)"
 
-	# Kill switch: block LAN -> WAN before the tunnel is up for the first time.
-	[ "$(role)" = client ] && TB_TUN=tb0 "$HOOKS/client-down" >/dev/null 2>&1
+	# Kill switch: block LAN -> WAN before the tunnel is up for the first
+	# time, but only once paired and switched on (a fresh install keeps the
+	# LAN online while you pair from the admin panel).
+	if [ "$(role)" = client ]; then
+		if paired_and_on; then
+			TB_TUN=tb0 "$HOOKS/client-down" >/dev/null 2>&1
+		else
+			TB_RELEASE=1 TB_TUN=tb0 "$HOOKS/client-down" >/dev/null 2>&1
+		fi
+	fi
 
 	procd_open_instance
 	procd_set_param command "$PROG" -config "$CONF" -quiet

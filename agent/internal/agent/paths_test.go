@@ -15,6 +15,7 @@ func TestDesiredPathsOpenWrtKeys(t *testing.T) {
 		return netif.Iface{Name: name, Network: network, WAN: network != "", Up: true, Carrier: true, Addrs: []string{"192.0.2.2/24"}}
 	}
 	ifs := []netif.Iface{up("phy0-sta0", "wwan"), up("eth1", "tethering"), up("br-lan", "")}
+	ifs[0].Kind, ifs[1].Kind = netif.KindWifi, netif.KindUSB
 	cfg := config.Default()
 	cfg.Role = config.RoleClient
 	none := func(config.PathSetting) bool { return false }
@@ -22,6 +23,12 @@ func TestDesiredPathsOpenWrtKeys(t *testing.T) {
 	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"eth1", "phy0-sta0"}) {
 		t.Fatalf("unconfigured WANs: %v", got)
 	}
+	// Save mobile data: the phone (secondary by default) stands by
+	cfg.Mode = config.ModeFailover
+	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"phy0-sta0"}) {
+		t.Fatalf("failover default: %v", got)
+	}
+	cfg.Mode = config.ModeSpeed
 	// "Backup only" on the phone: stays out while the hotel Wi-Fi works
 	cfg.Client.Paths = []config.PathSetting{{Iface: "tethering", Enabled: true, Priority: config.PriorityBackup}}
 	if got := desiredPaths(cfg, ifs, none); !slices.Equal(got, []string{"phy0-sta0"}) {

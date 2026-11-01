@@ -5,9 +5,16 @@
 if [ -f /etc/uci-defaults/90-tailbond ]; then
 	sh /etc/uci-defaults/90-tailbond && rm -f /etc/uci-defaults/90-tailbond
 fi
+# Running right away: the admin panel (Applications -> tailbond) talks to
+# the agent to pair. The tunnel starts once paired.
 /etc/init.d/tailbond enable
 /etc/init.d/tailbond restart
-# Menus: LuCI index cache, GL admin panel menu
+# GL admin panel: nginx caches /rpc modules per worker and reads
+# gl-conf.d at load; the menu itself is re-read on every page load.
+if [ -x /etc/init.d/nginx ] && nginx -t >/dev/null 2>&1; then
+	/etc/init.d/nginx reload >/dev/null 2>&1
+fi
+# LuCI menu cache
 rm -f /tmp/luci-indexcache* 2>/dev/null
 [ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd reload 2>/dev/null
 exit 0
