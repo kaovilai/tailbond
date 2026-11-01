@@ -168,6 +168,7 @@ private fun machinesNote(state: UiState, connected: Boolean): String? {
         list == null && state.peers.loading -> "Loading machines from ${state.serverName}…"
         list == null -> "Couldn't load the machine list from ${state.serverName}" + (state.peers.error?.let { " ($it)" } ?: "") + "."
         !list.tailscaleRunning -> "${state.serverName} isn't connected to Tailscale right now, so tailnet machines are unreachable."
+        state.live.state == ConnState.CONNECTING -> "Connecting… This is the list from ${ago(list.fetchedAtMs)}."
         !connected -> "Not connected. This is the list from ${ago(list.fetchedAtMs)}; connect to reach these machines."
         else -> null
     }
@@ -205,7 +206,7 @@ private fun StatusCard(state: UiState, actions: UiActions) {
             Column(Modifier.weight(1f)) {
                 Text(Words.stateTitle(live.state), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
-                Text(Words.stateLine(live, state.serverName), style = MaterialTheme.typography.bodyMedium)
+                Text(Words.stateLine(live, state.serverName, state.settings.handedToTailscale), style = MaterialTheme.typography.bodyMedium)
             }
             Spacer(Modifier.width(12.dp))
             Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f))
@@ -248,8 +249,8 @@ private fun HandedBackCard(state: UiState, actions: UiActions) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Tailscale is in charge on this phone", style = MaterialTheme.typography.titleMedium)
             Text(
-                "tailbond is off and stays off until you turn it on again. " +
-                    "If Tailscale isn't connected yet, open it and turn on its switch.",
+                "tailbond stays off until you turn it on again. In the Tailscale app, " +
+                    "turn on its switch if it says Disconnected.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (state.tailscaleInstalled) {
@@ -355,7 +356,6 @@ private fun ThisDevice(state: UiState) {
     val copy = LocalCopy.current
     val ip = state.live.tunnelIp
     val name = state.profile?.name?.ifBlank { null } ?: state.profile?.user?.ifBlank { null } ?: "This phone"
-    val serverIp = state.peers.list?.self?.ipv4
     ListItem(
         headlineContent = { Text("$name (this phone)", fontWeight = FontWeight.SemiBold) },
         supportingContent = {
@@ -368,7 +368,8 @@ private fun ThisDevice(state: UiState) {
                     },
                 )
                 Text(
-                    "On your tailnet through ${state.serverName}" + (serverIp?.let { " ($it)" } ?: ""),
+                    if (ip != null) "Your Tailscale machines can reach this phone at this address, through ${state.serverName}"
+                    else "This phone reaches your tailnet through ${state.serverName}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

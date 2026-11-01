@@ -79,7 +79,7 @@ fun ConnectionsScreen(state: UiState, actions: UiActions, modifier: Modifier = M
         val kinds = PathKind.entries.filter { it != PathKind.ETHERNET || Words.sampleFor(live, it) != null }
         for (kind in kinds) LinkCard(kind, state, actions, advanced)
         TextButton(onClick = { advanced = !advanced }, modifier = Modifier.padding(horizontal = 8.dp)) {
-            Text(if (advanced) "Hide link roles" else "Advanced: link roles")
+            Text(if (advanced) "Hide link roles" else "Advanced: choose which connection is main or backup")
         }
 
         SectionHeader("How to use your connections")

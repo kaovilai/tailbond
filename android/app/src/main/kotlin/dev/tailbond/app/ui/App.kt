@@ -170,7 +170,7 @@ fun HandoffDialog(kind: Handoff, state: UiState, actions: UiActions) {
     AlertDialog(
         onDismissRequest = actions::dismissHandoff,
         title = {
-            Text(if (kind == Handoff.OTHER_VPN_ACTIVE) "Turn off Tailscale's VPN?" else "Allow tailbond's VPN")
+            Text(if (kind == Handoff.OTHER_VPN_ACTIVE) "Switch from Tailscale to tailbond?" else "Allow tailbond's VPN")
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

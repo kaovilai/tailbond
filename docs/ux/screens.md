@@ -31,3 +31,7 @@ scrolling page). `-dark` = same screen in dark theme.
 
 Some screenshots (dialogs, the copy confirmation) show a moment in time; on a
 real phone they appear after the tap described.
+
+The web screenshots come from a test server that isn't on Tailscale, so the
+page shows its addresses as `home.example.net:443` / `127.0.0.1` where a real
+one shows `homebox.tail1234.ts.net`.

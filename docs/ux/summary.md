@@ -23,6 +23,7 @@ the commands in [android.md](../android.md#screen-renders).
 |---|---|---|---|---|---|
 | 0 | before | 5 / 14 / 10 | 4 / 17 / 6 | 4 / 10 / 6 | 13 / 41 / 22 |
 | 1 | after-1 | 1 / 3 / 9 | 1 / 5 / 11 | 3 / 7 / 3 | 5 / 15 / 23 |
+| 2 | after-2 | 0 / 2 / 7 | 0 / 3 / 7 | 1 / 5 / 10 | 1 / 10 / 24 |
 ROUNDS_PLACEHOLDER
 
 ## Round 0 → redesign
@@ -79,4 +80,33 @@ The redesign (commit `bdb3fc9`, agent `cc24a66`, web `68cfd1f`):
 | 23 | Server called home.example.net on the web header (A) | L | **reject** (test environment: Tailscale disabled, so the header shows the public address) |
 | 24 | "certificate is checked", "holds this phone's key" worry (C) | L | **fix**: "Secure connection to homebox", "Keep this link to yourself" |
 | 25 | "Not working" gives no reason (B) | L | **partial**: "Not working right now"; mqvpn exposes no per-path reason |
+
+## Round 2 triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Can't start alone: the server page's address and the server's name are shown nowhere (C, A) | H/M | **partial**: the admin's Devices tab now has *Invite someone's phone* (copyable `http://<magicdns>:8077/#add-phone`); onboarding says up front you need the server's name or link from whoever set it up. The phone can't discover the server by itself while Tailscale owns the VPN, so a first hint from the admin stays necessary |
+| 2 | Unknown-apps warning when installing from the browser (C) | M | **partial**: step 1 says Android will warn and why it's fine (the app comes from your own home server). Play Store distribution is out of scope |
+| 3 | Nothing says to come back to the browser after installing (C) | M | **fix**: "Then come back to this page for step 2" |
+| 4 | Cert error: which button is safe? (C) | M | **fix**: "If you're not sure, don't pair again: tap Try again later and tell whoever set it up." (no button reshuffle: no ping-pong with round 1 #4) |
+| 5 | Machines list below the fold (C, A) | M/L | **partial**: Internet traffic row moved below Machines, the mode line shortened; the list now starts on the first screen. Connections stay above Machines because tasks 4–5 need them |
+| 6 | Switch off leaves both VPNs off; nothing says Tailscale is still off (C) | M | **fix**: Disconnected line says Tailscale stays off until you switch back to it |
+| 7 | Save-data is set in four places (B, A, C) | M/L | **fix**: link roles behind *Advanced: link roles*; Connections page says the home switch picks *Save mobile data*; the monthly limit says it's separate |
+| 8 | Per-link speed on home unlabeled and summed (B) | M | **fix**: ↓/↑ per link |
+| 9 | This device 10.77.0.2: what's it for? (A, C) | M/L | **partial**: "On your tailnet through homebox (100.101.1.1)"; the round-1 limitation (no per-phone 100.x) stands |
+| 10 | Subnet routes / split DNS through homebox not described (B) | M | **reject**: same as round 1 #14 (needs server `--accept-routes` and a contract change) |
+| 11 | Settings "opens Tailscale" vs 12b "If Tailscale isn't connected yet…" (A, B) | L | **fix**: "opens the Tailscale app, where you turn Tailscale on" |
+| 12 | Data limit: do downloads count? (B) | L | **fix**: "counts everything tailbond sends and receives over mobile data" |
+| 13 | Paste-error field looks empty (B, C) | L | **fix** (render): the render now shows the pasted text |
+| 14 | "Keep this link to yourself" reads like a warning (C) | L | **fix**: "This link is just for this phone." |
+| 15 | *Switch back to Tailscale* is a small text link (C) | L | **fix**: full-width outlined button |
+| 16 | Always-on section is jargon (C) | L | **fix**: titled "Keep tailbond on all the time (optional)" |
+| 17 | Copy icon copies the IP while the row leads with the name (A, B, C) | L | **reject**: as round 1 #21 |
+| 18 | Web header shows home.example.net (A, B) | L | **reject**: as round 1 #23 (test server without Tailscale; manifest now says so) |
+| 19 | "Internet traffic: Through your home server" on by default (A) | L | **reject**: full tunnel is the contract default (bonding is the point); one tap to change |
+| 20 | Can't pick a tailnet exit node (B) | L | **reject**: the home server is the exit; choosing another exit node would be a server-side feature |
+| 21 | Unreachable error has no share button (C) | L | **reject**: low value for its cost; the text is plain enough to read out or screenshot |
+| 22 | "Remove from this phone" confirmation not visible (C) | L | **reject**: it does confirm (dialog); not rendered |
+| 23 | "Can't reach" error doesn't say whether it retries (B) | L | **reject**: it doesn't retry by itself after a hard failure; *Try again* is the action |
+| 24 | Jargon in the confirm dialog (address, Technical details) (C) | L | **reject**: the address line was asked for by B in round 1; details are collapsed |
 ROUND2_PLACEHOLDER

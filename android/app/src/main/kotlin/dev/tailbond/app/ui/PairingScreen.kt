@@ -136,6 +136,11 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("On this phone (easiest)", style = MaterialTheme.typography.titleMedium)
                 Text(
+                    "Came here from your home server's page? Go back to it in your browser and tap Add this phone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
                     "Keep Tailscale on for now. Open your home server's page, tap Add this phone, and tailbond opens with everything filled in.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -230,7 +235,10 @@ fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () ->
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it.")
-                Text("It connects over the internet to ${p.server}.", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "It connects over the internet to ${p.server}, and your internet traffic goes out from home (you can change that in Settings).",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 if (p.name.isNotBlank()) Text("This phone will be called \"${p.name}\" on $server.")
                 when {
                     p.certSha256 != null -> Row(verticalAlignment = Alignment.CenterVertically) {

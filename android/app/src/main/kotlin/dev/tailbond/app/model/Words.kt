@@ -22,13 +22,18 @@ object Words {
     }
 
     /** One line under the big switch. [server] is the home server's short name. */
-    fun stateLine(live: Live, server: String): String = when (live.state) {
+    fun stateLine(live: Live, server: String, handedToTailscale: Boolean = false): String = when {
+        handedToTailscale && live.state == ConnState.DISCONNECTED -> "Stopped. Tailscale is in charge on this phone."
+        else -> stateLineFor(live, server)
+    }
+
+    private fun stateLineFor(live: Live, server: String): String = when (live.state) {
         ConnState.CONNECTED -> "Through $server · ${activeKinds(live).ifEmpty { "no connection in use" }}"
         ConnState.CONNECTING -> "Reaching $server…"
         ConnState.RECONNECTING -> "Lost touch with $server, trying again" + (live.message?.let { " ($it)" } ?: "")
         ConnState.ERROR -> "Stopped. See below for how to fix it."
         ConnState.DISCONNECTED ->
-            "Stopped. Turn on to reach $server and your Tailscale machines. Tailscale stays off too until you switch back to it."
+            "Stopped. Turn on to reach $server and your Tailscale machines, or switch back to Tailscale below."
     }
 
     /** "Wi-Fi + mobile data": link kinds carrying traffic right now. */
@@ -124,9 +129,9 @@ object Words {
         ErrorKind.IDENTITY -> ErrorText(
             "Can't confirm this is your home server",
             "tailbond stopped because the server answering isn't the $server this phone was paired with. " +
-                "This is expected right after $server was reinstalled: then pair this phone again. " +
-                "If you're not sure, don't pair again: tap Try again later and tell whoever set it up.",
-            Fix.RETRY, Fix.REPAIR,
+                "Try again later, and tell whoever set it up. If $server was just reinstalled, " +
+                "they can add this phone again (Settings → Pair again).",
+            Fix.RETRY,
         )
         ErrorKind.REJECTED -> ErrorText(
             "Your home server doesn't recognise this phone",

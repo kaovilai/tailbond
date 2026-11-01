@@ -60,10 +60,10 @@ class WordsTest {
     @Test fun errorsNameTheFix() {
         assertEquals(Words.Fix.RETRY, Words.error(ErrorKind.UNREACHABLE, "homebox", "home.example.net:443", null).fix)
         assertTrue(Words.error(ErrorKind.UNREACHABLE, "homebox", "home.example.net:443", null).body.contains("UDP port 443"))
-        // never push re-pairing first on a certificate mismatch: it could be an impostor
+        // never offer re-pairing on a certificate mismatch: it could be an impostor
         val cert = Words.error(ErrorKind.IDENTITY, "homebox", "x:443", null)
         assertEquals(Words.Fix.RETRY, cert.fix)
-        assertEquals(Words.Fix.REPAIR, cert.second)
+        assertEquals(null, cert.second)
     }
 
     @Test fun serverName() {

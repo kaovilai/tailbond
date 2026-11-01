@@ -68,7 +68,7 @@ fun SettingsScreen(
             )
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onRepair) { Text("Pair again") }
-                TextButton(onClick = { forgetOpen = true }) { Text("Remove from this phone") }
+                TextButton(onClick = { forgetOpen = true }) { Text("Remove from this phone", color = MaterialTheme.colorScheme.error) }
             }
         }
 
@@ -94,7 +94,7 @@ fun SettingsScreen(
             supportingContent = {
                 Text(
                     if (state.settings.excludedApps.isEmpty()) "None. Every app goes through tailbond"
-                    else "${state.settings.excludedApps.size} app(s) use the phone's own connection",
+                    else state.settings.excludedApps.size.let { n -> if (n == 1) "1 app uses the phone's own connection" else "$n apps use the phone's own connection" },
                 )
             },
             leadingContent = { Icon(Icons.Filled.Apps, null) },
@@ -103,7 +103,7 @@ fun SettingsScreen(
         )
         ListItem(
             headlineContent = { Text("Switch back to Tailscale") },
-            supportingContent = { Text(if (state.tailscaleInstalled) "Turns tailbond off and opens the Tailscale app, where you turn Tailscale on" else "Turns tailbond off. Tailscale isn't installed: opens its store page") },
+            supportingContent = { Text(if (state.tailscaleInstalled) "Turns tailbond off and opens the Tailscale app. Turn Tailscale on there if it says Disconnected" else "Turns tailbond off. Tailscale isn't installed: opens its store page") },
             leadingContent = { Icon(Icons.Filled.SwapHoriz, null) },
             modifier = Modifier.clickable(onClick = actions::switchToTailscale),
         )
