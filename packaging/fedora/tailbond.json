@@ -1,0 +1,20 @@
+{
+  "role": "server",
+  "mqvpn_bin": "/usr/bin/mqvpn",
+  "state_dir": "/var/lib/tailbond",
+  "hooks_dir": "/usr/lib/tailbond/hooks",
+  "listen": ":8077",
+  "ui_password": "",
+  "mode": "speed",
+  "server": {
+    "port": 443,
+    "public_addr": "",
+    "subnet": "10.77.0.0/24",
+    "subnet6": "fd77:77::/112",
+    "use_tailscale_cert": true
+  },
+  "client": {
+    "pairing_uri": "",
+    "paths": []
+  }
+}

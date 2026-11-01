@@ -1,0 +1,378 @@
+// Package agent is tailbondd: it owns the config, supervises mqvpn, normalizes
+// its status and serves the HTTP API and web UI.
+package agent
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/tailbond/tailbond/agent/internal/hooks"
+	"github.com/tailbond/tailbond/agent/internal/mqctl"
+	"github.com/tailbond/tailbond/agent/internal/status"
+	"github.com/tailbond/tailbond/agent/internal/supervisor"
+	"github.com/tailbond/tailbond/agent/internal/tailscale"
+)
+
+type Options struct {
+	Version string
+	WebDir  string // serve the UI from disk instead of the embedded copy
+	Echo    bool   // copy logs to stderr (journald)
+}
+
+type Agent struct {
+	opts  Options
+	store *config.Store
+	logs  *supervisor.Ring
+	sup   *supervisor.Supervisor
+	ctl   *mqctl.Client
+	ts    *tailscale.CLI
+	hooks *hooks.Runner
+	rater *status.Rater
+	role  string
+
+	hookq  chan func()
+	pollMu sync.Mutex // serializes poll (the rater is not concurrency-safe)
+
+	mu       sync.Mutex
+	snap     *status.Status
+	rt       runtime // per-process state parsed from mqvpn output
+	tlsInfo  tlsInfo
+	sessions map[string]time.Time
+	client   *clientState
+}
+
+// runtime is reset every time mqvpn starts.
+type runtime struct {
+	tunnelIP    string
+	peerIP      string
+	ready       bool // server: "server ready" / client: ESTABLISHED
+	readyAt     time.Time
+	upHookFired bool
+	lastState   string
+	logPaths    map[string]logPath
+}
+
+type logPath struct {
+	id      uint64
+	srttMs  uint64
+	state   string
+	updated time.Time
+}
+
+type tlsInfo struct {
+	certFile, keyFile string
+	sni               string
+	insecure          bool
+	sha256            string
+	source            string // "tailscale" | "self-signed"
+}
+
+func New(store *config.Store, opts Options) *Agent {
+	cfg := store.Get()
+	a := &Agent{
+		opts:     opts,
+		store:    store,
+		logs:     supervisor.NewRing(2000),
+		ctl:      mqctl.New(cfg.ControlAddr),
+		rater:    status.NewRater(),
+		role:     cfg.Role,
+		hookq:    make(chan func(), 32),
+		sessions: map[string]time.Time{},
+	}
+	if opts.Echo {
+		a.logs.Echo = os.Stderr
+	}
+	a.ctl.Timeout = 900 * time.Millisecond
+	a.ts = &tailscale.CLI{Disabled: cfg.DisableTailscale, Route: cfg.Server.Subnet}
+	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
+	a.sup = supervisor.New(supervisor.Spec{
+		Bin:      cfg.MqvpnBin,
+		Args:     []string{"--config", a.confPath()},
+		PreStart: a.preStart,
+		OnLine:   a.onLine,
+		OnStart:  a.onStart,
+		OnExit:   a.onExit,
+	}, a.logs)
+	if a.role == config.RoleClient {
+		a.client = newClientState()
+	}
+	return a
+}
+
+func (a *Agent) Logf(format string, args ...any) { a.logs.Add("agent", fmt.Sprintf(format, args...)) }
+
+func (a *Agent) confPath() string {
+	cfg := a.store.Get()
+	name := "server.conf"
+	if cfg.Role == config.RoleClient {
+		name = "client.conf"
+	}
+	return filepath.Join(cfg.StateDir, name)
+}
+
+// Run blocks until ctx is cancelled.
+func (a *Agent) Run(ctx context.Context) error {
+	cfg := a.store.Get()
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		return err
+	}
+	go a.hookWorker(ctx)
+	a.Logf("tailbondd %s starting, role=%s mode=%s config=%s", a.opts.Version, cfg.Role, cfg.Mode, a.store.Path())
+
+	switch cfg.Role {
+	case config.RoleServer:
+		a.startServer(ctx)
+	case config.RoleClient:
+		a.startClient(ctx)
+	}
+
+	srvErr := make(chan error, 1)
+	go func() { srvErr <- a.serveHTTP(ctx) }()
+
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		a.poll(ctx)
+		select {
+		case <-ctx.Done():
+			a.Logf("shutting down")
+			a.sup.Stop()
+			a.drainHooks()
+			return nil
+		case err := <-srvErr:
+			a.sup.Stop()
+			a.drainHooks()
+			return err
+		case <-t.C:
+		}
+	}
+}
+
+func (a *Agent) hookWorker(ctx context.Context) {
+	for {
+		select {
+		case f := <-a.hookq:
+			f()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// drainHooks runs queued hooks synchronously at shutdown (down hooks matter).
+func (a *Agent) drainHooks() {
+	for {
+		select {
+		case f := <-a.hookq:
+			f()
+		default:
+			return
+		}
+	}
+}
+
+func (a *Agent) runHook(name string, env map[string]string) {
+	select {
+	case a.hookq <- func() { a.hooks.Run(name, env) }:
+	default:
+		a.Logf("hook queue full, dropping %s", name)
+	}
+}
+
+func (a *Agent) preStart(ctx context.Context) error {
+	a.mu.Lock()
+	a.rt = runtime{logPaths: map[string]logPath{}}
+	a.mu.Unlock()
+	if a.role == config.RoleServer {
+		return a.serverPreStart(ctx)
+	}
+	return a.clientPreStart(ctx)
+}
+
+func (a *Agent) onStart() {}
+
+func (a *Agent) onExit(err error) {
+	a.mu.Lock()
+	fired := a.rt.upHookFired
+	env := a.hookEnvLocked()
+	a.rt.ready, a.rt.upHookFired = false, false
+	a.mu.Unlock()
+	if fired {
+		if a.role == config.RoleServer {
+			a.runHook(hooks.ServerDown, env)
+		} else {
+			a.runHook(hooks.ClientDown, env)
+		}
+	}
+}
+
+var (
+	reState     = regexp.MustCompile(`state: (\w+) → (\w+)`)
+	reClientTun = regexp.MustCompile(`TUN (\S+) configured: (\S+) → (\S+)`)
+	reServerTun = regexp.MustCompile(`TUN (\S+) configured: (\S+) \(mtu`)
+	reReady     = regexp.MustCompile(`mqvpn server ready`)
+	reLogPath   = regexp.MustCompile(`\[STATUS\]\s+path(\d+)=(\S+) srtt=(\d+)ms tx=\d+ rx=\d+ (\w+)`)
+)
+
+func (a *Agent) onLine(line string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if m := reClientTun.FindStringSubmatch(line); m != nil {
+		a.rt.tunnelIP, a.rt.peerIP = m[2], m[3]
+		return
+	}
+	if m := reServerTun.FindStringSubmatch(line); m != nil {
+		a.rt.tunnelIP = m[2]
+		return
+	}
+	if reReady.MatchString(line) && a.role == config.RoleServer {
+		a.markReadyLocked()
+		return
+	}
+	if m := reState.FindStringSubmatch(line); m != nil && a.role == config.RoleClient {
+		a.rt.lastState = m[2]
+		switch m[2] {
+		case "ESTABLISHED":
+			a.markReadyLocked()
+		case "RECONNECTING", "CLOSED", "IDLE":
+			if a.rt.ready {
+				a.rt.ready = false
+				if a.rt.upHookFired {
+					a.rt.upHookFired = false
+					a.runHook(hooks.ClientDown, a.hookEnvLocked())
+				}
+			}
+		}
+		return
+	}
+	if m := reLogPath.FindStringSubmatch(line); m != nil {
+		var id, srtt uint64
+		fmt.Sscan(m[1], &id)
+		fmt.Sscan(m[3], &srtt)
+		a.rt.logPaths[m[2]] = logPath{id: id, srttMs: srtt, state: m[4], updated: time.Now()}
+	}
+}
+
+func (a *Agent) markReadyLocked() {
+	if a.rt.ready {
+		return
+	}
+	a.rt.ready, a.rt.readyAt = true, time.Now()
+	a.rt.upHookFired = true
+	if a.role == config.RoleServer {
+		a.runHook(hooks.ServerUp, a.hookEnvLocked())
+	} else {
+		a.runHook(hooks.ClientUp, a.hookEnvLocked())
+	}
+}
+
+func (a *Agent) hookEnvLocked() map[string]string {
+	cfg := a.store.Get()
+	env := map[string]string{
+		"TB_TUN":       config.DefaultTunName,
+		"TB_ROLE":      cfg.Role,
+		"TB_MODE":      cfg.Mode,
+		"TB_STATE_DIR": cfg.StateDir,
+		"TB_CONFIG":    a.confPath(),
+	}
+	if cfg.Role == config.RoleServer {
+		env["TB_SUBNET"] = cfg.Server.Subnet
+		env["TB_SUBNET6"] = cfg.Server.Subnet6
+		env["TB_PORT"] = fmt.Sprint(cfg.Server.Port)
+		if !cfg.Server.DisableDNS {
+			env["TB_DNS_IP"] = cfg.ServerTunnelIP()
+		} else {
+			env["TB_DNS_IP"] = ""
+		}
+		return env
+	}
+	env["TB_TUNNEL_IP"] = a.rt.tunnelIP
+	env["TB_SERVER_IP"] = ""
+	env["TB_TAILNET_ROUTES"] = ""
+	if a.client != nil && a.client.payload != nil {
+		env["TB_SERVER_IP"] = a.client.serverIP
+		env["TB_TAILNET_ROUTES"] = strings.Join(a.client.payload.TailnetRoutes, ",")
+	}
+	return env
+}
+
+// poll refreshes the status snapshot once a second.
+func (a *Agent) poll(ctx context.Context) {
+	a.pollMu.Lock()
+	defer a.pollMu.Unlock()
+	var st *status.Status
+	if a.role == config.RoleServer {
+		st = a.serverStatus(ctx)
+	} else {
+		st = a.clientStatus(ctx)
+	}
+	st.Version = a.opts.Version
+	a.mu.Lock()
+	a.snap = st
+	a.mu.Unlock()
+}
+
+func (a *Agent) Snapshot() *status.Status {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.snap == nil {
+		return &status.Status{Role: a.role, State: status.StateDisconnected, Paths: []status.Path{}, Clients: []status.Client{}}
+	}
+	return a.snap
+}
+
+// supState maps the supervisor and readiness to a contract state.
+func (a *Agent) supState(ready bool) (string, string) {
+	info := a.sup.Info()
+	switch info.State {
+	case supervisor.Running:
+		if ready {
+			return status.StateConnected, ""
+		}
+		return status.StateConnecting, ""
+	case supervisor.Starting:
+		return status.StateConnecting, ""
+	case supervisor.Backoff:
+		return status.StateError, info.LastErr
+	default:
+		return status.StateDisconnected, ""
+	}
+}
+
+func (a *Agent) tsStatus(ctx context.Context) *status.Tailscale {
+	ti := a.ts.Get(ctx)
+	return &status.Tailscale{
+		Running: ti.Running, Self: ti.Self, RoutesApproved: ti.RoutesApproved,
+		Installed: ti.Installed, DNSName: ti.DNSName, IPs: ti.IPs,
+	}
+}
+
+// genKey returns a random 32-byte base64 PSK (same format as `mqvpn --genkey`).
+func genKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+var errClientOnly = errors.New("client role only")
+var errServerOnly = errors.New("server role only")

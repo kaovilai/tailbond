@@ -1,0 +1,80 @@
+#!/bin/bash
+# tailbond server-up hook (Fedora). Run by tailbondd after mqvpn's server starts.
+# Env: TB_TUN TB_SUBNET TB_SUBNET6 TB_PORT TB_DNS_IP (+ TB_CONFIG TB_STATE_DIR).
+#
+# - firewalld running: open the UDP port, put tb0 in the "tailbond" zone and
+#   masquerade client traffic toward the internet and tailscale0
+#   (policy "tailbond-out"); tailnet peers may reach clients ("tailbond-in").
+# - no firewalld: mqvpn's NAT script handles internet NAT, plus iptables
+#   masquerade of the tailnet ranges out of tailscale0.
+# - Tailscale: advertise TB_SUBNET as a subnet route (approve it once in the
+#   admin console) so tailnet peers can reach bonded clients.
+set -u
+
+LIBDIR=/usr/lib/tailbond
+TB_TUN="${TB_TUN:-tb0}"
+TB_PORT="${TB_PORT:-443}"
+TAILNET4=100.64.0.0/10
+TAILNET6=fd7a:115c:a1e0::/48
+
+log() { echo "$*"; }
+
+sysctl -qw net.ipv4.ip_forward=1
+[ -n "${TB_SUBNET6:-}" ] && sysctl -qw net.ipv6.conf.all.forwarding=1
+
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  fw() { firewall-cmd -q "$@" 2>/dev/null; firewall-cmd -q --permanent "$@" 2>/dev/null; true; }
+  if ! firewall-cmd -q --info-zone=tailbond >/dev/null 2>&1; then
+    log "firewalld: tailbond zone not loaded, reloading"
+    firewall-cmd -q --reload
+  fi
+  defzone="$(firewall-cmd --get-default-zone)"
+  if [ "$TB_PORT" = 443 ]; then
+    fw --zone="$defzone" --add-service=tailbond
+  else
+    fw --zone="$defzone" --add-port="$TB_PORT/udp"
+  fi
+  # tb0 is listed in the zone file; re-add at runtime in case it was moved.
+  firewall-cmd -q --zone=tailbond --change-interface="$TB_TUN" 2>/dev/null || true
+  fw --policy=tailbond-out --add-rich-rule="rule family=ipv4 source address=$TB_SUBNET masquerade"
+  [ -n "${TB_SUBNET6:-}" ] && fw --policy=tailbond-out --add-rich-rule="rule family=ipv6 source address=$TB_SUBNET6 masquerade"
+  log "firewalld: udp/$TB_PORT open in zone $defzone; $TB_TUN in zone tailbond; masquerade $TB_SUBNET ${TB_SUBNET6:-}"
+else
+  if [ -x "$LIBDIR/mqvpn/mqvpn-server-nat.sh" ] && [ -n "${TB_CONFIG:-}" ]; then
+    "$LIBDIR/mqvpn/mqvpn-server-nat.sh" setup "$TB_CONFIG" || log "mqvpn-server-nat.sh setup failed"
+  fi
+  if ip link show tailscale0 >/dev/null 2>&1; then
+    c=(-m comment --comment tailbond-tailnet)
+    iptables -t nat -C POSTROUTING -s "$TB_SUBNET" -d "$TAILNET4" -o tailscale0 -j MASQUERADE "${c[@]}" 2>/dev/null ||
+      iptables -t nat -A POSTROUTING -s "$TB_SUBNET" -d "$TAILNET4" -o tailscale0 -j MASQUERADE "${c[@]}"
+    iptables -C FORWARD -i "$TB_TUN" -o tailscale0 -j ACCEPT "${c[@]}" 2>/dev/null ||
+      iptables -I FORWARD -i "$TB_TUN" -o tailscale0 -j ACCEPT "${c[@]}"
+    iptables -C FORWARD -i tailscale0 -o "$TB_TUN" -j ACCEPT "${c[@]}" 2>/dev/null ||
+      iptables -I FORWARD -i tailscale0 -o "$TB_TUN" -j ACCEPT "${c[@]}"
+    if [ -n "${TB_SUBNET6:-}" ]; then
+      ip6tables -t nat -C POSTROUTING -s "$TB_SUBNET6" -d "$TAILNET6" -o tailscale0 -j MASQUERADE "${c[@]}" 2>/dev/null ||
+        ip6tables -t nat -A POSTROUTING -s "$TB_SUBNET6" -d "$TAILNET6" -o tailscale0 -j MASQUERADE "${c[@]}"
+      ip6tables -C FORWARD -i "$TB_TUN" -o tailscale0 -j ACCEPT "${c[@]}" 2>/dev/null ||
+        ip6tables -I FORWARD -i "$TB_TUN" -o tailscale0 -j ACCEPT "${c[@]}"
+    fi
+    log "iptables: $TB_TUN -> tailscale0 masquerade for $TAILNET4 $TAILNET6"
+  fi
+fi
+
+# Tailscale: merge TB_SUBNET into the advertised routes (keeps existing ones,
+# including an exit node).
+if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+  cur="$(tailscale debug prefs 2>/dev/null | tr -d ' \n\t' | sed -n 's/.*"AdvertiseRoutes":\[\([^]]*\)\].*/\1/p' | tr -d '"')"
+  case ",$cur," in
+    *",$TB_SUBNET,"*) log "tailscale: $TB_SUBNET already advertised" ;;
+    *)
+      routes="${cur:+$cur,}$TB_SUBNET"
+      if tailscale set --advertise-routes="$routes"; then
+        log "tailscale: advertising $routes (approve $TB_SUBNET in the admin console if needed)"
+      else
+        log "tailscale: could not advertise $TB_SUBNET"
+      fi
+      ;;
+  esac
+fi
+exit 0

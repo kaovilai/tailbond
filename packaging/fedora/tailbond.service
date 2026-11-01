@@ -1,0 +1,27 @@
+[Unit]
+Description=tailbond WAN bonding server (tailbondd + mqvpn)
+Documentation=file:///usr/share/doc/tailbond-server/fedora-server.md
+After=network-online.target firewalld.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tailbondd -config /etc/tailbond/tailbond.json
+Restart=on-failure
+RestartSec=3
+# tailbondd stops mqvpn itself and then runs the server-down hook.
+KillMode=mixed
+TimeoutStopSec=20
+StateDirectory=tailbond
+StateDirectoryMode=0700
+# Root is needed for the TUN device, routes and the firewall/tailscale hooks.
+ProtectHome=true
+ProtectSystem=full
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/etc/tailbond /var/lib/tailbond /dev/net/tun
+
+[Install]
+WantedBy=multi-user.target

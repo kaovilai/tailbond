@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>tailbond</short>
+  <description>tailbond bonding server: mqvpn Multipath QUIC (MASQUE) on UDP 443. Forward this port on your home router.</description>
+  <port protocol="udp" port="443"/>
+</service>

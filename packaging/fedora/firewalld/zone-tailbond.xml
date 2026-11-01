@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bonded clients arrive on tb0. They may use services on this host (DNS
+     forwarder on the tunnel IP) and talk to each other. -->
+<zone target="ACCEPT">
+  <short>tailbond</short>
+  <description>Devices bonded to this server through the tailbond tunnel (tb0).</description>
+  <interface name="tb0"/>
+  <forward/>
+</zone>
