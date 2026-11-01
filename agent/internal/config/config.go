@@ -127,6 +127,33 @@ type Config struct {
 	AndroidAPK string `json:"android_apk,omitempty"`
 	// Additive: GL.iNet router package offered as GET /tailbond-glinet.ipk.
 	GLiNetIPK string `json:"glinet_ipk,omitempty"`
+	// Additive (server role): the phone landing page ("Get tailbond") on
+	// the Tailscale IPs. LandingPort is the port it binds (0 = 80, -1 =
+	// off); LandingPublicPort the port tailnet devices use (0 = the same;
+	// OpenWrt binds 8078 and redirects tailnet tcp/80 to it, since GL's
+	// nginx owns port 80).
+	LandingPort       int `json:"landing_port,omitempty"`
+	LandingPublicPort int `json:"landing_public_port,omitempty"`
+}
+
+// DefaultLandingPort serves the landing page at http://<server>/.
+const DefaultLandingPort = 80
+
+// LandingPorts returns the bind and public port of the landing page, or
+// ok=false when it is turned off.
+func (c *Config) LandingPorts() (bind, public int, ok bool) {
+	if c.LandingPort < 0 {
+		return 0, 0, false
+	}
+	bind = c.LandingPort
+	if bind == 0 {
+		bind = DefaultLandingPort
+	}
+	public = c.LandingPublicPort
+	if public <= 0 {
+		public = bind
+	}
+	return bind, public, true
 }
 
 // DefaultAndroidAPK is where packages may install the Android app for download.
@@ -218,6 +245,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port out of range: %d", c.Server.Port)
+	}
+	if c.LandingPort > 65535 || c.LandingPublicPort < 0 || c.LandingPublicPort > 65535 {
+		return fmt.Errorf("landing_port / landing_public_port out of range")
 	}
 	if c.Role == RoleServer {
 		p, err := netip.ParsePrefix(c.Server.Subnet)

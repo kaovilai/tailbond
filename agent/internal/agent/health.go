@@ -79,6 +79,10 @@ func isPrivate(ip netip.Addr) bool {
 
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
+// directFix: how to get direct Tailscale connections to this machine.
+const directFix = "On the router in front of this machine, forward UDP port 41641 to it, and allow 41641/udp in this machine's firewall. " +
+	"(Turning on UPnP on that router also works, but lets any device on your network open ports.)"
+
 func buildHealth(in healthInputs) healthView {
 	v := healthView{Checks: []healthCheck{}}
 	ts := in.TS
@@ -112,8 +116,13 @@ func buildHealth(in healthInputs) healthView {
 		case v.Relayed > 0:
 			c.Status = hWarn
 			c.Title = fmt.Sprintf("Tailscale: %s direct, %d through a relay (slower)", plural(v.Direct, "machine"), v.Relayed)
-			c.Detail = "Through a relay: " + strings.Join(relays, ", ") + ". To check one: tailscale ping " + relays[0]
-			c.Fix = "Usually fixed by forwarding UDP port 41641 to this machine, or by turning on UPnP on the router in front of it."
+			those := "that machine"
+			if v.Relayed > 1 {
+				those = "those machines"
+			}
+			c.Detail = "Through a relay: " + strings.Join(relays, ", ") + ". Only traffic between this machine and " + those +
+				" is slower (including bonded devices reaching it); bonding itself doesn't go through Tailscale. To check: tailscale ping " + relays[0] + " (\"via DERP\" means relayed)."
+			c.Fix = directFix
 		case v.Direct > 0:
 			c.Status, c.Title = hOK, fmt.Sprintf("Tailscale: %s direct", plural(v.Direct, "machine"))
 		default:
@@ -143,7 +152,7 @@ func buildHealth(in healthInputs) healthView {
 				Detail: pm, Fix: "Allow outbound UDP (Tailscale uses 41641 and 3478).", FixURL: urlFwPorts})
 		case n.MappingVariesByDestIP:
 			add(healthCheck{ID: "netcheck", Status: hWarn, Title: "This network makes direct Tailscale connections hard",
-				Detail: "Hard NAT (the outside port changes per destination); " + pm + ".", Fix: "Forward UDP port 41641 to this machine, or turn on UPnP on the router in front of it.", FixURL: urlFirewalls})
+				Detail: "The router in front of this machine picks a new outside port for every destination (\"hard NAT\"), so other machines can't connect straight back; " + pm + ".", Fix: directFix, FixURL: urlFirewalls})
 		default:
 			add(healthCheck{ID: "netcheck", Status: hOK, Title: "Network is friendly to direct connections", Detail: pm})
 		}

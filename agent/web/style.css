@@ -128,6 +128,11 @@ code { font-family: var(--mono); font-size: .92em; }
 
 .banner { margin: 8px 0 6px; padding: 10px 12px; border-radius: 10px; font-size: 13.5px;
   background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+/* speed tips are advice, not errors; blocking setup problems stay red */
+#health-banner { background: color-mix(in srgb, var(--warn) 14%, transparent); color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
+#health-banner.blocking { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+.addr-step ol { margin: 6px 0; padding-left: 20px; }
+.addr-step li { margin: 4px 0; }
 
 /* modes */
 .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
@@ -271,6 +276,10 @@ a { color: var(--accent); }
 a.btn { text-decoration: none; }
 .invite { margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
 .invite p { margin: 0; }
+.phone-install-body { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.phone-install-body .grow { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 8px; }
+.qr.qr-small { width: 160px; padding: 6px; align-self: flex-start; flex: none; }
+.qr.qr-small:empty { display: none; }
 .add-phone .step { display: flex; gap: 12px; align-items: flex-start; }
 .add-phone .step .grow { flex: 1; display: flex; flex-direction: column; gap: 8px; }
 .add-phone .step .num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; }

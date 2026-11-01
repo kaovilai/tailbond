@@ -83,6 +83,7 @@ async function api(method, path, body) {
   const r = await fetch(path, opts);
   if (r.status === 401) { showLogin(); throw new Error('login required'); }
   const data = await r.json().catch(() => ({}));
+  if (r.status === 403 && data.owner) { showOwnerOnly(data.owner); throw new Error('owner only'); }
   if (!r.ok || data.ok === false) throw new Error(data.error || r.statusText);
   return data;
 }
@@ -347,24 +348,39 @@ async function renderHealth() {
   try { v = await api('GET', '/api/health'); } catch { return; }
   const box = $('#health');
   const bad = v.checks.filter((c) => c.status === 'warn' || c.status === 'bad');
+  const blocking = v.checks.filter((c) => c.status === 'bad').length;
+  const headline = blocking
+    ? `Setup health: ${blocking} thing${blocking === 1 ? '' : 's'} to fix before devices can connect from away${bad.length > blocking ? `, ${bad.length - blocking} for best speed` : ''}`
+    : bad.length ? `Setup health: ${bad.length} thing${bad.length === 1 ? '' : 's'} to improve for best speed (tailbond works meanwhile)` : 'Setup health: everything is set up for best speed';
   const rows = (bad.length ? bad : v.checks).map((c) => h('li', { class: 'health-' + c.status },
     h('b', { text: c.title }),
     c.detail ? h('div', { class: 'muted small', text: c.detail }) : null,
     c.fix && c.status !== 'ok' ? h('div', { class: 'small' }, c.fix + ' ', c.fix_url ? h('a', { href: c.fix_url, target: '_blank', rel: 'noopener', text: 'How to fix' }) : null) : null));
-  box.replaceChildren(
-    h('h3', { text: bad.length ? `Setup health: ${bad.length} to improve for best speed` : 'Setup health: everything is set up for best speed' }),
+  box.replaceChildren(...[
+    h('h3', { text: headline }),
     h('ul', { class: 'health-list' }, rows),
-    bad.length ? h('p', { class: 'small', text: 'Not sure how? Show this card to whoever set up your internet; the links explain each fix.' }) : null,
+    bad.length ? h('p', { class: 'small', text: 'Each fix is on your home router or in the Tailscale admin console; the links explain them (the guide fedora-server.md has a section per item).' }) : null,
     h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
-      h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' })));
+      h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' }))].filter(Boolean));
   box.classList.remove('hidden');
   const ban = $('#health-banner');
   ban.replaceChildren();
-  if (bad.length) {
-    ban.append(`Setup health: ${bad.length} thing${bad.length === 1 ? '' : 's'} to improve for best speed. `,
+  const addr = state.settings && state.settings.public_addr_guessed;
+  if (bad.length || addr) {
+    ban.append(addr ? 'Setup: tell devices where home is (public address). ' : '', bad.length ? headline + '. ' : '',
       h('a', { href: '#', text: 'Show', onclick: (e) => { e.preventDefault(); $('#tabs button[data-tab="clients"]').click(); } }));
   }
-  ban.classList.toggle('hidden', !bad.length || state.tab === 'clients');
+  ban.classList.toggle('blocking', !!(blocking || addr));
+  ban.classList.toggle('hidden', !(bad.length || addr) || state.tab === 'clients');
+}
+
+function serverShort() { return (state.status && state.status.tailscale && state.status.tailscale.self) || 'this server'; }
+// Who may approve and add devices, in one sentence.
+function whoApproves() {
+  const s = state.settings || {};
+  if (s.password_set) return 'Who can approve: anyone with this page\'s password.';
+  if (s.owner) return `Who can approve: ${s.owner} (the Tailscale account ${serverShort()} belongs to), from any of their devices. People you share ${serverShort()} with, and others on your Tailscale network, can ask to connect but can't approve.`;
+  return `Who can approve: anyone on your Tailscale network who can reach ${serverShort()} (it's a tagged machine, so it has no single owner). Set a password below to limit that.`;
 }
 
 // Devices on the tailnet that asked to connect (POST /api/pair-requests).
@@ -375,10 +391,7 @@ function renderPairRequests(st) {
   box.classList.toggle('hidden', !reqs.length);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  const pw = state.settings && state.settings.password_set;
-  const who = h('p', { class: 'muted small', text: pw
-    ? 'Only people with this page\'s password can approve.'
-    : 'Who can approve: anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). To require a password: Devices tab → Who can approve.' });
+  const who = h('p', { class: 'muted small', text: whoApproves() + ' Approving lets the device reach your Tailscale machines the way ' + serverShort() + ' does (they see it as ' + serverShort() + ', under its access rules).' });
   box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), who, ...reqs.map((r) => {
     const what = r.kind === 'router' ? 'Travel router' : r.kind === 'phone' ? 'Phone' : 'Device';
     const decide = async (action, btn) => {
@@ -401,14 +414,7 @@ function renderPairRequests(st) {
   }));
 }
 
-function inviteLink(st) {
-  const dns = st.tailscale && st.tailscale.dns_name;
-  const host = dns ? `${dns}:${location.port || 80}` : location.host;
-  return `http://${host}/#add-phone`;
-}
-
 function renderClients(st) {
-  $('#invite-link').value = inviteLink(st);
   const list = $('#clients');
   const els = [];
   for (const c of st.clients) {
@@ -485,18 +491,33 @@ async function loadSettings() {
     $('#apk-no').classList.toggle('hidden', !!s.android_apk);
     $('#ipk-yes').classList.toggle('hidden', !s.glinet_ipk);
     $('#pw-state').textContent = s.password_set
-      ? 'Only people with this page\'s password. Change it, or save an empty one to remove it. Family adding their own phone then need it too.'
-      : 'Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with). Set a password to require it.';
+      ? 'Only people with this page\'s password, from any device on your Tailscale network. Change it, or save an empty one to remove it. Family adding a phone don\'t need it: their phone asks, you approve.'
+      : whoApproves() + (s.owner ? ' To let someone else approve too, set a password and give it to them.' : '');
     $('#ipk-no').classList.toggle('hidden', !!s.glinet_ipk);
+    // where phones get the app (the landing page on port 80, else /get)
+    if (s.landing_url) {
+      $('#invite-link').value = s.landing_url;
+      $('#landing-typed').textContent = s.landing_typed;
+      if (s.landing_qr_svg) {
+        const doc = new DOMParser().parseFromString(s.landing_qr_svg, 'image/svg+xml');
+        $('#landing-qr').replaceChildren(document.importNode(doc.documentElement, true));
+      }
+    }
+    $('#landing-no-apk').classList.toggle('hidden', !!s.android_apk);
     const w = $('#addr-warning');
     if (s.public_addr_guessed) {
       w.innerHTML = '';
+      const lan = (s.effective_public_addr || '').replace(/:\d+$/, '') || 'this machine';
       w.append(
-        h('b', { text: 'Public address not set. ' }),
-        `Pairing links will use ${s.effective_public_addr || 'no address'}, which is probably your LAN address. Enter your public IP or DDNS name (and forward UDP ${s.port} on your router).`,
+        h('h3', { text: 'Setup step: tell devices where home is' }),
+        h('p', { text: `Right now devices would connect to ${s.effective_public_addr || 'no address'}, an address inside your home, so they only work at home. Two things, on your home router's admin page:` }),
+        h('ol', {},
+          h('li', { text: `Forward UDP port ${s.port} to this machine (${lan}). The page is usually called Port forwarding, Virtual server or NAT. Give this machine a fixed address there too (DHCP reservation), so the forward keeps pointing at it.` }),
+          h('li', { text: 'Find your home\'s public address: the router\'s status page shows it (WAN or Internet IP). Better, a dynamic DNS name (many routers have a DDNS page) keeps working when that address changes. Type it here:' })),
         h('div', { class: 'row' },
-          h('input', { id: 'pub-addr', placeholder: `home.example.net:${s.port}` }),
-          h('button', { class: 'btn', type: 'button', onclick: savePublicAddr, text: 'Save' })));
+          h('input', { id: 'pub-addr', placeholder: 'e.g. home.example.net or 203.0.113.7' }),
+          h('button', { class: 'btn primary', type: 'button', onclick: savePublicAddr, text: 'Save' })),
+        h('p', { class: 'muted small', text: `The port (${s.port}) is added for you. If the router's own WAN address starts with 100.64–100.127, or is 10.x / 192.168.x while your public address is different, your provider shares one address between customers (carrier-grade NAT) and the forward can't work: see the guide, section 2.` }));
       w.classList.remove('hidden');
     } else w.classList.add('hidden');
   } else {
@@ -733,6 +754,14 @@ function setupPairing() {
   });
 }
 
+// Without a password, only the server owner's devices may use this page
+// from the tailnet; others asked to connect, or want the app.
+function showOwnerOnly(owner) {
+  const d = $('#owner-dialog');
+  $('#owner-who').textContent = owner;
+  $('#owner-get').href = '/get';
+  if (!d.open) d.showModal();
+}
 function showLogin() {
   const d = $('#login-dialog');
   if (!d.open) d.showModal();

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Get tailbond · {{.Server}}</title>
+<link rel="icon" href="/icon.svg">
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--text:#0f172a;--muted:#5b6b80;--line:#e2e8f0;--accent:#0d9488;--accent-soft:rgba(13,148,136,.12);--warn:#b45309;--phone:#eef1f4;--dlg:#fff;--ring:#f59e0b}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1117;--card:#121a23;--text:#e6edf3;--muted:#93a3b8;--line:#213041;--accent:#2dd4bf;--accent-soft:rgba(45,212,191,.14);--warn:#f59e0b;--phone:#1a2430;--dlg:#243140;--ring:#fbbf24}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 40px}
+header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+header img{width:36px;height:36px}
+header .who{font-size:14px;color:var(--muted)}
+header b{display:block;font-size:17px;color:var(--text)}
+h1{font-size:26px;line-height:1.25;margin:14px 0 8px}
+h2{font-size:19px;margin:0 0 6px}
+p{margin:6px 0}
+.lead{color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0}
+.step{display:flex;gap:12px}
+.num{flex:none;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:grid;place-items:center}
+@media (prefers-color-scheme:dark){.num{color:#06201d}}
+.grow{flex:1;min-width:0}
+.btn{display:block;text-align:center;text-decoration:none;font-weight:600;border-radius:12px;padding:14px 16px;margin:10px 0;border:2px solid var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);color:#fff}
+@media (prefers-color-scheme:dark){.btn.primary{color:#06201d}}
+.small{font-size:14px}
+.muted{color:var(--muted)}
+.note{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 12px;border-radius:8px;margin:10px 0}
+.warnbox{border-left:4px solid var(--warn);padding:10px 12px;background:var(--accent-soft);border-radius:8px}
+#get-app:target{outline:3px solid var(--ring);outline-offset:4px}
+.notyet{display:none;font-weight:600;margin:4px 0 8px}
+#get-app:target .notyet{display:block}
+code{font:14px ui-monospace,Menlo,Consolas,monospace;background:var(--accent-soft);padding:1px 5px;border-radius:5px;word-break:break-all}
+.qr{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.qr svg{width:180px;height:180px;flex:none;border-radius:8px}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:12px 0}
+.shot{background:var(--phone);border-radius:14px;padding:12px}
+.shot .cap{font-size:14px;margin:0 0 8px}
+.shot .cap b{color:var(--text)}
+.dlg{background:var(--dlg);border-radius:18px;padding:14px 16px 8px;box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:14px}
+.dlg .t{font-size:16px;font-weight:600;margin-bottom:4px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:14px;margin-top:8px}
+.dlg .acts span{padding:6px 8px;color:var(--accent);font-weight:600}
+.dlg .acts .tap{outline:3px solid var(--ring);border-radius:20px}
+.set{background:var(--dlg);border-radius:14px;padding:12px 14px;font-size:14px}
+.set .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px}
+.tog{width:40px;height:24px;border-radius:12px;background:var(--accent);position:relative;outline:3px solid var(--ring);outline-offset:2px;flex:none}
+.tog::after{content:"";position:absolute;right:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff}
+ol.plain{padding-left:20px;margin:6px 0}
+footer{margin-top:26px;font-size:14px;color:var(--muted)}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <img src="/icon.svg" alt="">
+  <div class="who"><b>tailbond</b>on your home server, {{.Server}}</div>
+</header>
+
+{{if and .Phone (not .Android)}}
+<h1>tailbond is for Android phones</h1>
+<p class="lead">This phone isn't an Android phone, so keep using the Tailscale app here. To set up an Android phone, type <b>{{.TypeName}}</b> into its browser while Tailscale is on.</p>
+{{else}}
+<h1>Get tailbond on {{if .Phone}}this phone{{else}}an Android phone{{end}}</h1>
+<p class="lead">tailbond joins your phone's Wi-Fi and mobile data into one faster, steadier connection to {{.Server}}, your home server. Your Tailscale machines (like the NAS) stay reachable through it.</p>
+
+{{if not .Phone}}
+<section class="card">
+  <h2>Install it on your phone</h2>
+  <div class="qr">
+    {{.QR}}
+    <div class="grow">
+      <p>With Tailscale on, point the phone's camera at this code. Or type <b>{{.TypeName}}</b> into the phone's browser (with the slash at the end, so it opens this page instead of searching).</p>
+      <p class="small muted">The page that opens on the phone has the app and the steps below. Anyone on your Tailscale account can open it; nothing here changes {{.Server}}'s settings.</p>
+    </div>
+  </div>
+</section>
+{{end}}
+
+<section class="card" id="get-app">
+  <div class="step"><span class="num">1</span><div class="grow">
+    <h2>Install the app</h2>
+    <p class="notyet warnbox">tailbond isn't on this phone yet, so step 2 brought you back here. Install it first, then tap step 2 again.</p>
+    {{if .APK}}
+    <a class="btn primary" href="/tailbond.apk" download>Download tailbond for Android ({{.APKSize}})</a>
+    <p>Then open the downloaded file. tailbond isn't in the Play Store: it comes from {{.Server}}, so Android asks you to confirm a few times. That's expected. Here's what you'll see (the words differ a little between phones):</p>
+    <div class="shots">
+      <div class="shot">
+        <p class="cap">① Chrome checks the file. Tap <b>Download anyway</b>, then <b>Open</b>.</p>
+        <div class="dlg"><div class="t">File might be harmful</div><div>Do you want to keep tailbond.apk anyway?</div>
+          <div class="acts"><span>Cancel</span><span class="tap">Download anyway</span></div></div>
+      </div>
+      <div class="shot">
+        <p class="cap">② Android asks once about your browser. Tap <b>Settings</b>.</p>
+        <div class="dlg"><div>For your security, your phone currently isn't allowed to install unknown apps from this source. You can change this in Settings.</div>
+          <div class="acts"><span>Cancel</span><span class="tap">Settings</span></div></div>
+      </div>
+      <div class="shot">
+        <p class="cap">③ Turn on <b>Allow from this source</b>, then go back (← or swipe from the edge of the screen).</p>
+        <div class="set"><div class="t"><b>Install unknown apps</b></div><div class="muted">Chrome</div>
+          <div class="row"><span>Allow from this source</span><span class="tog"></span></div></div>
+      </div>
+      <div class="shot">
+        <p class="cap">④ Tap <b>Install</b>. If Play Protect offers to scan the app, let it (<b>Scan app</b>), then Install.</p>
+        <div class="dlg"><div class="t">tailbond</div><div>Do you want to install this app?</div>
+          <div class="acts"><span>Cancel</span><span class="tap">Install</span></div></div>
+      </div>
+    </div>
+    <p class="small">When it says <b>App installed</b>, tap <b>Done</b> and come back to this page (Chrome, this tab) for step 2. You can turn <b>Allow from this source</b> off again afterwards; tailbond stays installed.</p>
+    <p class="small">Chrome's <b>Open</b> message gone before you tapped it? The file is in your downloads: Chrome's menu <b>⋮ → Downloads</b>, or the <b>Files</b> app → <b>Downloads</b>. Tap <b>tailbond.apk</b>.</p>
+    <p class="small muted">Stuck, or not comfortable with this? Ask whoever runs {{.Server}} to install it for you.</p>
+    <p class="small muted">This page starts with http://, but it comes to you through Tailscale, which encrypts it. To check the file: SHA-256 <code>{{.APKSHA256}}</code>. Later updates must be signed with the same key, or Android refuses them.</p>
+    {{else}}
+    <p class="warnbox">{{.Server}} doesn't have the app file yet. Ask whoever runs {{.Server}} to add it (they put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code>), then reload this page.</p>
+    {{end}}
+  </div></div>
+</section>
+
+<section class="card">
+  <div class="step"><span class="num">2</span><div class="grow">
+    <h2>Add this phone to {{.Server}}</h2>
+    {{if .Android}}<a class="btn primary" href="{{.Intent}}">Open tailbond and ask {{.Server}}</a>
+    {{else}}<p>On the phone, tap <b>Open tailbond and ask {{.Server}}</b> here. (Or open tailbond and type <b>{{.Server}}</b>.)</p>{{end}}
+    <p>tailbond opens and asks {{.Server}} to add this phone. Keep Tailscale on until then. Whoever runs {{.Server}} taps <b>Approve</b> on {{.Server}}'s page; you'll see it in the app right away.</p>
+    <p class="small muted">You run {{.Server}} yourself? Approve it at <a href="{{.Dashboard}}">{{.Dashboard}}</a>: the request is at the top, and that page works on this phone too.</p>
+  </div></div>
+</section>
+
+<section class="card">
+  <div class="step"><span class="num">3</span><div class="grow">
+    <h2>Turn tailbond on</h2>
+    <p>Once approved, tailbond shows what it will do: tap <b>Add phone</b>. Then tap the big switch at the top of tailbond. tailbond explains that it takes over from Tailscale, and Android asks once to allow its connection: tap <b>OK</b>.</p>
+    <p>Android runs one VPN at a time, so while tailbond is on, Tailscale's VPN is off on this phone. Your Tailscale machines stay reachable through {{.Server}}.</p>
+    <p class="small muted">tailbond connects straight to {{.Server}} over the internet (not through Tailscale), and by default this phone's internet traffic goes out from {{.Server}}, like using it as an exit node. tailbond's Settings change that. To go back, tap <b>Switch back to Tailscale</b> in tailbond.</p>
+  </div></div>
+</section>
+{{end}}
+
+<footer>tailbond {{.Version}} on {{.Server}}</footer>
+</main>
+</body>
+</html>
