@@ -57,7 +57,7 @@
       <div>
         <b>Get the tailbond app</b> <span class="muted small">(skip if it's installed)</span>
         <div id="apk-yes" class="hidden"><a class="btn" href="tailbond.apk" download>Download tailbond for Android</a>
-          <p class="muted small">Open the downloaded file to install it. Android may ask you to allow installs from your browser.</p></div>
+          <p class="muted small">Open the downloaded file to install it. Android warns about apps from outside the Play Store and asks you to allow installs from your browser: this app comes from your own home server. Then come back to this page for step 2.</p></div>
         <p id="apk-no" class="muted small">Ask whoever set up this home server for the tailbond app.</p>
       </div>
     </div>
@@ -76,7 +76,7 @@
         <a class="btn primary" id="phone-open" href="#">Open in tailbond</a>
         <button class="btn" type="button" id="phone-copy"><svg class="ico sm"><use href="#i-copy"/></svg>Copy link</button>
       </div>
-      <p class="muted small">Nothing opened? Install the app (step 1), then tap <b>Open in tailbond</b>. Keep this link to yourself: it lets a phone use your home server.</p>
+      <p class="muted small">Nothing opened? Install the app (step 1), then tap <b>Open in tailbond</b>. This link is just for this phone.</p>
     </div>
     <p class="muted small">Later, to go back to Tailscale, tap <b>Switch back to Tailscale</b> in the tailbond app.</p>
     <button class="linkish small" type="button" id="show-dashboard">Show the home server's own dashboard (for whoever runs it)</button>
@@ -136,6 +136,11 @@
         <button class="btn primary" type="submit"><svg class="ico sm"><use href="#i-plus"/></svg>Add</button>
       </div>
     </form>
+    <div class="card invite">
+      <h3>Invite someone's phone</h3>
+      <p class="muted">Send this link to a family member. They open it on their phone while Tailscale is on, and tap <b>Add this phone</b>.</p>
+      <div class="uri-row"><input id="invite-link" readonly><button class="btn icon" type="button" id="invite-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
+    </div>
     <div class="card warn hidden" id="addr-warning"></div>
     <div class="client-list" id="clients"></div>
   </section>

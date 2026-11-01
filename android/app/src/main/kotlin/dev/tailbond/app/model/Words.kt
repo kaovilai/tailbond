@@ -27,7 +27,8 @@ object Words {
         ConnState.CONNECTING -> "Reaching $server…"
         ConnState.RECONNECTING -> "Lost touch with $server, trying again" + (live.message?.let { " ($it)" } ?: "")
         ConnState.ERROR -> "Stopped. See below for how to fix it."
-        ConnState.DISCONNECTED -> "Stopped. Turn on to reach $server and your Tailscale machines."
+        ConnState.DISCONNECTED ->
+            "Stopped. Turn on to reach $server and your Tailscale machines. Tailscale stays off too until you switch back to it."
     }
 
     /** "Wi-Fi + mobile data": link kinds carrying traffic right now. */
@@ -124,7 +125,7 @@ object Words {
             "Can't confirm this is your home server",
             "tailbond stopped because the server answering isn't the $server this phone was paired with. " +
                 "This is expected right after $server was reinstalled: then pair this phone again. " +
-                "If nobody changed it, try again on another network and tell whoever set it up.",
+                "If you're not sure, don't pair again: tap Try again later and tell whoever set it up.",
             Fix.RETRY, Fix.REPAIR,
         )
         ErrorKind.REJECTED -> ErrorText(

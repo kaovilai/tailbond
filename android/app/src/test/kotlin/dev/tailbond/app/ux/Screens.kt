@@ -51,7 +51,7 @@ class Screens : UxRender() {
     @Test fun pairingError() = app(
         "02-pairing-paste-error",
         UiState(settings = AppSettings(onboarded = true), pairError = "pairing data is not base64url"),
-        tall = 1100,
+        tall = 1100, search = "tailbond://pair?d=eyJ2IjoxLCJuYW1lIjoicGl4ZWwt",
     )
     @Test fun deepLinkConfirm() = app("03-deeplink-confirm", UiState(settings = AppSettings(onboarded = true), pending = UxFixtures.profile))
     @Test fun handoff() = app("04-handoff-other-vpn", home(UxFixtures.disconnected).copy(handoff = Handoff.OTHER_VPN_ACTIVE))

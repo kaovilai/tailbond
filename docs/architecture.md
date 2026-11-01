@@ -96,6 +96,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | DELETE | `/api/clients/{name}` | server: revoke |
 | POST | `/api/pair` | client: `{"uri"}` to import a pairing |
 | GET | `/api/tailscale` | `tailscale status --json` summary + route approval state |
+| GET | `/tailbond.apk` | additive: the Android app, if the file at `android_apk` exists (else 404); `/api/settings` reports `android_apk: true/false` |
 | GET | `/api/peers` | server, additive: the tailnet machines bonded clients reach (below). Auth: client API token, or an admin session |
 | GET | `/api/clients/{name}` | server, additive: re-issue `{"uri","qr_svg"}` for an existing client |
 | GET | `/api/logs?since=<seq>&limit=<n>` | additive: `{"entries":[{"seq","t","src":"agent\|mqvpn\|hook","line"}]}` ring buffer |
@@ -232,6 +233,7 @@ Additive keys (all optional):
 - `server.users`: `[{"name","key","created"}]`, the registered clients (written by `POST /api/clients`; the file is mode 0600);
 - `server.disable_dns`: no DNS forwarder (the pairing payload then has no `dns`);
 - `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic);
-- `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`.
+- `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`;
+- `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing).
 
 Mode table details: `Reorder on (Profile = fiber_lte)` is rendered as `[Reorder] Enabled = true` plus a `[ReorderRule]` for UDP 443 with `fiber_lte` and one for UDP 53 with `default_udp`. The server always enables `[Hybrid]`, `[Reorder]` and `AllowClientScheduler`, so each client's mode takes effect. Failover keeps only the best usable priority tier in the client's `Path` list. The bonding modes use primary and secondary paths, and add backup paths only when no primary or secondary path is usable. Paths over their monthly `data_cap_mb` drop out.

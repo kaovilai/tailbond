@@ -52,8 +52,8 @@ object Routes {
 /**
  * The whole app: onboarding → pairing → home (status, connections, this
  * device, machines), with Connections, Settings, Apps and machine details as
- * pushed pages. [startRoute], [startSearch] and [startSnackbar] exist for the
- * screen renders.
+ * pushed pages. [startRoute], [startSearch] (machine search, or the pairing
+ * link field) and [startSnackbar] exist for the screen renders.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -135,7 +135,7 @@ fun TailbondApp(
             val m = Modifier.padding(pad)
             when {
                 page == "onboarding" -> OnboardingScreen(actions::finishOnboarding, m)
-                page == Routes.PAIR -> PairingScreen(state, actions, m)
+                page == Routes.PAIR -> PairingScreen(state, actions, m, startText = startSearch)
                 page == Routes.CONNECTIONS -> ConnectionsScreen(state, actions, m)
                 page == Routes.SETTINGS -> SettingsScreen(state, actions, onApps = { route = Routes.APPS }, onRepair = { route = Routes.PAIR }, modifier = m)
                 page == Routes.APPS -> AppsScreen(state, actions, m)

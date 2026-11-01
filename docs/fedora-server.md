@@ -57,9 +57,22 @@ tailbond works without Tailscale. With Tailscale running on the server (`sudo ta
 
 If you switch between the self-signed and the Tailscale certificate (by turning tailnet HTTPS on or off), pair your devices again: the old links pin the old certificate.
 
-## 4. Add a device and pair it with a QR code
+## 4. Add a device
 
-1. In the dashboard, open **Clients**, type a name (for example `pixel` or `slate7`), and press **Add**.
+**A phone, from the phone itself (no QR code).** While the phone still runs
+Tailscale, open `http://<server>.<tailnet>.ts.net:8077` on it (MagicDNS short
+names like `http://homebox:8077` usually work too). On a phone the page shows
+only **Add this phone**: step 1 downloads the app, step 2 creates the device
+and opens the tailbond app with the pairing. For someone else's phone, copy
+the link under **Devices → Invite someone's phone** and send it to them.
+
+To offer the app download, put the APK at `/usr/share/tailbond/tailbond.apk`
+(or set `android_apk` in `tailbond.json`); the page then shows a download
+button, served as `/tailbond.apk`.
+
+**With a QR code** (phone and computer, or a travel router):
+
+1. In the dashboard, open **Devices**, type a name (for example `pixel` or `slate7`), and press **Add**.
 2. A QR code and a `tailbond://pair?d=…` link appear. Each device gets its own key, so you can revoke one without touching the others.
    - **Phone:** scan the QR code with the tailbond app.
    - **Travel router (tailbondd in client role):** open its dashboard, go to **Setup**, and paste the link or scan the QR code. Then press **Pair & connect**.

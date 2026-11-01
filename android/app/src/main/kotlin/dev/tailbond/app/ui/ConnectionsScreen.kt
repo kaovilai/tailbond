@@ -75,10 +75,15 @@ fun ConnectionsScreen(state: UiState, actions: UiActions, modifier: Modifier = M
             }
         }
 
+        var advanced by remember { mutableStateOf(false) }
         val kinds = PathKind.entries.filter { it != PathKind.ETHERNET || Words.sampleFor(live, it) != null }
-        for (kind in kinds) LinkCard(kind, state, actions)
+        for (kind in kinds) LinkCard(kind, state, actions, advanced)
+        TextButton(onClick = { advanced = !advanced }, modifier = Modifier.padding(horizontal = 8.dp)) {
+            Text(if (advanced) "Hide link roles" else "Advanced: link roles")
+        }
 
         SectionHeader("How to use your connections")
+        Hint("The Save mobile data switch on the home screen picks \"Save mobile data\" here.")
         for (m in Mode.entries) {
             Row(
                 Modifier.fillMaxWidth()
@@ -122,7 +127,7 @@ private fun Rate(label: String, bps: Long, modifier: Modifier) {
 }
 
 @Composable
-private fun LinkCard(kind: PathKind, state: UiState, actions: UiActions) {
+private fun LinkCard(kind: PathKind, state: UiState, actions: UiActions, advanced: Boolean) {
     val live = state.live
     val setting = state.settings.path(kind)
     val st = Words.linkStatus(kind, live, state.settings, state.mode, state.capReached)
@@ -161,7 +166,7 @@ private fun LinkCard(kind: PathKind, state: UiState, actions: UiActions) {
                 }
                 Switch(checked = setting.enabled, onCheckedChange = { actions.setPath(kind, setting.copy(enabled = it)) })
             }
-            RolePicker(setting.priority, enabled = setting.enabled) { actions.setPath(kind, setting.copy(priority = it)) }
+            if (advanced) RolePicker(setting.priority, enabled = setting.enabled) { actions.setPath(kind, setting.copy(priority = it)) }
         }
     }
 }
@@ -222,7 +227,8 @@ private fun DataLimit(state: UiState, actions: UiActions) {
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            "Counts only what tailbond sends over mobile data. At the limit, tailbond stops using mobile data until the 1st of next month.",
+            "Separate from Save mobile data: counts everything tailbond sends and receives over mobile data. " +
+                "At the limit, tailbond stops using mobile data until the 1st of next month.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

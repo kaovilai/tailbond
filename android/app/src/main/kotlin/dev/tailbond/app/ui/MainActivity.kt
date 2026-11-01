@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -22,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
@@ -102,9 +102,9 @@ class MainActivity : ComponentActivity() {
         vm.handToTailscale()
         val launch = tailscaleLaunchIntent()
         try {
-            startActivity(launch ?: Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$TAILSCALE_PACKAGE")))
+            startActivity(launch ?: Intent(Intent.ACTION_VIEW, "market://details?id=$TAILSCALE_PACKAGE".toUri()))
         } catch (_: ActivityNotFoundException) {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$TAILSCALE_PACKAGE")))
+            startActivity(Intent(Intent.ACTION_VIEW, "https://play.google.com/store/apps/details?id=$TAILSCALE_PACKAGE".toUri()))
         }
     }
 
@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
         if (host.isEmpty()) return
         val withPort = if (':' in host) host else "$host:$AGENT_PORT"
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://$withPort/#add-phone")))
+            startActivity(Intent(Intent.ACTION_VIEW, "http://$withPort/#add-phone".toUri()))
         } catch (_: ActivityNotFoundException) {
         }
     }

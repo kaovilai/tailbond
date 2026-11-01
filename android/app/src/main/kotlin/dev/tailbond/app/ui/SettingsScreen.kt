@@ -103,12 +103,12 @@ fun SettingsScreen(
         )
         ListItem(
             headlineContent = { Text("Switch back to Tailscale") },
-            supportingContent = { Text(if (state.tailscaleInstalled) "Turns tailbond off and opens Tailscale" else "Turns tailbond off. Tailscale isn't installed: opens its store page") },
+            supportingContent = { Text(if (state.tailscaleInstalled) "Turns tailbond off and opens the Tailscale app, where you turn Tailscale on" else "Turns tailbond off. Tailscale isn't installed: opens its store page") },
             leadingContent = { Icon(Icons.Filled.SwapHoriz, null) },
             modifier = Modifier.clickable(onClick = actions::switchToTailscale),
         )
 
-        SectionHeader("Always-on VPN")
+        SectionHeader("Keep tailbond on all the time (optional)")
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 "To keep tailbond on all the time, turn on Always-on VPN for tailbond in Android's VPN settings. " +

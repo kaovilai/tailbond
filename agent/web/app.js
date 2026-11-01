@@ -336,7 +336,15 @@ function renderServerPaths(st) {
   for (const k of [...state.cards.keys()]) if (!els.includes(state.cards.get(k)) && !k.startsWith('p:')) state.cards.delete(k);
 }
 
+// the page's MagicDNS address works on any tailnet phone; fall back to how we were reached
+function inviteLink(st) {
+  const dns = st.tailscale && st.tailscale.dns_name;
+  const host = dns ? `${dns}:${location.port || 80}` : location.host;
+  return `http://${host}/#add-phone`;
+}
+
 function renderClients(st) {
+  $('#invite-link').value = inviteLink(st);
   const list = $('#clients');
   const els = [];
   for (const c of st.clients) {
@@ -586,6 +594,10 @@ function setupAddPhone() {
     $('#add-phone-done').classList.remove('hidden');
     btn.classList.add('hidden');
     location.href = uri; // the tailbond app handles tailbond://pair
+  });
+  $('#invite-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('#invite-link').value); } catch { $('#invite-link').select(); document.execCommand('copy'); }
+    toast('Link copied');
   });
   $('#show-dashboard').addEventListener('click', () => {
     state.dashboardShown = true;

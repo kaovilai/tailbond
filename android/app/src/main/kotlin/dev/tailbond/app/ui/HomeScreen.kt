@@ -45,7 +45,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,8 +77,8 @@ fun HomeScreen(
     onSettings: () -> Unit,
     onRepair: () -> Unit,
     onMachine: (String) -> Unit,
-    startSearch: String = "",
     modifier: Modifier = Modifier,
+    startSearch: String = "",
 ) {
     var query by rememberSaveable { mutableStateOf(startSearch) }
     val live = state.live
@@ -93,7 +92,7 @@ fun HomeScreen(
             item { HandedBackCard(state, actions) }
         } else {
             item {
-                TextButton(onClick = actions::switchToTailscale, modifier = Modifier.padding(horizontal = 8.dp)) {
+                OutlinedButton(onClick = actions::switchToTailscale, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     Icon(Icons.Filled.SwapHoriz, null)
                     Spacer(Modifier.width(8.dp))
                     Text("Switch back to Tailscale")
@@ -114,16 +113,6 @@ fun HomeScreen(
                     value = saving, role = Role.Switch,
                     onValueChange = { actions.setMode(if (it) Mode.FAILOVER else Mode.SPEED) },
                 ),
-            )
-        }
-
-        item {
-            ListItem(
-                headlineContent = { Text("Internet traffic") },
-                supportingContent = { Text(state.settings.routeMode.label) },
-                leadingContent = { Icon(Icons.Filled.Public, null) },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
-                modifier = Modifier.clickable(onClick = onSettings),
             )
         }
 
@@ -157,6 +146,17 @@ fun HomeScreen(
             MachineRow(n, isServer, dim = !connected, onOpen = { onMachine(n.hostname) }, onCopy = { (n.ipv4 ?: n.dnsName).let(copy) })
         }
         if (list != null && machines.isEmpty() && q.isNotEmpty()) item { Hint("No machine matches \"$query\".") }
+
+        item { SectionHeader("Internet") }
+        item {
+            ListItem(
+                headlineContent = { Text("Internet traffic") },
+                supportingContent = { Text(state.settings.routeMode.label) },
+                leadingContent = { Icon(Icons.Filled.Public, null) },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+                modifier = Modifier.clickable(onClick = onSettings),
+            )
+        }
 
     }
 }
@@ -328,7 +328,7 @@ private fun ConnectionsSummary(state: UiState, onOpen: () -> Unit) {
                         }
                         if (on && sample != null && sample.status == dev.tailbond.app.service.PathGate.STATUS_ACTIVE) {
                             Text(
-                                formatBps(sample.rxBps + sample.txBps),
+                                formatRatePair(sample.rxBps, sample.txBps),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -344,7 +344,7 @@ private fun ConnectionsSummary(state: UiState, onOpen: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
-            Text("Change", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text("More options", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.primary)
         }
     }
@@ -368,8 +368,7 @@ private fun ThisDevice(state: UiState) {
                     },
                 )
                 Text(
-                    "This phone isn't a Tailscale machine itself. Its traffic reaches your tailnet from " +
-                        state.serverName + (serverIp?.let { " ($it)" } ?: "") + ".",
+                    "On your tailnet through ${state.serverName}" + (serverIp?.let { " ($it)" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

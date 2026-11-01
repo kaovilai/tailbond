@@ -86,8 +86,8 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Get started") }
         Text(
-            "You'll need a home server with tailbond installed.",
-            style = MaterialTheme.typography.bodySmall,
+            "You'll need your home server's name or the link to its page. If someone else set it up, ask them for it.",
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -116,10 +116,10 @@ fun pairErrorText(reason: String): String = when {
 }
 
 @Composable
-fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifier) {
+fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifier, startText: String = "") {
     val ctx = LocalContext.current
     var scanning by rememberSaveable { mutableStateOf(false) }
-    var text by rememberSaveable { mutableStateOf("") }
+    var text by rememberSaveable { mutableStateOf(startText) }
     var server by rememberSaveable { mutableStateOf("") }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> scanning = granted }
     @Suppress("DEPRECATION")
