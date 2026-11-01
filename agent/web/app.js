@@ -1072,9 +1072,16 @@ function openUpload() {
       draw();
     }
     const ok = ub.upFiles.filter((f) => f.st === 'ok').length;
-    toast(`${ok} of ${ub.upFiles.length} files added`, ok < ub.upFiles.length);
+    const all = ok === ub.upFiles.length;
+    result.className = all ? 'ub-note ok' : 'ub-note bad';
+    result.textContent = all
+      ? `All ${ok} files added. Once the signature checks out (a few seconds), the update shows on this page and devices can get it from here.`
+      : `${ub.upFiles.length - ok} of ${ub.upFiles.length} files weren't accepted (see above). Check they come from the same release as stable.json, then upload those again.`;
+    if (all) { go.classList.add('hidden'); closeBtn.className = 'btn primary'; closeBtn.textContent = 'Done'; }
     ubOpen();
   });
+  const result = h('div', { class: 'hidden' });
+  const closeBtn = h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Close');
   dlg(h('h3', { text: 'Upload an update' }),
     h('p', { class: 'small', text: "For a server without internet, or where GitHub is blocked. On a computer with internet, open the release page and download:" }),
     h('ul', { class: 'small ub-need' },
@@ -1082,7 +1089,8 @@ function openUpload() {
       h('li', {}, 'the files your machines need: ', h('b', { text: '.rpm' }), ' or ', h('b', { text: '.tar.gz' }), ' for this server, ', h('b', { text: '.ipk' }), ' for GL routers, ', h('b', { text: '.apk' }), ' for phones')),
     h('label', { class: 'btn', for: 'up-files' }, 'Choose files…'), input, list,
     h('p', { class: 'muted small', text: "tailbond checks the signature before using anything, so a wrong or changed file is refused. Devices then update from this server as usual." }),
-    h('div', { class: 'row end' }, h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Close'), go));
+    result,
+    h('div', { class: 'row end' }, closeBtn, go));
 }
 
 // ---- backup & restore ----
