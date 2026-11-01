@@ -1,0 +1,880 @@
+From 71858ca1eeddcf0752ed5d1fa5c33a4459d8beb3 Mon Sep 17 00:00:00 2001
+From: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+Date: Sat, 31 Oct 2026 13:40:01 -0400
+Subject: [PATCH] feat(linux): serve the control API in client mode
+
+--control-port / [Control] Listen were server-only. In client mode on
+Linux they now serve get_status, get_stats, get_build_info and
+get_reorder_stats for this connection, in the server's JSON shape:
+get_status lists this connection as the one entry of "clients", and
+each path carries the server's per-path keys (srtt/min_rtt/cwnd/bytes/
+pkts/loss/state) plus "iface" (bound interface) and "status" (the
+library path status). A top-level "state" gives the client state.
+add_user/remove_user/list_users and the FEC commands reply
+"not supported in client mode".
+
+The library side is one internal snapshot,
+mqvpn_client_get_status_snapshot(), since the public
+mqvpn_path_info_t has no min_rtt or packet counters.
+
+Signed-off-by: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+---
+ src/main.c                          |   8 +-
+ src/mqvpn_client.c                  |  75 ++++++++++
+ src/mqvpn_internal.h                |  31 ++++
+ src/platform/linux/control_socket.c | 197 ++++++++++++++++++++-----
+ src/platform/linux/control_socket.h |  11 +-
+ src/platform/linux/platform_linux.c |  27 ++++
+ src/vpn_client.h                    |   3 +
+ tests/test_control_socket.c         | 213 +++++++++++++++++++++++++++-
+ 8 files changed, 523 insertions(+), 42 deletions(-)
+
+diff --git a/src/main.c b/src/main.c
+index 7052681..e075bf2 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -64,7 +64,8 @@ usage(const char *prog)
+         "  --kill-switch             Block traffic outside the VPN tunnel (client mode)\n"
+         "  --no-manage-routes        Do not modify the host routing table "
+         "(router/embedded integration)\n"
+-        "  --control-port PORT       TCP port for JSON control API (server mode)\n"
++        "  --control-port PORT       TCP port for JSON control API (server mode; client\n"
++        "                            mode on Linux: status/stats only)\n"
+         "  --control-addr ADDR       Bind address for control API (default 127.0.0.1)\n"
+         "                            (also configurable via [Control] Listen in INI / "
+         "control_listen in JSON)\n"
+@@ -349,7 +350,8 @@ main(int argc, char *argv[])
+     }
+ 
+     /* Resolve effective control endpoint (INI base + per-field CLI overrides).
+-     * Used by both --status (below) and the server-mode listener (further down). */
++     * Used by --status (below) and the server- and client-mode listeners
++     * (further down). */
+     char eff_control_addr_buf[256] = {0};
+     const char *eff_control_addr = NULL;
+     int eff_control_port = 0;
+@@ -588,6 +590,8 @@ main(int argc, char *argv[])
+             .reconnect_interval = file_cfg.reconnect_interval,
+             .kill_switch = kill_switch >= 0 ? kill_switch : file_cfg.kill_switch,
+             .manage_routes = manage_routes >= 0 ? manage_routes : file_cfg.manage_routes,
++            .control_addr = eff_control_addr,
++            .control_port = eff_control_port,
+             .init_max_path_id = eff_init_max_path_id,
+             .tun_mtu = eff_tun_mtu,
+             .path_mtu = eff_path_mtu,
+diff --git a/src/mqvpn_client.c b/src/mqvpn_client.c
+index d902841..bbbd17c 100644
+--- a/src/mqvpn_client.c
++++ b/src/mqvpn_client.c
+@@ -317,6 +317,10 @@ struct mqvpn_client_s {
+      * (typically a dead primary path) before xquic's 120s idle_time_out. */
+     uint64_t handshake_started_us;
+ 
++    /* Set on entering ESTABLISHED, cleared on leaving it (control API
++     * connected_sec, mqvpn_client_get_status_snapshot). */
++    uint64_t established_at_us;
++
+     /* ICMP PTB rate limit */
+     mqvpn_ptb_bucket_t ptb_bucket;
+ 
+@@ -482,6 +486,10 @@ client_set_state(mqvpn_client_t *c, mqvpn_client_state_t new_state)
+     } else if (old == MQVPN_STATE_CONNECTING) {
+         c->handshake_started_us = 0;
+     }
++    if (new_state == MQVPN_STATE_ESTABLISHED)
++        c->established_at_us = client_now_us(c);
++    else if (old == MQVPN_STATE_ESTABLISHED)
++        c->established_at_us = 0;
+     c->state = new_state;
+     if (c->cbs.state_changed) c->cbs.state_changed(old, new_state, c->user_ctx);
+ }
+@@ -4587,6 +4595,73 @@ mqvpn_client_get_paths(const mqvpn_client_t *c, mqvpn_path_info_t *out, int max_
+     return MQVPN_OK;
+ }
+ 
++int
++mqvpn_client_get_status_snapshot(const mqvpn_client_t *c,
++                                 mqvpn_internal_client_status_t *out)
++{
++    if (!c || !out) return -1;
++    memset(out, 0, sizeof(*out));
++    out->state = c->state;
++    out->scheduler = mqvpn_sched_to_name(c->config.scheduler);
++    uint64_t now = client_now_us(c);
++    if (c->state == MQVPN_STATE_ESTABLISHED && c->established_at_us > 0 &&
++        now > c->established_at_us)
++        out->connected_sec = (now - c->established_at_us) / 1000000;
++
++    char host[INET6_ADDRSTRLEN] = {0};
++    uint16_t port = 0;
++    if (c->server_addr.ss_family == AF_INET) {
++        const struct sockaddr_in *s4 = (const struct sockaddr_in *)&c->server_addr;
++        inet_ntop(AF_INET, &s4->sin_addr, host, sizeof(host));
++        port = ntohs(s4->sin_port);
++    } else if (c->server_addr.ss_family == AF_INET6) {
++        const struct sockaddr_in6 *s6 = (const struct sockaddr_in6 *)&c->server_addr;
++        inet_ntop(AF_INET6, &s6->sin6_addr, host, sizeof(host));
++        port = ntohs(s6->sin6_port);
++    }
++    if (host[0]) snprintf(out->endpoint, sizeof(out->endpoint), "%s:%u", host, port);
++
++    xqc_conn_stats_t xstats;
++    memset(&xstats, 0, sizeof(xstats));
++    if (c->engine && c->conn) xstats = xqc_conn_get_stats(c->engine, &c->conn->cid);
++
++    int count = c->n_paths < MQVPN_MAX_PATHS ? c->n_paths : MQVPN_MAX_PATHS;
++    for (int i = 0; i < count; i++) {
++        const path_entry_t *p = &c->paths[i];
++        mqvpn_internal_client_path_t *op = &out->paths[i];
++        mqvpn_path_stats_t *ps = &op->stats;
++        memcpy(op->iface, p->name, sizeof(op->iface));
++        op->iface[sizeof(op->iface) - 1] = '\0';
++        op->status = p->status;
++        ps->struct_size = sizeof(*ps);
++        ps->path_id = p->xqc_path_id;
++        ps->bytes_tx = p->bytes_tx;
++        ps->bytes_rx = p->bytes_rx;
++        ps->state = p->status == MQVPN_PATH_PENDING ? MQVPN_XQC_PATH_STATE_INIT
++                                                    : MQVPN_XQC_PATH_STATE_CLOSED;
++
++        const xqc_path_metrics_t *pm =
++            p->xquic_path_live ? xqc_find_path_metrics(&xstats, p->xqc_path_id) : NULL;
++        if (!pm) continue;
++        ps->srtt_us = pm->path_srtt;
++        ps->min_rtt_us = pm->path_min_rtt;
++        ps->cwnd = pm->path_cwnd;
++        ps->bytes_in_flight = pm->path_bytes_in_flight;
++        ps->bytes_tx = pm->path_send_bytes;
++        ps->bytes_rx = pm->path_recv_bytes;
++        ps->pkt_sent = pm->path_pkt_send_count;
++        ps->pkt_recv = pm->path_pkt_recv_count;
++        ps->pkt_lost = pm->path_lost_count;
++        ps->state = pm->path_state;
++        op->reinject_tx_bytes = pm->path_send_reinject_bytes;
++        out->bytes_tx += pm->path_send_bytes;
++        out->bytes_rx += pm->path_recv_bytes;
++    }
++    out->n_paths = count;
++    free(xstats.paths_info);
++    return 0;
++}
++
+ int
+ mqvpn_client_get_interest(const mqvpn_client_t *c, mqvpn_interest_t *out)
+ {
+diff --git a/src/mqvpn_internal.h b/src/mqvpn_internal.h
+index 72fc8d0..9b6d5c4 100644
+--- a/src/mqvpn_internal.h
++++ b/src/mqvpn_internal.h
+@@ -413,4 +413,35 @@ MQVPN_INTERNAL int mqvpn_server_get_client_sched(const mqvpn_server_t *s,
+                                                  mqvpn_internal_client_sched_t *out,
+                                                  int max);
+ 
++/* Client-side counterpart of mqvpn_server_get_client_info() for the control
++ * API in client mode: this connection as one client entry. Side channel like
++ * the reinject snapshot (the public mqvpn_path_info_t carries no min_rtt /
++ * packet counters, and mqvpn_path_stats_t cannot grow an iface name).
++ *
++ * paths[] holds every slot mqvpn_client_get_paths() lists, in slot order.
++ * Slots with a live xquic path carry its metrics; the others keep path_id =
++ * the slot's last xquic path id, the platform byte counters, and state INIT
++ * (PENDING) or CLOSED (everything else). */
++typedef struct {
++    char iface[16]; /* bound interface, "" = unpinned */
++    int status;     /* mqvpn_path_status_t */
++    uint64_t reinject_tx_bytes;
++    mqvpn_path_stats_t stats;
++} mqvpn_internal_client_path_t;
++
++typedef struct {
++    int state;              /* mqvpn_client_state_t */
++    uint64_t connected_sec; /* time in ESTABLISHED, 0 otherwise */
++    char endpoint[64];      /* server address "ip:port" */
++    const char *scheduler;  /* this client's scheduler name */
++    uint64_t bytes_tx;      /* sum over the live xquic paths */
++    uint64_t bytes_rx;
++    int n_paths;
++    mqvpn_internal_client_path_t paths[MQVPN_MAX_PATHS];
++} mqvpn_internal_client_status_t;
++
++/* 0 = *out filled, -1 = NULL argument. */
++MQVPN_INTERNAL int mqvpn_client_get_status_snapshot(const mqvpn_client_t *c,
++                                                    mqvpn_internal_client_status_t *out);
++
+ #endif /* MQVPN_INTERNAL_H */
+diff --git a/src/platform/linux/control_socket.c b/src/platform/linux/control_socket.c
+index ed7c422..a754f7e 100644
+--- a/src/platform/linux/control_socket.c
++++ b/src/platform/linux/control_socket.c
+@@ -2,9 +2,10 @@
+ // Copyright (c) 2026 mp0rta and mqvpn contributors
+ 
+ /*
+- * control_socket.c — TCP control API for mqvpn server
++ * control_socket.c — TCP control API for mqvpn server and client
+  *
+- * Supported JSON commands:
++ * Supported JSON commands (client mode: the four get_* commands without a
++ * user argument; the rest reply "not supported in client mode"):
+  *
+  *   {"cmd":"add_user",    "name":"alice","key":"alice-secret"}
+  *   {"cmd":"remove_user", "name":"alice"}
+@@ -37,6 +38,11 @@
+  *    "per_flow_limit_drop_count":N,"reset_discard_count":N,"delivered_count":N,
+  *    "added_latency_p99_ms":F,"added_latency_max_ms":F,
+  *    "added_latency_buffered_p99_ms":F}}
++ *
++ * Client mode answers get_status with this connection as the only entry of
++ * "clients" (same keys as the server's, "user" empty), plus a top-level
++ * "state" and per path "iface" (bound interface) and "status" (pending /
++ * active / degraded / standby / closed).
+  */
+ 
+ #include "control_socket.h"
+@@ -91,6 +97,8 @@ struct ctrl_socket_s {
+     struct event *ev_accept;
+     struct event_base *eb;
+     mqvpn_server_t *server;
++    mqvpn_client_t *client; /* client mode iff non-NULL (server is then NULL) */
++    uint64_t created_at_us; /* wall clock; client mode's uptime_sec */
+     /* Getter into the platform's transport ctx for the RX offload counters;
+      * see ctrl_socket_create's doc for why these do not travel through
+      * mqvpn_stats_t. NULL fn = report 0. */
+@@ -155,6 +163,39 @@ ctrl_add_ms(yyjson_mut_doc *doc, yyjson_mut_val *obj, const char *key, double ms
+     return yyjson_mut_set_fp_to_fixed(v, 3) && yyjson_mut_obj_add_val(doc, obj, key, v);
+ }
+ 
++static uint64_t
++ctrl_now_us(void)
++{
++    struct timeval tv;
++    if (gettimeofday(&tv, NULL) != 0) return 0;
++    return (uint64_t)tv.tv_sec * 1000000 + (uint64_t)tv.tv_usec;
++}
++
++/* One get_status path object, appended to jpaths; *out gets it (or NULL). */
++static bool
++ctrl_add_path(yyjson_mut_doc *doc, yyjson_mut_val *jpaths, const mqvpn_path_stats_t *ps,
++              uint64_t reinject_tx_bytes, yyjson_mut_val **out)
++{
++    yyjson_mut_val *jp = yyjson_mut_arr_add_obj(doc, jpaths);
++    bool ok = jp != NULL;
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "path_id", ps->path_id);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "srtt_ms", ps->srtt_us / 1000);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "min_rtt_ms", ps->min_rtt_us / 1000);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "cwnd", ps->cwnd);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "in_flight", ps->bytes_in_flight);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "bytes_tx", ps->bytes_tx);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "bytes_rx", ps->bytes_rx);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "pkt_sent", ps->pkt_sent);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "pkt_recv", ps->pkt_recv);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "pkt_lost", ps->pkt_lost);
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "state", ps->state);
++    ok &= yyjson_mut_obj_add_strcpy(doc, jp, "state_label",
++                                    mqvpn_path_state_label(ps->state));
++    ok &= yyjson_mut_obj_add_uint(doc, jp, "reinject_tx_bytes", reinject_tx_bytes);
++    if (out) *out = jp;
++    return ok;
++}
++
+ /* ── Command dispatch ────────────────────────────────────────────────────── */
+ 
+ /* Each handler creates a doc for its reply, adds the keys in wire order (keys,
+@@ -229,9 +270,18 @@ ctrl_cmd_get_stats(yyjson_val *req, char *resp, size_t resp_len, ctrl_socket_t *
+     (void)req;
+     mqvpn_stats_t st = {0};
+     st.struct_size = sizeof(st);
+-    mqvpn_server_get_stats(server, &st);
+-    int nc = mqvpn_server_get_n_clients(server);
+-    uint64_t uptime = mqvpn_server_uptime_seconds(server);
++    int nc;
++    uint64_t uptime;
++    if (cs->client) {
++        mqvpn_client_get_stats(cs->client, &st);
++        nc = mqvpn_client_get_state(cs->client) == MQVPN_STATE_ESTABLISHED;
++        uint64_t now = ctrl_now_us();
++        uptime = now > cs->created_at_us ? (now - cs->created_at_us) / 1000000 : 0;
++    } else {
++        mqvpn_server_get_stats(server, &st);
++        nc = mqvpn_server_get_n_clients(server);
++        uptime = mqvpn_server_uptime_seconds(server);
++    }
+     uint64_t rx_receives = 0, rx_datagrams = 0;
+     if (cs->rx_stats) cs->rx_stats(cs->rx_ctx, &rx_receives, &rx_datagrams);
+ 
+@@ -274,11 +324,63 @@ ctrl_cmd_get_stats(yyjson_val *req, char *resp, size_t resp_len, ctrl_socket_t *
+     return ctrl_reply(doc, resp, resp_len);
+ }
+ 
++static const char *const ctrl_client_state_names[] = {
++    "idle",        "connecting",   "authenticating", "tunnel_ready",
++    "established", "reconnecting", "closed",
++};
++
++/* get_status in client mode: the server's shape with this connection as the
++ * only client. */
++static int
++ctrl_client_get_status(char *resp, size_t resp_len, ctrl_socket_t *cs)
++{
++    mqvpn_internal_client_status_t cst;
++    if (mqvpn_client_get_status_snapshot(cs->client, &cst) < 0)
++        return ctrl_error(resp, resp_len, "internal error");
++
++    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
++    yyjson_mut_val *root = yyjson_mut_obj(doc);
++    yyjson_mut_doc_set_root(doc, root);
++    bool ok = yyjson_mut_obj_add_bool(doc, root, "ok", true);
++    ok &= yyjson_mut_obj_add_str(doc, root, "state",
++                                 cst.state >= 0 && cst.state < MQVPN_STATE__COUNT
++                                     ? ctrl_client_state_names[cst.state]
++                                     : "unknown");
++    ok &= yyjson_mut_obj_add_int(doc, root, "n_clients", 1);
++    yyjson_mut_val *jclients = yyjson_mut_obj_add_arr(doc, root, "clients");
++    yyjson_mut_val *jc = yyjson_mut_arr_add_obj(doc, jclients);
++    ok &= jc != NULL;
++    ok &= yyjson_mut_obj_add_str(doc, jc, "user", "");
++    ok &= yyjson_mut_obj_add_strcpy(doc, jc, "endpoint", cst.endpoint);
++    ok &= yyjson_mut_obj_add_strcpy(doc, jc, "scheduler",
++                                    cst.scheduler ? cst.scheduler : "unknown");
++    ok &= yyjson_mut_obj_add_uint(doc, jc, "connected_sec", cst.connected_sec);
++    ok &= yyjson_mut_obj_add_uint(doc, jc, "bytes_tx", cst.bytes_tx);
++    ok &= yyjson_mut_obj_add_uint(doc, jc, "bytes_rx", cst.bytes_rx);
++    ok &= yyjson_mut_obj_add_int(doc, jc, "n_paths", cst.n_paths);
++    yyjson_mut_val *jpaths = yyjson_mut_obj_add_arr(doc, jc, "paths");
++    ok &= jpaths != NULL;
++    for (int p = 0; p < cst.n_paths; p++) {
++        const mqvpn_internal_client_path_t *cp = &cst.paths[p];
++        yyjson_mut_val *jp = NULL;
++        ok &= ctrl_add_path(doc, jpaths, &cp->stats, cp->reinject_tx_bytes, &jp);
++        ok &= yyjson_mut_obj_add_strcpy(doc, jp, "iface", cp->iface);
++        ok &= yyjson_mut_obj_add_str(
++            doc, jp, "status", mqvpn_path_status_string((mqvpn_path_status_t)cp->status));
++    }
++    if (!ok) {
++        yyjson_mut_doc_free(doc);
++        return ctrl_reply(NULL, resp, resp_len);
++    }
++    return ctrl_reply(doc, resp, resp_len);
++}
++
+ static int
+ ctrl_cmd_get_status(yyjson_val *req, char *resp, size_t resp_len, ctrl_socket_t *cs)
+ {
+     mqvpn_server_t *server = cs->server;
+     (void)req;
++    if (cs->client) return ctrl_client_get_status(resp, resp_len, cs);
+     mqvpn_client_info_t clients[MQVPN_MAX_USERS];
+     int n_clients = 0;
+     mqvpn_server_get_client_info(server, clients, MQVPN_MAX_USERS, &n_clients);
+@@ -343,22 +445,7 @@ ctrl_cmd_get_status(yyjson_val *req, char *resp, size_t resp_len, ctrl_socket_t
+                 }
+             }
+ 
+-            yyjson_mut_val *jp = yyjson_mut_arr_add_obj(doc, jpaths);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "path_id", ps->path_id);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "srtt_ms", ps->srtt_us / 1000);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "min_rtt_ms", ps->min_rtt_us / 1000);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "cwnd", ps->cwnd);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "in_flight", ps->bytes_in_flight);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "bytes_tx", ps->bytes_tx);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "bytes_rx", ps->bytes_rx);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "pkt_sent", ps->pkt_sent);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "pkt_recv", ps->pkt_recv);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "pkt_lost", ps->pkt_lost);
+-            ok &= yyjson_mut_obj_add_uint(doc, jp, "state", ps->state);
+-            ok &= yyjson_mut_obj_add_strcpy(doc, jp, "state_label",
+-                                            mqvpn_path_state_label(ps->state));
+-            ok &=
+-                yyjson_mut_obj_add_uint(doc, jp, "reinject_tx_bytes", reinject_tx_bytes);
++            ok &= ctrl_add_path(doc, jpaths, ps, reinject_tx_bytes, NULL);
+         }
+     }
+     if (!ok) {
+@@ -374,7 +461,15 @@ ctrl_cmd_get_build_info(yyjson_val *req, char *resp, size_t resp_len, ctrl_socke
+     mqvpn_server_t *server = cs->server;
+     (void)req;
+     const char *ver = mqvpn_version_string();
+-    const char *sched = mqvpn_server_scheduler_label(server);
++    const char *sched;
++    if (cs->client) {
++        mqvpn_internal_client_status_t cst;
++        sched = mqvpn_client_get_status_snapshot(cs->client, &cst) == 0 && cst.scheduler
++                    ? cst.scheduler
++                    : "unknown";
++    } else {
++        sched = mqvpn_server_scheduler_label(server);
++    }
+ #ifdef XQC_ENABLE_FEC
+     int fec_enabled = 1;
+ #else
+@@ -489,7 +584,8 @@ ctrl_cmd_get_reorder_stats(yyjson_val *req, char *resp, size_t resp_len,
+      * conn has reorder enabled, so the JSON is always well-formed (all-zero
+      * counters). */
+     mqvpn_reorder_stats_t rs;
+-    if (mqvpn_server_get_reorder_stats(server, &rs) < 0)
++    if ((cs->client ? mqvpn_client_get_reorder_stats(cs->client, &rs)
++                    : mqvpn_server_get_reorder_stats(server, &rs)) < 0)
+         return ctrl_error(resp, resp_len, "internal error");
+ 
+     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+@@ -539,16 +635,17 @@ typedef int (*ctrl_cmd_fn)(yyjson_val *req, char *resp, size_t resp_len,
+ static const struct {
+     const char *name;
+     ctrl_cmd_fn fn;
++    bool server_only; /* refused in client mode */
+ } ctrl_cmds[] = {
+-    {"add_user", ctrl_cmd_add_user},
+-    {"remove_user", ctrl_cmd_remove_user},
+-    {"list_users", ctrl_cmd_list_users},
+-    {"get_stats", ctrl_cmd_get_stats},
+-    {"get_status", ctrl_cmd_get_status},
+-    {"get_build_info", ctrl_cmd_get_build_info},
+-    {"get_fec_stats", ctrl_cmd_get_fec_stats},
+-    {"get_all_fec_stats", ctrl_cmd_get_all_fec_stats},
+-    {"get_reorder_stats", ctrl_cmd_get_reorder_stats},
++    {"add_user", ctrl_cmd_add_user, true},
++    {"remove_user", ctrl_cmd_remove_user, true},
++    {"list_users", ctrl_cmd_list_users, true},
++    {"get_stats", ctrl_cmd_get_stats, false},
++    {"get_status", ctrl_cmd_get_status, false},
++    {"get_build_info", ctrl_cmd_get_build_info, false},
++    {"get_fec_stats", ctrl_cmd_get_fec_stats, true},
++    {"get_all_fec_stats", ctrl_cmd_get_all_fec_stats, true},
++    {"get_reorder_stats", ctrl_cmd_get_reorder_stats, false},
+ };
+ 
+ static int
+@@ -568,13 +665,18 @@ dispatch(const char *req, char *resp, size_t resp_len, ctrl_socket_t *cs)
+         rc = ctrl_error(resp, resp_len, "missing cmd");
+     } else {
+         ctrl_cmd_fn fn = NULL;
++        bool refused = false;
+         for (size_t i = 0; i < sizeof(ctrl_cmds) / sizeof(ctrl_cmds[0]); i++)
+             if (strcmp(cmd, ctrl_cmds[i].name) == 0) {
+                 fn = ctrl_cmds[i].fn;
++                refused = ctrl_cmds[i].server_only && cs->client;
+                 break;
+             }
+-        rc =
+-            fn ? fn(root, resp, resp_len, cs) : ctrl_error(resp, resp_len, "unknown cmd");
++        if (refused)
++            rc = ctrl_error(resp, resp_len, "not supported in client mode");
++        else
++            rc = fn ? fn(root, resp, resp_len, cs)
++                    : ctrl_error(resp, resp_len, "unknown cmd");
+     }
+     yyjson_doc_free(doc); /* handlers neither free nor keep the request doc */
+     return rc;
+@@ -729,11 +831,12 @@ ctrl_on_accept(evutil_socket_t fd, short what, void *arg)
+ 
+ /* ── Public API ──────────────────────────────────────────────────────────── */
+ 
+-ctrl_socket_t *
+-ctrl_socket_create(struct event_base *eb, const char *addr, int port,
+-                   mqvpn_server_t *server, ctrl_rx_stats_fn rx_stats, void *rx_ctx)
++static ctrl_socket_t *
++ctrl_socket_open(struct event_base *eb, const char *addr, int port,
++                 mqvpn_server_t *server, mqvpn_client_t *client,
++                 ctrl_rx_stats_fn rx_stats, void *rx_ctx)
+ {
+-    if (!eb || port <= 0 || port > 65535 || !server) return NULL;
++    if (!eb || port <= 0 || port > 65535 || (!server == !client)) return NULL;
+ 
+     if (!addr || addr[0] == '\0') addr = "127.0.0.1";
+ 
+@@ -747,6 +850,8 @@ ctrl_socket_create(struct event_base *eb, const char *addr, int port,
+     if (!cs) return NULL;
+     cs->eb = eb;
+     cs->server = server;
++    cs->client = client;
++    cs->created_at_us = ctrl_now_us();
+     /* Borrowed getter — the platform ctx outlives this socket. */
+     cs->rx_stats = rx_stats;
+     cs->rx_ctx = rx_ctx;
+@@ -818,6 +923,22 @@ ctrl_socket_create(struct event_base *eb, const char *addr, int port,
+     return cs;
+ }
+ 
++ctrl_socket_t *
++ctrl_socket_create(struct event_base *eb, const char *addr, int port,
++                   mqvpn_server_t *server, ctrl_rx_stats_fn rx_stats, void *rx_ctx)
++{
++    if (!server) return NULL;
++    return ctrl_socket_open(eb, addr, port, server, NULL, rx_stats, rx_ctx);
++}
++
++ctrl_socket_t *
++ctrl_socket_create_client(struct event_base *eb, const char *addr, int port,
++                          mqvpn_client_t *client, ctrl_rx_stats_fn rx_stats, void *rx_ctx)
++{
++    if (!client) return NULL;
++    return ctrl_socket_open(eb, addr, port, NULL, client, rx_stats, rx_ctx);
++}
++
+ void
+ ctrl_socket_destroy(ctrl_socket_t *cs)
+ {
+diff --git a/src/platform/linux/control_socket.h b/src/platform/linux/control_socket.h
+index b109f6c..61b6ec9 100644
+--- a/src/platform/linux/control_socket.h
++++ b/src/platform/linux/control_socket.h
+@@ -2,7 +2,7 @@
+ // Copyright (c) 2026 mp0rta and mqvpn contributors
+ 
+ /*
+- * control_socket.h — TCP control API for mqvpn server
++ * control_socket.h — TCP control API for mqvpn server and client
+  *
+  * Listens on a TCP port (default: 127.0.0.1 only) and accepts JSON commands.
+  * All I/O is driven by the same libevent loop as the VPN — no locking needed.
+@@ -54,6 +54,15 @@ ctrl_socket_t *ctrl_socket_create(struct event_base *eb, const char *addr, int p
+                                   mqvpn_server_t *server, ctrl_rx_stats_fn rx_stats,
+                                   void *rx_ctx);
+ 
++/* Client mode: get_status / get_stats / get_build_info / get_reorder_stats
++ * answer for this one connection, in the server's JSON shape (one entry in
++ * "clients", each path additionally carrying "iface" and "status").
++ * The user-table and FEC commands reply {"ok":false,"error":"not supported
++ * in client mode"}. Arguments as for ctrl_socket_create. */
++ctrl_socket_t *ctrl_socket_create_client(struct event_base *eb, const char *addr,
++                                         int port, mqvpn_client_t *client,
++                                         ctrl_rx_stats_fn rx_stats, void *rx_ctx);
++
+ void ctrl_socket_destroy(ctrl_socket_t *cs);
+ 
+ #endif /* MQVPN_CONTROL_SOCKET_H */
+diff --git a/src/platform/linux/platform_linux.c b/src/platform/linux/platform_linux.c
+index abdb4da..77d2571 100644
+--- a/src/platform/linux/platform_linux.c
++++ b/src/platform/linux/platform_linux.c
+@@ -484,6 +484,23 @@ on_signal(evutil_socket_t sig, short what, void *arg)
+ }
+ 
+ 
++/* Control-API view of the client's receive-side offload counters
++ * (ctrl_rx_stats_fn): what released slots already handed to ctx plus every
++ * live slot's transport ctx, like svr_rx_stats. */
++static void
++cli_rx_stats(void *arg, uint64_t *receives, uint64_t *datagrams)
++{
++    const platform_ctx_t *p = (const platform_ctx_t *)arg;
++    *receives = p->gro_receives;
++    *datagrams = p->gro_datagrams;
++    for (int i = 0; i < p->n_paths; i++) {
++        uint64_t r = 0, d = 0;
++        platform_read_rx_stats(&p->paths[i], &r, &d);
++        *receives += r;
++        *datagrams += d;
++    }
++}
++
+ /* ================================================================
+  *  Main entry point: linux_platform_run_client
+  * ================================================================ */
+@@ -492,6 +509,7 @@ int
+ linux_platform_run_client(const mqvpn_client_cfg_t *cfg)
+ {
+     int rc = 1;
++    ctrl_socket_t *ctrl = NULL;
+     platform_ctx_t ctx;
+     memset(&ctx, 0, sizeof(ctx));
+     ctx.tun.fd = -1;
+@@ -650,6 +668,14 @@ linux_platform_run_client(const mqvpn_client_cfg_t *cfg)
+     /* Schedule initial tick */
+     schedule_next_tick(&ctx);
+ 
++    /* Control API (optional, status/stats only). Torn down first in cleanup,
++     * while ctx and the client it reads are still alive. */
++    if (cfg->control_port > 0) {
++        ctrl = ctrl_socket_create_client(ctx.eb, cfg->control_addr, cfg->control_port,
++                                         ctx.client, cli_rx_stats, &ctx);
++        if (!ctrl) LOG_WRN("control API setup failed — continuing without it");
++    }
++
+     LOG_INF("entering event loop...");
+     event_base_dispatch(ctx.eb);
+     rc = ctx.fatal_error ? 1 : 0;
+@@ -673,6 +699,7 @@ cleanup:
+      *      Step 2 already took the numbers off the ctxs, so these last two
+      *      are order-independent — the server does them the other way
+      *      round, and both lines report the same totals either way. */
++    ctrl_socket_destroy(ctrl);
+     for (int i = 0; i < ctx.n_paths; i++) {
+         uint64_t r, d;
+         platform_read_rx_stats(&ctx.paths[i], &r, &d);
+diff --git a/src/vpn_client.h b/src/vpn_client.h
+index 57228be..10f405f 100644
+--- a/src/vpn_client.h
++++ b/src/vpn_client.h
+@@ -32,6 +32,9 @@ typedef struct mqvpn_client_cfg_s {
+     int reconnect_interval;     /* base reconnect interval in seconds (default 5) */
+     int kill_switch;            /* 1=block traffic outside tunnel (default 0) */
+     int manage_routes; /* 1=manage host routes (default 1), 0=skip routing setup */
++    const char
++        *control_addr; /* JSON control API bind address (Linux; NULL = 127.0.0.1) */
++    int control_port;  /* JSON control API TCP port (0 = disabled) */
+     uint64_t init_max_path_id;         /* draft-21 §4.6 TP cap, 0=use xquic default 8 */
+     int tun_mtu;                       /* 0=auto (MSS-derived), >0=cap (floor 1280) */
+     int path_mtu;                      /* 0=default packet size, >0=underlay MTU */
+diff --git a/tests/test_control_socket.c b/tests/test_control_socket.c
+index 02c9e98..a787e8a 100644
+--- a/tests/test_control_socket.c
++++ b/tests/test_control_socket.c
+@@ -5,7 +5,8 @@
+  * test_control_socket.c — unit tests for the control-API command dispatch
+  * (src/platform/linux/control_socket.c::dispatch).
+  *
+- * Drives dispatch() end to end with the server-facing API mocked, covering
++ * Drives dispatch() end to end with the server-facing API (and, for client
++ * mode, the client-facing one) mocked, covering
+  * command routing, argument validation, error codes and the response JSON
+  * (shape, escaping, the worst-case get_status size bound, the too-large
+  * envelope) without sudo/netns.
+@@ -53,6 +54,11 @@ static int g_all_fec_n = 0;
+ static int g_reorder_rc = 0;
+ static double g_reorder_p99 = 1.5;
+ 
++/* Client mode */
++static mqvpn_internal_client_status_t g_cli_status;
++static mqvpn_client_state_t g_cli_state = MQVPN_STATE_ESTABLISHED;
++static int g_cli_reorder_called = 0;
++
+ /* ── Stubs for the server-facing API the handlers call ────────────────────── */
+ 
+ int
+@@ -214,6 +220,52 @@ mqvpn_reorder_latency_buffered_percentile(const mqvpn_reorder_stats_t *st, doubl
+     return 2.5;
+ }
+ 
++/* ── Stubs for the client-facing API (client mode) ────────────────────────── */
++
++int
++mqvpn_client_get_stats(const mqvpn_client_t *c, mqvpn_stats_t *out)
++{
++    (void)c;
++    memset(out, 0, sizeof(*out));
++    out->struct_size = sizeof(*out);
++    out->bytes_tx = 222;
++    out->bytes_rx = 333;
++    out->udp_tx_sends = 44;
++    return 0;
++}
++
++mqvpn_client_state_t
++mqvpn_client_get_state(const mqvpn_client_t *c)
++{
++    (void)c;
++    return g_cli_state;
++}
++
++int
++mqvpn_client_get_status_snapshot(const mqvpn_client_t *c,
++                                 mqvpn_internal_client_status_t *out)
++{
++    (void)c;
++    *out = g_cli_status;
++    return 0;
++}
++
++int
++mqvpn_client_get_reorder_stats(const mqvpn_client_t *c, mqvpn_reorder_stats_t *out)
++{
++    (void)c;
++    memset(out, 0, sizeof(*out));
++    out->delivered_count = 77;
++    g_cli_reorder_called++;
++    return 0;
++}
++
++const char *
++mqvpn_path_status_string(mqvpn_path_status_t status)
++{
++    return status == MQVPN_PATH_ACTIVE ? "active" : "pending";
++}
++
+ /* Pull in dispatch() + the command handlers (all static). */
+ #include "control_socket.c"
+ 
+@@ -275,6 +327,21 @@ call(const char *req)
+     dispatch(req, g_resp, sizeof(g_resp) - 2, &cs);
+ }
+ 
++static int g_dummy_client; /* opaque sentinel, like g_dummy_server */
++
++/* call() against a client-mode socket. */
++static void
++call_client(const char *req)
++{
++    memset(g_resp, 0, sizeof(g_resp));
++    ctrl_socket_t cs = {
++        .client = (mqvpn_client_t *)&g_dummy_client,
++        .rx_stats = test_rx_stats,
++        .rx_ctx = NULL,
++    };
++    dispatch(req, g_resp, sizeof(g_resp) - 2, &cs);
++}
++
+ /* ── Envelope / routing ───────────────────────────────────────────────────── */
+ 
+ static void
+@@ -885,6 +952,145 @@ test_exact_shapes(void)
+     CHECK_EQ_STR(want);
+ }
+ 
++/* ── Client mode ──────────────────────────────────────────────────────────── */
++
++static void
++seed_client_status(void)
++{
++    memset(&g_cli_status, 0, sizeof(g_cli_status));
++    g_cli_status.state = MQVPN_STATE_ESTABLISHED;
++    g_cli_status.connected_sec = 42;
++    strcpy(g_cli_status.endpoint, "203.0.113.7:443");
++    g_cli_status.scheduler = "minrtt";
++    g_cli_status.bytes_tx = 1000;
++    g_cli_status.bytes_rx = 2000;
++    g_cli_status.n_paths = 2;
++
++    mqvpn_internal_client_path_t *p0 = &g_cli_status.paths[0];
++    strcpy(p0->iface, "wan");
++    p0->status = MQVPN_PATH_ACTIVE;
++    p0->reinject_tx_bytes = 9;
++    p0->stats.path_id = 0;
++    p0->stats.srtt_us = 31000;
++    p0->stats.min_rtt_us = 18000;
++    p0->stats.bytes_tx = 600;
++    p0->stats.bytes_rx = 1500;
++    p0->stats.pkt_sent = 10;
++    p0->stats.pkt_recv = 20;
++    p0->stats.pkt_lost = 1;
++    p0->stats.state = 2;
++
++    mqvpn_internal_client_path_t *p1 = &g_cli_status.paths[1];
++    strcpy(p1->iface, "wwan0");
++    p1->status = MQVPN_PATH_PENDING;
++    p1->stats.path_id = 1;
++}
++
++/* get_status keeps the server's shape: one client whose paths carry the
++ * server's keys plus iface/status. */
++static void
++test_client_get_status(void)
++{
++    seed_client_status();
++    call_client("{\"cmd\":\"get_status\"}");
++    yyjson_doc *d = parse_resp();
++    yyjson_val *root = yyjson_doc_get_root(d);
++    CHECK(yyjson_get_bool(yyjson_obj_get(root, "ok")));
++    CHECK(yyjson_equals_str(yyjson_obj_get(root, "state"), "established"));
++    CHECK(yyjson_get_int(yyjson_obj_get(root, "n_clients")) == 1);
++    yyjson_val *clients = yyjson_obj_get(root, "clients");
++    CHECK(yyjson_arr_size(clients) == 1);
++    yyjson_val *c0 = yyjson_arr_get(clients, 0);
++    CHECK(yyjson_equals_str(yyjson_obj_get(c0, "user"), ""));
++    CHECK(yyjson_equals_str(yyjson_obj_get(c0, "endpoint"), "203.0.113.7:443"));
++    CHECK(yyjson_equals_str(yyjson_obj_get(c0, "scheduler"), "minrtt"));
++    CHECK(yyjson_get_uint(yyjson_obj_get(c0, "connected_sec")) == 42);
++    CHECK(yyjson_get_uint(yyjson_obj_get(c0, "bytes_tx")) == 1000);
++    CHECK(yyjson_get_uint(yyjson_obj_get(c0, "bytes_rx")) == 2000);
++    CHECK(yyjson_get_int(yyjson_obj_get(c0, "n_paths")) == 2);
++    yyjson_val *paths = yyjson_obj_get(c0, "paths");
++    CHECK(yyjson_arr_size(paths) == 2);
++
++    yyjson_val *jp0 = yyjson_arr_get(paths, 0);
++    CHECK(yyjson_equals_str(yyjson_obj_get(jp0, "iface"), "wan"));
++    CHECK(yyjson_equals_str(yyjson_obj_get(jp0, "status"), "active"));
++    CHECK(yyjson_get_uint(yyjson_obj_get(jp0, "srtt_ms")) == 31);
++    CHECK(yyjson_get_uint(yyjson_obj_get(jp0, "min_rtt_ms")) == 18);
++    CHECK(yyjson_get_uint(yyjson_obj_get(jp0, "bytes_tx")) == 600);
++    CHECK(yyjson_get_uint(yyjson_obj_get(jp0, "pkt_sent")) == 10);
++    CHECK(yyjson_get_uint(yyjson_obj_get(jp0, "pkt_recv")) == 20);
++    CHECK(yyjson_get_uint(yyjson_obj_get(jp0, "pkt_lost")) == 1);
++    CHECK(yyjson_equals_str(yyjson_obj_get(jp0, "state_label"), "active"));
++    CHECK(yyjson_get_uint(yyjson_obj_get(jp0, "reinject_tx_bytes")) == 9);
++
++    yyjson_val *jp1 = yyjson_arr_get(paths, 1);
++    CHECK(yyjson_equals_str(yyjson_obj_get(jp1, "iface"), "wwan0"));
++    CHECK(yyjson_equals_str(yyjson_obj_get(jp1, "status"), "pending"));
++
++    /* Every server path key is present on the client path too. */
++    static const char *const server_keys[] = {
++        "path_id",  "srtt_ms",     "min_rtt_ms",        "cwnd",     "in_flight",
++        "bytes_tx", "bytes_rx",    "pkt_sent",          "pkt_recv", "pkt_lost",
++        "state",    "state_label", "reinject_tx_bytes",
++    };
++    for (size_t k = 0; k < sizeof(server_keys) / sizeof(server_keys[0]); k++)
++        CHECK(yyjson_obj_get(jp1, server_keys[k]) != NULL);
++    yyjson_doc_free(d);
++}
++
++static void
++test_client_get_stats(void)
++{
++    g_cli_state = MQVPN_STATE_ESTABLISHED;
++    call_client("{\"cmd\":\"get_stats\"}");
++    CHECK_HAS("\"ok\":true");
++    CHECK_HAS("\"n_clients\":1");
++    CHECK_HAS("\"bytes_tx\":222");
++    CHECK_HAS("\"bytes_rx\":333");
++    CHECK_HAS("\"udp_tx_sends\":44");
++    CHECK_HAS("\"udp_rx_receives\":61");
++    CHECK_HAS("\"uptime_sec\":");
++
++    g_cli_state = MQVPN_STATE_RECONNECTING;
++    call_client("{\"cmd\":\"get_stats\"}");
++    CHECK_HAS("\"n_clients\":0");
++    g_cli_state = MQVPN_STATE_ESTABLISHED;
++}
++
++static void
++test_client_build_info_and_reorder(void)
++{
++    seed_client_status();
++    call_client("{\"cmd\":\"get_build_info\"}");
++    CHECK_HAS("\"scheduler\":\"minrtt\"");
++
++    g_cli_reorder_called = 0;
++    call_client("{\"cmd\":\"get_reorder_stats\"}");
++    CHECK(g_cli_reorder_called == 1);
++    CHECK_HAS("\"delivered_count\":77");
++}
++
++/* The user table and FEC commands are server-only. */
++static void
++test_client_server_only_refused(void)
++{
++    static const char *const reqs[] = {
++        "{\"cmd\":\"add_user\",\"name\":\"a\",\"key\":\"k\"}",
++        "{\"cmd\":\"remove_user\",\"name\":\"a\"}",
++        "{\"cmd\":\"list_users\"}",
++        "{\"cmd\":\"get_fec_stats\",\"user\":\"a\"}",
++        "{\"cmd\":\"get_all_fec_stats\"}",
++    };
++    for (size_t i = 0; i < sizeof(reqs) / sizeof(reqs[0]); i++) {
++        g_last_add_name[0] = '\0';
++        call_client(reqs[i]);
++        CHECK_EQ_STR("{\"ok\":false,\"error\":\"not supported in client mode\"}");
++    }
++    CHECK(g_last_add_name[0] == '\0');
++    call_client("{\"cmd\":\"frobnicate\"}");
++    CHECK_EQ_STR("{\"ok\":false,\"error\":\"unknown cmd\"}");
++}
++
+ int
+ main(void)
+ {
+@@ -937,6 +1143,11 @@ main(void)
+     test_get_status_too_large_envelope();
+     test_exact_shapes();
+ 
++    test_client_get_status();
++    test_client_get_stats();
++    test_client_build_info_and_reorder();
++    test_client_server_only_refused();
++
+     if (g_failed) {
+         fprintf(stderr, "test_control_socket: %d CHECK(s) FAILED\n", g_failed);
+         return 1;
+-- 
+2.56.0
+
