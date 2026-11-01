@@ -115,8 +115,33 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | POST | `/api/captive/check` | client, additive: `{"name"}` re-check now (`""` = all) |
 | GET | `/api/health` | additive: [setup health](#setup-health) |
 | GET | `/tailbond-glinet.ipk` | additive: the GL router package, from `glinet_ipk` (default `/usr/share/tailbond/tailbond-glinet.ipk`) or rebuilt from opkg's records of the installed package |
+| GET | `/get` | server, additive, **unauthenticated**: the [phone page](#phone-page) (HTML), also served on port 80 |
 
-### Client API token and `GET /api/peers`
+`GET /api/settings` (server role) additionally reports `landing_url` (where
+phones get tailbond: `http://<full MagicDNS name>/` while the phone page
+listens, else `http://<name>:8077/get`), `landing_typed` (what to type in a
+phone's browser, e.g. `homebox`) and `landing_qr_svg` (QR code of
+`landing_url`).
+
+#### Phone page
+
+Server role: a page for phones that run Tailscale but not tailbond yet,
+served on **port 80 of the Tailscale IPs** (config `landing_port`, default
+80, `-1` = off; `landing_public_port` is the port tailnet devices use when a
+firewall redirect sits in between: OpenWrt binds 8078 and redirects tailnet
+tcp/80 to it). Typing the server's MagicDNS short name in a phone's browser
+opens it. It serves exactly `GET /` (HTML: the APK download with what
+Android's install prompts look like, and a link that opens the app asking
+this server), `GET /tailbond.apk` and `GET /icon.svg`; every other path
+redirects to `/`, whatever `ui_password` says. Binding failures (port in
+use) are logged once and the page stays at `/get` on the dashboard port.
+
+The app link is `intent://ask?server=<full MagicDNS name>#Intent;scheme=tailbond;package=dev.tailbond.app;S.browser_fallback_url=<page>#get-app;end`,
+i.e. **`tailbond://ask?server=<name>`**: the app asks that server to pair
+([pairing over Tailscale](#pairing-over-tailscale)) as if the name had been
+typed. Only plain host names or addresses are accepted.
+
+## Client API token and `GET /api/peers`
 
 A paired client authenticates to the server's agent with
 
@@ -193,6 +218,7 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 - a mode selector (Speed / Streaming / Redundant / Failover);
 - one card per connection: icon by kind, live rate sparkline, latency, loss, state chip, enable toggle, priority dropdown, data used vs cap;
 - server role: a Devices tab (add a device → QR code, revoke, per-client paths) and a Tailscale panel;
+- server role, Devices tab: **Add an Android phone** with a QR code of the [phone page](#phone-page) and its link;
 - server role, viewed on a phone (or opened as `#add-phone`): an **Add this phone** card on top. One tap
   creates the client (`POST /api/clients`, name guessed from the phone model) and navigates to the
   `tailbond://pair` deep link, so the app opens with the pairing; no QR code on the same device.
@@ -207,7 +233,7 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 - `agent`: `CGO_ENABLED=0 go build` for linux/amd64 and linux/arm64.
 - RPM: `packaging/fedora/build-rpm.sh` → `out/rpm/`.
 - IPK: `packaging/openwrt/build-ipk.sh` → `out/ipk/tailbond_<ver>_aarch64_cortex-a53.ipk` (plain ar/tar ipk; no OpenWrt SDK needed since binaries are static).
-- APK: `android/` Gradle → `out/android/tailbond-debug.apk`.
+- APK: `android/` Gradle → `out/android/tailbond-debug.apk`. The RPM and the IPK carry it at `/usr/share/tailbond/tailbond.apk` when it exists at build time (or `TAILBOND_APK`).
 
 ## Platform hooks (keep the agent platform-neutral)
 
@@ -215,7 +241,7 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 
 | Hook | When | Args / env |
 |---|---|---|
-| `server-up` | after mqvpn server starts | env `TB_TUN`, `TB_SUBNET`, `TB_SUBNET6`, `TB_PORT`, `TB_DNS_IP` |
+| `server-up` | after mqvpn server starts | env `TB_TUN`, `TB_SUBNET`, `TB_SUBNET6`, `TB_PORT`, `TB_DNS_IP`, `TB_WEB_PORTS` (additive: the tcp ports the agent serves to the tailnet, dashboard then phone page, e.g. `8077 80`) |
 | `server-down` | after mqvpn server stops | same |
 | `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES` |
 | `client-down` | tunnel down | same; `TB_RELEASE=1` when the user turned tailbond off or unpaired (the LAN goes back to the WANs whatever the kill switch says) |
@@ -224,7 +250,7 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 
 Every hook also gets `TB_ROLE`, `TB_MODE`, `TB_STATE_DIR` and `TB_CONFIG` (path of the generated mqvpn INI). Besides `<hooks_dir>/<hook>`, executables in `<hooks_dir>/<hook>.d/` run in lexical order.
 
-- Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`), `tailscale set --advertise-routes`. Without a running firewalld they fall back to mqvpn's NAT script plus iptables masquerade toward `tailscale0`.
+- Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`, `TB_WEB_PORTS` from tailnet source ranges only), `tailscale set --advertise-routes`. Without a running firewalld they fall back to mqvpn's NAT script plus iptables masquerade toward `tailscale0`.
 - OpenWrt hooks (`packaging/openwrt/hooks/`): UCI network/firewall zone `tailbond` for `tb0`, forwarding `lan → tailbond`, policy routing of LAN through `tb0`, server-role equivalents for Flint 3.
 - The agent runs mqvpn with `manage_routes = false` on OpenWrt and lets hooks route. On Fedora (server only), internet NAT comes from the firewalld `tailbond-out` policy, or from mqvpn's own NAT script when firewalld isn't running.
 
@@ -255,6 +281,7 @@ Additive keys (all optional):
 - `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`;
 - `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing);
 - `glinet_ipk`: router package offered as `GET /tailbond-glinet.ipk`;
+- `landing_port` (server: phone page bind port, default 80, `-1` = off), `landing_public_port` (the port tailnet devices use, default the same);
 - `server.users[].ts_node`: the Tailscale stable node ID that asked to pair (re-asking re-issues this user's key);
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;
 - `client.captive_portal_detect` (default `true`), `client.captive_probe_urls` (default: Google's `generate_204`, Firefox's `success.txt`).
