@@ -79,7 +79,7 @@ func TestCollectDecodeApply(t *testing.T) {
 	os.WriteFile(filepath.Join(state, "server.crt"), []byte("CERT"), 0o600)
 	os.WriteFile(filepath.Join(state, "server.key"), []byte("KEY"), 0o600)
 	os.WriteFile(filepath.Join(state, "usage.json"), []byte("{}"), 0o600)
-	p, err := Collect(cfgPath, state, "config tailbond 'main'\n")
+	p, err := Collect(cfgPath, state, "config tailbond 'main'\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

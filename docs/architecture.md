@@ -638,7 +638,7 @@ Status (`/api/status`, additive): `protocol`, and
 - `state`: `idle` | `checking` | `downloading` | `waiting` (window or
   deferral; `deferred` says why) | `installing` | `trial` (new version
   running, health check pending) | `failed` | `rolled_back` | `off`.
-- `source`: `mirror` (the home server) | `public` (update.source) | `upload`.
+- `source`: `mirror` (the home server) | `public` (update.source) | `upload` (an offline upload, server) | `cache` (server: the last good manifest, the public source being unreachable; `error` says why).
 - `outdated` (server role): registered clients whose last reported version
   is older than this server's.
 
@@ -778,7 +778,7 @@ Request bodies for these endpoints may be up to 2 MiB.
 CLI:
 - `tailbondd backup --out FILE [--passphrase-file F]`: the passphrase comes from the file, from `TB_BACKUP_PASSPHRASE`, or a prompt.
 - `tailbondd backup --plain` prints the summary.
-- `tailbondd restore FILE [--yes] [--passphrase-file F]`: run it with the service stopped, or it asks the running agent to do it.
+- `tailbondd restore FILE [--yes] [--passphrase-file F]`: run it with the service stopped, or restart the service right after (the running agent would otherwise keep its settings in memory).
 
 ## Captive portals
 

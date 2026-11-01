@@ -302,6 +302,12 @@ func (a *Agent) serverStatus(ctx context.Context) *status.Status {
 	}
 	a.rater.Begin()
 	st.Clients, st.Totals, st.UptimeSec = status.Server(a.rater, time.Now(), mst, mstats, names)
+	vers := a.clientVersions()
+	for i := range st.Clients {
+		if v, ok := vers[st.Clients[i].Name]; ok {
+			st.Clients[i].Version, st.Clients[i].Kind = v.Version, v.Kind
+		}
+	}
 	a.rater.End()
 	a.noteOutside(st.Clients)
 	st.Tailscale = a.tsStatus(ctx)

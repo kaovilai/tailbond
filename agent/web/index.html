@@ -29,6 +29,8 @@
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-update" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-backup" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-ts" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5" cy="5" r="2.2" opacity=".35"/><circle cx="12" cy="5" r="2.2" opacity=".35"/><circle cx="19" cy="5" r="2.2" opacity=".35"/><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/><circle cx="5" cy="19" r="2.2" opacity=".35"/><circle cx="12" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2" opacity=".35"/></g></symbol>
   </defs>
 </svg>
@@ -120,6 +122,7 @@
     <button data-tab="clients" data-role="server">Devices</button>
     <button data-tab="setup" data-role="client">Setup</button>
     <button data-tab="tailscale">Tailscale</button>
+    <button data-tab="maint">Updates &amp; backup<span class="tab-badge hidden" id="maint-badge"></span></button>
     <button data-tab="logs">Logs</button>
   </nav>
 
@@ -198,6 +201,12 @@
     <div class="card" id="ts-panel"></div>
   </section>
 
+  <!-- Updates & backup (both roles): filled by app.js from /api/status `update`, /api/update, /api/backups -->
+  <section class="tab hidden" id="tab-maint">
+    <section class="card ub-card" id="upd-card" aria-label="Updates"></section>
+    <section class="card ub-card" id="bk-card" aria-label="Backup and restore"></section>
+  </section>
+
   <section class="tab hidden" id="tab-logs">
     <div class="card logs-card">
       <div class="row between"><h3>Logs</h3><label class="check"><input type="checkbox" id="logs-follow" checked> follow</label></div>
@@ -236,6 +245,9 @@
     <div class="row end"><button class="btn primary" type="submit">Sign in</button></div>
   </form>
 </dialog>
+
+<!-- Updates & backup dialogs (install, upload, backup, restore, what's inside): content built by app.js -->
+<dialog id="ub-dialog" class="ub-dialog"><div class="dialog-inner" id="ub-dialog-body"></div></dialog>
 
 <div class="toast hidden" id="toast"></div>
 <script src="app.js"></script>

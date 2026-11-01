@@ -27,9 +27,13 @@ type Payload struct {
 	UCI    string            `json:"uci,omitempty"`   // `uci export tailbond` (OpenWrt)
 }
 
-// Collect reads what a backup of this machine contains.
-func Collect(cfgPath, stateDir, uci string) (*Payload, error) {
+// Collect reads what a backup of this machine contains: the config file
+// as saved (or, before it was ever saved, the config in memory).
+func Collect(cfgPath, stateDir, uci string, fallback *config.Config) (*Payload, error) {
 	b, err := os.ReadFile(cfgPath)
+	if os.IsNotExist(err) && fallback != nil {
+		b, err = json.Marshal(fallback)
+	}
 	if err != nil {
 		return nil, err
 	}

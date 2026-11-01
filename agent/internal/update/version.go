@@ -5,6 +5,7 @@
 package update
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -36,6 +37,10 @@ func Parse(s string) (Version, bool) {
 	if i := strings.IndexByte(s, '+'); i >= 0 {
 		s = s[:i]
 	}
+	// an OpenWrt package revision at the end: "0.2.0-r1", "1.2.3-beta.1-r1"
+	if m := reRevision.FindStringIndex(s); m != nil {
+		s = s[:m[0]]
+	}
 	core, pre, _ := strings.Cut(s, "-")
 	parts := strings.Split(core, ".")
 	if len(parts) != 3 {
@@ -57,11 +62,9 @@ func Parse(s string) (Version, bool) {
 		}
 	}
 	if pre != "" {
+		// "-<n>-g<hash>" (git describe) and "-dirty" contain a "-" here
+		// and fail below: such builds never update themselves
 		ids := strings.Split(pre, ".")
-		// an OpenWrt revision: "0.1.0-r96" (optionally after a pre-release)
-		if last := ids[len(ids)-1]; isRevision(last) {
-			ids = ids[:len(ids)-1]
-		}
 		for _, id := range ids {
 			if id == "" || id == "dirty" || strings.Contains(id, "-") {
 				return Version{}, false
@@ -72,13 +75,7 @@ func Parse(s string) (Version, bool) {
 	return v, true
 }
 
-func isRevision(s string) bool {
-	if len(s) < 2 || s[0] != 'r' {
-		return false
-	}
-	_, err := strconv.Atoi(s[1:])
-	return err == nil
-}
+var reRevision = regexp.MustCompile(`-r[0-9]+$`)
 
 // Compare orders two versions like semver (-1, 0, 1). A version with a
 // pre-release sorts before the same version without one.

@@ -99,10 +99,13 @@ func TestVersionOrder(t *testing.T) {
 			t.Errorf("%s should be newer than %s", order[i], order[i-1])
 		}
 	}
+	if !Same("1.2.3-beta.1-r1", "1.2.3-beta.1") || !Same("0.2.0-r1", "0.2.0") {
+		t.Error("ipk revision after a pre-release")
+	}
 	if !Same("0.1.0-r96", "v0.1.0") || !Same("0.1.0", "0.1.0+build.5") {
 		t.Error("revision / build metadata should be ignored")
 	}
-	for _, bad := range []string{"dev", "abc1234", "0.1", "0.1.0-dirty", "v0.1.0-5-gabc123-dirty", "1.x.0", ""} {
+	for _, bad := range []string{"dev", "abc1234", "0.1", "0.1.0-dirty", "v0.1.0-5-gabc123-dirty", "0.2.0-3-gabc1234", "1.x.0", ""} {
 		if _, ok := Parse(bad); ok {
 			t.Errorf("%q parsed", bad)
 		}

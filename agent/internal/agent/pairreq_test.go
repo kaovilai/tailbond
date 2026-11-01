@@ -86,7 +86,7 @@ func TestHelloIsPublicAndMinimal(t *testing.T) {
 	}
 	var h map[string]any
 	decode(t, w, &h)
-	if h["tailbond"] != true || h["role"] != "server" || h["version"] != "test" || len(h) != 4 {
+	if h["tailbond"] != true || h["role"] != "server" || h["version"] != "test" || h["protocol"] != float64(1) || len(h) != 5 {
 		t.Fatalf("hello = %v", h)
 	}
 	// everything else still needs the password

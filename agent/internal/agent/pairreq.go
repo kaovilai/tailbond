@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"github.com/tailbond/tailbond/agent/internal/update"
 	"net/http"
 	"net/netip"
 	"os"
@@ -156,7 +157,7 @@ func (a *Agent) serverName() string {
 // hHello lets routers and phones on the tailnet find tailbond servers.
 // Unauthenticated and minimal on purpose.
 func (a *Agent) hHello(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"tailbond": true, "name": a.serverName(), "version": a.opts.Version, "role": a.role})
+	writeJSON(w, http.StatusOK, map[string]any{"tailbond": true, "name": a.serverName(), "version": a.opts.Version, "role": a.role, "protocol": update.Protocol})
 }
 
 // hPairRequestCreate: POST /api/pair-requests from a tailnet device.

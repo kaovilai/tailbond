@@ -59,6 +59,17 @@ func (m Mirror) Store(channel string, manifest, sig []byte) error {
 	return writeAtomic(m.manifestPath(channel), manifest)
 }
 
+// SetOrigin records where the cached manifest came from ("public",
+// "upload"); Origin reads it.
+func (m Mirror) SetOrigin(channel, origin string) {
+	_ = os.WriteFile(filepath.Join(m.Dir, channel+".origin"), []byte(origin), 0o644)
+}
+
+func (m Mirror) Origin(channel string) string {
+	b, _ := os.ReadFile(filepath.Join(m.Dir, channel+".origin"))
+	return strings.TrimSpace(string(b))
+}
+
 // Prune keeps the artifacts of the given manifests (current, previous),
 // drops the rest, and then drops the previous version's artifacts too if
 // the cache is over MaxBytes.

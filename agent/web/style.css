@@ -344,3 +344,81 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
 .health-unknown::before { content: '?'; color: var(--muted, #64748b); }
 #pw-form .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); margin-top: 8px; }
 .warn-text { color: color-mix(in srgb, var(--warn) 70%, var(--text)); margin-top: 4px; }
+
+/* Updates & backup tab */
+.tab-badge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 99px;
+  background: var(--warn); color: #fff; font-size: 11px; font-weight: 700; vertical-align: 1px; }
+.tab-badge.bad { background: var(--bad); }
+.ub-card { margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
+.ub-head { display: flex; align-items: center; gap: 12px; }
+.ub-head .grow { flex: 1; min-width: 0; }
+.ub-head h3 { margin: 0; }
+.ub-card h4 { margin: 0 0 6px; font-size: 14px; }
+.ub-card p { margin: 4px 0; }
+.ub-card .row { margin-top: 8px; }
+.ub-now { display: flex; flex-direction: column; gap: 2px; }
+.ub-big { font-size: 18px; font-weight: 650; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ub-big a { font-size: 14px; font-weight: 600; }
+.ub-sec { border-top: 1px solid var(--line); padding-top: 12px; }
+.ub-wait { color: color-mix(in srgb, var(--warn) 75%, var(--text)); font-weight: 600; font-size: 14px; }
+.chip.ub-secfix { border: 0; padding: 3px 10px; text-transform: none; }
+.ub-list { list-style: none; margin: 4px 0 6px; padding: 0; display: grid; gap: 6px; }
+.ub-list li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.ub-list .ico { color: var(--muted); }
+.ub-note { border-radius: 10px; padding: 10px 12px; font-size: 13.5px; background: var(--card-2); border: 1px solid var(--line); }
+.ub-note.ok { background: color-mix(in srgb, var(--ok) 10%, var(--card)); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.ub-note.bad { background: color-mix(in srgb, var(--bad) 8%, var(--card)); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+.ub-note.warn { background: color-mix(in srgb, var(--warn) 9%, var(--card)); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.ub-note ul { margin: 6px 0 0; padding-left: 18px; }
+.ub-note li { margin: 3px 0; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card-2); }
+.seg button { border: 0; border-left: 1px solid var(--line); background: none; color: var(--text); font: inherit; font-size: 14px; font-weight: 600; padding: 7px 14px; cursor: pointer; }
+.seg button:first-child { border-left: 0; }
+.seg button.on { background: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .seg button.on { color: #042f2e; } }
+.ub-window input[type=time] { flex: none; min-width: 0; width: 7.5em; }
+.ub-more summary { cursor: pointer; color: var(--accent); font-size: 13.5px; font-weight: 600; margin-top: 8px; }
+.ub-more .row { margin-top: 6px; }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 1s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ub-dialog { width: min(520px, calc(100vw - 24px)); }
+.ub-dialog .dialog-inner { max-height: calc(100vh - 40px); overflow: auto; }
+.ub-dialog p { margin: 0; }
+.ub-dialog h3 { margin: 0; }
+.ub-dialog h4 { margin: 4px 0 0; font-size: 14px; }
+.ub-dialog .field, .ub-card .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.ub-need { margin: 0; padding-left: 18px; }
+#up-files { display: none; }
+.ub-dialog label.btn { align-self: flex-start; }
+.ub-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ub-files li { display: flex; gap: 10px; align-items: center; font-family: var(--mono); font-size: 12.5px; padding: 6px 8px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); }
+.ub-files li .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ub-files .up-st { font-family: inherit; }
+.ub-files .up-ok .up-st { color: var(--ok); }
+.ub-files .up-bad .up-st { color: var(--bad); }
+.ub-files .up-send .up-st { color: var(--warn); }
+.ub-pass { display: flex; flex-direction: column; gap: 6px; }
+.meter { height: 5px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; border-radius: 99px; transition: width .2s; }
+.meter.weak i { width: 25%; background: var(--bad); }
+.meter.ok i { width: 60%; background: var(--warn); }
+.meter.strong i { width: 100%; background: var(--ok); }
+.ub-file { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--line); }
+.ub-file b { word-break: break-all; }
+.ub-changes { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.ub-changes th { text-align: left; font-weight: 600; padding: 5px 8px 5px 0; vertical-align: top; white-space: nowrap; }
+.ub-changes td { padding: 5px 6px; vertical-align: top; border-top: 1px solid var(--line); word-break: break-word; }
+.ub-changes th { border-top: 1px solid var(--line); }
+.ub-summary th { width: 40%; white-space: normal; }
+.ub-backups { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.ub-backups th { text-align: left; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; padding: 4px 8px 4px 0; }
+.ub-backups td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); }
+.ub-done { display: flex; align-items: center; gap: 10px; color: var(--ok); }
+.ub-done .ico { width: 28px; height: 28px; }
+.btn.danger-fill { background: var(--bad); border-color: var(--bad); color: #fff; }
+input.num { width: 5.5em; flex: none !important; min-width: 0 !important; }
+.ub-card .check { color: var(--text); font-size: 14px; margin-top: 8px; }
+@media (max-width: 560px) {
+  .seg button { padding: 7px 10px; font-size: 13px; }
+  .ub-backups td:nth-child(3), .ub-backups th:nth-child(3) { display: none; }
+}

@@ -73,6 +73,22 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST /api/bypass", a.hBypassPost)
 	mux.HandleFunc("DELETE /api/bypass/{id}", a.hBypassDelete)
 	mux.HandleFunc("GET /api/lan-clients", a.hLANClients)
+	// Updates, the update mirror, backups (docs/architecture.md)
+	mux.HandleFunc("GET /api/update", a.hUpdateGet)
+	mux.HandleFunc("POST /api/update/check", a.hUpdateCheck)
+	mux.HandleFunc("POST /api/update/install", a.hUpdateInstall)
+	mux.HandleFunc("POST /api/update/policy", a.hUpdatePolicy)
+	mux.HandleFunc("POST /api/update/upload", a.hUpdateUpload)
+	mux.HandleFunc("GET /updates/", a.hMirror)
+	mux.HandleFunc("GET /api/pairing", a.hPairing)
+	mux.HandleFunc("POST /api/backup", a.hBackup)
+	mux.HandleFunc("GET /api/backup/summary", a.hBackupSummary)
+	mux.HandleFunc("POST /api/backup/settings", a.hBackupSettings)
+	mux.HandleFunc("POST /api/restore/preview", a.hRestorePreview)
+	mux.HandleFunc("POST /api/restore", a.hRestore)
+	mux.HandleFunc("GET /api/backups", a.hBackups)
+	mux.HandleFunc("GET /api/backups/{name}", a.hBackupDownload)
+	mux.HandleFunc("POST /api/backups/push", a.hBackupPush)
 	// Captive portals (client role)
 	mux.HandleFunc("POST /api/captive/signin", a.hCaptiveSignin)
 	mux.HandleFunc("DELETE /api/captive/signin", a.hCaptiveSigninEnd)
@@ -97,12 +113,24 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 		// Bonded clients reach the server's tunnel address; there only the
 		// token-authenticated peer list exists (no UI, no admin API).
 		if a.viaTunnel(r) {
-			if r.URL.Path != "/api/peers" || r.Method != http.MethodGet {
+			if !tunnelPath(r) {
 				httpErr(w, http.StatusNotFound, errNotFound)
 				return
 			}
-			if a.clientForToken(r) == "" {
+			if client := a.clientForToken(r); client != "" {
+				a.noteClientVersion(r, client)
+			} else if r.URL.Path != "/api/hello" {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="tailbond"`)
+				httpErr(w, http.StatusUnauthorized, errors.New("client token required"))
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		// the update mirror and a client's pairing refresh: token, admin
+		// session, or a tailnet / loopback source
+		if strings.HasPrefix(r.URL.Path, "/updates/") || r.URL.Path == "/api/pairing" || r.URL.Path == "/api/backups/push" {
+			if !a.mirrorAllowed(r) {
 				httpErr(w, http.StatusUnauthorized, errors.New("client token required"))
 				return
 			}
@@ -120,8 +148,11 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 					return
 				}
 			}
-			// Mutations must come from our own page (no CSRF via simple forms).
-			if r.Method != http.MethodGet && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && r.Method != http.MethodDelete {
+			// Mutations must come from our own page (no CSRF via simple forms;
+			// application/octet-stream needs a CORS preflight too).
+			ct := r.Header.Get("Content-Type")
+			upload := r.URL.Path == "/api/update/upload" && strings.HasPrefix(ct, "application/octet-stream")
+			if r.Method != http.MethodGet && !strings.HasPrefix(ct, "application/json") && r.Method != http.MethodDelete && !upload {
 				httpErr(w, http.StatusUnsupportedMediaType, errors.New("send application/json"))
 				return
 			}
@@ -684,4 +715,16 @@ func (a *Agent) serveOn(ctx context.Context, what string, h http.Handler, addrs 
 			_ = bind(false)
 		}
 	}
+}
+
+// tunnelPath: what bonded clients may ask the server over the tunnel.
+func tunnelPath(r *http.Request) bool {
+	p := r.URL.Path
+	switch {
+	case r.Method == http.MethodGet && (p == "/api/peers" || p == "/api/hello" || p == "/api/pairing" || strings.HasPrefix(p, "/updates/")):
+		return true
+	case r.Method == http.MethodPost && p == "/api/backups/push":
+		return true
+	}
+	return false
 }

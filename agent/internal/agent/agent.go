@@ -27,6 +27,7 @@ import (
 	"github.com/tailbond/tailbond/agent/internal/status"
 	"github.com/tailbond/tailbond/agent/internal/supervisor"
 	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/tailbond/tailbond/agent/internal/update"
 )
 
 type Options struct {
@@ -88,6 +89,9 @@ type Agent struct {
 	subnetMoved chan struct{}
 	// bypassNow re-applies the bypass rules (WAN changes).
 	bypassNow chan struct{}
+	// auto-updates and backups (update.go, backupapi.go)
+	upd     *updater
+	restart chan struct{}
 }
 
 // runtime is reset every time mqvpn starts.
@@ -134,6 +138,8 @@ func New(store *config.Store, opts Options) *Agent {
 		rescan:      make(chan struct{}, 1),
 		subnetMoved: make(chan struct{}, 1),
 		bypassNow:   make(chan struct{}, 1),
+		upd:         newUpdater(),
+		restart:     make(chan struct{}, 1),
 	}
 	if opts.Echo {
 		a.logs.Echo = os.Stderr
@@ -145,8 +151,12 @@ func New(store *config.Store, opts Options) *Agent {
 	a.glRead = glrepeater.Read
 	a.listIfs = netif.Discover
 	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
+	mqvpnBin := cfg.MqvpnBin
+	if o := MqvpnOverride(); o != "" {
+		mqvpnBin = o // this version came with its own mqvpn (self-update)
+	}
 	a.sup = supervisor.New(supervisor.Spec{
-		Bin:      cfg.MqvpnBin,
+		Bin:      mqvpnBin,
 		Args:     []string{"--config", a.confPath()},
 		PreStart: a.preStart,
 		OnLine:   a.onLine,
@@ -199,6 +209,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.startClient(ctx)
 	}
 
+	go a.updateLoop(ctx)
+	go a.backupLoop(ctx)
 	srvErr := make(chan error, 1)
 	go func() { srvErr <- a.serveHTTP(ctx) }()
 	if cfg.Role == config.RoleServer {
@@ -222,6 +234,14 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.sup.Stop()
 			a.drainHooks()
 			return err
+		case <-a.restart:
+			a.Logf("restarting (update)")
+			a.sup.Stop()
+			a.drainHooks()
+			if a.client != nil {
+				a.clearBypass()
+			}
+			return ErrRestart
 		case <-t.C:
 		}
 	}
@@ -455,6 +475,8 @@ func (a *Agent) poll(ctx context.Context) {
 		st = a.clientStatus(ctx)
 	}
 	st.Version = a.opts.Version
+	st.Protocol = update.Protocol
+	st.Update = a.updateView()
 	a.mu.Lock()
 	a.snap = st
 	a.mu.Unlock()

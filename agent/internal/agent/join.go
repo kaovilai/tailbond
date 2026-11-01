@@ -28,6 +28,7 @@ type helloInfo struct {
 	Name     string `json:"name"`
 	Version  string `json:"version"`
 	Role     string `json:"role"`
+	Protocol int    `json:"protocol,omitempty"`
 }
 
 // foundServer is one entry of GET /api/discover.

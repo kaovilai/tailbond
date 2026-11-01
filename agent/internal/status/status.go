@@ -75,6 +75,9 @@ type Client struct {
 	TxBytes      uint64 `json:"tx_bytes"`
 	RxBytes      uint64 `json:"rx_bytes"`
 	Paths        []Path `json:"paths"`
+	// Additive: what the client last reported (X-Tailbond-Version/Kind)
+	Version string `json:"version,omitempty"`
+	Kind    string `json:"kind,omitempty"`
 }
 
 type Tailscale struct {
@@ -111,6 +114,44 @@ type Status struct {
 	Servers      []ServerState `json:"servers,omitempty"`
 	ActiveServer string        `json:"active_server,omitempty"`
 	Failover     *Failover     `json:"failover,omitempty"`
+	// Updates (docs/architecture.md, "Updates")
+	Protocol int     `json:"protocol,omitempty"`
+	Update   *Update `json:"update,omitempty"`
+}
+
+// Update is the status of auto-updates on this machine.
+type Update struct {
+	Current    string        `json:"current"`
+	Available  string        `json:"available,omitempty"`
+	Policy     string        `json:"policy"`
+	Channel    string        `json:"channel"`
+	Pin        string        `json:"pin,omitempty"`
+	State      string        `json:"state"` // idle | checking | downloading | waiting | installing | trial | failed | rolled_back | off
+	Source     string        `json:"source,omitempty"`
+	LastCheck  *time.Time    `json:"last_check,omitempty"`
+	LastResult string        `json:"last_result,omitempty"`
+	Detail     string        `json:"detail,omitempty"` // last result detail, e.g. reinstalled_after_firmware_upgrade
+	NotesURL   string        `json:"notes_url,omitempty"`
+	Security   bool          `json:"security,omitempty"`
+	Deferred   string        `json:"deferred,omitempty"`
+	Window     string        `json:"window,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	Mirror     *MirrorStatus `json:"mirror,omitempty"`
+	Outdated   []Outdated    `json:"outdated,omitempty"`
+}
+
+// MirrorStatus: the server's update mirror.
+type MirrorStatus struct {
+	Version string `json:"version,omitempty"`
+	Files   int    `json:"files"`
+	Bytes   int64  `json:"bytes"`
+}
+
+// Outdated is a client running an older version than its server.
+type Outdated struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind,omitempty"`
+	Version string `json:"version"`
 }
 
 // ServerState is one entry of the client's server list.
