@@ -7,6 +7,15 @@
 # when build/mqvpn exists; JOBS caps parallelism, default 4), build a static
 # tailbondd, stage everything into a tarball, then rpmbuild -bb.
 # Needs: cmake gcc gcc-c++ make libevent-devel golang rpm-build systemd-rpm-macros.
+#
+# Env: VERSION (semver, a leading v is dropped; default: the v* tag at HEAD,
+# else 0.1.0 with tailbondd reporting git describe, so a dev build never
+# updates itself), TB_UPDATE_PUBKEY / TB_UPDATE_SOURCE (compiled into
+# tailbondd, scripts/release/ldflags.sh), JOBS, TAILBOND_APK,
+# TAILBOND_GLINET_IPK.
+# A pre-release 1.2.3-beta.1 becomes Version 1.2.3, Release 0.beta.1 (RPM
+# versions can't hold "-"; 0.x sorts below the release's 1):
+# tailbond-server-1.2.3-0.beta.1.fc44.x86_64.rpm.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -14,7 +23,22 @@ PKG="$ROOT/packaging/fedora"
 MQ="$ROOT/third_party/mqvpn"
 OUT="$ROOT/out/rpm"
 JOBS="${JOBS:-4}"
-VERSION="${VERSION:-0.1.0}"
+# shellcheck source=../../scripts/release/ldflags.sh
+. "$ROOT/scripts/release/ldflags.sh"
+AGENT_VERSION=""
+if [ -z "${VERSION:-}" ]; then
+  VERSION="$(git -C "$ROOT" describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null || true)"
+  if [ -z "$VERSION" ]; then
+    VERSION=0.1.0
+    AGENT_VERSION="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)"
+  fi
+fi
+VERSION="$(tb_norm_version "$VERSION")"
+[[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-([0-9A-Za-z.-]+))?$ ]] ||
+  { echo "VERSION=$VERSION is not semver MAJOR.MINOR.PATCH[-pre]"; exit 1; }
+RPM_VERSION="${BASH_REMATCH[1]}"
+PRE="${BASH_REMATCH[3]}"
+if [ -n "$PRE" ]; then RPM_RELEASE="0.${PRE//-/_}"; else RPM_RELEASE=1; fi
 
 case "$(uname -m)" in
   x86_64) GOARCH=amd64 ;;
@@ -37,13 +61,13 @@ if [ ! -x "$MQ/build/mqvpn" ] || [ ! -x "$MQ/build/mqvpn-nat-config" ]; then
 fi
 
 echo "==> building tailbondd ($GOARCH)"
-VERSION="$VERSION" "$ROOT/agent/build.sh" "$GOARCH" >/dev/null
+VERSION="${AGENT_VERSION:-$VERSION}" "$ROOT/agent/build.sh" "$GOARCH" >/dev/null
 TBD="$ROOT/out/agent/linux-$GOARCH/tailbondd"
 
 echo "==> staging"
 TOP="$(mktemp -d)"
 trap 'rm -rf "$TOP"' EXIT
-SRC="$TOP/tailbond-server-$VERSION"
+SRC="$TOP/tailbond-server-$RPM_VERSION"
 mkdir -p "$SRC"/{bin,lib,hooks,firewalld,doc,share} "$TOP"/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
 install -m 0755 "$MQ/build/mqvpn" "$SRC/bin/mqvpn"
 strip "$SRC/bin/mqvpn" 2>/dev/null || true
@@ -66,11 +90,11 @@ if [ -z "$ipk" ]; then
   for f in "$ROOT"/out/ipk/tailbond_*_aarch64_cortex-a53_neon-vfpv4.ipk; do if [ -f "$f" ]; then ipk="$f"; fi; done
 fi
 if [ -n "$ipk" ]; then install -m 0644 "$ipk" "$SRC/share/tailbond-glinet.ipk"; fi
-tar -C "$TOP" -czf "$TOP/SOURCES/tailbond-server-$VERSION.tar.gz" "tailbond-server-$VERSION"
+tar -C "$TOP" -czf "$TOP/SOURCES/tailbond-server-$RPM_VERSION.tar.gz" "tailbond-server-$RPM_VERSION"
 cp "$PKG/tailbond-server.spec" "$TOP/SPECS/"
 
 echo "==> rpmbuild"
-rpmbuild -bb --define "_topdir $TOP" --define "tb_version $VERSION" "$TOP/SPECS/tailbond-server.spec" >"$TOP/rpmbuild.log" 2>&1 ||
+rpmbuild -bb --define "_topdir $TOP" --define "tb_version $RPM_VERSION" --define "tb_release $RPM_RELEASE" "$TOP/SPECS/tailbond-server.spec" >"$TOP/rpmbuild.log" 2>&1 ||
   { tail -40 "$TOP/rpmbuild.log"; exit 1; }
 mkdir -p "$OUT"
 find "$TOP/RPMS" -name '*.rpm' -exec cp {} "$OUT/" \;

@@ -17,14 +17,21 @@
 #                                     missing, or always with TB_BUILD_AGENT=1)
 # Env:
 #   TB_ARCHS      default "x86_64 aarch64" (missing mqvpn: skipped, except x86_64)
-#   VERSION       default git describe
+#   VERSION       default git describe (a leading v is dropped)
 #   TAILBOND_APK  default out/android/tailbond-debug.apk (optional)
+#   TB_UPDATE_PUBKEY / TB_UPDATE_SOURCE  compiled into tailbondd when it is
+#                 built here (scripts/release/ldflags.sh)
+# Release asset: tailbond-linux-<arch>.tar.gz (no version in the name; the
+# update manifest and VERSION inside say which). The agent's self-update
+# finds bin/tailbondd, bin/mqvpn and hooks/ in it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PKG="$ROOT/packaging/linux"
 OUT="$ROOT/out/linux"
-VERSION="${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+# shellcheck source=../../scripts/release/ldflags.sh
+. "$ROOT/scripts/release/ldflags.sh"
+VERSION="$(tb_norm_version "${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}")"
 die() { echo "build-bundle: $*" >&2; exit 1; }
 
 built=0
