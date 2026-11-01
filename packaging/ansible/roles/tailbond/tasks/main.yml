@@ -1,0 +1,207 @@
+---
+# tailbond server: the generic Linux bundle, like packaging/linux/install.sh.
+# Decisions (port, subnet, Tailscale, phone page port, limits) come from
+# defaults/main.yml; the installer's dry run checks them against the host.
+# Tailscale itself is not installed here: bring it up before this role if
+# tailbond_tailscale is true.
+
+- name: Check the platform
+  ansible.builtin.assert:
+    that:
+      - ansible_system == 'Linux'
+      - ansible_architecture in ['x86_64', 'aarch64']
+      # EL 9/10 (Alma, Rocky, RHEL) and Fedora; Debian 12+; Ubuntu 22.04+.
+      # Older systemd lacks some of the unit's hardening keys.
+      - >-
+        (ansible_os_family == 'RedHat' and ansible_distribution_major_version | int >= 9)
+        or (ansible_distribution == 'Debian' and ansible_distribution_major_version | int >= 12)
+        or (ansible_distribution == 'Ubuntu' and ansible_distribution_major_version | int >= 22)
+      - tailbond_subnet is match('^10\.\d{1,3}\.\d{1,3}\.0/24$')
+      - tailbond_subnet != '10.77.0.0/24'
+      - tailbond_firewall in ['firewalld', 'ufw', 'nftables', 'none']
+      - tailbond_tailscale | bool or tailbond_public_addr | length > 0
+    fail_msg: >-
+      Unsupported platform, or tailbond_subnet unset / 10.77.0.0/24 (the home
+      server default; pick a free /24, e.g. from `install.sh --dry-run`), or
+      no tailbond_public_addr without Tailscale.
+
+- name: Work out the IPv6 subnet
+  ansible.builtin.set_fact:
+    _tailbond_subnet6: >-
+      {{ tailbond_subnet6 if tailbond_subnet6 | length > 0 else
+         'fd77:%02x%02x::/112' | format(tailbond_subnet.split('.')[1] | int, tailbond_subnet.split('.')[2] | int) }}
+
+- name: Install what the installer and the hooks use
+  ansible.builtin.package:
+    name: "{{ (['iproute'] if ansible_os_family == 'RedHat' else ['iproute2']) + ['tar', 'gzip']
+              + (['nftables'] if tailbond_firewall in ['nftables', 'ufw'] else []) }}"
+    state: present
+
+- name: Copy the bundle
+  ansible.builtin.copy:
+    src: "{{ tailbond_bundle }}"
+    dest: "{{ tailbond_src_dir }}.tar.gz"
+    mode: "0644"
+  register: _tailbond_bundle
+
+- name: Look for an unpacked bundle
+  ansible.builtin.stat:
+    path: "{{ tailbond_src_dir | dirname }}/tailbond-linux-{{ ansible_architecture }}/install.sh"
+  register: _tailbond_unpacked
+
+- name: Unpack the bundle
+  ansible.builtin.unarchive:
+    src: "{{ tailbond_src_dir }}.tar.gz"
+    dest: "{{ tailbond_src_dir | dirname }}"
+    remote_src: true
+  when: _tailbond_bundle.changed or not _tailbond_unpacked.stat.exists
+
+- name: Link the unpacked bundle as {{ tailbond_src_dir }}
+  ansible.builtin.file:
+    src: "{{ tailbond_src_dir | dirname }}/tailbond-linux-{{ ansible_architecture }}"
+    dest: "{{ tailbond_src_dir }}"
+    state: link
+    force: true
+
+# The installer's own checks, read-only: fails if the port is taken by
+# something else, the subnet overlaps a route or address, or tcp/8077 is
+# in use. tailbond's own listeners and tb0 are recognised on re-runs.
+- name: Check port and subnet against this host (installer dry run)
+  ansible.builtin.command:
+    argv: >-
+      {{ [tailbond_src_dir ~ '/install.sh', '--dry-run',
+          '--config', '/nonexistent/tailbond-ansible-preflight.json',
+          '--prefix', tailbond_prefix,
+          '--port', tailbond_port | string,
+          '--subnet', tailbond_subnet, '--subnet6', _tailbond_subnet6,
+          '--landing-port', tailbond_landing_port | string]
+         + (['--public-addr', tailbond_public_addr] if tailbond_public_addr | length > 0 else [])
+         + ([] if tailbond_tailscale | bool else ['--no-tailscale']) }}
+  register: _tailbond_preflight
+  changed_when: false
+  check_mode: false
+  failed_when: _tailbond_preflight.rc != 0 or 'overlaps' in _tailbond_preflight.stderr
+  # In check mode on a first run the bundle isn't unpacked yet.
+  when: not ansible_check_mode or _tailbond_unpacked.stat.exists
+
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ tailbond_prefix }}/lib/tailbond/hooks", mode: "0755"}
+    - {path: "{{ tailbond_prefix }}/share/tailbond", mode: "0755"}
+    - {path: "{{ tailbond_prefix }}/share/doc/tailbond", mode: "0755"}
+    - {path: /etc/tailbond, mode: "0755"}
+    - {path: /var/lib/tailbond, mode: "0700"}
+    - {path: /etc/sysctl.d, mode: "0755"}
+
+- name: Install binaries
+  ansible.builtin.copy:
+    src: "{{ tailbond_src_dir }}/bin/{{ item }}"
+    dest: "{{ tailbond_prefix }}/bin/{{ item }}"
+    remote_src: true
+    mode: "0755"
+  loop: [mqvpn, tailbondd]
+  notify: [Restore SELinux contexts, Restart tailbond]
+
+- name: Install hooks
+  ansible.builtin.copy:
+    src: "{{ tailbond_src_dir }}/hooks/{{ item }}"
+    dest: "{{ tailbond_prefix }}/lib/tailbond/hooks/{{ item }}"
+    remote_src: true
+    mode: "0755"
+  loop: [server-up, server-down]
+  notify: Restore SELinux contexts
+
+- name: Install the README (the unit's Documentation=)
+  ansible.builtin.copy:
+    src: "{{ tailbond_src_dir }}/README.md"
+    dest: "{{ tailbond_prefix }}/share/doc/tailbond/README.md"
+    remote_src: true
+    mode: "0644"
+
+- name: Look for the Android app in the bundle
+  ansible.builtin.stat:
+    path: "{{ tailbond_src_dir }}/share/tailbond.apk"
+  register: _tailbond_apk
+
+- name: Install the Android app for the phone page
+  ansible.builtin.copy:
+    src: "{{ tailbond_src_dir }}/share/tailbond.apk"
+    dest: "{{ tailbond_prefix }}/share/tailbond/tailbond.apk"
+    remote_src: true
+    mode: "0644"
+  when: _tailbond_apk.stat.exists
+
+# tailbondd rewrites tailbond.json at runtime (registered devices, settings
+# from the dashboard), so the role merges only the keys it owns into the
+# existing file, and writes it only when one of them differs; a template of
+# the whole file would drop users and restart the service on every run.
+- name: Read the existing config
+  ansible.builtin.slurp:
+    src: /etc/tailbond/tailbond.json
+  register: _tailbond_conf_raw
+  failed_when: false
+
+# tailbondd leaves out false/zero values of optional keys (omitempty) when
+# it saves, so compare against the file with those filled in.
+- name: Fill in what tailbondd leaves out
+  ansible.builtin.set_fact:
+    _tailbond_conf_old: >-
+      {{ _tailbond_conf_omitempty
+         | combine((_tailbond_conf_raw.content | b64decode | from_json) if _tailbond_conf_raw.content is defined else {}, recursive=True) }}
+
+- name: Merge the role's settings into it
+  ansible.builtin.set_fact:
+    _tailbond_conf_new: >-
+      {{ (_tailbond_conf_defaults if _tailbond_conf_raw.content is not defined else {})
+         | combine(_tailbond_conf_old, recursive=True)
+         | combine(_tailbond_conf_owned, recursive=True) }}
+
+- name: Write the config
+  ansible.builtin.template:
+    src: tailbond.json.j2
+    dest: /etc/tailbond/tailbond.json
+    mode: "0600"
+    backup: true
+  when: _tailbond_conf_raw.content is not defined or _tailbond_conf_new != _tailbond_conf_old
+  notify: Restart tailbond
+
+- name: Enable forwarding
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/90-tailbond.conf
+    reload: "{{ tailbond_apply_sysctl | bool }}"
+  loop: >-
+    {{ [{'name': 'net.ipv4.ip_forward', 'value': '1'}, {'name': 'net.ipv6.conf.all.forwarding', 'value': '1'}]
+       + ([{'name': 'net.ipv6.conf.' ~ ansible_default_ipv6.interface ~ '.accept_ra', 'value': '2'}]
+          if ansible_default_ipv6.interface is defined else []) }}
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Systemd unit
+  ansible.builtin.template:
+    src: tailbond.service.j2
+    dest: /etc/systemd/system/tailbond.service
+    mode: "0644"
+  notify: [Restore SELinux contexts, Restart tailbond]
+
+# After the unit: the firewalld tasks flush handlers (a restart then
+# finds the unit).
+- name: Firewall
+  ansible.builtin.include_tasks: "firewall-{{ tailbond_firewall }}.yml"
+  when: tailbond_firewall in ['firewalld', 'ufw']
+
+- name: Apply pending changes before starting
+  ansible.builtin.meta: flush_handlers
+
+- name: Start tailbond
+  ansible.builtin.systemd_service:
+    name: tailbond
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: tailbond_start | bool

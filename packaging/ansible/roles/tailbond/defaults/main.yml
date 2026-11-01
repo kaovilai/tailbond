@@ -1,0 +1,74 @@
+---
+# tailbond server role: the generic Linux bundle (packaging/linux), installed
+# the way packaging/linux/install.sh does it, with its decisions written down
+# as variables instead of detected. See docs/vps.md.
+
+# The bundle on the controller (packaging/linux/build-bundle.sh, CI artifact
+# linux-bundle). One per architecture.
+tailbond_bundle: "files/tailbond-linux-{{ ansible_architecture }}.tar.gz"
+# Unpacked here on the host; binaries and hooks are copied from it.
+tailbond_src_dir: /usr/local/src/tailbond
+
+# /usr/local keeps out of the package manager's way (and gets bin_t under
+# SELinux); /usr works too.
+tailbond_prefix: /usr/local
+
+# Tunnel UDP port; what pairing links carry. 443 is the default elsewhere,
+# but Caddy/nginx with HTTP/3 hold udp/443, so a VPS usually needs another
+# one. Changing it later means pairing devices again.
+tailbond_port: 8443
+
+# IPv4 tunnel subnet: a /24 that overlaps no route or address on the host
+# and differs from every other tailbond server the clients use (home servers
+# default to 10.77.0.0/24). Required; `sudo ./install.sh --dry-run` from the
+# bundle prints a free one. Example: 10.83.142.0/24.
+tailbond_subnet: ""
+# IPv6 tunnel subnet; default derived from tailbond_subnet
+# (10.83.142.0/24 -> fd77:538e::/112).
+tailbond_subnet6: ""
+
+# What clients dial (host or host:port). Behind NAT (AWS, GCP, Oracle) set
+# the public address or a DNS name.
+tailbond_public_addr: "{{ ansible_default_ipv4.address | default('') }}"
+
+# Use Tailscale: tailscale cert for TLS, tailnet access for bonded devices,
+# the tunnel subnet advertised by the hook, pairing over the tailnet. Off:
+# self-signed + pinned cert, internet exit only, pair with links/QR codes.
+# Switching later means pairing devices again (the certificate changes).
+tailbond_tailscale: true
+
+# Phone page on the Tailscale address. 80 when nothing listens on *:80;
+# with Caddy/nginx on *:80 use 8078 (-1 = off).
+tailbond_landing_port: 8078
+tailbond_landing_public_port: "{{ tailbond_landing_port }}"
+
+# true when something listens on *:53 (the forwarder binds only the tunnel
+# address, so systemd-resolved and podman's aardvark-dns don't clash).
+tailbond_disable_dns: false
+
+# systemd limits for tailbondd + mqvpn + hooks (one cgroup). Measured with
+# scripts/measure-server-mem.sh: ~45 MB idle, ~65 MB with two busy clients,
+# ~114 MB at an unshaped 1 Gbit/s. MemoryHigh throttles, MemoryMax kills
+# inside the unit only.
+tailbond_memory_high: 96M
+tailbond_memory_max: 160M
+tailbond_gomemlimit: 40MiB
+# Below 0: the kernel's OOM killer prefers bigger processes (n8n); not
+# -1000, MemoryMax bounds us anyway.
+tailbond_oom_score_adjust: -100
+
+# firewalld | ufw | nftables | none. firewalld: the tailbond zone and
+# policies from the bundle plus the tunnel port in tailbond_firewalld_zone
+# (the hook adds the runtime rules). nftables: only the hook's own table.
+tailbond_firewall: "{{ 'firewalld' if ansible_os_family == 'RedHat' else 'nftables' }}"
+# Zone of the internet-facing interface.
+tailbond_firewalld_zone: public
+# Zone tailscale0 is in (tcp 8077 and the phone page from tailnet addresses).
+tailbond_firewalld_tailscale_zone: "{{ tailbond_firewalld_zone }}"
+
+# Start and enable the service.
+tailbond_start: true
+
+# Apply the forwarding sysctls now (false only in containers, where
+# /proc/sys is read-only).
+tailbond_apply_sysctl: true

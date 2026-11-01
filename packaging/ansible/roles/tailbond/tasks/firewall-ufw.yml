@@ -1,0 +1,31 @@
+---
+# ufw: persistent rules tagged "tailbond", like install.sh. NAT comes from the
+# server-up hook's nftables table, and since ufw sets the iptables FORWARD
+# policy to DROP, the hook also adds ACCEPT rules for tb0 there.
+
+- name: Tunnel port and traffic from bonded devices
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | default(omit) }}"
+    proto: "{{ item.proto | default(omit) }}"
+    interface: "{{ item.interface | default(omit) }}"
+    direction: "{{ 'in' if item.interface is defined else omit }}"
+    comment: tailbond
+  loop:
+    - {port: "{{ tailbond_port }}", proto: udp}
+    - {interface: tb0}
+  loop_control:
+    label: "{{ item }}"
+
+- name: Dashboard, phone page and Tailscale's port
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    interface: "{{ item.interface | default(omit) }}"
+    direction: "{{ 'in' if item.interface is defined else omit }}"
+    comment: tailbond
+  loop: >-
+    {{ [{'port': '8077', 'proto': 'tcp', 'interface': 'tailscale0'}, {'port': '41641', 'proto': 'udp'}]
+       + ([{'port': tailbond_landing_port | string, 'proto': 'tcp', 'interface': 'tailscale0'}] if tailbond_landing_port | int > 0 else []) }}
+  when: tailbond_tailscale | bool
