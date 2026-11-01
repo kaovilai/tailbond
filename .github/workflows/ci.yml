@@ -75,7 +75,7 @@ jobs:
       - name: Install build + test deps
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q cmake build-essential libevent-dev iproute2 curl netcat-openbsd openssl dnsmasq-base
+          sudo apt-get install -y -q cmake build-essential libevent-dev iproute2 curl netcat-openbsd openssl dnsmasq-base nftables bind9-dnsutils jq python3
       - name: mqvpn submodule revision
         id: mq
         run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
