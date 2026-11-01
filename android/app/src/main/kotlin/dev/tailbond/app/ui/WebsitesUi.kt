@@ -75,7 +75,8 @@ fun WebsitesScreen(state: UiState, actions: UiActions, onApps: () -> Unit, modif
                         Text("Needs Android 13 or newer", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "This phone runs an older Android, which can't let single websites skip a VPN. " +
-                                "Use Apps that skip tailbond instead: pick the app (your bank's app, or the browser you use for it).",
+                                "Use Apps that skip tailbond instead and pick the app, such as your bank's app. " +
+                                "Everything that app does then skips tailbond, so for a browser use a separate one just for banking.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(onClick = onApps) {
@@ -97,7 +98,7 @@ fun WebsitesScreen(state: UiState, actions: UiActions, onApps: () -> Unit, modif
             ListItem(
                 headlineContent = { Text(w.domain) },
                 supportingContent = {
-                    Text(listOfNotNull(w.note.ifBlank { null }, "also www.${w.domain}").joinToString(" · "))
+                    Text(listOfNotNull(w.note.ifBlank { null }, "Covers ${Words.websiteCovers(w.domain)}").joinToString(" · "))
                 },
                 leadingContent = { Icon(Icons.Filled.Language, null) },
                 trailingContent = {
@@ -120,7 +121,7 @@ fun WebsitesScreen(state: UiState, actions: UiActions, onApps: () -> Unit, modif
         }
         item {
             Text(
-                "Changes apply within a few seconds; new addresses for a website reconnect tailbond for a moment.",
+                Words.WEBSITES_CHANGES,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -140,6 +141,7 @@ fun WebsitesScreen(state: UiState, actions: UiActions, onApps: () -> Unit, modif
             initialPreset = initial?.substringAfter(':', "")?.ifEmpty { null },
             onAdd = { domains, note -> domains.forEach { actions.addWebsite(it, note) }; adding = false },
             onDismiss = { adding = false },
+            onApps = { adding = false; onApps() },
             inline = initial != null,
         )
     }
@@ -152,7 +154,13 @@ fun WebsitesScreen(state: UiState, actions: UiActions, onApps: () -> Unit, modif
  * Robolectric never idles with a text field in a dialog window).
  */
 @Composable
-fun AddWebsiteDialog(initialPreset: String? = null, onAdd: (List<String>, String) -> Unit, onDismiss: () -> Unit, inline: Boolean = false) {
+fun AddWebsiteDialog(
+    initialPreset: String? = null,
+    onAdd: (List<String>, String) -> Unit,
+    onDismiss: () -> Unit,
+    onApps: () -> Unit = {},
+    inline: Boolean = false,
+) {
     var text by rememberSaveable { mutableStateOf("") }
     var presetTitle by rememberSaveable { mutableStateOf(initialPreset) }
     val preset = WebsiteBypass.PRESETS.firstOrNull { it.title == presetTitle }
@@ -173,7 +181,13 @@ fun AddWebsiteDialog(initialPreset: String? = null, onAdd: (List<String>, String
                 singleLine = true,
                 isError = bad,
                 supportingText = {
-                    Text(if (bad) "Type a website name like mybank.com" else "Its www. name is included")
+                    Text(
+                        when {
+                            bad -> "Type a website name like mybank.com"
+                            typed != null -> "Covers ${Words.websiteCovers(typed)} only; add other names (like login.$typed) separately"
+                            else -> "Covers the name and its www. name only; add other names (like login.mybank.com) separately"
+                        },
+                    )
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                 modifier = Modifier.fillMaxWidth(),
@@ -190,6 +204,9 @@ fun AddWebsiteDialog(initialPreset: String? = null, onAdd: (List<String>, String
             }
             preset?.let { p ->
                 Text(p.explain, style = MaterialTheme.typography.bodyMedium)
+                if (p.domains.isEmpty() && p.note.isNotEmpty()) {
+                    TextButton(onClick = onApps) { Text("Open Apps that skip tailbond") }
+                }
                 if (p.domains.isNotEmpty()) {
                     Text("Adds ${p.domains.joinToString()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

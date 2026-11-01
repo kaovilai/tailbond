@@ -176,17 +176,19 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(if (adding) "Or use the other server's page" else "Or use the home server's page", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Came here from your home server's page? Go back to it in your browser and tap step 2, Open tailbond and ask.",
+                    if (adding) "Open the other server's page in your browser and tap Add this phone; it opens tailbond with the pairing."
+                    else "Came here from your home server's page? Go back to it in your browser and tap step 2, Open tailbond and ask.",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
                 OutlinedButton(onClick = { actions.openHomeServerPage(named) }, enabled = named.isNotBlank()) {
                     Icon(Icons.Filled.OpenInBrowser, null)
-                    Text("  Open ${named.ifBlank { "home server" }} page")
+                    Text("  Open ${named.ifBlank { if (adding) "the other server's" else "home server" }} page")
                 }
                 if (named.isBlank()) {
                     Text(
-                        "Type the home server's name in the box above to open its page here.",
+                        if (adding) "Type the other server's name in the box above to open its page here."
+                        else "Type the home server's name in the box above to open its page here.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -198,7 +200,8 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("From another screen", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "On a computer, open the home server's dashboard (its name and :8077, e.g. http://homebox:8077) → Devices → Add a device with a code, and scan the code it shows. (Not the code on the \"Get tailbond\" page: that one only opens the install page.)",
+                    if (adding) "On a computer, open the other server's dashboard (its name and :8077, e.g. http://${named.ifBlank { "vps" }}:8077) → Devices → Add a device with a code, and scan the code it shows."
+                    else "On a computer, open the home server's dashboard (its name and :8077, e.g. http://homebox:8077) → Devices → Add a device with a code, and scan the code it shows. (Not the code on the \"Get tailbond\" page: that one only opens the install page.)",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (scanning) {
@@ -218,7 +221,7 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                         }
                     }) {
                         Icon(Icons.Filled.QrCodeScanner, null)
-                        Text("  Scan code from your home server")
+                        Text(if (adding) "  Scan code from the other server" else "  Scan code from your home server")
                     }
                 }
             }
@@ -375,14 +378,15 @@ fun ConfirmPairingDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (adding) {
                     Text("tailbond keeps using $primary and switches to $server by itself when $primary is down, then back to $primary once it works again. You can change the order in Settings.")
-                    Text("Through $server your Tailscale machines stay reachable too, and they see this phone as $server.")
+                    Text("While $server is in use, your internet traffic goes out from $server instead of $primary, and your Tailscale machines see this phone as $server.")
                 } else if (renewing) {
                     Text("This renews this phone's pairing with $server. Nothing else changes.")
                 } else {
                     Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it. They see this phone as $server (not as your own phone), so they allow it whatever they allow $server.")
                 }
                 Text(
-                    "It connects over the internet to ${p.server}, and your internet traffic goes out from home (you can change that in Settings).",
+                    if (adding) "It connects over the internet to ${p.server}."
+                    else "It connects over the internet to ${p.server}, and your internet traffic goes out from $server (you can change that in Settings).",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (p.name.isNotBlank()) Text("This phone will be called \"${p.name}\" on $server.")

@@ -14,6 +14,7 @@ import dev.tailbond.app.model.TunnelPlan
 import dev.tailbond.app.model.serverShortName
 import dev.tailbond.app.model.tailnetDomain
 import dev.tailbond.app.pairing.PairingPayload
+import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.Live
 
 /** Machine list state: the last list we got, plus whether a refresh failed. */
@@ -64,7 +65,10 @@ data class UiState(
 ) {
     /** The server the tunnel uses (or will use): failover's active one, else the main one. */
     val activeServer: ServerProfile?
-        get() = servers.firstOrNull { it.id == live.failover?.activeId } ?: servers.firstOrNull()
+        get() {
+            val on = live.state == ConnState.CONNECTED || live.state == ConnState.CONNECTING || live.state == ConnState.RECONNECTING
+            return (if (on) servers.firstOrNull { it.id == live.failover?.activeId } else null) ?: servers.firstOrNull()
+        }
 
     val serverNames: Map<String, String> get() = servers.associate { it.id to it.name }
 

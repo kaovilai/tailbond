@@ -259,7 +259,9 @@ class TailbondVpnService : MqvpnVpnService() {
 
     private fun publishFailover() {
         val e = engine
-        val view = if (e != null && multi()) e.view() else null
+        val view = if (e != null && multi()) e.view().let { v ->
+            v.copy(sinceWallMs = v.lastSwitch?.let { System.currentTimeMillis() - (v.nowMs - it.atMs) })
+        } else null
         LiveState.set { it.copy(failover = view) }
     }
 
@@ -561,7 +563,7 @@ class TailbondVpnService : MqvpnVpnService() {
             val summary = if (s2 != null) {
                 Words.connectionsSummary(lv, s2.settings, TunnelPlan.effectiveMode(s2.server.payload, s2.settings), cap)
             } else null
-            val note = Words.serverLine(lv.failover, servers.associate { it.id to it.name })
+            val note = Words.serverNoteShort(lv.failover, servers.associate { it.id to it.name })
             notifyText(
                 getString(R.string.notif_connected, s2?.server?.name ?: getString(R.string.home_server)),
                 listOfNotNull(note, summary, "↓ ${formatBps(rxBps)}  ↑ ${formatBps(txBps)}").joinToString(" · "),

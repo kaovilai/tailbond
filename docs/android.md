@@ -264,10 +264,14 @@ failover](architecture.md#multiple-servers-and-failover).
   A server that fails before connecting (no answer, wrong certificate, key
   refused) is retried every 3 s until the 15 s are up; when every server has
   failed that way in a row, tailbond stops and says so, like with one server.
-- **Wording**: the home card says "Using vps (homebox is unreachable)",
-  "Back to homebox in 1:20" while counting down, and "Back on homebox" for a
-  few minutes after going back; a **Servers** section lists each server's
-  state. With one server nothing of this shows.
+- **Wording**: the home card says "Using vps since 14:02 (homebox is
+  unreachable)", "Back to homebox in 1:20" while counting down (with **Stay
+  on vps**), "Using vps since 15:10 (you picked it)" (with **Go back to
+  homebox**), and "Back on homebox since 14:20" for a few minutes after going
+  back; a **Servers** section lists each server's state. *Use this server
+  now* isn't offered for a server that doesn't answer. With backups, the
+  internet traffic setting reads "Through your server" (the one in use).
+  With one server nothing of this shows.
 
 ## Skipping the tunnel
 
@@ -291,6 +295,11 @@ Two ways to let traffic use the phone's own connection instead of tailbond:
   `netflix.com`, `nflxvideo.net`; for a streaming app, skip the app instead),
   **Wi-Fi calling** (nothing to add: the phone's own Wi-Fi calling already
   goes straight over Wi-Fi; calling apps are apps).
+  Each website covers its name and its `www.` name only (Android can only
+  leave out addresses it looked up itself, so it can't know
+  `login.mybank.com` in advance): add other names as their own rows. The
+  lookups are answered by the server in use, so a site may pick its servers
+  for where that server is rather than where the phone is.
   The limit, as the page says it: it goes by addresses, so parts of a site
   loaded from other names still use tailbond, other sites on the same
   addresses (big hosting networks) skip it too, and apps with their own

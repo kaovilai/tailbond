@@ -44,6 +44,8 @@ data class FailoverView(
     /** Since when the active server has worked without a break; null while it doesn't. */
     val workingSinceMs: Long? = null,
     val nowMs: Long = 0,
+    /** Wall-clock time (ms since epoch) of [lastSwitch]; set by the caller, the engine's clock is monotonic. */
+    val sinceWallMs: Long? = null,
 ) {
     val primaryId: String? get() = servers.firstOrNull()?.id
     fun state(id: String): ServerState? = servers.firstOrNull { it.id == id }?.state

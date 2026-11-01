@@ -157,7 +157,7 @@ fun HomeScreen(
         item {
             ListItem(
                 headlineContent = { Text("Internet traffic") },
-                supportingContent = { Text(state.settings.routeMode.label) },
+                supportingContent = { Text(Words.routeLabel(state.settings.routeMode, state.servers.size > 1)) },
                 leadingContent = { Icon(Icons.Filled.Public, null) },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
                 modifier = Modifier.clickable(onClick = onSettings),
@@ -208,23 +208,32 @@ private fun StatusCard(state: UiState, actions: UiActions) {
             containerColor = if (connected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
     ) {
-        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(Words.stateTitle(live.state), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
-                Text(Words.stateLine(live, state.serverName, state.settings.handedToTailscale), style = MaterialTheme.typography.bodyMedium)
-                val serverLine = if (on) Words.serverLine(live.failover, state.serverNames) else null
-                if (serverLine != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Dns, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(serverLine, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        Column(Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(Words.stateTitle(live.state), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(Words.stateLine(live, state.serverName, state.settings.handedToTailscale), style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f))
+            }
+            // which server is in use and why, full width under the switch
+            val note = if (on) Words.serverNote(live.failover, state.serverNames) else null
+            if (note != null) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Filled.Dns, null, Modifier.size(18.dp).padding(top = 2.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(note.line, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        note.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        note.action?.let { a ->
+                            Button(onClick = { actions.useServerNow(a.serverId) }, modifier = Modifier.padding(top = 8.dp)) { Text(a.label) }
+                        }
                     }
                 }
             }
-            Spacer(Modifier.width(12.dp))
-            Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f))
         }
     }
 }

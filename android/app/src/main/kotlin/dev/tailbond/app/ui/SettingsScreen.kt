@@ -70,8 +70,8 @@ fun SettingsScreen(
             ) {
                 RadioButton(selected = state.settings.routeMode == r, onClick = null, modifier = Modifier.padding(8.dp))
                 Column {
-                    Text(r.label)
-                    Text(r.explain, style = MaterialTheme.typography.bodySmall, color = muted)
+                    Text(Words.routeLabel(r, state.servers.size > 1))
+                    Text(Words.routeExplain(r, state.servers.map { it.name }), style = MaterialTheme.typography.bodySmall, color = muted)
                 }
             }
         }

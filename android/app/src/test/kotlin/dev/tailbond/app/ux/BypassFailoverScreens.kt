@@ -25,6 +25,8 @@ import dev.tailbond.app.ui.UiState
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * Multiple servers with failover, and websites that skip the tunnel:
@@ -60,6 +62,7 @@ class BypassFailoverScreens : UxRender() {
         reason: FailoverReason = FailoverReason.NONE,
         failbackIn: Long? = null,
         last: Switch? = null,
+        since: Long? = null,
     ) = FailoverView(
         activeId = active,
         servers = listOf(ServerStatus("h", homeState, now - 5_000), ServerStatus("v", vpsState, now - 4_000)),
@@ -68,7 +71,12 @@ class BypassFailoverScreens : UxRender() {
         failbackInMs = failbackIn,
         lastSwitch = last,
         nowMs = now,
+        sinceWallMs = since,
     )
+
+    /** Today at [h]:[m] in the renderer's time zone, so the PNGs say "since 14:02". */
+    private fun at(h: Int, m: Int) = LocalDate.of(2026, 11, 1).atTime(h, m).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    private val toVps = Switch("v", "h", SwitchKind.FAILOVER, now - 25 * 60_000L)
 
     private fun state(live: Live, f: FailoverView?, servers: List<ServerProfile> = listOf(home, vps), s: AppSettings = settings) = UiState(
         profile = servers.first().payload,
@@ -82,9 +90,10 @@ class BypassFailoverScreens : UxRender() {
 
     private val onVps = UxFixtures.connectedBoth.copy(tunnelIp = "10.83.142.2")
     private val primaryStandby = view("h", ServerState.ACTIVE, ServerState.STANDBY)
-    private val usingVps = view("v", ServerState.UNREACHABLE, ServerState.ACTIVE, FailoverReason.PRIMARY_DOWN)
-    private val failingBack = view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.PRIMARY_DOWN, failbackIn = 80_000)
-    private val backOn = view("h", ServerState.ACTIVE, ServerState.STANDBY, last = Switch("h", "v", SwitchKind.FAILBACK, now - 40_000))
+    private val usingVps = view("v", ServerState.UNREACHABLE, ServerState.ACTIVE, FailoverReason.PRIMARY_DOWN, last = toVps, since = at(14, 2))
+    private val failingBack = view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.PRIMARY_DOWN, failbackIn = 80_000, last = toVps, since = at(14, 2))
+    private val backOn = view("h", ServerState.ACTIVE, ServerState.STANDBY, last = Switch("h", "v", SwitchKind.FAILBACK, now - 40_000), since = at(14, 20))
+    private val pickedVps = view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.MANUAL, last = Switch("v", "h", SwitchKind.MANUAL, now - 60_000), since = at(15, 10))
 
     private fun app(
         name: String,
@@ -104,8 +113,10 @@ class BypassFailoverScreens : UxRender() {
     @Test fun backOnPrimary() = app("43-home-back-on-homebox", state(UxFixtures.connectedBoth, backOn))
     @Test fun switching() = app(
         "43b-home-switching-to-vps",
-        state(Live(state = ConnState.CONNECTING), view("v", ServerState.UNREACHABLE, ServerState.CONNECTING, FailoverReason.PRIMARY_DOWN)),
+        state(Live(state = ConnState.CONNECTING), view("v", ServerState.UNREACHABLE, ServerState.CONNECTING, FailoverReason.PRIMARY_DOWN, last = Switch("v", "h", SwitchKind.FAILOVER, now - 3_000), since = at(14, 2))),
     )
+    @Test fun pickedBackup() = app("41c-home-using-vps-you-picked-it", state(onVps, pickedVps))
+    @Test fun settingsCountdown() = app("44c-settings-servers-homebox-answering-again", state(onVps, failingBack), tall = 1300, route = Routes.SETTINGS)
     @Test fun allDown() = app(
         "49-home-error-no-server-reachable",
         state(UxFixtures.errorTimeout.copy(errorKind = ErrorKind.UNREACHABLE), view("v", ServerState.UNREACHABLE, ServerState.CONNECTING, FailoverReason.PRIMARY_DOWN)),

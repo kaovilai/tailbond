@@ -132,8 +132,9 @@ object Words {
     fun error(kind: ErrorKind?, server: String, address: String, detail: String?, servers: List<String> = emptyList()): ErrorText = when {
         servers.size > 1 && kind != ErrorKind.NOT_PAIRED -> ErrorText(
             "Can't reach any of your servers",
-            "tailbond tried ${ServerList.joinNames(servers)} and none of them worked" + (detail?.let { " ($it)" } ?: "") + ". " +
-                "Check that this phone is online and that at least one of them is turned on, then try again.",
+            "tailbond tried ${ServerList.joinNames(servers)} and none of them answered, so it stopped. " +
+                "Your phone is using its normal internet now, without tailbond. Try again in a moment; if it keeps happening, " +
+                "tell whoever set up your servers that ${if (servers.size == 2) "neither ${servers[0]} nor ${servers[1]}" else "none of ${ServerList.joinNames(servers)}"} answers.",
             Fix.RETRY,
         )
         else -> errorOne(kind, server, address, detail)
@@ -181,33 +182,78 @@ object Words {
 
     /** How long "Back on homebox" stays on screen after a failback. */
     const val BACK_ON_MS = 5 * 60_000L
+    /** A backup still connecting this soon after the switch reads as "Switching to…". */
+    const val SWITCHING_MS = 60_000L
+
+    /** "14:02" in the phone's time zone. */
+    fun clockTime(wallMs: Long): String =
+        java.time.Instant.ofEpochMilli(wallMs).atZone(java.time.ZoneId.systemDefault()).toLocalTime()
+            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+
+    /** A button next to the failover note: switch to [serverId] now (or stay on it). */
+    data class NoteAction(val label: String, val serverId: String)
+
+    /** The failover note: [line] in bold, [detail] under it, an optional button. */
+    data class ServerNote(val line: String, val detail: String? = null, val action: NoteAction? = null)
 
     /**
-     * The failover sentence for the home card and the notification:
-     * "Using vps (homebox is unreachable)", "Back to homebox in 1:20",
-     * "Back on homebox"; null when the primary is in use as normal.
+     * What the home card and the notification say about which server is in use:
+     * "Using vps since 14:02 (homebox is unreachable)", "Back to homebox in 1:20"
+     * (with "Stay on vps"), "Back on homebox since 14:20"; null when the main
+     * server is in use as normal.
      */
-    fun serverLine(f: FailoverView?, names: Map<String, String>): String? {
+    fun serverNote(f: FailoverView?, names: Map<String, String>, time: (Long) -> String = ::clockTime): ServerNote? {
         f ?: return null
         fun n(id: String?) = id?.let { names[it] } ?: "the other server"
         val active = n(f.activeId)
-        val primaryId = f.primaryId
+        val primaryId = f.primaryId ?: return null
         val primary = n(primaryId)
-        if (f.failbackTo != null && f.failbackInMs != null) return "Back to ${n(f.failbackTo)} in ${mmss(f.failbackInMs)}"
+        val since = f.sinceWallMs?.let { " since ${time(it)}" } ?: ""
+        val sw = f.lastSwitch
         if (f.activeId == primaryId) {
-            val sw = f.lastSwitch
             val recent = sw != null && sw.kind == SwitchKind.FAILBACK && sw.to == primaryId && f.nowMs - sw.atMs <= BACK_ON_MS
-            return if (recent && f.state(f.activeId) == ServerState.ACTIVE) "Back on $primary" else null
+            return if (recent && f.state(f.activeId) == ServerState.ACTIVE) ServerNote("Back on $primary$since") else null
+        }
+        val switching = f.state(f.activeId) == ServerState.CONNECTING && sw != null && sw.to == f.activeId &&
+            f.nowMs - sw.atMs <= SWITCHING_MS
+        if (switching && f.reason != FailoverReason.MANUAL) {
+            return ServerNote(
+                "Switching to $active… ($primary isn't answering)",
+                "For these few seconds apps use the phone's own connection, unless Android's \"Block connections without VPN\" is on.",
+            )
         }
         return when (f.reason) {
-            FailoverReason.MANUAL -> "Using $active (you picked it)"
-            FailoverReason.POLICY -> "Always using $active"
-            else -> when (f.state(primaryId ?: "")) {
-                ServerState.UNREACHABLE -> "Using $active ($primary is unreachable)"
-                ServerState.STANDBY -> "Using $active ($primary is answering again)"
-                else -> "Using $active ($primary stopped working)"
+            FailoverReason.MANUAL -> ServerNote(
+                "Using $active$since (you picked it)",
+                "Stays on $active until you pick $primary or $active stops working.",
+                NoteAction("Go back to $primary", primaryId),
+            )
+            FailoverReason.POLICY -> ServerNote("Always using $active", "You chose this in Settings → When to switch.")
+            else -> {
+                val fb = f.failbackTo
+                if (fb != null && f.failbackInMs != null) {
+                    ServerNote(
+                        "Using $active$since (${n(fb)} is answering again)",
+                        "Back to ${n(fb)} in ${mmss(f.failbackInMs)}. Calls may pause for a few seconds then.",
+                        NoteAction("Stay on $active", f.activeId),
+                    )
+                } else {
+                    val why = when (f.state(primaryId)) {
+                        ServerState.UNREACHABLE -> "$primary is unreachable"
+                        ServerState.STANDBY -> "$primary is answering again"
+                        else -> "$primary stopped working"
+                    }
+                    ServerNote("Using $active$since ($why)", "You're still connected. It goes back to $primary by itself once $primary works again.")
+                }
             }
         }
+    }
+
+    /** One line for the notification text. */
+    fun serverNoteShort(f: FailoverView?, names: Map<String, String>): String? {
+        val note = serverNote(f, names) ?: return null
+        val countdown = note.detail?.takeIf { it.startsWith("Back to ") }?.substringBefore('.')
+        return listOfNotNull(note.line, countdown).joinToString(" · ")
     }
 
     /** Status of one server in the lists, and its dot: green, red, grey (null). */
@@ -230,6 +276,11 @@ object Words {
         else -> "Prefer ${names[0]}, then ${ServerList.joinNames(names.drop(1))} if ${names[0]} is down"
     }
 
+    /** The one plain line on how switching works. */
+    const val HOW_IT_DECIDES =
+        "How it decides: a server counts as down when the tunnel to it has worked over none of your connections for the time above. " +
+            "Waiting servers get a tiny check every 10 seconds, outside the tunnel. When the server changes, open connections start over."
+
     fun preferExplain(primary: String, s: AppSettings): String =
         "Switches after ${seconds(s.failoverTiming.switchAfterMs)} without a working connection, and goes back to $primary " +
             "once it has answered for ${seconds(s.failoverTiming.failbackAfterMs)} in a row."
@@ -251,13 +302,36 @@ object Words {
             "Asking over Tailscale does this by itself while $newName has no other devices."
     }
 
+    // --- internet traffic ---
+
+    /** "Through your home server" with one server; with backups it names the server in use. */
+    fun routeLabel(r: RouteMode, multi: Boolean): String = when {
+        r == RouteMode.FULL && multi -> "Through your server"
+        else -> r.label
+    }
+
+    fun routeExplain(r: RouteMode, names: List<String>): String = when {
+        r == RouteMode.FULL && names.size > 1 ->
+            "All internet traffic leaves from the server in use (${names[0]}, or ${ServerList.joinNames(names.drop(1), "or")} while ${names[0]} is down), like using an exit node. " +
+                "A rented server's address may look like a VPN to some websites."
+        names.size > 1 -> r.explain.replace("go through home", "go through the server in use").replace("looked up through home", "looked up through that server")
+        else -> r.explain
+    }
+
     // --- website bypass ---
+
+    /** What a website rule covers, for its row. */
+    fun websiteCovers(domain: String): String = "$domain and www.$domain"
 
     fun websitesSummary(s: AppSettings, sdkInt: Int): String = when {
         !WebsiteBypass.supported(sdkInt) -> "Needs Android 13 or newer"
         s.websites.isEmpty() -> "None"
         else -> s.activeWebsites.size.let { n -> if (n == 1) "1 website uses the phone's own connection" else "$n websites use the phone's own connection" }
     }
+
+    const val WEBSITES_CHANGES =
+        "Changes apply within a few seconds. tailbond looks the websites up again every 10 minutes; only when their addresses " +
+            "change does the connection blip, briefly and at most once a minute (no full reconnect)."
 
     const val WEBSITES_LIMIT =
         "tailbond goes by each website's addresses, looked up through your server when it connects and every 10 minutes, " +

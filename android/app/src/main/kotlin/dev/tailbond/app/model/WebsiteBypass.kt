@@ -97,7 +97,8 @@ object WebsiteBypass {
     val PRESETS = listOf(
         Preset(
             "Banking",
-            "Banks may block a login that seems to come from somewhere else. Type your bank's website below, e.g. mybank.com.",
+            "Banks may block a login that seems to come from somewhere else. Type your bank's website in the box above, e.g. mybank.com " +
+                "(add login.mybank.com too if your bank signs you in there). Use your bank's app? Add the app under Apps that skip tailbond instead.",
             emptyList(), "Bank",
         ),
         Preset(

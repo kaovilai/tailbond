@@ -12,6 +12,7 @@ import dev.tailbond.app.model.AddCheck
 import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.Cidr
 import dev.tailbond.app.model.Mode
+import dev.tailbond.app.model.RouteMode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.Words
 import dev.tailbond.app.model.Words.LinkStatus
@@ -23,6 +24,7 @@ import dev.tailbond.app.service.Live
 import dev.tailbond.app.service.PathGate
 import dev.tailbond.app.service.PathSample
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -101,19 +103,51 @@ class WordsTest {
         nowMs = 1_000_000,
     )
 
+    private val at = { _: Long -> "14:02" }
+    private fun note(f: FailoverView) = Words.serverNote(f, names, at)
+
     @Test fun failoverWording() {
-        assertEquals("Using vps (homebox is unreachable)", Words.serverLine(view("v", ServerState.UNREACHABLE, ServerState.ACTIVE), names))
-        assertEquals("Back to homebox in 1:20", Words.serverLine(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 80_000), names))
-        assertEquals("Back to homebox in 0:01", Words.serverLine(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 400), names))
+        val since = view("v", ServerState.UNREACHABLE, ServerState.ACTIVE).copy(sinceWallMs = 1L)
+        assertEquals("Using vps since 14:02 (homebox is unreachable)", note(since)?.line)
+        assertTrue(note(since)!!.detail!!.contains("goes back to homebox by itself"))
+        // no switch time known: no "since"
+        assertEquals("Using vps (homebox is unreachable)", note(view("v", ServerState.UNREACHABLE, ServerState.ACTIVE))?.line)
+
+        val counting = note(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 80_000))!!
+        assertEquals("Using vps (homebox is answering again)", counting.line)
+        assertTrue(counting.detail!!.startsWith("Back to homebox in 1:20"))
+        assertEquals(Words.NoteAction("Stay on vps", "v"), counting.action)
+        assertTrue(note(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 400))!!.detail!!.startsWith("Back to homebox in 0:01"))
+        assertEquals(
+            "Using vps (homebox is answering again) · Back to homebox in 1:20",
+            Words.serverNoteShort(view("v", ServerState.STANDBY, ServerState.ACTIVE, failbackIn = 80_000), names),
+        )
+
         val back = Switch("h", "v", SwitchKind.FAILBACK, 1_000_000 - 30_000)
-        assertEquals("Back on homebox", Words.serverLine(view("h", ServerState.ACTIVE, ServerState.STANDBY, FailoverReason.NONE, last = back), names))
+        val backOn = view("h", ServerState.ACTIVE, ServerState.STANDBY, FailoverReason.NONE, last = back).copy(sinceWallMs = 1L)
+        assertEquals("Back on homebox since 14:02", note(backOn)?.line)
         // long after the failback, or while it's still connecting: nothing to say
         val old = back.copy(atMs = 1_000_000 - Words.BACK_ON_MS - 1)
-        assertNull(Words.serverLine(view("h", ServerState.ACTIVE, ServerState.STANDBY, FailoverReason.NONE, last = old), names))
-        assertNull(Words.serverLine(view("h", ServerState.CONNECTING, ServerState.STANDBY, FailoverReason.NONE, last = back), names))
-        assertEquals("Using vps (you picked it)", Words.serverLine(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.MANUAL), names))
-        assertEquals("Always using vps", Words.serverLine(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.POLICY), names))
-        assertNull(Words.serverLine(null, names))
+        assertNull(note(view("h", ServerState.ACTIVE, ServerState.STANDBY, FailoverReason.NONE, last = old)))
+        assertNull(note(view("h", ServerState.CONNECTING, ServerState.STANDBY, FailoverReason.NONE, last = back)))
+
+        val manual = note(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.MANUAL))!!
+        assertEquals("Using vps (you picked it)", manual.line)
+        assertEquals("Stays on vps until you pick homebox or vps stops working.", manual.detail)
+        assertEquals(Words.NoteAction("Go back to homebox", "h"), manual.action)
+        assertEquals("Always using vps", note(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.POLICY))?.line)
+
+        val switching = view("v", ServerState.UNREACHABLE, ServerState.CONNECTING, last = Switch("v", "h", SwitchKind.FAILOVER, 1_000_000 - 3_000))
+        assertEquals("Switching to vps… (homebox isn't answering)", note(switching)?.line)
+        assertNull(Words.serverNote(null, names))
+    }
+
+    @Test fun internetTrafficNamesTheServerInUse() {
+        assertEquals("Through your home server", Words.routeLabel(RouteMode.FULL, multi = false))
+        assertEquals("Through your server", Words.routeLabel(RouteMode.FULL, multi = true))
+        val explain = Words.routeExplain(RouteMode.FULL, listOf("homebox", "vps"))
+        assertTrue(explain.contains("homebox, or vps while homebox is down"))
+        assertEquals(RouteMode.FULL.explain, Words.routeExplain(RouteMode.FULL, listOf("homebox")))
     }
 
     @Test fun serverStatusWords() {
@@ -138,9 +172,12 @@ class WordsTest {
     }
 
     @Test fun allServersFailedError() {
-        val e = Words.error(ErrorKind.UNREACHABLE, "vps", "x:443", null, listOf("homebox", "vps"))
+        val e = Words.error(ErrorKind.UNREACHABLE, "vps", "x:443", "Connection timeout", listOf("homebox", "vps"))
         assertEquals("Can't reach any of your servers", e.title)
         assertTrue(e.body.contains("homebox and vps"))
+        assertTrue(e.body.contains("normal internet now, without tailbond"))
+        assertTrue(e.body.contains("neither homebox nor vps answers"))
+        assertFalse(e.body.contains("timeout")) // no technical detail
     }
 
     @Test fun websitesSummaryNamesTheAndroidLimit() {

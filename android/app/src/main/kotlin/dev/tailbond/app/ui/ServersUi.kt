@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.tailbond.app.failover.FailoverPolicy
+import dev.tailbond.app.failover.ServerState
 import dev.tailbond.app.model.ServerProfile
 import dev.tailbond.app.model.Words
 import dev.tailbond.app.service.ConnState
@@ -69,10 +70,19 @@ fun ServersOverview(state: UiState, onOpen: () -> Unit) {
                     }
                 },
                 supportingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatusDot(good)
-                        Spacer(Modifier.width(6.dp))
-                        Text(label)
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            StatusDot(good)
+                            Spacer(Modifier.width(6.dp))
+                            Text(label)
+                        }
+                        if (on && state.live.failover?.state(s.id) == ServerState.UNREACHABLE) {
+                            Text(
+                                "tailbond can't reach it (Tailscale may still show it online below)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 },
                 leadingContent = { Icon(Icons.Filled.Dns, null) },
@@ -131,6 +141,12 @@ fun ServersSection(state: UiState, actions: UiActions, onRepair: (String) -> Uni
                 actions.setFailoverPolicy(FailoverPolicy.ALWAYS, srv.id)
             }
         }
+        Text(
+            Words.HOW_IT_DECIDES,
+            style = MaterialTheme.typography.bodySmall,
+            color = muted,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
     }
 
     removing?.let { s ->
@@ -226,7 +242,9 @@ private fun ServerCard(
                     IconButton(onClick = onUp, enabled = index > 0) { Icon(Icons.Filled.ArrowUpward, "Move ${s.name} up") }
                     IconButton(onClick = onDown, enabled = index < count - 1) { Icon(Icons.Filled.ArrowDownward, "Move ${s.name} down") }
                     Spacer(Modifier.weight(1f))
-                    if (on && !active) TextButton(onClick = onUseNow) { Text("Use this server now") }
+                    // not offered for a server that doesn't answer: it would only drop the connection
+                    val unreachable = state.live.failover?.state(s.id) == ServerState.UNREACHABLE
+                    if (on && !active && !unreachable) TextButton(onClick = onUseNow) { Text("Use this server now") }
                 }
             } else {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
