@@ -796,16 +796,17 @@
               return self.alert(h, "info", w.label + " needs you to sign in", [
                 h("div", "GL's Repeater page handles this sign-in. Open it, click " + "“Login Mode for Public Hotspots” (or “Go to Login”) and accept the hotel's terms."),
                 h("div", { style: { marginTop: "6px" } }, w.signinUntil
-                  ? "Signing in through GL's Login Mode now: tailbond is letting devices here reach the sign-in page directly."
-                  : "tailbond steps aside while you sign in, and adds " + w.label + " back to bonding by itself afterwards. Your other connections keep working meanwhile.")
+                  ? "GL's Login Mode is on: devices here use the hotel Wi-Fi directly, not through your home server, so its sign-in page loads. It ends by itself once you've signed in (or click “Quit Login Mode” on GL's Repeater page); tailbond then adds " + w.label + " back to bonding."
+                  : "While you sign in, devices here use the hotel Wi-Fi directly, not through your home server. Afterwards tailbond adds " + w.label + " back to bonding by itself. Your other connections keep working meanwhile.")
               ], [h("a", { class: "tb-btn small primary", attrs: { href: "#/internet" } }, "Open GL's Repeater page")]);
             }
             if (w.signinUntil) {
+              var mins = Math.max(1, Math.round((until - Date.now()) / 60000));
               return self.alert(h, "info", "Signing in to " + w.label + "…", [
-                h("div", ["Sign in on the page that opened (accept the terms, enter the room number…). Until " + hhmm + ", devices here use " + w.label + " directly, without your home server. tailbond adds it back by itself once you're signed in."])
+                h("div", ["Sign in on the page that opened (accept the terms, enter the room number…). For up to " + mins + " more minute" + (mins === 1 ? "" : "s") + " (until " + hhmm + "), devices here use " + w.label + " directly, not through your home server. tailbond adds it back by itself once you're signed in."])
               ], [self.btn(h, "Open the sign-in page again", function () { window.open(w.portalUrl || "http://neverssl.com/", "_blank", "noopener"); }, "small primary"),
                 self.btn(h, "I've signed in, check now", function () { self.run("chk-" + w.key, api("POST", "/api/captive/check", { name: w.key }), "Checking…"); }, "small"),
-                self.btn(h, "Stop", function () { self.run("si-" + w.key, api("DELETE", "/api/captive/signin"), "Sign-in stopped"); }, "small text")]);
+                self.btn(h, "Stop sign-in mode", function () { self.run("si-" + w.key, api("DELETE", "/api/captive/signin"), "Sign-in mode stopped"); }, "small text")]);
             }
             return self.alert(h, "", noun + " needs you to sign in", [
               h("div", "It shows a sign-in page before it lets anyone online. Until then tailbond keeps " + w.label + " out of bonding" + (self.wans.some(function (x) { return x !== w && x.enabled && x.usable && x.captive !== "portal"; }) ? " and your other connections carry your traffic." : ".")),
@@ -1116,6 +1117,9 @@
           if (!ts.installed || !ts.running) out.push("tailscale");
           else if (!ts.routes_approved) out.push("route");
           if (s.public_addr_guessed) out.push("address");
+          // a problem that stops travel routers connecting at all (e.g.
+          // carrier-grade NAT) is a setup step too
+          A(this.health && this.health.checks).forEach(function (c) { if (c.status === "bad" && c.id !== "tailscale") out.push("health:" + c.id); });
           return out;
         },
 
@@ -1136,6 +1140,11 @@
               [h("div", ["Travel routers reach this router over the internet, so they need a name for your home. Easiest: turn on ", h("a", { class: "tb-link", attrs: { href: "#/ddns" } }, "APPLICATIONS → Dynamic DNS"), " and paste the name it shows here (it looks like ", h("span", { class: "tb-mono" }, "abc1234.glddns.com"), "). Right now they'd use " + (addr || "a home-network address") + ", which only works at home."]),
                 this.addrEditor(h)]));
           }
+          steps.filter(function (x) { return x.indexOf("health:") === 0; }).forEach(function (x) {
+            var c = A(self.health.checks).filter(function (k) { return "health:" + k.id === x; })[0];
+            if (c) items.push(self.alert(h, "err", "Step " + (++n) + ": " + c.title, [h("div", c.detail || ""), c.fix ? h("div", { style: { marginTop: "4px" } }, [c.fix + " ", c.fix_url ? h("a", { class: "tb-link", attrs: { href: c.fix_url, target: "_blank", rel: "noopener" } }, "How to fix") : null]) : null,
+              h("div", { class: "tb-small", style: { marginTop: "4px" } }, "Not sure? Show this to whoever set up your internet.")]));
+          });
           if (!steps.length) {
             items.push(this.alert(h, "ok", "Setup done", "Travel routers and phones can connect from anywhere, and your Tailscale machines reach them. The first connection from away from home confirms the port works."));
           }
@@ -1172,7 +1181,8 @@
           var self = this, v = this.health;
           if (!v) return null;
           var steps = this.setupSteps();
-          var checks = A(v.checks).filter(function (c) { return !(c.id === "route" || c.id === "tailscale") || !steps.length; });
+          if (steps.length) return null; // finish the setup steps first
+          var checks = A(v.checks);
           var bad = checks.filter(function (c) { return c.status === "warn" || c.status === "bad"; });
           var rest = checks.filter(function (c) { return bad.indexOf(c) < 0; });
           var row = function (c) {
@@ -1188,15 +1198,19 @@
               ])
             ]);
           };
+          var unknown = checks.filter(function (c) { return c.status === "unknown"; }).length;
           var head = bad.length
-            ? h("div", { style: { marginBottom: "6px", color: "#8a5d10" } }, bad.length + " thing" + (bad.length === 1 ? "" : "s") + " to improve for best speed:")
-            : h("div", { style: { marginBottom: "6px", color: "#137a46", fontWeight: 600 } }, "✓ Everything is set up for best speed");
+            ? h("div", { style: { marginBottom: "6px", color: "#8a5d10" } }, bad.length + " thing" + (bad.length === 1 ? "" : "s") + " to improve for best speed (tailbond works meanwhile, just slower):")
+            : h("div", { style: { marginBottom: "6px", color: "#137a46", fontWeight: 600 } }, unknown
+              ? "✓ Nothing to fix. " + unknown + " check" + (unknown === 1 ? " needs" : "s need") + " a device connecting from away (marked ?)."
+              : "✓ Everything is set up for best speed");
           return this.card(h, "Setup health", [head,
             h("div", { class: "tb-list" }, bad.map(row).concat(bad.length && !this.showHealthOk ? [] : rest.map(row))),
             bad.length && rest.length ? h("a", { class: "tb-link tb-small", on: { click: function () { self.showHealthOk = !self.showHealthOk; } } }, this.showHealthOk ? "Hide the rest" : "Show " + rest.length + " more check" + (rest.length === 1 ? "" : "s")) : null,
+            bad.length ? h("div", { class: "tb-small", style: { marginTop: "8px" } }, "Not sure how? Show this card to whoever set up your internet; the links explain each fix.") : null,
             h("div", { class: "tb-muted tb-small", style: { marginTop: "8px" } }, ["Direct connections are faster than relayed ones. ",
               h("a", { class: "tb-link", attrs: { href: "https://tailscale.com/docs/reference/connection-types", target: "_blank", rel: "noopener" } }, "About Tailscale connection types")])
-          ], v.ok ? h("span", { class: "tb-chip ok" }, "All good") : h("span", { class: "tb-chip warn" }, bad.length + " to improve"));
+          ], bad.length ? h("span", { class: "tb-chip warn" }, bad.length + " to improve") : h("span", { class: "tb-chip ok" }, "All good"));
         },
 
         // How to put tailbond on a GL travel router (the install itself

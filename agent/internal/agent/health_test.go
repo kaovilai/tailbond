@@ -63,11 +63,11 @@ func TestHealthRelayedHardNATRouteCGNAT(t *testing.T) {
 		t.Fatal("ok with problems")
 	}
 	c := check(t, v, "tailscale_direct")
-	if c.Status != hWarn || c.Title != "Tailscale: 2 machines direct, 2 via relay (slower)" || c.FixURL != urlConnTypes ||
+	if c.Status != hWarn || c.Title != "Tailscale: 2 machines direct, 2 through a relay (slower)" || c.FixURL != urlConnTypes ||
 		!strings.Contains(c.Detail, "slate7, work-laptop") || !strings.Contains(c.Fix, "41641") {
 		t.Fatalf("%+v", c)
 	}
-	if c := check(t, v, "netcheck"); c.Status != hWarn || c.FixURL != urlFirewalls || c.Detail != "no port mapping on the router" {
+	if c := check(t, v, "netcheck"); c.Status != hWarn || c.FixURL != urlFirewalls || !strings.Contains(c.Detail, "no port mapping on the router") {
 		t.Fatalf("%+v", c)
 	}
 	if c := check(t, v, "route"); c.Status != hWarn || c.FixURL != urlSubnetRtrs {
@@ -99,7 +99,7 @@ func TestHealthTailscaleOffAndClientRole(t *testing.T) {
 	}
 	// client: only the path to its home server counts
 	v = buildHealth(healthInputs{Role: config.RoleClient, TS: tsInfo(t, strings.Replace(homeStatus, `"HostName":"nas"`, `"HostName":"homebox2"`, 1), ""), ServerTS: "work-laptop", Now: time.Now()})
-	if c := check(t, v, "tailscale_direct"); c.Title != "Tailscale to your home server: 0 machines direct, 1 via relay (slower)" {
+	if c := check(t, v, "tailscale_direct"); c.Title != "Tailscale to your home server: 0 machines direct, 1 through a relay (slower)" {
 		t.Fatalf("%+v", c)
 	}
 	for _, c := range v.Checks {

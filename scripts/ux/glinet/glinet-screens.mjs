@@ -68,6 +68,7 @@ async function fedora(vp) {
   await page.screenshot({ path: `${out}/14-fedora-dashboard-request-${vp}.png` });
   if (vp === 'desktop') {
     await page.click('#tabs button[data-tab="clients"]');
+    await page.waitForSelector('#health:not(.hidden)');
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${out}/15-fedora-devices-tab-${vp}.png`, fullPage: true });
   }

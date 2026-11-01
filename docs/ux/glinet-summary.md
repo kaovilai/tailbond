@@ -31,7 +31,9 @@ Renders: `out/ux/glinet/round-N/` (not committed; `out/` is ignored).
 | 1 | 0 / 3 / 12 | 0 / 3 / 22 | 0 / 6 / 11 | 0 / 3 / 13 | 0 / 15 / 58 |
 | 2 | 0 / 3 / 11 | 0 / 1 / 18 | 0 / 3 / 10 | 0 / 0 / 17 | 0 / 7 / 56 |
 | 3 | 0 / 1 / 9 | 0 / 2 / 16 | 0 / 2 / 9 | 0 / 1 / 13 | 0 / 6 / 47 |
+| 4 | 0 / 3 / 11 | 0 / 5 / 13 | 1 / 3 / 11 | 0 / 3 / 15 | 1 / 14 / 50 |
 | 3 | 0 / 1 / 9 | 0 / 2 / 16 | 0 / 2 / 9 | 0 / 1 / 13 | 0 / 6 / 47 |
+| 4 | 0 / 3 / 11 | 0 / 5 / 13 | 1 / 3 / 11 | 0 / 3 / 15 | 1 / 14 / 50 |
 
 ## Round 1 triage
 
@@ -96,3 +98,26 @@ Lows rejected: as in rounds 1–2 (graphs, SSID, Secondary, billing day, the Fed
 
 Lows fixed: "leave the other options as they are" for LuCI's overwrite checkbox and "the router's internet keeps working" (A, B, C); example tailnet name taken from the server's name before the machine list loads (A, B).
 Lows rejected: as in rounds 1–2 (graphs, SSID, Secondary, billing day, the Fedora phone view, port 80 in the mock).
+
+## Scope added after round 3
+
+Captive portals (own probe, sign-in mode, GL repeater Login Mode as the
+source of truth for wwan), setup health (direct vs relayed Tailscale,
+netcheck, carrier-grade NAT, route, UDP 443), the panel moved under GL's
+VPN section (like GL's VPN client and Speedify), Android Wi-Fi sign-in.
+Task script tasks 8–10 and persona D comparing directly against Speedify
+on GL were added from round 4 on; round 4 is the first review of these.
+
+## Round 4 triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Fresh Flint: "Everything is set up for best speed" under "2 setup steps left" (C high; A, B, D) | H/M | **fix**: the health card stays hidden until the setup steps are done; with only unchecked items it says "Nothing to fix. N checks need a device connecting from away (?)"; the badge counts problems only |
+| 2 | Carrier-grade NAT: green "Setup done" above "travel routers can't reach UDP 443" (A, B, C, D) | M | **fix**: a blocking health problem becomes a numbered setup step (red), and "Setup done" only shows without one |
+| 3 | Setup health missing on the Fedora Devices tab (A, B, C, D) | M | **fix** (real bug): the web UI's API helper treats `"ok": false` as an error; the health view's flag is now `all_good` |
+| 4 | Relay fixes in jargon (UPnP/NAT-PMP, double NAT, tailscale ping); which box to change (A, C) | M | **fix**: "Usually fixed by forwarding UDP port 41641 to this machine, or by turning on UPnP on the router in front of it"; technical detail stays in the second line; a hand-off line "Show this card to whoever set up your internet" |
+| 5 | Relayed machines in health don't match the machine list (B; C, D low) | M | **fix** (fixture inconsistency): fixtures share one peer list; the machine list itself marks "via relay (slower)" |
+| 6 | GL Login Mode: what bypasses the tunnel, for how long, how to stop (B) | M | **fix**: "devices here use the hotel Wi-Fi directly, not through your home server … ends by itself once you've signed in (or click Quit Login Mode on GL's Repeater page)"; same words on both sign-in cards |
+
+Lows fixed: "Until 04:06" → "For up to 9 more minutes (until 04:06)"; "Stop" → "Stop sign-in mode"; an all-good health render (18c).
+Lows rejected: LuCI install (GL has no upload in Plug-ins), VPN vs APPLICATIONS placement (A: GL keeps VPN apps, including Speedify, under VPN), graphs/billing day (D, earlier rounds).

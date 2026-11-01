@@ -46,7 +46,7 @@ type healthCheck struct {
 }
 
 type healthView struct {
-	OK       bool                `json:"ok"` // nothing to fix (unknowns allowed)
+	OK       bool                `json:"all_good"` // nothing to fix (unknowns allowed)
 	Checks   []healthCheck       `json:"checks"`
 	Direct   int                 `json:"direct"`
 	Relayed  int                 `json:"relayed"`
@@ -111,9 +111,9 @@ func buildHealth(in healthInputs) healthView {
 		switch {
 		case v.Relayed > 0:
 			c.Status = hWarn
-			c.Title = fmt.Sprintf("Tailscale: %s direct, %d via relay (slower)", plural(v.Direct, "machine"), v.Relayed)
-			c.Detail = "Via relay: " + strings.Join(relays, ", ") + ". Check with: tailscale ping " + relays[0]
-			c.Fix = "Let Tailscale connect directly: forward UDP 41641 to this machine or turn on UPnP/NAT-PMP on your router, and avoid double NAT."
+			c.Title = fmt.Sprintf("Tailscale: %s direct, %d through a relay (slower)", plural(v.Direct, "machine"), v.Relayed)
+			c.Detail = "Through a relay: " + strings.Join(relays, ", ") + ". To check one: tailscale ping " + relays[0]
+			c.Fix = "Usually fixed by forwarding UDP port 41641 to this machine, or by turning on UPnP on the router in front of it."
 		case v.Direct > 0:
 			c.Status, c.Title = hOK, fmt.Sprintf("Tailscale: %s direct", plural(v.Direct, "machine"))
 		default:
@@ -142,8 +142,8 @@ func buildHealth(in healthInputs) healthView {
 			add(healthCheck{ID: "netcheck", Status: hBad, Title: "UDP is blocked on this network: Tailscale goes through relays",
 				Detail: pm, Fix: "Allow outbound UDP (Tailscale uses 41641 and 3478).", FixURL: urlFwPorts})
 		case n.MappingVariesByDestIP:
-			add(healthCheck{ID: "netcheck", Status: hWarn, Title: "Hard NAT on this network: direct Tailscale connections often fail",
-				Detail: pm, Fix: "Forward UDP 41641 to this machine, or turn on UPnP/NAT-PMP on the router.", FixURL: urlFirewalls})
+			add(healthCheck{ID: "netcheck", Status: hWarn, Title: "This network makes direct Tailscale connections hard",
+				Detail: "Hard NAT (the outside port changes per destination); " + pm + ".", Fix: "Forward UDP port 41641 to this machine, or turn on UPnP on the router in front of it.", FixURL: urlFirewalls})
 		default:
 			add(healthCheck{ID: "netcheck", Status: hOK, Title: "Network is friendly to direct connections", Detail: pm})
 		}

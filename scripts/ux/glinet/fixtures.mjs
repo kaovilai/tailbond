@@ -82,7 +82,7 @@ const serverBase = (statusOver = {}, tsOver = {}, setOver = {}) => ({
     'GET /api/status': serverStatus(statusOver),
     'GET /api/settings': { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', glinet_ipk: true, ...setOver },
     'GET /api/tailscale': { installed: true, running: true, self: 'homebox', dns_name: 'homebox.tail1234.ts.net', tailnet: 'alex@example.com', route: '10.77.0.0/24', route_advertised: true, routes_approved: true, admin_url: 'https://login.tailscale.com/admin/machines', ...tsOver },
-    'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((p) => p.hostname === 'work-laptop' ? p : p) },
+    'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((m) => (m.hostname === 'pixel-8' ? { ...m, conn: 'direct', relay: undefined } : m)) },
     'GET /api/health': healthGood,
   },
 });
@@ -93,23 +93,23 @@ const pendingReq = { id: '4b79980f2bc88e95', name: 'slate7', kind: 'router', dev
 
 // GET /api/health on the Flint 3
 const hc = (id, status, title, extra = {}) => ({ id, status, title, ...extra });
-const healthGood = { ok: true, direct: 4, relayed: 0, checks: [
-  hc('tailscale_direct', 'ok', 'Tailscale: 4 machines direct'),
+const healthGood = { all_good: true, direct: 2, relayed: 0, checks: [
+  hc('tailscale_direct', 'ok', 'Tailscale: 2 machines direct'),
   hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'port mapping: UPnP' }),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
   hc('cgnat', 'ok', 'Public internet address 203.0.113.7'),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'slate7 connected from 198.51.100.9, 2 h ago.' }),
 ] };
-const healthRelayed = { ok: false, direct: 2, relayed: 2, relayed_peers: ['slate7', 'work-laptop'], checks: [
-  hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 2 via relay (slower)', { detail: 'Via relay: slate7, work-laptop. Check with: tailscale ping slate7',
-    fix: 'Let Tailscale connect directly: forward UDP 41641 to this machine or turn on UPnP/NAT-PMP on your router, and avoid double NAT.', fix_url: 'https://tailscale.com/docs/reference/connection-types' }),
-  hc('netcheck', 'warn', 'Hard NAT on this network: direct Tailscale connections often fail', { detail: 'no port mapping on the router',
-    fix: 'Forward UDP 41641 to this machine, or turn on UPnP/NAT-PMP on the router.', fix_url: 'https://tailscale.com/docs/integrations/firewalls' }),
+const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: ['pixel-8'], checks: [
+  hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 1 through a relay (slower)', { detail: 'Through a relay: pixel-8. To check one: tailscale ping pixel-8',
+    fix: 'Usually fixed by forwarding UDP port 41641 to this machine, or by turning on UPnP on the router in front of it.', fix_url: 'https://tailscale.com/docs/reference/connection-types' }),
+  hc('netcheck', 'warn', 'This network makes direct Tailscale connections hard', { detail: 'Hard NAT (the outside port changes per destination); no port mapping on the router.',
+    fix: 'Forward UDP port 41641 to this machine, or turn on UPnP on the router in front of it.', fix_url: 'https://tailscale.com/docs/integrations/firewalls' }),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
   hc('cgnat', 'ok', 'Behind your home router (public address 203.0.113.7)', { detail: 'Forward UDP 443 on that router to 192.168.1.2.' }),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 3 h ago.' }),
 ] };
-const healthCgnat = { ok: false, direct: 3, relayed: 0, checks: [
+const healthCgnat = { all_good: false, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
   hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'no port mapping on the router' }),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
@@ -117,7 +117,7 @@ const healthCgnat = { ok: false, direct: 3, relayed: 0, checks: [
     fix: 'Ask your provider for a public IPv4 address (or use public IPv6).', fix_url: 'https://tailscale.com/docs/reference/device-connectivity' }),
   hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it." }),
 ] };
-const healthRoute = { ok: false, direct: 3, relayed: 0, checks: [
+const healthRoute = { all_good: false, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
   hc('route', 'warn', "Route 10.77.0.0/24 isn't approved yet", { fix: 'Approve it once in the Tailscale admin console (Machines → this machine → Edit route settings).', fix_url: 'https://tailscale.com/docs/features/subnet-routers' }),
   hc('cgnat', 'unknown', 'Behind your home router', { detail: 'Forward UDP 443 on that router to 192.168.8.1.' }),
@@ -165,7 +165,8 @@ export const states = {
       { name: 'ipad', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, paths: [] },
     ],
   }),
-  '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed }),
+  '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed, 'GET /api/peers': { ...peers, client: '' } }),
+  '18c-server-health-good': serverBase(),
   '18b-server-health-cgnat': withApi(serverBase(), { 'GET /api/health': healthCgnat }),
   // hotel: the repeater is behind a portal, GL's repeater handles it
   '16-captive-gl-repeater': connected([

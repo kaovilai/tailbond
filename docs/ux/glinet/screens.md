@@ -32,3 +32,4 @@ admin panel, VPN → tailbond. The data is a test fixture.
 | 17b-captive-own-signing-in | Same, after clicking "Open sign-in page" (the hotel's page opened in a new tab) |
 | 18-server-health-relayed | Flint 3: some Tailscale machines connect through a relay |
 | 18b-server-health-cgnat | Flint 3: the home internet line uses carrier-grade NAT |
+| 18c-server-health-good | Flint 3: everything set up |
