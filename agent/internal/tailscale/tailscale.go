@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/netip"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,41 @@ type Info struct {
 	Peers           int    `json:"peers"`
 	PeersOnline     int    `json:"peers_online"`
 	Error           string `json:"error,omitempty"`
+	// SelfNode and PeerList back GET /api/peers (not part of /api/tailscale).
+	SelfNode *Node  `json:"-"`
+	PeerList []Node `json:"-"`
+}
+
+// Node is one tailnet machine as GET /api/peers reports it.
+type Node struct {
+	HostName     string    `json:"hostname"`
+	DNSName      string    `json:"dns_name"`
+	TailscaleIPs []string  `json:"tailscale_ips"`
+	OS           string    `json:"os"`
+	Online       bool      `json:"online"`
+	LastSeen     time.Time `json:"last_seen,omitzero"`
+}
+
+type nodeJSON struct {
+	HostName     string
+	DNSName      string
+	OS           string
+	TailscaleIPs []string
+	Online       bool
+	LastSeen     time.Time
+}
+
+func (n nodeJSON) node() Node {
+	ips := n.TailscaleIPs
+	if ips == nil {
+		ips = []string{}
+	}
+	out := Node{HostName: n.HostName, DNSName: strings.TrimSuffix(n.DNSName, "."), TailscaleIPs: ips, OS: n.OS, Online: n.Online}
+	// tailscale reports the zero time ("0001-01-01T00:00:00Z") for never/now-online peers
+	if !n.LastSeen.IsZero() && n.LastSeen.Year() > 1 {
+		out.LastSeen = n.LastSeen.UTC()
+	}
+	return out
 }
 
 type CLI struct {
@@ -74,15 +110,11 @@ type statusJSON struct {
 		MagicDNSSuffix string
 	}
 	Self *struct {
-		HostName      string
-		DNSName       string
-		TailscaleIPs  []string
+		nodeJSON
 		PrimaryRoutes []string
 		AllowedIPs    []string
 	}
-	Peer map[string]struct {
-		Online bool
-	}
+	Peer map[string]nodeJSON
 }
 
 type prefsJSON struct {
@@ -126,40 +158,9 @@ func (c *CLI) fetch(ctx context.Context) *Info {
 		info.Error = err.Error()
 		return info
 	}
-	var st statusJSON
-	if err := json.Unmarshal(out, &st); err != nil {
-		info.Error = "parse tailscale status: " + err.Error()
+	if err := parseStatus(out, c.Route, info); err != nil {
+		info.Error = err.Error()
 		return info
-	}
-	info.BackendState = st.BackendState
-	info.Running = st.BackendState == "Running"
-	info.MagicDNSSuffix = st.MagicDNSSuffix
-	if st.CurrentTailnet != nil {
-		info.Tailnet = st.CurrentTailnet.Name
-		if info.MagicDNSSuffix == "" {
-			info.MagicDNSSuffix = st.CurrentTailnet.MagicDNSSuffix
-		}
-	}
-	for _, p := range st.Peer {
-		info.Peers++
-		if p.Online {
-			info.PeersOnline++
-		}
-	}
-	if st.Self != nil {
-		info.Self = st.Self.HostName
-		info.DNSName = strings.TrimSuffix(st.Self.DNSName, ".")
-		info.IPs = st.Self.TailscaleIPs
-		approved := map[string]bool{}
-		for _, r := range append(append([]string{}, st.Self.PrimaryRoutes...), st.Self.AllowedIPs...) {
-			if pfx, err := netip.ParsePrefix(r); err == nil && pfx.Bits() < pfx.Addr().BitLen() {
-				if !approved[pfx.String()] {
-					approved[pfx.String()] = true
-					info.ApprovedRoutes = append(info.ApprovedRoutes, pfx.String())
-				}
-			}
-		}
-		info.RoutesApproved = c.Route != "" && approved[canon(c.Route)]
 	}
 	if pout, err := c.run(ctx, "debug", "prefs"); err == nil {
 		var p prefsJSON
@@ -181,6 +182,57 @@ func (c *CLI) fetch(ctx context.Context) *Info {
 		info.AdminURL = "https://login.tailscale.com/admin/machines"
 	}
 	return info
+}
+
+// parseStatus fills info from `tailscale status --json` output.
+func parseStatus(out []byte, route string, info *Info) error {
+	var st statusJSON
+	if err := json.Unmarshal(out, &st); err != nil {
+		return errors.New("parse tailscale status: " + err.Error())
+	}
+	info.BackendState = st.BackendState
+	info.Running = st.BackendState == "Running"
+	info.MagicDNSSuffix = st.MagicDNSSuffix
+	if st.CurrentTailnet != nil {
+		info.Tailnet = st.CurrentTailnet.Name
+		if info.MagicDNSSuffix == "" {
+			info.MagicDNSSuffix = st.CurrentTailnet.MagicDNSSuffix
+		}
+	}
+	info.PeerList = []Node{}
+	for _, p := range st.Peer {
+		info.Peers++
+		if p.Online {
+			info.PeersOnline++
+		}
+		info.PeerList = append(info.PeerList, p.node())
+	}
+	sort.Slice(info.PeerList, func(i, j int) bool {
+		a, b := info.PeerList[i], info.PeerList[j]
+		if a.Online != b.Online {
+			return a.Online
+		}
+		return strings.ToLower(a.HostName) < strings.ToLower(b.HostName)
+	})
+	if st.Self != nil {
+		self := st.Self.node()
+		self.Online = true
+		info.SelfNode = &self
+		info.Self = st.Self.HostName
+		info.DNSName = strings.TrimSuffix(st.Self.DNSName, ".")
+		info.IPs = st.Self.TailscaleIPs
+		approved := map[string]bool{}
+		for _, r := range append(append([]string{}, st.Self.PrimaryRoutes...), st.Self.AllowedIPs...) {
+			if pfx, err := netip.ParsePrefix(r); err == nil && pfx.Bits() < pfx.Addr().BitLen() {
+				if !approved[pfx.String()] {
+					approved[pfx.String()] = true
+					info.ApprovedRoutes = append(info.ApprovedRoutes, pfx.String())
+				}
+			}
+		}
+		info.RoutesApproved = route != "" && approved[canon(route)]
+	}
+	return nil
 }
 
 func canon(s string) string {

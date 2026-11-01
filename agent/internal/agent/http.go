@@ -42,6 +42,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/clients/{name}", a.hClientDelete)
 	mux.HandleFunc("POST /api/pair", a.hPair)
 	mux.HandleFunc("GET /api/tailscale", a.hTailscale)
+	mux.HandleFunc("GET /api/peers", a.hPeers)
 	mux.HandleFunc("GET /api/settings", a.hSettingsGet)
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpErr(w, http.StatusNotFound, errNotFound) })
@@ -65,8 +66,23 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'")
+		// Bonded clients reach the server's tunnel address; there only the
+		// token-authenticated peer list exists (no UI, no admin API).
+		if a.viaTunnel(r) {
+			if r.URL.Path != "/api/peers" || r.Method != http.MethodGet {
+				httpErr(w, http.StatusNotFound, errNotFound)
+				return
+			}
+			if a.clientForToken(r) == "" {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="tailbond"`)
+				httpErr(w, http.StatusUnauthorized, errors.New("client token required"))
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" {
-			if !a.authorized(r) {
+			if !a.authorized(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
 				httpErr(w, http.StatusUnauthorized, errors.New("login required"))
 				return
 			}
@@ -454,6 +470,10 @@ func (a *Agent) listenAddrs(ctx context.Context) []string {
 	for _, ip := range a.ts.Get(ctx).IPs {
 		out = append(out, net.JoinHostPort(ip, port))
 	}
+	// the tunnel address, for bonded clients' GET /api/peers (it appears once mqvpn is up)
+	if ip := cfg.ServerTunnelIP(); ip != "" {
+		out = append(out, net.JoinHostPort(ip, port))
+	}
 	return out
 }
 
@@ -495,7 +515,8 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 	if err := bind(true); err != nil {
 		return err
 	}
-	t := time.NewTicker(30 * time.Second)
+	// retry often enough that the tunnel address is served soon after mqvpn starts
+	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
 		select {
