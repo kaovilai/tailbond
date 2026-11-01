@@ -93,7 +93,10 @@
         var path = args.path, m = (args.method || "GET").toUpperCase();
         if (F.down) return resolve({ ok: false, code: 0, error: "agent_down" });
         if ((F.hang || []).indexOf(key(m, path)) >= 0) return; // still running
-        var r = (F.api || {})[key(m, path)];
+        // seq: successive answers (the last one sticks); after: a call that changes later answers
+        var sq = (F.seq || {})[key(m, path)];
+        var r = sq && sq.length ? (sq.length > 1 ? sq.shift() : sq[0]) : (F.api || {})[key(m, path)];
+        if (F.after && F.after[key(m, path)]) Object.assign(F.api, F.after[key(m, path)]);
         if (r === undefined && m !== "GET") r = { ok: true };
         if (r === undefined) return resolve({ ok: false, code: 404, data: { error: "not found" } });
         if (r && r.__err) return resolve({ ok: false, code: r.__err, data: r.data || { error: r.msg } });

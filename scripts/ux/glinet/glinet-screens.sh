@@ -31,7 +31,7 @@ PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').versi
 mkdir -p "$OUT"
 podman run --rm --network=none --userns=keep-id \
     -v "$PW/node_modules:/pw/node_modules:ro,z" -v "$REPO:/repo:ro,z" -v "$OUT:/out:z" \
-    -e NODE_PATH=/pw/node_modules -w /repo/scripts/ux/glinet \
+    -e NODE_PATH=/pw/node_modules -e TB_UX_DEBUG="${TB_UX_DEBUG:-}" -w /repo/scripts/ux/glinet \
     "mcr.microsoft.com/playwright:v$PW_VERSION-noble" \
     node /repo/scripts/ux/glinet/glinet-screens.mjs /repo /out $SET
 echo "$(find "$OUT" -name "*.png" | wc -l) screenshots in $OUT"

@@ -285,8 +285,9 @@ const bpRules = [
   { id: 'a7b9', kind: 'port', match: 'udp/500', target: 'direct', enabled: true, note: 'Wi-Fi calling' },
 ];
 const bpCounters = { b3f9: { connections: 37 }, c1d2: { connections: 0 }, d4e5: { connections: 212 }, a7b8: { connections: 4 }, a7b9: { connections: 2 } };
-const bf = (statusOver = {}, api = {}) => withApi(connected(twoWans, { ...oneServer, ...statusOver }), { 'GET /api/lan-clients': lanClients, ...api });
 const bypassApi = (rules, support = bpOk, counters = {}) => ({ 'GET /api/bypass': { rules, support, wans: bpWans, counters } });
+// every client screen has the bypass card (the four rules unless a state says otherwise)
+const bf = (statusOver = {}, api = {}) => withApi(connected(twoWans, { ...oneServer, ...statusOver }), { 'GET /api/lan-clients': lanClients, ...bypassApi(bpRules, bpOk, bpCounters), ...api });
 const discoverVps = { 'GET /api/discover': { tailscale_installed: true, tailscale_running: true, self: 'slate7', checked: 5, servers: [
   { name: 'homebox', dns_name: 'homebox.tail1234.ts.net', ip: '100.101.1.1', os: 'linux', version: '0.1.0-r42' },
   { name: 'vps', dns_name: 'vps.tail1234.ts.net', ip: '100.101.5.5', os: 'linux', version: '0.1.0-r42' },
@@ -307,7 +308,12 @@ export const bfStates = {
   'failback-countdown': bf(failingBack, {}),
   'failover-you-picked-vps': bf(pickedVps, {}),
   'add-server-waiting-approval': bf(joinVps({ state: 'waiting' }), discoverVps),
-  'add-server-subnet-clash': bf(joinVps({ state: 'error', error: 'subnet_in_use' }), discoverVps),
+  'add-server-subnet-clash': bf(joinVps({ state: 'error', error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' }), discoverVps),
+  // the panel was open while homebox came back: one status on vps, then on homebox
+  'back-on-homebox-since': { ...bf(homeAndVps), settle: 2600, seq: { 'GET /api/status': [
+    bf({ ...failingBack, failover: failover({ reason: 'primary_down', since: ago(20 * 60), failback_in_sec: 1 }) }).api['GET /api/status'],
+    bf({ ...homeAndVps, uptime_sec: 3 * 60, failover: failover({ since: ago(3 * 60) }) }).api['GET /api/status'],
+  ] } },
 };
 // steps: {text} clicks the first element with that text, {click} a selector,
 // {button} a button by exact name, {fill: [selector, value]}.
@@ -315,7 +321,10 @@ export const bfActions = {
   'bypass-add-website-presets': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }] },
   'bypass-add-streaming-preset': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }, { click: '.tb-dialog >> text=Streaming location' }] },
   'bypass-add-device-picker': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }, { click: '.tb-dialog >> text=A device' }, { click: '.tb-dialog >> text=alex-iphone' }] },
-  'bypass-add-wifi-calling': { base: 'bypass-empty', steps: [{ click: '.tb-card >> text=Wi-Fi calling' }] },
+  'bypass-add-wifi-calling': { base: 'bypass-empty', steps: [{ click: '.tb-card button.tb-preset >> text=Wi-Fi calling' }] },
+  // after clicking Add in that dialog: the card with the new row (and the toast)
+  'bypass-wifi-calling-added': { base: 'bypass-empty', full: true, after: { 'POST /api/bypass': bypassApi(bpRules.slice(3), bpOk, { a7b8: { connections: 0 }, a7b9: { connections: 0 } }) },
+    steps: [{ click: '.tb-card button.tb-preset >> text=Wi-Fi calling' }, { click: '.tb-dialog .tb-btn.primary' }, { wait: 500 }] },
   'add-server-open': { base: 'servers-single-home', full: true, steps: [{ text: 'Add a backup server' }] },
   'add-server-paste-clash': { base: 'servers-single-home', full: true, api: { 'POST /api/servers': { __err: 409, data: { ok: false, error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' } } },
     steps: [{ text: 'Add a backup server' }, { text: 'No Tailscale there? Paste a pairing link from it' }, { fill: ['.tb-sec textarea', 'tailbond://pair?d=eyJ2IjoxLCJzIjoiMjAzLjAuMTEzLjk6ODQ0MyJ9'] }, { button: 'Add' }] },
