@@ -51,7 +51,7 @@ jobs:
         run: |
           mapfile -t files < <(git ls-files 'scripts/*.sh' 'scripts/**/*.sh' 'agent/*.sh' \
             'android/scripts/*.sh' 'packaging/fedora/*.sh' 'packaging/fedora/hooks/*' \
-            'packaging/openwrt/*.sh')
+            'packaging/openwrt/*.sh' 'packaging/linux/*.sh' 'packaging/linux/hooks/*')
           shellcheck -S warning "${files[@]}"
       - name: OpenWrt hooks and init (busybox sh)
         run: |
@@ -75,7 +75,7 @@ jobs:
       - name: Install build + test deps
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q cmake build-essential libevent-dev iproute2 curl netcat-openbsd openssl
+          sudo apt-get install -y -q cmake build-essential libevent-dev iproute2 curl netcat-openbsd openssl dnsmasq-base
       - name: mqvpn submodule revision
         id: mq
         run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
@@ -92,6 +92,9 @@ jobs:
         run: sudo scripts/smoke-client-control.sh
       - name: e2e-netns
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
+      - name: Server memory and CPU under load (informational)
+        continue-on-error: true
+        run: MB=100 MQVPN="$PWD/out/native/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/measure-server-mem.sh
 
   android:
     name: Android APK
@@ -157,8 +160,8 @@ jobs:
         uses: actions/cache@v6
         with:
           path: out/build/mqvpn-aarch64
-          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
-          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/lib/*.sh') }}-
+          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
+          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
       - name: Static aarch64 mqvpn
         run: scripts/build-mqvpn-aarch64-musl.sh
       - name: Build ipk
@@ -170,6 +173,106 @@ jobs:
           name: glinet-ipk
           path: out/ipk/*.ipk
           if-no-files-found: error
+
+  mqvpn-x86_64:
+    name: Static x86_64 mqvpn (musl)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: mqvpn submodule revision
+        id: mq
+        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+      - name: Cache x86_64 mqvpn build tree
+        uses: actions/cache@v6
+        with:
+          path: out/build/mqvpn-x86_64
+          key: mqvpn-x86_64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
+          restore-keys: mqvpn-x86_64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+      - name: Build (native amd64 Alpine, podman)
+        run: scripts/build-mqvpn-musl.sh x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mqvpn-x86_64
+          path: out/x86_64/mqvpn
+          if-no-files-found: error
+
+  linux-bundle:
+    name: Generic Linux bundle (VPS)
+    runs-on: ubuntu-24.04
+    needs: [agent, mqvpn-x86_64]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true # mqvpn's LICENSE and NOTICE
+      - uses: actions/download-artifact@v8
+        with:
+          name: tailbondd
+          path: out/agent/
+      - uses: actions/download-artifact@v8
+        with:
+          name: mqvpn-x86_64
+          path: out/x86_64/
+      - name: Build bundle
+        run: |
+          chmod +x out/x86_64/mqvpn out/agent/linux-*/tailbondd
+          TB_ARCHS=x86_64 packaging/linux/build-bundle.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-bundle
+          path: out/linux/*.tar.gz
+          if-no-files-found: error
+
+  vps-install:
+    name: VPS install (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    needs: linux-bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["almalinux:10", "debian:12", "ubuntu:24.04"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-bundle
+          path: out/linux/
+      - name: install.sh in ${{ matrix.image }} (dry-run decisions, install, re-run, run, uninstall)
+        env:
+          IMAGE: docker.io/library/${{ matrix.image }}
+        run: |
+          sudo podman run --rm --cap-add NET_ADMIN --device /dev/net/tun -v "$PWD:/src:ro" "$IMAGE" \
+            bash /src/packaging/linux/test-install.sh /src/out/linux/tailbond-linux-x86_64.tar.gz
+      - name: systemd unit (almalinux/10-init)
+        if: matrix.image == 'almalinux:10'
+        run: |
+          sudo podman run -d --name tb --systemd=always --cap-add NET_ADMIN --device /dev/net/tun \
+            -v "$PWD:/src:ro" docker.io/almalinux/10-init
+          sudo podman exec tb bash -euc '
+            for _ in $(seq 1 30); do systemctl is-system-running -q --wait 2>/dev/null && break; sleep 1; done
+            dnf install -y -q iproute nftables tar gzip >/dev/null
+            mkdir -p /tmp/b && tar -C /tmp/b -xzf /src/out/linux/tailbond-linux-x86_64.tar.gz
+            /tmp/b/tailbond-linux-x86_64/install.sh --no-tailscale --public-addr 203.0.113.7
+            systemctl is-active tailbond
+            systemctl show tailbond -p MemoryHigh -p MemoryMax -p OOMScoreAdjust
+            systemctl show tailbond -p MemoryMax | grep -qx MemoryMax=167772160
+            nft list table inet tailbond | grep -q masquerade
+            /tmp/b/tailbond-linux-x86_64/uninstall.sh --purge
+            ! systemctl is-active -q tailbond'
+          sudo podman rm -f tb
+
+  ansible:
+    name: Ansible role lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: ansible-lint
+        run: |
+          pipx install ansible-core
+          pipx inject ansible-core ansible-lint --include-apps
+          ansible-galaxy collection install ansible.posix community.general
+          cd packaging/ansible && ansible-lint roles/tailbond
 
   rpm:
     name: Fedora RPM
@@ -208,7 +311,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, openwrt, rpm]
+    needs: [agent, shellcheck, e2e, android, openwrt, rpm, linux-bundle, vps-install]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -218,7 +321,7 @@ jobs:
           path: dist/
       - name: Checksums
         run: |
-          find dist -type f \( -name '*.apk' -o -name '*.ipk' -o -name '*.rpm' -o -name tailbondd \) \
+          find dist -type f \( -name '*.apk' -o -name '*.ipk' -o -name '*.rpm' -o -name tailbondd -o -name 'tailbond-linux-*.tar.gz' \) \
             -exec sha256sum {} + | sed 's|  dist/|  |' > SHA256SUMS
           cat SHA256SUMS
       - name: Publish GitHub release
@@ -230,5 +333,5 @@ jobs:
             tar -czf "tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
           done
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag \
-            dist/android-apk/*.apk dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm \
+            dist/android-apk/*.apk dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz \
             tailbondd-*.tar.gz SHA256SUMS
