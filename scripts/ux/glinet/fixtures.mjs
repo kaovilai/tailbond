@@ -11,7 +11,7 @@ const peers = {
   peers: [
     { hostname: 'nas', dns_name: 'nas.tail1234.ts.net', tailscale_ips: ['100.101.2.2', 'fd7a:115c:a1e0::2'], os: 'linux', online: true, conn: 'direct' },
     { hostname: 'apple-tv', dns_name: 'apple-tv.tail1234.ts.net', tailscale_ips: ['100.101.4.4'], os: 'tvOS', online: true, conn: 'direct' },
-    { hostname: 'pixel-8', dns_name: 'pixel-8.tail1234.ts.net', tailscale_ips: ['100.101.8.8'], os: 'android', online: true, conn: 'relay', relay: 'fra' },
+    { hostname: 'pixel-8', dns_name: 'pixel-8.tail1234.ts.net', tailscale_ips: ['100.101.8.8'], os: 'android', online: true, conn: 'direct' },
     { hostname: 'work-laptop', dns_name: 'work-laptop.tail1234.ts.net', tailscale_ips: ['100.101.3.3'], os: 'macOS', online: false, last_seen: ago(26 * 3600) },
   ],
 };
@@ -93,12 +93,12 @@ const pendingReq = { id: '4b79980f2bc88e95', name: 'slate7', kind: 'router', dev
 
 // GET /api/health on the Flint 3
 const hc = (id, status, title, extra = {}) => ({ id, status, title, ...extra });
-const healthGood = { all_good: true, direct: 2, relayed: 0, checks: [
-  hc('tailscale_direct', 'ok', 'Tailscale: 2 machines direct'),
+const healthGood = { all_good: true, direct: 3, relayed: 0, checks: [
+  hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
   hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'port mapping: UPnP' }),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
   hc('cgnat', 'ok', 'Public internet address 203.0.113.7'),
-  hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'slate7 connected from 198.51.100.9, 2 h ago.' }),
+  hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 2 h ago.' }),
 ] };
 const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: ['pixel-8'], checks: [
   hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 1 through a relay (slower)', { detail: 'Through a relay: pixel-8. To check one: tailscale ping pixel-8',
@@ -154,7 +154,7 @@ export const states = {
     livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'standby', 0, 0, 0),
     livePath('usb0', 'tethering', 'Tethering', 'usb', 'standby', 0, 0, 0, { priority: 'secondary', data_cap_mb: 5000, used_bytes: 1.2e9 }),
     livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'failed', 0, 0, 0),
-  ], { state: 'disconnected', uptime_sec: 0, tunnel_ip: '', totals: { tx_bps: 0, rx_bps: 0 }, settings: { disconnected: true } }),
+  ], { state: 'disconnected', uptime_sec: 0, tunnel_ip: '', totals: { tx_bps: 0, rx_bps: 0 }, settings: { disconnected: true } }, { tethering: { priority: 'backup', in_use: false } }),
   '10-not-running': { model: 'GL-BE3600', down: true },
   // Flint 3 at home
   '11-server-pending-request': serverBase({ pair_requests: [pendingReq] }),
@@ -165,7 +165,7 @@ export const states = {
       { name: 'ipad', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, paths: [] },
     ],
   }),
-  '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed, 'GET /api/peers': { ...peers, client: '' } }),
+  '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed, 'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((m) => (m.hostname === 'pixel-8' ? { ...m, conn: 'relay', relay: 'fra' } : m)) } }),
   '18c-server-health-good': serverBase(),
   '18b-server-health-cgnat': withApi(serverBase(), { 'GET /api/health': healthCgnat }),
   // hotel: the repeater is behind a portal, GL's repeater handles it

@@ -32,8 +32,10 @@ Renders: `out/ux/glinet/round-N/` (not committed; `out/` is ignored).
 | 2 | 0 / 3 / 11 | 0 / 1 / 18 | 0 / 3 / 10 | 0 / 0 / 17 | 0 / 7 / 56 |
 | 3 | 0 / 1 / 9 | 0 / 2 / 16 | 0 / 2 / 9 | 0 / 1 / 13 | 0 / 6 / 47 |
 | 4 | 0 / 3 / 11 | 0 / 5 / 13 | 1 / 3 / 11 | 0 / 3 / 15 | 1 / 14 / 50 |
+| 5 | 0 / 1 / 16 | 0 / 2 / 12 | 0 / 0 / 23 | 0 / 1 / 15 | 0 / 4 / 66 |
 | 3 | 0 / 1 / 9 | 0 / 2 / 16 | 0 / 2 / 9 | 0 / 1 / 13 | 0 / 6 / 47 |
 | 4 | 0 / 3 / 11 | 0 / 5 / 13 | 1 / 3 / 11 | 0 / 3 / 15 | 1 / 14 / 50 |
+| 5 | 0 / 1 / 16 | 0 / 2 / 12 | 0 / 0 / 23 | 0 / 1 / 15 | 0 / 4 / 66 |
 
 ## Round 1 triage
 
@@ -121,3 +123,15 @@ on GL were added from round 4 on; round 4 is the first review of these.
 
 Lows fixed: "Until 04:06" → "For up to 9 more minutes (until 04:06)"; "Stop" → "Stop sign-in mode"; an all-good health render (18c).
 Lows rejected: LuCI install (GL has no upload in Plug-ins), VPN vs APPLICATIONS placement (A: GL keeps VPN apps, including Speedify, under VPN), graphs/billing day (D, earlier rounds).
+
+## Round 5 triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Flint health fix "forward UDP 41641 to this machine, or turn on UPnP on the router in front of it": on a Flint the router *is* this machine; same fix twice (A) | M | **fix**: on the GL panel the fix names GL's page ("On this router: NETWORK → UPnP, turn it on. If another router sits in front…"); a repeated fix shows once ("Same fix as above"); the Port row no longer says "opened" without saying carrier-grade NAT blocks it |
+| 2 | Fedora: setup health only on the Devices tab (D) | M | **fix**: a banner on every tab when something needs improving ("Setup health: 2 things to improve … Show"), plus the hand-off line on the card |
+| 3 | Direct/relay labels: which hop? Does LAN→NAS use the bond or the Slate's own Tailscale? (B) | M | **fix**: the Slate's list says LAN devices reach machines through the bond to homebox, and that direct/relay is how homebox reaches each machine; fixtures now agree between the Slate and the Flint |
+| 4 | Sign-in mode: all device traffic or only the sign-in page? Header still says "Connected … using" (B) | M | **fix**: both sign-in cards and the status line say all traffic from devices goes out that connection directly (not only the sign-in page, not through homebox) until signed in, and that the router's own tunnel stays up on the other connections |
+
+Lows fixed: GL Login Mode banner title ("Signing in to Repeater through GL's Login Mode", no second "click Login Mode") (A); explain why cable sign-in differs from Wi-Fi (GL covers the repeater only) (A, D); health counts match the list (B, C); "on this router's clock" (B); turned-off fixture keeps Backup only (D).
+Lows rejected: on-screen push notification for portals (D: the GL admin has no notification channel for plug-ins; the summary line and card are where GL users look), graphs, Secondary, billing day (earlier rounds), checksum (B), port 80 in the Fedora invite (render mock).

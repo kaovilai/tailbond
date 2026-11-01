@@ -477,7 +477,9 @@
         });
         var line = used.length ? "Using " + used.join(" + ") : "Connected, waiting for a connection to carry traffic";
         var portal = ws.filter(function (w) { return w.enabled && w.captive === "portal"; }).map(function (w) { return KIND_NOUN[w.kind] || w.label; });
-        if (portal.length) line += " · " + portal.join(", ") + " needs sign-in";
+        var signing = ws.filter(function (w) { return w.enabled && w.captive === "portal" && w.signinUntil; }).map(function (w) { return KIND_NOUN[w.kind] || w.label; });
+        if (signing.length) line = "Signing in on " + signing.join(", ") + ": all traffic from devices here goes out " + signing.join(", ") + " directly, not through " + (this.serverShort || "your home server") + ", until you're signed in";
+        else if (portal.length) line += " · " + portal.join(", ") + " needs sign-in";
         if (broken.length) line += " · " + broken.join(", ") + " not working right now";
         else if (saving.length) line += " · " + saving.join(", ") + " on standby";
         return line;
@@ -793,22 +795,23 @@
             var until = w.signinUntil ? new Date(w.signinUntil) : null;
             var hhmm = until ? ("0" + until.getHours()).slice(-2) + ":" + ("0" + until.getMinutes()).slice(-2) : "";
             if (w.captiveSource === "glinet") {
-              return self.alert(h, "info", w.label + " needs you to sign in", [
-                h("div", "GL's Repeater page handles this sign-in. Open it, click " + "“Login Mode for Public Hotspots” (or “Go to Login”) and accept the hotel's terms."),
+              return self.alert(h, "info", w.signinUntil ? "Signing in to " + w.label + " through GL's Login Mode" : w.label + " needs you to sign in", [
+                w.signinUntil ? null : h("div", "GL's Repeater page handles this sign-in. Open it, click " + "“Login Mode for Public Hotspots” (or “Go to Login”) and accept the hotel's terms."),
                 h("div", { style: { marginTop: "6px" } }, w.signinUntil
-                  ? "GL's Login Mode is on: devices here use the hotel Wi-Fi directly, not through your home server, so its sign-in page loads. It ends by itself once you've signed in (or click “Quit Login Mode” on GL's Repeater page); tailbond then adds " + w.label + " back to bonding."
+                  ? "GL's Login Mode is on: all traffic from devices here goes out the hotel Wi-Fi directly (not just the sign-in page), not through your home server, so the page loads. It ends by itself once you've signed in (or click “Quit Login Mode” on GL's Repeater page); tailbond then adds " + w.label + " back to bonding."
                   : "While you sign in, devices here use the hotel Wi-Fi directly, not through your home server. Afterwards tailbond adds " + w.label + " back to bonding by itself. Your other connections keep working meanwhile.")
-              ], [h("a", { class: "tb-btn small primary", attrs: { href: "#/internet" } }, "Open GL's Repeater page")]);
+              ], [h("a", { class: "tb-btn small" + (w.signinUntil ? "" : " primary"), attrs: { href: "#/internet" } }, w.signinUntil ? "Back to GL's Repeater page" : "Open GL's Repeater page")]);
             }
             if (w.signinUntil) {
               var mins = Math.max(1, Math.round((until - Date.now()) / 60000));
               return self.alert(h, "info", "Signing in to " + w.label + "…", [
-                h("div", ["Sign in on the page that opened (accept the terms, enter the room number…). For up to " + mins + " more minute" + (mins === 1 ? "" : "s") + " (until " + hhmm + "), devices here use " + w.label + " directly, not through your home server. tailbond adds it back by itself once you're signed in."])
+                h("div", ["Sign in on the page that opened (accept the terms, enter the room number…). For up to " + mins + " more minute" + (mins === 1 ? "" : "s") + " (until " + hhmm + " on this router's clock), all traffic from devices here goes out " + w.label + " directly, not just the sign-in page, and not through your home server. The router's own tunnel stays up on your other connections. tailbond adds " + w.label + " back by itself once you're signed in."])
               ], [self.btn(h, "Open the sign-in page again", function () { window.open(w.portalUrl || "http://neverssl.com/", "_blank", "noopener"); }, "small primary"),
                 self.btn(h, "I've signed in, check now", function () { self.run("chk-" + w.key, api("POST", "/api/captive/check", { name: w.key }), "Checking…"); }, "small"),
                 self.btn(h, "Stop sign-in mode", function () { self.run("si-" + w.key, api("DELETE", "/api/captive/signin"), "Sign-in mode stopped"); }, "small text")]);
             }
             return self.alert(h, "", noun + " needs you to sign in", [
+              w.kind === "wifi" ? null : h("div", { class: "tb-small", style: { marginBottom: "4px" } }, "GL's Login Mode covers the repeater Wi-Fi only; tailbond handles sign-in pages on other connections like this one."),
               h("div", "It shows a sign-in page before it lets anyone online. Until then tailbond keeps " + w.label + " out of bonding" + (self.wans.some(function (x) { return x !== w && x.enabled && x.usable && x.captive !== "portal"; }) ? " and your other connections carry your traffic." : ".")),
               h("div", { class: "tb-small", style: { marginTop: "6px" } }, "Opening the sign-in page lets devices here reach " + w.label + " directly (without your home server) for up to 10 minutes, so the page can load.")
             ], [self.btn(h, self.busy["si-" + w.key] ? "Opening…" : "Open sign-in page", function () {
@@ -891,8 +894,8 @@
             var list = A(p.peers).filter(function (x) { return !q || (x.hostname + " " + x.dns_name + " " + A(x.tailscale_ips).join(" ")).toLowerCase().indexOf(q) >= 0; });
             body = [
               h("div", { class: "tb-muted", style: { marginBottom: "10px" } }, serverSide
-                ? "Devices connected through tailbond reach these machines by name or 100.x address."
-                : "Laptops and phones on this router's Wi-Fi or LAN reach these by their full name, e.g. " + this.exampleName() + ", or by their 100.x address."),
+                ? "Devices connected through tailbond reach these machines by name or 100.x address. “Direct” / “via relay” is how this router reaches each one."
+                : "Laptops and phones on this router's Wi-Fi or LAN reach these through the bond to " + (this.serverShort || "your home server") + " (not this router's own Tailscale), by their full name, e.g. " + this.exampleName() + ", or by their 100.x address. “Direct” / “via relay” is how " + (this.serverShort || "your home server") + " reaches each machine."),
               A(p.peers).length > 6 ? h("input", { class: "tb-input", style: { marginBottom: "8px" }, attrs: { placeholder: "Search machines" }, domProps: { value: this.peerFilter }, on: { input: function (e) { self.peerFilter = e.target.value; } } }) : null,
               h("div", { class: "tb-list" }, list.map(function (m) {
                 var ip = A(m.tailscale_ips)[0] || "";
@@ -1152,7 +1155,7 @@
             h("div", "Internet address"),
             steps.indexOf("address") >= 0 ? h("div", { class: "tb-muted" }, "not set yet (step above)") : (this.addrEdit ? this.addrEditor(h) : h("div", { class: "tb-row" }, [h("span", { class: "tb-mono" }, addr || "not set"),
               this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
-            h("div", "Port"), h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "Is your internet cable plugged straight into this router? Then nothing else to do. If it's plugged into another box (your internet provider's modem-router), that box must forward UDP " + (s.port || 443) + " to this router; see the box's manual under \"port forwarding\".")]),
+            h("div", "Port"), steps.indexOf("health:cgnat") >= 0 ? h("div", "UDP " + (s.port || 443) + " is opened on this router, but your provider's shared address (step above) keeps travel routers from reaching it.") : h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "Is your internet cable plugged straight into this router? Then nothing else to do. If it's plugged into another box (your internet provider's modem-router), that box must forward UDP " + (s.port || 443) + " to this router; see the box's manual under \"port forwarding\".")]),
             h("div", "Tailscale name"), h("div", { class: "tb-mono" }, ts.dns_name || "—"),
             h("div", "tailbond page password"), this.pwEdit ? h("div", { class: "tb-row" }, [
               h("input", { class: "tb-input", attrs: { type: "password", placeholder: "New password (empty: none)", autocomplete: "new-password" }, domProps: { value: this.pwValue }, on: { input: function (e) { self.pwValue = e.target.value; } } }),
@@ -1183,6 +1186,11 @@
           var steps = this.setupSteps();
           if (steps.length) return null; // finish the setup steps first
           var checks = A(v.checks);
+          // on the Flint, "this machine" is the router itself: say where in GL
+          var glFix = "On this router: NETWORK → UPnP, turn it on. If another router sits in front of this one (for example your internet provider's box), forward UDP port 41641 to this router there.";
+          checks = checks.map(function (c) { return (c.id === "tailscale_direct" || c.id === "netcheck") && c.fix ? Object.assign({}, c, { fix: glFix }) : c; });
+          var shown = {};
+          checks = checks.map(function (c) { if (c.fix && shown[c.fix]) return Object.assign({}, c, { fix: "Same fix as above.", fix_url: "" }); if (c.fix) shown[c.fix] = true; return c; });
           var bad = checks.filter(function (c) { return c.status === "warn" || c.status === "bad"; });
           var rest = checks.filter(function (c) { return bad.indexOf(c) < 0; });
           var row = function (c) {

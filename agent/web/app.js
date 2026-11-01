@@ -189,7 +189,7 @@ function setRole(role) {
   // each device picks its own mode; the server has none to choose
   $('#modes').classList.toggle('hidden', role === 'server');
   if (role === 'client') loadSettings();
-  if (role === 'server') loadSettings();
+  if (role === 'server') { loadSettings(); renderHealth(); }
 }
 
 function pathCard(key) {
@@ -354,9 +354,17 @@ async function renderHealth() {
   box.replaceChildren(
     h('h3', { text: bad.length ? `Setup health: ${bad.length} to improve for best speed` : 'Setup health: everything is set up for best speed' }),
     h('ul', { class: 'health-list' }, rows),
+    bad.length ? h('p', { class: 'small', text: 'Not sure how? Show this card to whoever set up your internet; the links explain each fix.' }) : null,
     h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
       h('a', { href: 'https://tailscale.com/docs/reference/connection-types', target: '_blank', rel: 'noopener', text: 'About Tailscale connection types' })));
   box.classList.remove('hidden');
+  const ban = $('#health-banner');
+  ban.replaceChildren();
+  if (bad.length) {
+    ban.append(`Setup health: ${bad.length} thing${bad.length === 1 ? '' : 's'} to improve for best speed. `,
+      h('a', { href: '#', text: 'Show', onclick: (e) => { e.preventDefault(); $('#tabs button[data-tab="clients"]').click(); } }));
+  }
+  ban.classList.toggle('hidden', !bad.length || state.tab === 'clients');
 }
 
 // Devices on the tailnet that asked to connect (POST /api/pair-requests).
@@ -757,4 +765,4 @@ setupPairing();
 setupLogin();
 connect();
 setInterval(pollLogs, 2000);
-setInterval(() => { if (state.tab === 'tailscale') renderTailscale(); if (state.tab === 'clients') renderHealth(); }, 15000);
+setInterval(() => { if (state.tab === 'tailscale') renderTailscale(); if (state.role === 'server') renderHealth(); }, 15000);

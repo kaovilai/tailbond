@@ -57,7 +57,23 @@ tailbond works without Tailscale. With Tailscale running on the server (`sudo ta
 
 If you switch between the self-signed and the Tailscale certificate (by turning tailnet HTTPS on or off), pair your devices again: the old links pin the old certificate.
 
+For best speed (direct Tailscale connections, the port, the route), see
+[setup tips](setup-tips.md); the dashboard's **Devices** tab shows a
+**Setup health** card that checks them.
+
 ## 4. Add a device
+
+**A GL.iNet travel router (no SSH).** Open **Devices → Add a GL.iNet travel
+router**: download the router package (served as `/tailbond-glinet.ipk` when
+`/usr/share/tailbond/tailbond-glinet.ipk` exists, or `glinet_ipk` is set),
+install it on the router through LuCI, then on the router open **VPN →
+tailbond → Ask to connect**. The request shows up at the top of this page
+with the router's Tailscale identity; tap **Approve**.
+
+Who can approve: anyone who can open this page. It listens on 127.0.0.1 and
+the Tailscale IP, so that's everyone on your tailnet who can reach this
+machine (check your ACLs). Set `ui_password` in `tailbond.json` to require a
+password.
 
 **A phone, from the phone itself (no QR code).** While the phone still runs
 Tailscale, open `http://<server>.<tailnet>.ts.net:8077` on it (MagicDNS short
