@@ -3,7 +3,7 @@
 // Usage (inside the Playwright image): node glinet-screens.mjs <repo> <outdir>
 import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync } from 'node:fs';
-import { states, actions } from './fixtures.mjs';
+import { states, actions, fedoraStatus } from './fixtures.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
@@ -42,7 +42,33 @@ async function shot(name, fixture, vp, act, page0) {
   await ctx.close();
 }
 
+// Fedora home server: the agent's own web UI (agent/web), API answered
+// from fixtures.
+const webDir = `${repo}/agent/web`;
+const webTypes = { html: 'text/html', js: 'application/javascript', css: 'text/css', svg: 'image/svg+xml' };
+async function fedora(vp) {
+  const ctx = await browser.newContext({ ...viewports[vp], locale: 'en-US', timezoneId: 'UTC' });
+  const page = await ctx.newPage();
+  await page.route('http://homebox.test/**', (route) => {
+    const p = new URL(route.request().url()).pathname;
+    if (p === '/api/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fedoraStatus) });
+    if (p === '/api/settings') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ role: 'server', effective_public_addr: 'home.example.net:443', version: '0.1.0-r42' }) });
+    if (p === '/api/logs') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"entries":[]}' });
+    if (p.startsWith('/api/')) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"ok":false}' });
+    const f = p === '/' ? 'index.html' : p.slice(1);
+    try {
+      return route.fulfill({ status: 200, body: readFileSync(`${webDir}/${f}`), contentType: webTypes[f.split('.').pop()] || 'application/octet-stream' });
+    } catch { return route.fulfill({ status: 404, body: '' }); }
+  });
+  await page.goto('http://homebox.test/');
+  await page.waitForSelector('#pair-requests:not(.hidden)');
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${out}/14-fedora-dashboard-request-${vp}.png` });
+  await ctx.close();
+}
+
 for (const vp of Object.keys(viewports)) {
+  await fedora(vp);
   await shot('01-not-installed-luci-upload', {}, vp, null, 'luci.html');
   for (const [name, fx] of Object.entries(states)) await shot(name, fx, vp);
   for (const [name, act] of Object.entries(actions)) if (act) await shot(name, states[act.base], vp, act);

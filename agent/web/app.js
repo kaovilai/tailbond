@@ -167,6 +167,7 @@ function render(st) {
     for (const b of document.querySelectorAll('#modes button')) b.setAttribute('aria-checked', String(b.dataset.mode === st.mode));
   }
 
+  renderPairRequests(st);
   if (st.role === 'client') renderClientPaths(st); else renderServerPaths(st);
   if (st.role === 'server' && state.tab === 'clients') renderClients(st);
   $('#foot').textContent = `tailbondd ${st.version || ''} · ${st.control_api ? 'live path stats' : 'basic stats (mqvpn control API unavailable)'}`;
@@ -337,6 +338,36 @@ function renderServerPaths(st) {
 }
 
 // the page's MagicDNS address works on any tailnet phone; fall back to how we were reached
+// Devices on the tailnet that asked to connect (POST /api/pair-requests).
+function renderPairRequests(st) {
+  const box = $('#pair-requests');
+  const reqs = st.role === 'server' && Array.isArray(st.pair_requests) ? st.pair_requests : [];
+  const sig = reqs.map((r) => r.id).join(',');
+  box.classList.toggle('hidden', !reqs.length);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), ...reqs.map((r) => {
+    const what = r.kind === 'router' ? 'Travel router' : r.kind === 'phone' ? 'Phone' : 'Device';
+    const decide = async (action, btn) => {
+      btn.disabled = true;
+      try {
+        await api('POST', `/api/pair-requests/${r.id}/${action}`, {});
+        toast(action === 'approve' ? `${r.name} can connect now. It connects by itself in a few seconds.` : 'Declined');
+        box.dataset.sig = '';
+        pollOnce();
+      } catch (e) { btn.disabled = false; toast(e.message, true); }
+    };
+    return h('div', { class: 'pair-req' },
+      h('div', { class: 'pair-req-text' },
+        h('b', { text: r.repair ? `${r.name} is asking to connect again` : `${r.name} wants to connect` }),
+        h('div', { class: 'muted small', text: `${what} on your tailnet · signed in as ${r.user || 'unknown'} · ${r.hostname ? r.hostname + ' · ' : ''}${r.ip}` }),
+        r.repair ? h('div', { class: 'small', text: 'It was connected before (reset or reinstalled). Approving gives it its old access back.' }) : null),
+      h('div', { class: 'pair-req-actions' },
+        h('button', { class: 'btn', type: 'button', text: 'Decline', onclick: (e) => decide('decline', e.currentTarget) }),
+        h('button', { class: 'btn primary', type: 'button', text: 'Approve', onclick: (e) => decide('approve', e.currentTarget) })));
+  }));
+}
+
 function inviteLink(st) {
   const dns = st.tailscale && st.tailscale.dns_name;
   const host = dns ? `${dns}:${location.port || 80}` : location.host;

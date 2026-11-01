@@ -138,3 +138,14 @@ export const actions = {
   '09b-unpair-confirm': { base: '05-connected-two-wans', click: 'button.tb-btn.danger' },
   '07b-set-limit': { base: '07-save-data-standby', clickText: 'Change limit' },
 };
+
+// The Fedora home server's own dashboard (agent web UI) with a request.
+const srvPath = (id, rx, tx, rtt) => ({ id, iface: '', kind: 'unknown', state: 'active', srtt_ms: rtt, min_rtt_ms: rtt, loss_pct: 0, rx_bps: rx, tx_bps: tx, rx_bytes: 0, tx_bytes: 0, enabled: true });
+export const fedoraStatus = {
+  ...serverStatus({ pair_requests: [pendingReq] }), server: 'homebox.tail1234.ts.net:443',
+  totals: { tx_bps: 12e6, rx_bps: 1.1e6, tx_bytes: 8.1e9, rx_bytes: 0.9e9 },
+  clients: [
+    { name: 'pixel-8', registered: true, connected: true, endpoint: '198.51.100.20:51234', scheduler: 'wlb', connected_sec: 3 * 3600, tx_bps: 12e6, rx_bps: 1.1e6, tx_bytes: 8.1e9, rx_bytes: 0.9e9, paths: [srvPath(0, 0.7e6, 8e6, 31), srvPath(1, 0.4e6, 4e6, 58)] },
+    { name: 'ipad', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0, paths: [] },
+  ],
+};

@@ -11,7 +11,11 @@
 # the client with 2 active paths; traffic continues after one path goes down;
 # mode switch reconnects; hooks fire; revocation works; GET /api/peers is
 # served on the tunnel IP to paired clients only (401 without / 200 with the
-# token derived from the pairing key; Tailscale is disabled, so the list is empty).
+# token derived from the pairing key); pairing over Tailscale: a fake
+# `tailscale` CLI on PATH in each namespace (status/whois return canned
+# JSON) plus 100.x addresses, so the client agent discovers the server
+# (GET /api/hello), asks to pair (POST /api/join -> /api/pair-requests), the
+# admin approves on the server, and the client connects by itself.
 # Checks (soft): client-side per-path stats, which need the mqvpn client
 # control API patch (patches/mqvpn/0001-client-control-api.patch).
 set -euo pipefail
@@ -114,6 +118,41 @@ ip netns exec "$NS_S" tc qdisc add dev pb root netem delay 40ms 5ms loss 1%
 ip netns exec "$NS_C" ping -c3 -i0.2 -w5 10.200.1.1 >/dev/null && ip netns exec "$NS_C" ping -c3 -i0.2 -w5 10.200.2.1 >/dev/null
 ok "underlay reachable on both paths (wlan0: netem 40ms ±5ms, 1% loss)"
 
+say "fake tailnet: homebox 100.101.1.1 (server), slate7 100.101.9.9 (client)"
+ip -n "$NS_S" addr add 100.101.1.1/32 dev lo
+ip -n "$NS_C" addr add 100.101.9.9/32 dev lo
+ip -n "$NS_C" route add 100.101.1.1/32 via 10.200.1.1 dev eth0 src 100.101.9.9
+ip -n "$NS_S" route add 100.101.9.9/32 via 10.200.1.2 dev pa
+mkdir -p "$WORK/ts-srv" "$WORK/ts-cli"
+fake_ts() { # fake_ts DIR STATUS_JSON
+  cat >"$1/tailscale" <<EOF
+#!/bin/sh
+# fake tailscale CLI for the e2e test
+case "\$1" in
+status) cat <<'J'
+$2
+J
+;;
+whois)
+  [ "\$3" = 100.101.9.9 ] || { echo "no such peer" >&2; exit 1; }
+  echo '{"Node":{"ID":9,"StableID":"nE2ESLATE","Name":"slate7.tail1234.ts.net.","ComputedName":"slate7","Hostinfo":{"Hostname":"GL-BE3600","OS":"linux"}},"UserProfile":{"LoginName":"alex@example.com","DisplayName":"Alex"}}' ;;
+debug) echo '{"AdvertiseRoutes":[]}' ;;
+cert) echo "certs disabled" >&2; exit 1 ;;
+*) exit 0 ;;
+esac
+EOF
+  chmod +x "$1/tailscale"
+}
+fake_ts "$WORK/ts-srv" '{"BackendState":"Running","MagicDNSSuffix":"tail1234.ts.net","CurrentTailnet":{"Name":"alex@example.com"},
+ "Self":{"HostName":"homebox","DNSName":"homebox.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.1.1"],"Online":true},
+ "Peer":{"n1":{"HostName":"slate7","DNSName":"slate7.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.9.9"],"Online":true},
+         "n2":{"HostName":"nas","DNSName":"nas.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.2.2"],"Online":true}}}'
+fake_ts "$WORK/ts-cli" '{"BackendState":"Running","MagicDNSSuffix":"tail1234.ts.net","CurrentTailnet":{"Name":"alex@example.com"},
+ "Self":{"HostName":"slate7","DNSName":"slate7.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.9.9"],"Online":true},
+ "Peer":{"n1":{"HostName":"homebox","DNSName":"homebox.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.1.1"],"Online":true},
+         "n2":{"HostName":"nas","DNSName":"nas.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.2.2"],"Online":true}}}'
+ok "fake tailscale CLIs in place"
+
 say "hooks"
 mkdir -p "$WORK/hooks"
 for h in server-up server-down client-up client-down; do
@@ -133,13 +172,12 @@ cat >"$WORK/srv/tailbond.json" <<EOF
   "mqvpn_bin": "$MQVPN",
   "state_dir": "$WORK/srv/state",
   "hooks_dir": "$WORK/hooks",
-  "listen": "$API",
+  "listen": ":8077",
   "mode": "speed",
-  "disable_tailscale": true,
   "server": {"port": 443, "public_addr": "$SERVER_IP", "subnet": "10.77.0.0/24", "subnet6": "fd77:77::/112", "use_tailscale_cert": false}
 }
 EOF
-ip netns exec "$NS_S" "$TAILBONDD" -config "$WORK/srv/tailbond.json" >"$WORK/server.log" 2>&1 &
+ip netns exec "$NS_S" env PATH="$WORK/ts-srv:$PATH" "$TAILBONDD" -config "$WORK/srv/tailbond.json" >"$WORK/server.log" 2>&1 &
 SRV_PID=$!
 if wait_for 20 "server agent connected" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\" and .control_api'"; then
   ok "server agent up, mqvpn server running, control API reachable"
@@ -149,8 +187,8 @@ fi
 [ -s "$WORK/hook-server-up.env" ] && grep -q '^TB_SUBNET=10.77.0.0/24' "$WORK/hook-server-up.env" && grep -q '^TB_DNS_IP=10.77.0.1' "$WORK/hook-server-up.env" \
   && ok "server-up hook ran with TB_* env" || bad "server-up hook missing or wrong env"
 
-say "pairing"
-PAIR="$(sapi -X POST -d '{"name":"e2e-router"}' "http://$API/api/clients")"
+say "pairing link (POST /api/clients)"
+PAIR="$(sapi -X POST -d '{"name":"e2e-legacy"}' "http://$API/api/clients")"
 URI="$(jq -r .uri <<<"$PAIR")"
 [[ "$URI" == tailbond://pair\?d=* ]] && jq -e '.qr_svg | startswith("<svg")' <<<"$PAIR" >/dev/null \
   && ok "POST /api/clients issued a pairing URI + QR SVG" || bad "bad pairing response: $PAIR"
@@ -159,11 +197,11 @@ while [ $(( ${#B64} % 4 )) -ne 0 ]; do B64="$B64="; done
 PAYLOAD="$(printf '%s' "$B64" | tr '_-' '/+' | base64 -d)"
 jq -e '.v == 1 and .server == "10.200.1.1:443" and .insecure == true and (.cert_sha256 | length) == 64 and .dns == ["10.77.0.1"]' <<<"$PAYLOAD" >/dev/null \
   && ok "payload: v1, server, pinned self-signed cert, dns" || bad "payload unexpected: $PAYLOAD"
-sapi "http://$API/api/clients" | jq -e '.[] | select(.name == "e2e-router" and .registered)' >/dev/null \
+sapi "http://$API/api/clients" | jq -e '.[] | select(.name == "e2e-legacy" and .registered)' >/dev/null \
   && ok "client registered (persisted to config)" || bad "client not listed"
-jq -e '.server.users[] | select(.name == "e2e-router")' "$WORK/srv/tailbond.json" >/dev/null && ok "user persisted in tailbond.json" || bad "user not persisted"
+jq -e '.server.users[] | select(.name == "e2e-legacy")' "$WORK/srv/tailbond.json" >/dev/null && ok "user persisted in tailbond.json" || bad "user not persisted"
 
-say "start tailbondd (client role) and import the pairing"
+say "start tailbondd (client role), find the server over Tailscale, ask to pair"
 cat >"$WORK/cli/tailbond.json" <<EOF
 {
   "role": "client",
@@ -171,16 +209,49 @@ cat >"$WORK/cli/tailbond.json" <<EOF
   "state_dir": "$WORK/cli/state",
   "hooks_dir": "$WORK/hooks",
   "listen": "$API",
-  "disable_tailscale": true,
   "client": {"pairing_uri": "", "paths": [], "no_dns": true}
 }
 EOF
-ip netns exec "$NS_C" "$TAILBONDD" -config "$WORK/cli/tailbond.json" >"$WORK/client.log" 2>&1 &
+ip netns exec "$NS_C" env PATH="$WORK/ts-cli:$PATH" "$TAILBONDD" -config "$WORK/cli/tailbond.json" >"$WORK/client.log" 2>&1 &
 CLI_PID=$!
 wait_for 10 "client agent API" capi "http://$API/api/status" || { bad "client agent did not start"; exit 1; }
 capi "http://$API/api/paths" | jq -e '[.[] | select(.name == "eth0" and .kind == "ethernet"), select(.name == "wlan0" and .kind == "wifi")] | length == 2' >/dev/null \
   && ok "interface discovery: eth0=ethernet, wlan0=wifi" || bad "discovery wrong: $(capi "http://$API/api/paths")"
-capi -X POST -d "$(jq -n --arg u "$URI" '{uri:$u}')" "http://$API/api/pair" | jq -e .ok >/dev/null && ok "POST /api/pair accepted" || bad "pair failed"
+HELLO="$(ip netns exec "$NS_C" curl -fsS -m 3 http://100.101.1.1:8077/api/hello || true)"
+jq -e '.tailbond == true and .role == "server" and .name == "homebox"' <<<"$HELLO" >/dev/null \
+  && ok "GET /api/hello on the server's Tailscale IP: $HELLO" || bad "hello: $HELLO"
+DISC="$(capi "http://$API/api/discover?refresh=1" || true)"
+jq -e '.tailscale_running and ([.servers[] | select(.name == "homebox" and .ip == "100.101.1.1")] | length == 1) and .checked == 2' <<<"$DISC" >/dev/null \
+  && ok "GET /api/discover: found homebox among 2 online peers" || bad "discover: $DISC"
+capi -X POST -d '{"server":"homebox","name":"e2e-router"}' "http://$API/api/join" | jq -e '.state == "asking"' >/dev/null \
+  && ok "POST /api/join homebox" || bad "join failed"
+if wait_for 10 "join waiting" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/join | jq -e '.state == \"waiting\"'"; then
+  ok "client waiting for approval"
+else
+  bad "join state: $(capi "http://$API/api/join")"
+fi
+REQS="$(sapi "http://$API/api/pair-requests")"
+REQ_ID="$(jq -r '.[] | select(.status == "pending") | .id' <<<"$REQS" | head -1)"
+jq -e '.[0] | .name == "e2e-router" and .device == "slate7" and .user == "alex@example.com" and .ip == "100.101.9.9" and .kind == "router" and (has("token") | not)' <<<"$REQS" >/dev/null \
+  && ok "server lists the pending request (whois: slate7, alex@example.com)" || bad "pair-requests: $REQS"
+wait_for 5 "status lists the request" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/status | jq -e '.pair_requests | length == 1'" \
+  && ok "status shows 1 pending request" || bad "status pair_requests: $(sapi "http://$API/api/status" | jq -c .pair_requests)"
+[ "$(ip netns exec "$NS_C" curl -s -m 3 -o /dev/null -w '%{http_code}' "http://100.101.1.1:8077/api/pair-requests/$REQ_ID")" = 404 ] \
+  && ok "polling without the request token: 404" || bad "poll without token not rejected"
+sapi -X POST -d '{}' "http://$API/api/pair-requests/$REQ_ID/approve" | jq -e '.client == "e2e-router"' >/dev/null \
+  && ok "admin approved the request" || bad "approve failed"
+if wait_for 15 "client imported the pairing" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.paired and .join.state == \"approved\"'"; then
+  ok "client picked up the pairing by itself"
+else
+  bad "client not paired: $(capi "http://$API/api/status" | jq -c '{paired, join}')"
+fi
+jq -e '.server.users[] | select(.name == "e2e-router" and .ts_node == "nE2ESLATE")' "$WORK/srv/tailbond.json" >/dev/null \
+  && ok "server user e2e-router bound to the Tailscale node" || bad "ts_node not stored"
+URI="$(jq -r .client.pairing_uri "$WORK/cli/tailbond.json")"
+B64="${URI#tailbond://pair?d=}"
+while [ $(( ${#B64} % 4 )) -ne 0 ]; do B64="$B64="; done
+PAYLOAD="$(printf '%s' "$B64" | tr '_-' '/+' | base64 -d)"
+jq -e '.user == "e2e-router" and .server == "10.200.1.1:443"' <<<"$PAYLOAD" >/dev/null && ok "approved payload: e2e-router @ 10.200.1.1:443" || bad "payload: $PAYLOAD"
 
 if wait_for 30 "client connected" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'"; then
   ok "client agent reports connected (pin check passed)"
@@ -215,12 +286,14 @@ else
 fi
 [ "$(code -H "Authorization: Bearer $(printf '%064d' 0)" "$PEERS_URL")" = 401 ] && ok "wrong token: 401" || bad "wrong token not rejected"
 if [ "$(code -H "Authorization: Bearer $TOKEN" "$PEERS_URL")" = 200 ] &&
-   jq -e '.client == "e2e-router" and (.peers | type == "array") and (.tailscale_running == false)' "$WORK/peers.out" >/dev/null; then
-  ok "derived token: 200, peers list (empty, Tailscale disabled)"
+   jq -e '.client == "e2e-router" and .server == "homebox" and ([.peers[].hostname] | index("nas") != null) and .tailscale_running' "$WORK/peers.out" >/dev/null; then
+  ok "derived token: 200, peers list (homebox's tailnet: nas, slate7)"
 else
   bad "derived token: $(cat "$WORK/peers.out")"
 fi
 [ "$(code -H "Authorization: Bearer $TOKEN" http://10.77.0.1:8077/api/status)" = 404 ] && ok "admin API not served on the tunnel IP" || bad "tunnel IP serves /api/status"
+capi "http://$API/api/peers" | jq -e '.server == "homebox" and (.peers | length) >= 1' >/dev/null \
+  && ok "client agent's GET /api/peers: the server's list through the tunnel" || bad "client /api/peers: $(capi "http://$API/api/peers")"
 
 two_paths() {
   ip netns exec "$NS_S" curl -fsS -m 2 "http://$API/api/status" |
@@ -234,10 +307,10 @@ fi
 # generate some traffic, then check rate/RTT normalization
 ip netns exec "$NS_C" ping -c 20 -i 0.05 -s 1200 -W 2 10.77.0.1 >/dev/null 2>&1 || true
 SST="$(sapi "http://$API/api/status")"
-jq -e '.totals.rx_bytes > 0 and .totals.tx_bytes > 0 and ([.clients[0].paths[] | select(.srtt_ms > 0)] | length) >= 1' <<<"$SST" >/dev/null \
-  && ok "server totals and per-path RTT populated" || bad "server stats empty: $(jq -c '{totals, p: .clients[0].paths}' <<<"$SST")"
-jq -e '[.clients[0].paths[] | select(.srtt_ms >= 30)] | length >= 1' <<<"$SST" >/dev/null \
-  && ok "netem path visible (srtt >= 30ms on one path)" || soft "netem RTT not visible yet: $(jq -c '[.clients[0].paths[] | .srtt_ms]' <<<"$SST")"
+jq -e '.totals.rx_bytes > 0 and .totals.tx_bytes > 0 and ([(.clients[] | select(.name == "e2e-router") | .paths)[] | select(.srtt_ms > 0)] | length) >= 1' <<<"$SST" >/dev/null \
+  && ok "server totals and per-path RTT populated" || bad "server stats empty: $(jq -c '{totals, p: (.clients[] | select(.name == "e2e-router") | .paths)}' <<<"$SST")"
+jq -e '[(.clients[] | select(.name == "e2e-router") | .paths)[] | select(.srtt_ms >= 30)] | length >= 1' <<<"$SST" >/dev/null \
+  && ok "netem path visible (srtt >= 30ms on one path)" || soft "netem RTT not visible yet: $(jq -c '[(.clients[] | select(.name == "e2e-router") | .paths)[] | .srtt_ms]' <<<"$SST")"
 
 say "client-side stats (needs the client control API patch)"
 CST="$(capi "http://$API/api/status")"

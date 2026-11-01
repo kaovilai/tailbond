@@ -49,6 +49,8 @@
 
 <main>
   <!-- server role, on a phone (or opened from the app as #add-phone): one tap pairs this phone -->
+  <section class="card pair-requests hidden" id="pair-requests" aria-label="Waiting for your approval"></section>
+
   <section class="card add-phone hidden" id="add-phone" aria-labelledby="add-phone-title">
     <div class="add-phone-head"><svg class="ico"><use href="#i-device"/></svg><h2 id="add-phone-title">Add this phone</h2></div>
     <p class="muted">This is your home server's page. Two steps, then tailbond takes over from Tailscale on this phone. No code to scan.</p>
