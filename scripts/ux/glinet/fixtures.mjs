@@ -100,13 +100,13 @@ const pendingReq = { id: '4b79980f2bc88e95', name: 'slate7', kind: 'router', dev
 const hc = (id, status, title, extra = {}) => ({ id, status, title, ...extra });
 const healthGood = { all_good: true, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
-  hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'port mapping: UPnP' }),
+  hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'no port mapping on the router' }),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
   hc('cgnat', 'ok', 'Public internet address 203.0.113.7'),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 2 h ago.' }),
 ] };
 // texts as the agent's health.go writes them
-const directFix = "On the router in front of this machine, forward UDP port 41641 to it, and allow 41641/udp in this machine's firewall. (Turning on UPnP on that router also works, but lets any device on your network open ports.)";
+const directFix = "On the router in front of this machine, forward UDP port 41641 to it. (Turning on UPnP on that router also works, but lets any device on your network open ports.)";
 const directDetail = (m) => `Through a relay: ${m}. Only traffic between this machine and that machine is slower (including bonded devices reaching it); bonding itself doesn't go through Tailscale. To check: tailscale ping ${m} ("via DERP" means relayed).`;
 const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: ['apple-tv'], checks: [
   hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 1 through a relay (slower)', { detail: directDetail('apple-tv'),
@@ -121,8 +121,8 @@ const healthCgnat = { all_good: false, direct: 3, relayed: 0, checks: [
   hc('tailscale_direct', 'ok', 'Tailscale: 3 machines direct'),
   hc('netcheck', 'ok', 'Network is friendly to direct connections', { detail: 'no port mapping on the router' }),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
-  hc('cgnat', 'bad', 'Your internet line uses carrier-grade NAT', { detail: "This machine's internet address 100.72.3.4 is shared by your provider, so travel routers can't reach UDP 443 here.",
-    fix: 'Ask your provider for a public IPv4 address (or use public IPv6).', fix_url: 'https://tailscale.com/docs/reference/device-connectivity' }),
+  hc('cgnat', 'bad', 'Your internet line uses carrier-grade NAT', { detail: "This machine's internet address 100.72.3.4 is shared by your provider, so travel routers and phones away from home can't reach UDP 443 here. Bonding needs that direct connection; it can't run through Tailscale's relays (they'd make it slower than a single link).",
+    fix: "If your line has IPv6, enter this machine's public IPv6 address as the internet address (the router's status page shows it). Otherwise ask your provider for a public IPv4 address (often free or a small monthly fee).", fix_url: 'https://tailscale.com/docs/reference/device-connectivity' }),
   hc('port', 'unknown', 'UDP 443: not confirmed from outside yet', { detail: "It can't be checked from inside your network; the first device that connects from away confirms it." }),
 ] };
 const healthRoute = { all_good: false, direct: 3, relayed: 0, checks: [
@@ -234,6 +234,11 @@ export const fedoraStatusApproved = {
 export const fedoraStatusPhone = {
   ...fedoraStatusApproved,
   pair_requests: [{ ...pendingReq, id: '9c1d22e07a4f61b3', name: 'pixel-7a', kind: 'phone', device: 'pixel-7a', dns_name: 'pixel-7a.tail1234.ts.net', hostname: 'Pixel 7a', os: 'android', user: 'sam@example.com', ip: '100.101.7.7' }],
+};
+// after approving pixel-7a: it's on the device list, connected
+export const fedoraStatusPhoneDone = {
+  ...fedoraStatusApproved,
+  clients: [...fedoraStatusApproved.clients, { name: 'pixel-7a', registered: true, connected: true, endpoint: '198.51.100.44:40112', scheduler: 'wlb', connected_sec: 40, tx_bps: 4.2e6, rx_bps: 0.3e6, tx_bytes: 2.1e7, rx_bytes: 1.5e6, paths: [srvPath(0, 0.2e6, 2.8e6, 28), srvPath(1, 0.1e6, 1.4e6, 61)] }],
 };
 // right after dnf install + systemctl enable --now: nothing paired yet
 export const fedoraStatusFresh = { ...serverStatus({ clients: [] }), uptime_sec: 40, server: '192.168.1.2:443', clients: [], pair_requests: [], totals: { tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0 } };

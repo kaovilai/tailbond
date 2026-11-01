@@ -3,7 +3,7 @@
 // Usage (inside the Playwright image): node glinet-screens.mjs <repo> <outdir>
 import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync } from 'node:fs';
-import { states, actions, landing, fedoraStatus, fedoraStatusApproved, fedoraStatusFresh, fedoraStatusPhone, fedoraHealth, fedoraHealthGood, fedoraHealthRoute } from './fixtures.mjs';
+import { states, actions, landing, fedoraStatus, fedoraStatusApproved, fedoraStatusFresh, fedoraStatusPhone, fedoraStatusPhoneDone, fedoraHealth, fedoraHealthGood, fedoraHealthRoute } from './fixtures.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
@@ -83,10 +83,11 @@ async function fedora(vp, name, { status = fedoraStatus, after = null, settings 
 }
 
 async function fedoraAll(vp) {
-  await fedora(vp, '14-fedora-dashboard-request', { waitFor: '#pair-requests:not(.hidden)' });
+  await fedora(vp, '14-fedora-dashboard-request', { waitFor: '#pair-requests:not(.hidden)', full: true });
   if (vp !== 'desktop') return;
   await fedora(vp, '14b-fedora-after-approve', { waitFor: '#pair-requests:not(.hidden)', click: 'Approve', after: fedoraStatusApproved });
   await fedora(vp, '14c-fedora-phone-request', { status: fedoraStatusPhone, waitFor: '#pair-requests:not(.hidden)' });
+  await fedora(vp, '14d-fedora-phone-approved', { status: fedoraStatusPhone, waitFor: '#pair-requests:not(.hidden)', click: 'Approve', after: fedoraStatusPhoneDone, full: true });
   await fedora(vp, '15-fedora-devices-tab', { tab: 'clients', full: true });
   await fedora(vp, '15b-fedora-tailscale-tab', { tab: 'tailscale', full: true });
   await fedora(vp, '15c-fedora-fresh-install', { status: fedoraStatusFresh, settings: { public_addr: '', effective_public_addr: '192.168.1.2:443', public_addr_guessed: true, tls: 'self-signed' },

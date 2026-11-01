@@ -45,6 +45,9 @@ if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>
   firewall-cmd -q --zone=tailbond --change-interface="$TB_TUN" 2>/dev/null || true
   fw --policy=tailbond-out --add-rich-rule="rule family=ipv4 source address=$TB_SUBNET masquerade"
   [ -n "${TB_SUBNET6:-}" ] && fw --policy=tailbond-out --add-rich-rule="rule family=ipv6 source address=$TB_SUBNET6 masquerade"
+  # Tailscale's own port, so a forward on the router is all direct
+  # connections need (setup health's relay fix).
+  if command -v tailscale >/dev/null 2>&1; then fw --zone="$wanzone" --add-port=41641/udp; fi
   # The dashboard and the phone page (TB_WEB_PORTS, tcp) for tailnet
   # sources only, in the zone tailscale0 is in (else the default zone).
   # tailscaled itself drops 100.64.0.0/10 sources that don't arrive on

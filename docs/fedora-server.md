@@ -39,6 +39,7 @@ What the package changes in firewalld (the `server-up` hook, every start):
 
 - UDP 443 (the `tailbond` service) in the zone of the interface that has the default route, the one your router's port forward arrives on (else the default zone). Check with `sudo firewall-cmd --get-active-zones` and `sudo firewall-cmd --zone=<zone> --list-services`.
 - tcp 8077 and 80 from tailnet addresses only (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), in the zone `tailscale0` is in (else the default zone): `sudo firewall-cmd --zone=<zone> --list-rich-rules`. Tailscale drops those source addresses on any other interface, so this doesn't open the ports to your LAN.
+- UDP 41641 (Tailscale's own port) in the same zone as UDP 443 when Tailscale is installed, so a forward on your router is all direct Tailscale connections need.
 - `tb0` in the `tailbond` zone, and the `tailbond-out` policy: bonded devices may use this machine's services on its tunnel address (`10.77.0.1`, e.g. the DNS forwarder), and reach the internet, your home LAN and your tailnet through it.
 
 UDP 443 is also what HTTP/3 uses: if this machine runs a web server with HTTP/3, set another port (`"server": {"port": 8443}`) and forward that one instead. SELinux needs no changes: the service runs unconfined as root, like other VPN servers.
@@ -79,7 +80,7 @@ For best speed (direct Tailscale connections, the port, the route), see
 | Carrier-grade NAT (red: stops devices connecting from away) | your provider shares your internet address | section 2, *Carrier-grade NAT* |
 | UDP 443 not confirmed from outside yet (?) | nothing has connected from away yet | none: the first device connecting from away confirms it |
 | Route 10.77.0.0/24 isn't approved yet | Tailscale machines can't reach bonded devices (devices can already reach them) | admin console → Machines → this machine → **Edit route settings** → tick it. Or approve it automatically with an ACL [`autoApprovers`](https://tailscale.com/docs/reference/syntax/policy-file#autoapprovers) entry |
-| *N* machines through a relay (slower) | Tailscale traffic between this machine and those machines goes through Tailscale's relays (DERP); only traffic to *those* machines is slower, bonding itself isn't affected | on your router, forward **UDP 41641** to this machine, and allow it here: `sudo firewall-cmd --permanent --zone=<wan zone> --add-port=41641/udp && sudo firewall-cmd --reload`. UPnP on the router also works but lets any device on your LAN open ports. Check with `tailscale ping <machine>`: "via DERP(…)" is relayed, "via <ip>:<port>" is direct. A relay can also come from the other machine's network, which you may not control |
+| *N* machines through a relay (slower) | Tailscale traffic between this machine and those machines goes through Tailscale's relays (DERP); only traffic to *those* machines is slower, bonding itself isn't affected | on your router, forward **UDP 41641** to this machine (this machine's firewall already allows it; see section 1). UPnP on the router also works but lets any device on your LAN open ports. Check with `tailscale ping <machine>`: "via DERP(…)" is relayed, "via <ip>:<port>" is direct. A relay can also come from the other machine's network, which you may not control |
 | This network makes direct connections hard ("hard NAT") | the router in front of this machine picks a new outside port for every destination | same fix as the relay item (one forward fixes both) |
 
 ## 4. Add a device
@@ -93,14 +94,19 @@ with the router's Tailscale identity; tap **Approve**.
 
 See [who can approve](#who-can-approve-and-what-an-approved-device-reaches) below.
 
-**An Android phone that runs Tailscale.** On the phone, with Tailscale on,
-open the browser and type the server's name (`homebox`), or scan the QR code
+**An Android phone that runs Tailscale.** The phone must be on your
+Tailscale network: the person signed in to your tailnet (invite them in the
+admin console), or this machine shared with their account; and allowed to
+reach this machine on tcp 80 and 8077 (Tailscale's default policy allows
+it). On the phone, with Tailscale on, open the browser and type the
+server's name with a slash (`homebox/`; without it the browser searches), or scan the QR code
 under **Devices → Add an Android phone**. The phone page offers the app
 (with pictures of each Android install prompt) and an **Open tailbond and
 ask homebox** button: the app opens, asks this server, and the request shows
 up at the top of the dashboard with the phone's Tailscale identity. Tap
-**Approve**. For family, send them the link from that card, or just tell
-them to type the name.
+**Approve**; the phone shows up under the devices, connected, a few seconds
+after its owner turns tailbond on. For family, send them the link from that
+card, or tell them to type `homebox/`.
 
 The page offers the app when `/usr/share/tailbond/tailbond.apk` exists (the
 RPM ships it when it was built with one; or set `android_apk` in
@@ -118,10 +124,14 @@ allow installs from their browser once; the page shows those prompts.
   added) and open the phone page. A *tagged* server has no owning account:
   then anyone on the tailnet who can reach it can use the dashboard, so set a
   password.
-- **Password** (**Devices → Who can approve and add devices**, or
-  `"ui_password"` in `tailbond.json`): anyone with the password, from any
-  tailnet device; it protects the whole dashboard API, including
-  `/api/clients`. The curl examples below then need a login first:
+- **More approvers, no password**: add their Tailscale logins under
+  **Devices → Who can approve and add devices** (or `"approvers":
+  ["sam@example.com"]` in `tailbond.json`). On a tagged server, the approvers
+  are the only ones.
+- **Password** (same card, or `"ui_password"` in `tailbond.json`): replaces
+  the rules above. Anyone with the password, from any tailnet device, and
+  everyone (you and this machine too) needs it; it protects the whole
+  dashboard API, including `/api/clients`. The curl examples below then need a login first:
   `curl -c jar -H 'Content-Type: application/json' -d '{"password":"…"}' http://127.0.0.1:8077/api/login`, then `-b jar` on each call.
 - **What an approved device reaches**: the internet through your home
   connection, your home LAN, and your tailnet. To the tailnet its traffic
@@ -140,7 +150,7 @@ allow installs from their browser once; the page shows those prompts.
 
   Keep tcp 80 and 8077 to the server open for the people whose devices should
   ask to connect (the phone page and pair requests use them). A tagged server
-  has no owner, so set a dashboard password too.
+  has no owner, so name its approvers (or set a password).
 
 **With a QR code** (phone and computer, or a travel router):
 

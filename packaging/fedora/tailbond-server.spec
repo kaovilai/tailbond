@@ -73,6 +73,7 @@ if [ "$1" -eq 0 ] && command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --s
     z="$(firewall-cmd --get-default-zone 2>/dev/null)"
     for zz in $(firewall-cmd --permanent --get-zones 2>/dev/null); do
         firewall-cmd -q --permanent --zone="$zz" --remove-service=tailbond 2>/dev/null || :
+        firewall-cmd -q --permanent --zone="$zz" --remove-port=41641/udp 2>/dev/null || :
     done
     tz="$(firewall-cmd --permanent --get-zone-of-interface=tailscale0 2>/dev/null)" || tz="$z"
     firewall-cmd --permanent --zone="$tz" --list-rich-rules 2>/dev/null | grep -E 'source address="(100\.64\.0\.0/10|fd7a:115c:a1e0::/48)" port port="(80|8077)" protocol="tcp" accept' |

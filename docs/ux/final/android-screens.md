@@ -24,6 +24,7 @@ what they look like (web-00). On a real phone they appear while installing.
 | 02b-pairing-ask-waiting | A few seconds later |
 | 02c-pairing-ask-not-found, 02d-pairing-ask-declined | Two ways asking can go wrong |
 | 02e-pairing-ask-approved-confirm | After someone approved it on homebox |
+| 03-deeplink-confirm | Same confirmation, shown on top of the main screen (when the app was already open) |
 | 01-onboarding (+ -dark) | The app's very first screen when opened from the launcher instead |
 | 02-pairing | The next screen after that (also where 02a–02d live) |
 | 02-pairing-paste-error | Same, after pasting something wrong |

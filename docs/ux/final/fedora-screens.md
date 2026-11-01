@@ -12,6 +12,7 @@ public address).
 | glinet/14-fedora-dashboard-request-desktop (+ -phone) | Later: the dashboard while a travel router (slate7) is asking to connect |
 | glinet/14b-fedora-after-approve-desktop | Right after clicking Approve on 14 |
 | glinet/14c-fedora-phone-request-desktop | Later: a family member's phone asking to connect (after they used the phone page) |
+| glinet/14d-fedora-phone-approved-desktop | Right after clicking Approve on 14c, once the phone turned tailbond on (whole page) |
 | glinet/15-fedora-devices-tab-desktop | Devices tab, with setup health (one machine through a relay) |
 | glinet/15b-fedora-tailscale-tab-desktop | Tailscale tab |
 | glinet/15d-fedora-health-all-good-desktop | Devices tab after the health problems were fixed |
