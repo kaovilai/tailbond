@@ -58,6 +58,10 @@ type User struct {
 	Name    string `json:"name"`
 	Key     string `json:"key"`
 	Created int64  `json:"created,omitempty"`
+	// Additive: the Tailscale stable node ID of the device that asked to
+	// pair (POST /api/pair-requests); approving that device again re-issues
+	// this credential instead of adding a second one.
+	TSNode string `json:"ts_node,omitempty"`
 }
 
 type Server struct {

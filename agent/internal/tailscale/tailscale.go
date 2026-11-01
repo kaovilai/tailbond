@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,7 @@ type CLI struct {
 	Route string
 
 	mu      sync.Mutex
+	fake    bool
 	cached  *Info
 	fetched time.Time
 }
@@ -138,7 +140,9 @@ func (c *CLI) Get(ctx context.Context) *Info {
 // Invalidate drops the cache (after route changes).
 func (c *CLI) Invalidate() {
 	c.mu.Lock()
-	c.cached = nil
+	if !c.fake {
+		c.cached = nil
+	}
 	c.mu.Unlock()
 }
 
@@ -257,4 +261,90 @@ func (c *CLI) Cert(ctx context.Context, domain, certFile, keyFile string) error 
 		return errors.New(strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// Whois is who a tailnet address belongs to (`tailscale whois --json`).
+type Whois struct {
+	NodeID   string `json:"node_id"`  // stable node ID
+	Node     string `json:"node"`     // machine name (MagicDNS short name)
+	DNSName  string `json:"dns_name"` // full MagicDNS name, no trailing dot
+	Hostname string `json:"hostname"` // the OS hostname the device reports
+	OS       string `json:"os,omitempty"`
+	User     string `json:"user"` // login name
+	UserName string `json:"user_name,omitempty"`
+}
+
+type whoisJSON struct {
+	Node *struct {
+		ID           int64
+		StableID     string
+		Name         string
+		ComputedName string
+		Hostinfo     *struct {
+			Hostname string
+			OS       string
+		}
+	}
+	UserProfile *struct {
+		LoginName   string
+		DisplayName string
+	}
+}
+
+// ParseWhois decodes `tailscale whois --json` output.
+func ParseWhois(out []byte) (*Whois, error) {
+	var w whoisJSON
+	if err := json.Unmarshal(out, &w); err != nil {
+		return nil, errors.New("parse tailscale whois: " + err.Error())
+	}
+	if w.Node == nil {
+		return nil, errors.New("tailscale whois: no node")
+	}
+	r := &Whois{NodeID: w.Node.StableID, DNSName: strings.TrimSuffix(w.Node.Name, "."), Node: w.Node.ComputedName}
+	if r.NodeID == "" && w.Node.ID != 0 {
+		r.NodeID = strconv.FormatInt(w.Node.ID, 10)
+	}
+	if r.Node == "" {
+		r.Node, _, _ = strings.Cut(r.DNSName, ".")
+	}
+	if w.Node.Hostinfo != nil {
+		r.Hostname, r.OS = w.Node.Hostinfo.Hostname, w.Node.Hostinfo.OS
+	}
+	if w.UserProfile != nil {
+		r.User, r.UserName = w.UserProfile.LoginName, w.UserProfile.DisplayName
+	}
+	if r.NodeID == "" {
+		return nil, errors.New("tailscale whois: node has no ID")
+	}
+	return r, nil
+}
+
+// Whois asks the local tailscaled who owns a tailnet IP.
+func (c *CLI) Whois(ctx context.Context, ip string) (*Whois, error) {
+	if c.Disabled {
+		return nil, errors.New("tailscale integration disabled")
+	}
+	out, err := c.run(ctx, "whois", "--json", ip)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWhois(out)
+}
+
+var tailnetPrefixes = []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("fd7a:115c:a1e0::/48")}
+
+// IsTailnetIP reports whether ip is in Tailscale's address ranges.
+func IsTailnetIP(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	for _, p := range tailnetPrefixes {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// NewFake returns a CLI that always reports info (tests).
+func NewFake(info *Info) *CLI {
+	return &CLI{cached: info, fetched: time.Now().Add(100 * 365 * 24 * time.Hour), fake: true}
 }

@@ -46,6 +46,17 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.hSettingsGet)
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
 	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
+	mux.HandleFunc("DELETE /api/pair", a.hUnpair)
+	// Pairing over Tailscale (docs/architecture.md).
+	mux.HandleFunc("GET /api/hello", a.hHello)
+	mux.HandleFunc("POST /api/pair-requests", a.hPairRequestCreate)
+	mux.HandleFunc("GET /api/pair-requests", a.hPairRequestList)
+	mux.HandleFunc("GET /api/pair-requests/{id}", a.hPairRequestPoll)
+	mux.HandleFunc("POST /api/pair-requests/{id}/{action}", a.hPairRequestDecide)
+	mux.HandleFunc("GET /api/discover", a.hDiscover)
+	mux.HandleFunc("GET /api/join", a.hJoinGet)
+	mux.HandleFunc("POST /api/join", a.hJoin)
+	mux.HandleFunc("DELETE /api/join", a.hJoinCancel)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpErr(w, http.StatusNotFound, errNotFound) })
 
 	var assets fs.FS = web.FS
@@ -83,7 +94,7 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" {
-			if !a.authorized(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
+			if !a.authorized(r) && !tailnetPublic(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
 				httpErr(w, http.StatusUnauthorized, errors.New("login required"))
 				return
 			}
@@ -95,6 +106,21 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// tailnetPublic: the requests a device on the tailnet makes before it is
+// paired. Their handlers check the source and identity themselves.
+func tailnetPublic(r *http.Request) bool {
+	p := r.URL.Path
+	switch {
+	case p == "/api/hello" && r.Method == http.MethodGet:
+		return true
+	case p == "/api/pair-requests" && r.Method == http.MethodPost:
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "/api/pair-requests/"):
+		return !strings.Contains(strings.TrimPrefix(p, "/api/pair-requests/"), "/")
+	}
+	return false
 }
 
 func (a *Agent) authorized(r *http.Request) bool {

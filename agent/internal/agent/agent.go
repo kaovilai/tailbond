@@ -49,6 +49,18 @@ type Agent struct {
 	tlsInfo  tlsInfo
 	sessions map[string]time.Time
 	client   *clientState
+	pairReqs *pairRequests // server role
+	join     *joinState    // client role: asking a server to pair
+	userStop bool          // client: the user turned tailbond off or unpaired
+
+	// whois identifies tailnet peers (tests stub it).
+	whois func(ctx context.Context, ip string) (*tailscale.Whois, error)
+	// hello probes a possible server (tests stub it).
+	hello func(ctx context.Context, addr string) (*helloInfo, error)
+	// apiPort is the port tailbond servers serve /api/hello and pair requests on.
+	apiPort string
+	disc    discoveryCache
+	rescan  chan struct{}
 }
 
 // runtime is reset every time mqvpn starts.
@@ -88,12 +100,18 @@ func New(store *config.Store, opts Options) *Agent {
 		role:     cfg.Role,
 		hookq:    make(chan func(), 32),
 		sessions: map[string]time.Time{},
+		pairReqs: newPairRequests(),
+		join:     &joinState{State: joinIdle},
+		apiPort:  "8077",
+		rescan:   make(chan struct{}, 1),
 	}
 	if opts.Echo {
 		a.logs.Echo = os.Stderr
 	}
 	a.ctl.Timeout = 900 * time.Millisecond
 	a.ts = &tailscale.CLI{Disabled: cfg.DisableTailscale, Route: cfg.Server.Subnet}
+	a.whois = a.ts.Whois
+	a.hello = a.fetchHello
 	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
 	a.sup = supervisor.New(supervisor.Spec{
 		Bin:      cfg.MqvpnBin,
@@ -107,6 +125,15 @@ func New(store *config.Store, opts Options) *Agent {
 		a.client = newClientState()
 	}
 	return a
+}
+
+// Rescan re-checks the WANs now (SIGHUP; OpenWrt's hotplug sends it when
+// an interface goes up or down).
+func (a *Agent) Rescan() {
+	select {
+	case a.rescan <- struct{}{}:
+	default:
+	}
 }
 
 func (a *Agent) Logf(format string, args ...any) { a.logs.Add("agent", fmt.Sprintf(format, args...)) }
@@ -295,6 +322,10 @@ func (a *Agent) hookEnvLocked() map[string]string {
 			env["TB_DNS_IP"] = ""
 		}
 		return env
+	}
+	if a.userStop {
+		// turned off on purpose: the LAN goes back to the WANs, kill switch or not
+		env["TB_RELEASE"] = "1"
 	}
 	env["TB_TUNNEL_IP"] = a.rt.tunnelIP
 	env["TB_SERVER_IP"] = ""
