@@ -261,7 +261,7 @@ No code changed after round 12. Decisions for whoever continues:
 | 7 | "This device" block reads like an unfinished setup and pushes Machines down (Android C) | M | **open**: shorten to the address plus "not a Tailscale address", details behind a tap |
 | 8 | firewalld changes re-applied every start, 41641 has no opt-out (F1) | M | **open**: a `manage_firewall` / `open_tailscale_port` setting |
 | 9 | Uninstall leaves the route advertised; manual cleanup can drop other routes (F1) | M | **open**: have `%preun` withdraw only tailbond's own route, as the OpenWrt package does on purge |
-| 10 | 15c says `"no_advertise_route": true` without the `"server"` key or the restart (F1) | M | **open** (text bug): say `"server": {"no_advertise_route": true}`, then restart |
+| 10 | 15c says `"no_advertise_route": true` without the `"server"` key or the restart (F1) | M | **fixed after round 12 (unreviewed)**: text now names the `"server"` section and the restart |
 | 11 | Approved devices act as homebox, no per-device limit (F1, F2) | M | **partial (architecture, stated)**: bonded devices are masqueraded as the server; per-device identity needs a Tailscale node per device, out of scope since the Android loop (round 1 #6). The UI and the guide say it plainly and give the tag + grants way to narrow it |
 | 12 | Any local user/program can approve; a password replaces the identity check instead of adding to it (F1, F2) | M | **open**: allow password *and* approvers together; recommend one for a family server |
 | 13 | The optional route's orange "!" and green "approved" make approving look like the goal (F2) | M | **open**: a neutral icon for optional items and a recommendation for home setups |

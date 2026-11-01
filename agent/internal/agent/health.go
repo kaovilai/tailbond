@@ -187,7 +187,7 @@ func buildHealth(in healthInputs) healthView {
 			add(healthCheck{ID: "route", Status: hWarn, Title: "Route " + in.Route + " isn't approved yet (optional)",
 				Detail: "Devices connected through tailbond reach your Tailscale machines without it. Approving it lets your Tailscale machines reach those devices too, under your access rules.",
 				Fix: "If you want that: Tailscale admin console → Machines → this machine → Edit route settings (an autoApprovers rule in your policy approves it automatically). " +
-					"If you do not want it: leave it, or set \"no_advertise_route\": true in tailbond.json to stop advertising it.", FixURL: urlSubnetRtrs})
+					"If you do not want it: leave it, or add \"no_advertise_route\": true inside the \"server\" section of /etc/tailbond/tailbond.json, then restart tailbond (Fedora: sudo systemctl restart tailbond; GL.iNet: /etc/init.d/tailbond restart) to stop advertising it.", FixURL: urlSubnetRtrs})
 		}
 	}
 
