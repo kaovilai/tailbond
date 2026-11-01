@@ -29,6 +29,7 @@ Renders: `out/ux/glinet/round-N/` (not committed; `out/` is ignored).
 | Round | A (H/M/L) | B (H/M/L) | C (H/M/L) | D (H/M/L) | Total H/M/L |
 |---|---|---|---|---|---|
 | 1 | 0 / 3 / 12 | 0 / 3 / 22 | 0 / 6 / 11 | 0 / 3 / 13 | 0 / 15 / 58 |
+| 2 | 0 / 3 / 11 | 0 / 1 / 18 | 0 / 3 / 10 | 0 / 0 / 17 | 0 / 7 / 56 |
 
 ## Round 1 triage
 
@@ -54,3 +55,20 @@ not-connected WANs say they're used automatically once connected (C, D); "Pair a
 cap resets "on the 1st of each month" and standby uses no data (B, D); role-switch link says you can switch back (C, D);
 server device rates say downloading/uploading (B).
 Lows rejected or deferred: SSID on the repeater card (B; agent doesn't read GL's wireless state yet), per-connection graphs on the router (D), checksum/signature (B: releases page concern), logs in the panel (B; :8077 advanced page has them), shared-node flagging and autoApprovers (B), Fedora phone view leading with "Add this phone" (A, C: the phone view of the server page is for adding that phone, decided in the Android loop).
+
+## Round 2 triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Machine names wrap mid-word on phones ("nas.tail1234.ts.ne" / "t") (C; A, B, D low) | M | **fix**: names break only after a dot; the 100.x address has its own line |
+| 2 | The install steps aren't on the Slate 7 itself (C, A) | M | **partial**: before install the Slate only runs GL's own pages, which tailbond can't change, and GL's Plug-ins page has no upload. The steps live where the file comes from (Fedora page Devices tab, Flint panel); the task script now says the file was downloaded there, as it would be |
+| 3 | Waiting screen: how to reach the Flint's panel from the hotel (A) | M | **fix**: one link for both kinds of home server, `http://homebox:8077`, which the agent serves on its Tailscale IP (the Flint's firewall rule opens tcp/8077 from the tailnet zone); the Flint admin panel is mentioned for when you're home |
+| 4 | Port forwarding line unclear; nothing checks it (A) | M | **partial**: plain question ("Is your internet cable plugged straight into this router? Then nothing else to do"), what to do otherwise; "All set" became "Setup done … the first connection from away confirms the port works". An outside reachability test needs an external service: out of scope |
+| 5 | Flint setup jargon: route, public IP, Dynamic DNS (C) | M | **fix**: route step says exactly what to tick; the address step links GL's Dynamic DNS page and says what the name looks like (abc1234.glddns.com) |
+| 6 | Fedora header said `homebox.tail1234.ts.net:443`, Slate says `home.example.net` (B) | M | **fix** (render-timing bug): the header was drawn before settings loaded; it now redraws with the public address once they arrive |
+
+Lows fixed: server rates labelled "Sending to devices / Receiving" (D); "At the limit, tailbond stops using this connection" (D);
+"tailbondd" → "tailbond" in the Fedora footer (A); "router's Setup tab" → the GL panel's words (B); mode cards stack on phones.
+Lows rejected: "Secondary" level and billing-day reset (D; Always already includes secondary), per-connection graphs (D, round 1),
+port 80 in the Fedora invite link (B: render artifact, the mock serves the page on port 80; the real one is :8077),
+who may approve on the Fedora page (B: anyone who can open its page; set `ui_password` to restrict; documented in docs/fedora-server.md).

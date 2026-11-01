@@ -15,8 +15,9 @@ Your setup:
 - a laptop that will connect to the Slate 7's Wi-Fi.
 
 Tasks:
-1. Install tailbond on the Slate 7 **without SSH** (you downloaded the
-   package file to your laptop).
+1. Install tailbond on the Slate 7 **without SSH**. You downloaded the
+   package file to your laptop from the home server's tailbond page
+   (screen 15, or the Flint 3's panel on 11–13).
 2. Pair the Slate 7 with the home server.
 3. At a hotel: use the hotel Wi-Fi (Slate 7 in Repeater mode) **and** your
    phone over USB tethering, and confirm both are being used.

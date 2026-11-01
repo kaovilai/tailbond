@@ -94,6 +94,7 @@
     ".tb-bar i{display:block;height:100%;background:#409eff;}",
     ".tb-bar i.full{background:#f56c6c;}",
     ".tb-modes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}",
+    ".tb-modes.three{grid-template-columns:repeat(3,minmax(0,1fr));}",
     ".tb-mode{border:1px solid #dcdfe6;border-radius:8px;padding:12px 14px;cursor:pointer;background:#fff;text-align:left;font:inherit;color:inherit;}",
     ".tb-mode:hover{border-color:#409eff;}",
     ".tb-mode.on{border-color:#409eff;background:#ecf5ff;box-shadow:inset 0 0 0 1px #409eff;}",
@@ -139,7 +140,7 @@
     ".tb-foot{text-align:center;color:#c0c4cc;font-size:12px;margin:8px 0 24px;}",
     "@media (max-width:760px){",
     " .tb-grid{grid-template-columns:1fr;}",
-    " .tb-modes{grid-template-columns:repeat(2,minmax(0,1fr));}",
+    " .tb-modes,.tb-modes.three{grid-template-columns:1fr;}",
     " .tb-card-b{padding:14px;}",
     " .tb-card-h{padding:12px 14px;}",
     " .tb-hero{padding:16px 14px;gap:12px;}",
@@ -215,6 +216,15 @@
   function portOf(a) {
     var m = (a || "").match(/:(\d+)$/);
     return m ? m[1] : "";
+  }
+  // "nas.tail1234.ts.net" may wrap after a dot, never inside a word
+  function dotBreaks(h, name) {
+    var out = [];
+    (name || "").split(".").forEach(function (part, i, all) {
+      out.push(part + (i < all.length - 1 ? "." : ""));
+      if (i < all.length - 1) out.push(h("wbr"));
+    });
+    return out;
   }
   function lastSeen(p) {
     if (p.online) return "Online";
@@ -735,7 +745,7 @@
               }, "primary small"),
               this.btn(h, "Cancel", function () { self.capEdit = null; }, "small text")
             ]));
-            usage.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "Counts everything tailbond sends and receives over it. At the limit it pauses; the count restarts on the 1st of each month. 0 = no limit."));
+            usage.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "Counts everything tailbond sends and receives over it. At the limit, tailbond stops using this connection until the count restarts on the 1st of each month. 0 = no limit."));
           }
           return h("div", { class: "tb-wan" + (live ? "" : " dim") }, [
             h("div", { class: "tb-row" }, [
@@ -776,7 +786,7 @@
           // failover mode is shown only if something else picked it.
           var shown = MODES.filter(function (m) { return m.wire !== "failover" || cur === "failover"; });
           return this.card(h, "Speed or reliability", [
-            h("div", { class: "tb-modes", style: { gridTemplateColumns: shown.length === 3 ? "repeat(3,minmax(0,1fr))" : "" } }, shown.map(function (m) {
+            h("div", { class: "tb-modes" + (shown.length === 3 ? " three" : "") }, shown.map(function (m) {
               return h("button", { class: "tb-mode" + (cur === m.wire ? " on" : ""), attrs: { type: "button", title: m.wire }, on: { click: function () { self.setMode(m.wire); } } }, [
                 h("div", { class: "tb-mode-t" }, m.label), h("div", { class: "tb-mode-b" }, m.blurb)
               ]);
@@ -834,7 +844,8 @@
                   h("span", { class: "tb-dot" + (m.online ? " ok" : "") }),
                   h("div", { class: "tb-grow" }, [
                     h("div", { style: { fontWeight: 600 } }, m.hostname),
-                    h("div", { class: "tb-mono" }, [h("span", { style: { wordBreak: "break-all" } }, m.dns_name), ip ? h("span", { class: "tb-nowrap" }, "  ·  " + ip) : null]),
+                    h("div", { class: "tb-mono" }, dotBreaks(h, m.dns_name)),
+                    ip ? h("div", { class: "tb-mono tb-nowrap" }, ip) : null,
                     h("div", { class: "tb-muted tb-small" }, (m.os ? m.os + " · " : "") + lastSeen(m))
                   ]),
                   self.btn(h, "Copy name", function () { self.copy(m.dns_name); }, "small")
@@ -858,10 +869,8 @@
                 h("div", { class: "tb-wan-t" }, j.state === "asking" ? "Asking " + srv + "…" : "Waiting for approval on " + srv + "…"),
                 h("div", { class: "tb-muted", style: { marginTop: "4px", lineHeight: 1.6 } }, [
                   "On " + srv + ", tap ", h("b", "Approve"), " next to ", h("b", j.name || "this router"), ". This router connects by itself once approved; you can close this page.",
-                  h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } }, [
-                    h("li", ["Flint 3 at home: its admin panel → APPLICATIONS → tailbond."]),
-                    h("li", ["Computer at home: open ", h("a", { class: "tb-link", attrs: { href: "http://" + hostOf(j.server) + ":8077/", target: "_blank", rel: "noopener" } }, "http://" + srv + ":8077"), " from any device on your Tailscale account (a phone works too)."])
-                  ])
+                  h("div", { style: { marginTop: "6px" } }, ["From anywhere: open ", h("a", { class: "tb-link", attrs: { href: "http://" + hostOf(j.server) + ":8077/", target: "_blank", rel: "noopener" } }, "http://" + srv + ":8077"),
+                    " on any device signed in to your Tailscale account (a phone works too). At home with a Flint 3, its admin panel → APPLICATIONS → tailbond works as well."])
                 ])
               ]),
               h("div", { class: "tb-actions" }, [this.btn(h, "Cancel", function () { self.cancelAsk(); })])
@@ -957,7 +966,7 @@
           var title = !on ? "Home server is off" : err ? "Home server has a problem" : todo ? "Home server is on · " + todo + " setup step" + (todo === 1 ? "" : "s") + " left" : "Home server is on";
           out.push(this.hero(h, !on ? "" : err ? "err" : todo ? "warn" : "on", title, line,
             this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "Home server on/off"),
-            on && conn.length ? h("div", { class: "tb-rates" }, [h("span", ["↓ ", h("b", fmtRate(st.totals.rx_bps))]), h("span", ["↑ ", h("b", fmtRate(st.totals.tx_bps))])]) : null));
+            on && conn.length ? h("div", { class: "tb-rates" }, [h("span", ["Sending to devices ", h("b", fmtRate(st.totals.tx_bps))]), h("span", ["Receiving ", h("b", fmtRate(st.totals.rx_bps))])]) : null));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
 
           if (this.pending.length) {
@@ -1054,22 +1063,22 @@
           }
           if (steps.indexOf("route") >= 0) {
             items.push(this.alert(h, "", "Step " + (++n) + ": allow tailbond devices on your Tailscale network",
-              [h("div", ["One click in the Tailscale admin console: Machines → ", h("b", ts.self || "this router"), " → Edit route settings → turn on ", h("b", ts.route || "10.77.0.0/24"), ". Until then, your Tailscale machines can't reach the devices connected through tailbond (those devices can still reach them)."])],
+              [h("div", ["In the Tailscale admin console, open ", h("b", ts.self || "this router"), ", choose ", h("b", "Edit route settings"), ", tick the one route listed (", ts.route || "10.77.0.0/24", ") and save. That lets your Tailscale machines reach devices that connect through tailbond. Devices can already reach your machines without it."])],
               [h("a", { class: "tb-btn small primary", attrs: { href: ts.admin_url || "https://login.tailscale.com/admin/machines", target: "_blank", rel: "noopener" } }, "Open admin console")]));
           }
           if (steps.indexOf("address") >= 0) {
             items.push(this.alert(h, "", "Step " + (++n) + ": tell travel routers where home is",
-              [h("div", "Travel routers connect to this router over the internet, so they need its internet address. Right now they'd use " + (addr || "a home-network address") + ", which only works at home. Enter your home's public IP address or a Dynamic DNS name (APPLICATIONS → Dynamic DNS gives you one)."),
+              [h("div", ["Travel routers reach this router over the internet, so they need a name for your home. Easiest: turn on ", h("a", { class: "tb-link", attrs: { href: "#/ddns" } }, "APPLICATIONS → Dynamic DNS"), " and paste the name it shows here (it looks like ", h("span", { class: "tb-mono" }, "abc1234.glddns.com"), "). Right now they'd use " + (addr || "a home-network address") + ", which only works at home."]),
                 this.addrEditor(h)]));
           }
           if (!steps.length) {
-            items.push(this.alert(h, "ok", "All set", "Travel routers and phones can connect from anywhere, and your Tailscale machines reach them."));
+            items.push(this.alert(h, "ok", "Setup done", "Travel routers and phones can connect from anywhere, and your Tailscale machines reach them. The first connection from away from home confirms the port works."));
           }
           items.push(h("div", { class: "tb-kv", style: { marginTop: "4px" } }, [
             h("div", "Internet address"),
             steps.indexOf("address") >= 0 ? h("div", { class: "tb-muted" }, "not set yet (step above)") : (this.addrEdit ? this.addrEditor(h) : h("div", { class: "tb-row" }, [h("span", { class: "tb-mono" }, addr || "not set"),
               this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
-            h("div", "Port"), h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "If another router sits in front of this one (for example your internet provider's box), forward UDP " + (s.port || 443) + " to this router there.")]),
+            h("div", "Port"), h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "Is your internet cable plugged straight into this router? Then nothing else to do. If it's plugged into another box (your internet provider's modem-router), that box must forward UDP " + (s.port || 443) + " to this router; see the box's manual under \"port forwarding\".")]),
             h("div", "Tailscale name"), h("div", { class: "tb-mono" }, ts.dns_name || "—"),
             h("div", "Secure connection"), h("div", s.tls === "tailscale" ? "Certificate from Tailscale for " + (s.tls_name || "") : "This router's own certificate, checked by each device")
           ]));

@@ -170,7 +170,7 @@ function render(st) {
   renderPairRequests(st);
   if (st.role === 'client') renderClientPaths(st); else renderServerPaths(st);
   if (st.role === 'server' && state.tab === 'clients') renderClients(st);
-  $('#foot').textContent = `tailbondd ${st.version || ''} · ${st.control_api ? 'live path stats' : 'basic stats (mqvpn control API unavailable)'}`;
+  $('#foot').textContent = `tailbond ${st.version || ''} · ${st.control_api ? 'live path stats' : 'basic stats (mqvpn control API unavailable)'}`;
   // forget sparkline history for series that disappeared
   for (const [k, s] of state.hist) if (Date.now() - s.seen > 120000) state.hist.delete(k);
 }
@@ -445,6 +445,9 @@ async function loadSettings() {
   try {
     state.settings = await api('GET', '/api/settings');
   } catch { return; }
+  if (state.status) $('#subtitle').textContent = state.status.role === 'server'
+    ? `Home server · reachable at ${state.settings.effective_public_addr || state.status.server || 'no public address'}`
+    : $('#subtitle').textContent;
   const s = state.settings;
   if (s.role === 'server') {
     $('#apk-yes').classList.toggle('hidden', !s.android_apk);
