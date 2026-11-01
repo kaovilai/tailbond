@@ -202,6 +202,37 @@ type wanView struct {
 	Name  string `json:"name"`
 	Label string `json:"label,omitempty"`
 	Up    bool   `json:"up"`
+	// Default: carries the router's default route now, i.e. where
+	// "Use the internet directly" goes
+	Default bool `json:"default,omitempty"`
+}
+
+// routePath is the IPv4 routing table (tests point it elsewhere).
+var routePath = "/proc/net/route"
+
+// defaultRouteDev is the device of the main table's default route with the
+// lowest metric ("" if none).
+func defaultRouteDev(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	best, bestMetric := "", -1
+	for _, line := range strings.Split(string(b), "\n")[1:] {
+		fs := strings.Fields(line)
+		// Iface Destination Gateway Flags RefCnt Use Metric Mask ...
+		if len(fs) < 8 || fs[1] != "00000000" || fs[7] != "00000000" {
+			continue
+		}
+		var m int
+		if _, err := fmt.Sscan(fs[6], &m); err != nil {
+			continue
+		}
+		if bestMetric < 0 || m < bestMetric {
+			best, bestMetric = fs[0], m
+		}
+	}
+	return best
 }
 
 func (a *Agent) hBypassGet(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +245,7 @@ func (a *Agent) hBypassGet(w http.ResponseWriter, r *http.Request) {
 	if rules == nil {
 		rules = []config.BypassRule{}
 	}
+	defDev := defaultRouteDev(routePath)
 	a.mu.Lock()
 	wans := []wanView{}
 	seen := map[string]bool{}
@@ -223,7 +255,7 @@ func (a *Agent) hBypassGet(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seen[it.Key()] = true
-		wans = append(wans, wanView{Name: it.Key(), Label: it.Label, Up: it.Usable()})
+		wans = append(wans, wanView{Name: it.Key(), Label: it.Label, Up: it.Usable(), Default: dev == defDev})
 	}
 	a.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{

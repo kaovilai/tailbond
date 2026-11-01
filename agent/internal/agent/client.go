@@ -52,6 +52,8 @@ type clientState struct {
 	// last verdict of tunnelWorking, for logging changes
 	lastWorking       *bool
 	lastWorkingServer string
+	lastWhy           string          // why the tunnel last stopped working
+	history           []status.Switch // switches, newest first
 	// bypass rules (bypass.go)
 	bypass bypassState
 }
@@ -77,7 +79,7 @@ func (a *Agent) startClient(ctx context.Context) {
 			a.client.usage.Bytes = map[string]uint64{}
 		}
 	}
-	a.loadServers()
+	a.loadServers("")
 	if n := len(cfg.Client.Servers); n > 1 {
 		a.Logf("%d servers, primary %s", n, cfg.Client.Servers[0].Name)
 	}
@@ -621,7 +623,7 @@ func (a *Agent) importPairing(uri string) (*pairing.Payload, error) {
 	}); err != nil {
 		return nil, err
 	}
-	a.loadServers()
+	a.loadServers(switchList)
 	a.mu.Lock()
 	a.userStop = false
 	a.mu.Unlock()
@@ -807,7 +809,7 @@ func (a *Agent) hUnpair(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	a.loadServers()
+	a.loadServers("")
 	a.mu.Lock()
 	a.userStop = true
 	if a.join.cancel != nil {

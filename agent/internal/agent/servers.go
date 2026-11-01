@@ -43,7 +43,7 @@ func policyOf(f config.Failover) failover.Policy {
 // loadServers rebuilds the runtime list from the config and keeps the
 // failover machine in step. It returns the server to switch to when the
 // active one changed or went away ("" otherwise). Caller holds no lock.
-func (a *Agent) loadServers() string {
+func (a *Agent) loadServers(why string) string {
 	cfg := a.store.Get()
 	var list []serverRT
 	var order []string
@@ -77,6 +77,9 @@ func (a *Agent) loadServers() string {
 			to = t
 		}
 	}
+	if next := cs.fo.Active(); next != cs.activeServer && cs.activeServer != "" && next != "" && why != "" {
+		cs.recordSwitchLocked(cs.activeServer, next, why)
+	}
 	cs.activeServer = cs.fo.Active()
 	cs.payload = nil
 	if s := cs.server(cs.activeServer); s != nil {
@@ -99,6 +102,28 @@ func (cs *clientState) server(name string) *serverRT {
 	return nil
 }
 
+// Reasons for a switch (status failover.history[].reason).
+const (
+	switchFailover = "failover" // the active server stopped working
+	switchFailback = "failback" // an earlier server is healthy again
+	switchManual   = "manual"   // "Use this server now"
+	switchPolicy   = "policy"   // "Always use <server>"
+	switchList     = "list"     // the server list changed
+	maxHistory     = 20
+)
+
+// recordSwitchLocked adds a switch to the history. Caller holds a.mu.
+func (cs *clientState) recordSwitchLocked(from, to, why string) {
+	sw := status.Switch{At: time.Now().UTC(), From: from, To: to, Reason: why}
+	if why == switchFailover {
+		sw.Detail = cs.lastWhy
+	}
+	cs.history = append([]status.Switch{sw}, cs.history...)
+	if len(cs.history) > maxHistory {
+		cs.history = cs.history[:maxHistory]
+	}
+}
+
 // switchServer makes name the active server: mqvpn restarts, client-down
 // runs with the old server's env (TB_SWITCH=1), client-up with the new one.
 func (a *Agent) switchServer(name, why string) {
@@ -110,6 +135,9 @@ func (a *Agent) switchServer(name, why string) {
 		return
 	}
 	prev := cs.activeServer
+	if prev != name {
+		cs.recordSwitchLocked(prev, name, why)
+	}
 	cs.activeServer, cs.payload = name, s.payload
 	cs.peers, cs.peersAt = nil, time.Time{}
 	running := a.sup.Active()
@@ -168,7 +196,13 @@ func (a *Agent) serverWatcher(ctx context.Context) {
 		to := cs.fo.Step(now, working)
 		a.mu.Unlock()
 		if to != "" {
-			a.switchServer(to, "failover policy")
+			why := switchFailover
+			a.mu.Lock()
+			if cs.server(to) != nil && indexOf(cs.fo.Order(), to) < indexOf(cs.fo.Order(), cs.activeServer) && working {
+				why = switchFailback
+			}
+			a.mu.Unlock()
+			a.switchServer(to, why)
 		}
 	}
 }
@@ -224,6 +258,9 @@ func (a *Agent) tunnelWorking() bool {
 	cs := a.client
 	changed := cs.lastWorking == nil || *cs.lastWorking != ok || cs.lastWorkingServer != cs.activeServer
 	cs.lastWorking, cs.lastWorkingServer = &ok, cs.activeServer
+	if !ok {
+		cs.lastWhy = why
+	}
 	name := cs.activeServer
 	a.mu.Unlock()
 	if changed {
@@ -279,7 +316,19 @@ func (a *Agent) serversView(st *status.Status, working bool) {
 		n := int((v.FailbackIn + time.Second - 1) / time.Second)
 		fv.FailbackInSec = &n
 	}
+	if len(cs.history) > 0 {
+		fv.History = append([]status.Switch(nil), cs.history...)
+	}
 	st.Servers, st.ActiveServer, st.Failover = out, v.Active, fv
+}
+
+func indexOf(list []string, s string) int {
+	for i, x := range list {
+		if x == s {
+			return i
+		}
+	}
+	return -1
 }
 
 // subnetClash returns the server in the config whose tunnel subnet
@@ -350,15 +399,15 @@ func (a *Agent) addServer(uri, name string) (string, error) {
 		return "", err
 	}
 	a.Logf("added server %s (%s) as a backup", added, p.Server)
-	a.afterServersChanged()
+	a.afterServersChanged(switchList)
 	a.connectIfIdle()
 	return added, nil
 }
 
 // afterServersChanged reloads the list and switches if the active server
 // changed or is gone.
-func (a *Agent) afterServersChanged() {
-	to := a.loadServers()
+func (a *Agent) afterServersChanged(why string) {
+	to := a.loadServers(why)
 	if !a.paired() {
 		a.mu.Lock()
 		a.userStop = true
@@ -367,7 +416,7 @@ func (a *Agent) afterServersChanged() {
 		return
 	}
 	if to != "" {
-		a.switchServer(to, "server list changed")
+		a.switchServer(to, switchList)
 	}
 }
 
@@ -477,7 +526,7 @@ func (a *Agent) hServersDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Logf("server %s removed", name)
-	a.afterServersChanged()
+	a.afterServersChanged(switchList)
 	a.poll(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -511,15 +560,15 @@ func (a *Agent) hServersActive(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusInternalServerError, err)
 			return
 		}
-		if to := a.loadServers(); to != "" {
-			a.switchServer(to, "always use "+body.Name)
+		if to := a.loadServers(switchPolicy); to != "" {
+			a.switchServer(to, switchPolicy)
 		}
 	} else {
 		a.mu.Lock()
 		to := a.client.fo.Manual(body.Name, time.Now())
 		a.mu.Unlock()
 		if to != "" {
-			a.switchServer(to, "chosen in the dashboard")
+			a.switchServer(to, switchManual)
 		}
 	}
 	a.connectIfIdle()
@@ -559,7 +608,7 @@ func (a *Agent) hServersOrder(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	a.afterServersChanged()
+	a.afterServersChanged(switchList)
 	a.poll(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -611,7 +660,7 @@ func (a *Agent) hServersPolicy(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	a.afterServersChanged()
+	a.afterServersChanged(switchPolicy)
 	a.poll(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

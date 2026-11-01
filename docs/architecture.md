@@ -131,7 +131,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | POST | `/api/servers/active` | client, additive: `{"name"}` "Use this server now" (switches immediately; no automatic failback until it fails) |
 | POST | `/api/servers/order` | client, additive: `{"names":[…]}` the full list in the new order; the first is the primary |
 | POST | `/api/servers/policy` | client, additive: `{"policy":"prefer"\|"always","server"?,"switch_after_sec"?,"failback_after_sec"?}` |
-| GET | `/api/bypass` | client, additive: `{"rules":[…],"support":{…},"wans":[{"name","label","up"}],"counters":{"<id>":{"connections"}}}` (connections a rule sent past the tunnel since it was applied) ([bypass rules](#bypass-rules-client-role)) |
+| GET | `/api/bypass` | client, additive: `{"rules":[…],"support":{…},"wans":[{"name","label","up","default"}],"counters":{"<id>":{"connections"}}}` (connections a rule sent past the tunnel since it was applied) ([bypass rules](#bypass-rules-client-role)) |
 | POST | `/api/bypass` | client, additive: one rule; without `id` (or an unknown one) it is added, else replaced. Returns the stored rule (with its `id`) |
 | DELETE | `/api/bypass/{id}` | client, additive |
 | GET | `/api/lan-clients` | client, additive: devices on the LAN `[{"mac","ip","name","online"}]` from the DHCP leases (`client.leases_file`, default `/tmp/dhcp.leases`) and the neighbour table, online first, then by name |
@@ -443,6 +443,12 @@ Status (`/api/status`, `/api/servers`), additive:
 - `last_ok`: when the tunnel last worked (active) or the last probe was answered (others); omitted if never.
 - `failover.reason`: why the active server isn't the primary: `""` (it is), `primary_down`, `manual`, `policy` (`always`).
 - `failback_in_sec`: present while counting down to a failback.
+- `history`: the last 20 switches since the agent started, newest first:
+  `[{"at","from","to","reason":"failover"|"failback"|"manual"|"policy"|"list","detail"}]`
+  (`detail`, for failovers: why the old server stopped working, e.g. "no answer on any path for 5 s").
+
+In `GET /api/bypass`, `wans[].default` marks the WAN carrying the router's
+default route now, i.e. where "Use the internet directly" goes.
 
 `status.server` and `tunnel_ip` describe the active server. Apps word it as
 "Using vps (homebox is unreachable)" / "Back to homebox in 1:20".

@@ -28,6 +28,12 @@ esac
 		t.Fatal(err)
 	}
 	go a.hookWorker(t.Context())
+	routePath = filepath.Join(out, "route")
+	os.WriteFile(routePath, []byte("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"+
+		"phy0-sta0\t00000000\t0102000A\t0003\t0\t0\t20\t00000000\n"+
+		"eth0\t00000000\t010200C0\t0003\t0\t0\t10\t00000000\n"+
+		"eth0\t000200C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\n"), 0o644)
+	t.Cleanup(func() { routePath = "/proc/net/route" })
 	ifs := []netif.Iface{
 		{Name: "eth0", Network: "wan", Label: "Ethernet", WAN: true, Up: true, Carrier: true, Addrs: []string{"192.0.2.2/24"}},
 		{Name: "phy0-sta0", Network: "wwan", Label: "Repeater", WAN: true},
@@ -86,7 +92,7 @@ esac
 	if len(got.Rules) != 3 || got.Support.Domains != "nftset" || got.Counters["r1"].Connections != 3 {
 		t.Fatalf("GET %+v", got)
 	}
-	if len(got.WANs) != 2 || got.WANs[0].Name != "wan" || !got.WANs[0].Up || got.WANs[1].Up {
+	if len(got.WANs) != 2 || got.WANs[0].Name != "wan" || !got.WANs[0].Up || got.WANs[1].Up || !got.WANs[0].Default || got.WANs[1].Default {
 		t.Fatalf("wans %+v", got.WANs)
 	}
 

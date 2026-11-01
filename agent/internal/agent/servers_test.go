@@ -27,7 +27,7 @@ func clientAgent(t *testing.T, edit func(*config.Config)) *Agent {
 	}
 	cfg.ApplyDefaults()
 	a := New(config.NewStore(filepath.Join(t.TempDir(), "tailbond.json"), cfg), Options{})
-	a.loadServers()
+	a.loadServers("")
 	t.Cleanup(a.sup.Stop)
 	return a
 }
@@ -123,6 +123,9 @@ func TestServersAddOrderRemove(t *testing.T) {
 	}
 	a.poll(context.Background())
 	st = a.Snapshot()
+	if h := st.Failover.History; len(h) == 0 || h[0].From != "homebox" || h[0].To != "vps" || h[0].Reason != "list" {
+		t.Fatalf("history %+v", st.Failover.History)
+	}
 	if len(st.Servers) != 1 || st.ActiveServer != "vps" || st.Failover.Policy != "prefer" || !a.paired() {
 		t.Fatalf("after delete %+v %q %+v", st.Servers, st.ActiveServer, st.Failover)
 	}

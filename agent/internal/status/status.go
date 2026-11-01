@@ -132,6 +132,18 @@ type Failover struct {
 	Reason           string     `json:"reason"`
 	Since            *time.Time `json:"since,omitempty"`
 	FailbackInSec    *int       `json:"failback_in_sec,omitempty"`
+	// the last switches, newest first (in memory: since the agent started)
+	History []Switch `json:"history,omitempty"`
+}
+
+// Switch is one change of the active server.
+type Switch struct {
+	At     time.Time `json:"at"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Reason string    `json:"reason"` // failover | failback | manual | policy | list
+	// why the server left behind stopped working, for failovers
+	Detail string `json:"detail,omitempty"`
 }
 
 // MapPathState turns mqvpn path labels (control API state_label or the client
