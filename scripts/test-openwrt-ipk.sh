@@ -80,6 +80,10 @@ show("badjoin", m.api({ method = "POST", path = "/api/join", body = { server = "
 show("login", m.api({ method = "POST", path = "/api/login", body = {} }))
 show("escape", m.api({ method = "GET", path = "/api/../etc/passwd" }))
 show("info", m.info())
+show("ksoff", m.set_kill_switch({ on = false }))
+show("ksinfo", m.info())
+show("ksbad", m.set_kill_switch({ on = "yes" }))
+show("kson", m.set_kill_switch({ on = true }))
 LUA
 lua /tmp/rpc.lua >/tmp/rpc.out 2>&1
 cat /tmp/rpc.out | cut -c1-200
@@ -90,6 +94,8 @@ grep '^badjoin ' /tmp/rpc.out | grep -q '"code":400' && ok "rpc api POST passes 
 grep '^login ' /tmp/rpc.out | grep -q 'not_allowed' && ok "login path refused" || bad "login allowed"
 grep '^escape ' /tmp/rpc.out | grep -q 'not_allowed' && ok "path escape refused" || bad "escape allowed"
 grep '^info ' /tmp/rpc.out | grep -q '"role":"client"' && ok "rpc info" || bad "rpc info"
+grep '^ksoff ' /tmp/rpc.out | grep -q '"ok":true' && grep '^ksinfo ' /tmp/rpc.out | grep -q '"kill_switch":false' && grep '^ksbad ' /tmp/rpc.out | grep -q bad_value \
+	&& [ "$(uci -q get tailbond.client.kill_switch)" = 1 ] && ok "rpc set_kill_switch (UCI client.kill_switch)" || bad "set_kill_switch"
 
 echo "== bypass rules (this image's dnsmasq has no nftset: website rules wait, the rest applies)"
 cat >/tmp/bypass.lua <<'LUA'

@@ -264,7 +264,7 @@ const h2 = sw(2, 'homebox', 'vps', 'failover', 'homebox stopped answering for 15
 const h23 = sw(23, 'vps', 'homebox', 'failback');
 const h38 = sw(38, 'homebox', 'vps', 'manual');
 const h40 = sw(40.5, 'vps', 'homebox', 'manual');
-const onVpsAt = (st) => ({ server: '203.0.113.9:8443', tunnel_ip: '10.83.142.2', active_server: 'vps', ...st });
+const onVpsAt = (st) => ({ server: '203.0.113.9:8443', tunnel_ip: '10.83.142.3', active_server: 'vps', ...st });
 // minute 60: homebox in use, vps on standby; four switches so far
 const homeAndVps = { uptime_sec: 19.5 * 60, servers: [home('active', true, 59.98), vps('standby', false, 59.92)], active_server: 'homebox', failover: failover({ since: at(40.5), history: [h40, h38, h23, h2] }) };
 // minute 4: homebox stopped answering at 1:45; vps since 2
@@ -285,15 +285,18 @@ const lanClients = [
 const bpOk = { domains: 'nftset', firewall: 'nft' };
 const bpRules = [
   { id: 'b3f9', kind: 'domain', match: 'mybank.com', target: 'direct', enabled: true, note: 'Bank' },
-  { id: 'c1d2', kind: 'device', match: '3c:22:fb:10:aa:01', ip: '192.168.8.23', target: 'tunnel', enabled: true, note: 'work-laptop' },
-  { id: 'd4e5', kind: 'device', match: 'f0:27:2d:8b:44:10', ip: '192.168.8.40', target: 'direct', enabled: true, note: 'Fire-TV-Stick' },
+  { id: 'c1d2', kind: 'device', match: '3c:22:fb:10:aa:01', ip: '192.168.8.23', host: 'work-laptop', target: 'tunnel', enabled: true, note: 'work-laptop' },
+  { id: 'd4e5', kind: 'device', match: 'f0:27:2d:8b:44:10', ip: '192.168.8.40', host: 'Fire-TV-Stick', target: 'direct', enabled: true, note: 'Fire-TV-Stick' },
   { id: 'a7b8', kind: 'port', match: 'udp/4500', target: 'direct', enabled: true, note: 'Wi-Fi calling' },
   { id: 'a7b9', kind: 'port', match: 'udp/500', target: 'direct', enabled: true, note: 'Wi-Fi calling' },
 ];
 const bpCounters = { b3f9: { connections: 37 }, c1d2: { connections: 0 }, d4e5: { connections: 212 }, a7b8: { connections: 4 }, a7b9: { connections: 2 } };
 const bypassApi = (rules, support = bpOk, counters = {}) => ({ 'GET /api/bypass': { rules, support, wans: bpWans, counters } });
 // every client screen has the bypass card (the four rules unless a state says otherwise)
-const bf = (statusOver = {}, api = {}) => withApi(connected(twoWans, { ...oneServer, ...statusOver }), { 'GET /api/lan-clients': lanClients, ...bypassApi(bpRules, bpOk, bpCounters), ...api });
+// the router is 10.77.0.3 (the phone screens use .2); work-laptop is on the LAN, so not in the tailnet list
+const bfPeers = { ...peers, peers: peers.peers.filter((m) => m.hostname !== 'work-laptop') };
+const bf = (statusOver = {}, api = {}) => withApi(connected(twoWans, { tunnel_ip: '10.77.0.3', ...oneServer, ...statusOver }),
+  { 'GET /api/lan-clients': lanClients, 'GET /api/peers': bfPeers, ...bypassApi(bpRules, bpOk, bpCounters), ...api });
 const discoverVps = { 'GET /api/discover': { tailscale_installed: true, tailscale_running: true, self: 'slate7', checked: 5, servers: [
   { name: 'homebox', dns_name: 'homebox.tail1234.ts.net', ip: '100.101.1.1', os: 'linux', version: '0.1.0-r42' },
   { name: 'vps', dns_name: 'vps.tail1234.ts.net', ip: '100.101.5.5', os: 'linux', version: '0.1.0-r42' },
@@ -313,6 +316,8 @@ export const bfStates = {
   'failover-using-vps-home-unreachable': { ...bf(onVps), clock: at(4) },
   'failback-countdown': { ...bf(failingBack), clock: at(21 + 40 / 60) },
   'failover-you-picked-vps': { ...bf(pickedVps), clock: at(40) },
+  // someone turned the kill switch off (UCI client.kill_switch=0)
+  'servers-kill-switch-off': { ...bf(homeAndVps), clock: at(60), info: { installed: true, version: '0.1.0-r42', role: 'client', enabled: true, running: true, kill_switch: false } },
   'add-server-waiting-approval': bf(joinVps({ state: 'waiting' }), discoverVps),
   'add-server-subnet-clash': bf(joinVps({ state: 'error', error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' }), discoverVps),
   // the panel was open while homebox came back: one status on vps, then on homebox

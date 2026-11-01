@@ -158,7 +158,12 @@ In the panel (**Home server** card, which becomes **Servers** with two or more):
 - **When to switch**: "Prefer homebox, use vps if homebox is down" (default)
   or "Always use vps" (never switches by itself).
 - The top card says what's happening: "Using vps (homebox is unreachable)",
-  then "Back to homebox in 1:20" while it counts down.
+  then "Back to homebox in 1:20" while it counts down; **Recent switches**
+  lists the last ones.
+- **Kill switch** (UCI `client.kill_switch`, on by default): while no server
+  can be reached, or during a switch, devices here wait instead of using the
+  WAN unprotected. The switch in the card takes effect the next time the
+  tunnel reconnects.
 
 Each server needs its own tunnel addresses. A VPS set up with
 `packaging/linux/install.sh` picks a free range by itself; a new server with
@@ -172,7 +177,8 @@ Contract: [architecture.md](architecture.md#multiple-servers-and-failover).
 Rules that let some traffic skip the tunnel (or never skip it):
 - **A website** (and everything under it): a bank that blocks VPNs, streaming
   that should see where you are;
-- **A device** on the router's LAN, picked from the list (by MAC): a TV stick
+- **A device** on the router's LAN, picked from the list (by MAC, and by its
+  DHCP name, so a new private Wi-Fi address keeps the rule): a TV stick
   that should use the hotel internet, or a work laptop that must **always use
   tailbond** (that beats website rules);
 - **An address or port** (under *More*): Wi-Fi calling is UDP 500 and 4500.

@@ -88,7 +88,7 @@
     return new Promise(function (resolve) {
       setTimeout(function () {
         if (fn === "info") return resolve(F.info || { installed: true, version: "0.1.0-r42", role: F.role || "client", enabled: true, running: true });
-        if (fn === "service" || fn === "set_role") return resolve({ ok: true });
+        if (fn === "service" || fn === "set_role" || fn === "set_kill_switch") return resolve({ ok: true });
         if (fn === "status") args = { method: "GET", path: "/api/status" };
         var path = args.path, m = (args.method || "GET").toUpperCase();
         if (F.down) return resolve({ ok: false, code: 0, error: "agent_down" });

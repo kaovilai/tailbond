@@ -25,9 +25,10 @@ rules below unless the row says otherwise).
 | add-server-waiting-approval | After "Ask to add": waiting for someone to approve on vps |
 | add-server-subnet-clash | vps approved, but it uses the same tunnel addresses as homebox: what to change on vps |
 | add-server-paste-clash | Same clash, after pasting a pairing link instead |
-| servers-home-active-vps-standby | Two servers: homebox in use, vps on standby, "When to switch", the last 3 of 4 recent switches |
+| servers-home-active-vps-standby | Two servers: homebox in use, vps on standby, "When to switch", the last 3 of 4 recent switches, the kill switch (on) |
+| servers-kill-switch-off | Same, with the kill switch turned off: the switch and the wording that depends on it |
 | servers-recent-switches-all | Same, after clicking "Show all (4)" under Recent switches |
 | failover-using-vps-home-unreachable | homebox stopped answering; tailbond switched to vps. Phone too |
 | failback-countdown | homebox answers again: back to homebox in 1:20 |
-| failover-you-picked-vps | Someone clicked "Use now" on vps |
+| failover-you-picked-vps | Someone clicked "Use now" on vps (picked by hand; automatic switching paused) |
 | back-on-homebox-since | The page was open while homebox came back: back on homebox, with the time |

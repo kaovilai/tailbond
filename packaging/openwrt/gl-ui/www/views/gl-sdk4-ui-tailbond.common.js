@@ -610,12 +610,12 @@
         // what changes while a backup carries the tunnel
         var note = "On " + act + ": websites see " + act + "'s internet address, connections that were open restart once, and your Tailscale machines see devices here as coming from " + act + ".";
         if (fo.reason === "primary_down") {
-          return back ? { title: "Using " + act + " (" + first + " is answering again)", line: "Back to " + first + " in " + fmtClock(fo.failback_in_sec) + ". Calls may pause for a few seconds then", act: ["Stay on " + act + " for now", stay], note: note }
+          return back ? { title: "Using " + act + " (" + first + " is answering again)", line: "Back to " + first + " in " + fmtClock(fo.failback_in_sec) + ". Calls may pause for a few seconds then", act: ["Stay on " + act + " (until you pick " + first + " or " + act + " stops working)", stay], note: note }
             : { title: "Using " + act + (since ? " since " + since : "") + " (" + first + " is unreachable)", line: "You're still online; nothing to do. It goes back to " + first + " by itself once it answers again", note: note };
         }
         if (fo.reason === "manual") {
           var firstOk = ss[0].state === "standby";
-          return { title: "Using " + act + (since ? " since " + since : "") + " (you picked it)", line: "Stays on " + act + " until you pick " + first + " or " + act + " stops working", act: firstOk ? ["Go back to " + first, goFirst] : null, note: note };
+          return { title: "Using " + act + (since ? " since " + since : "") + " (picked by hand)", line: "Stays on " + act + " until you pick " + first + " or " + act + " stops working", act: firstOk ? ["Go back to " + first, goFirst] : null, note: note };
         }
         if (fo.reason === "policy") return { title: "Always using " + act, note: act === first ? null : note };
         if (!fo.reason && this.backOnUntil > Date.now()) return { title: "Connected to " + act, line: "Back on " + act + (since ? " since " + since : "") };
@@ -714,18 +714,27 @@
             h("div", { style: { marginTop: "6px" } }, asked
               ? "A new server with no devices yet moves to a free range by itself when you ask it over Tailscale. " + other + " already has devices, so whoever runs it changes its range, then you ask again."
               : "A new server with no devices yet moves to a free range by itself when you ask it over Tailscale (a pasted link can't do that): try “Its name in Tailscale” above. If it already has devices, whoever runs it changes its range."),
-            h("div", { style: { marginTop: "8px" } }, [this.btn(h, "Copy a message to send them", function () { self0.copyMsg(msg); }, "small primary")]),
-            h("details", { style: { marginTop: "8px" } }, [h("summary", { class: "tb-small", style: { cursor: "pointer" } }, "How they change it"),
-              h("ul", { class: "tb-steps", style: { color: "inherit", marginTop: "4px" } }, [
-                h("li", ["A VPS set up with tailbond's Linux installer: run it again with ", h("code", "sudo ./install.sh --subnet " + free)]),
-                h("li", ["A GL router as server (over SSH): ", h("code", "uci set tailbond.server.subnet=" + free + "; uci commit tailbond; /etc/init.d/tailbond restart")]),
-                h("li", ["Another Linux server: in ", h("code", "/etc/tailbond/tailbond.json"), " set ", h("code", "\"server\": {\"subnet\": \"" + free + "\"}"), " and restart tailbond"])
-              ]),
-              h("div", { class: "tb-small" }, "Devices already connected to " + other + " reconnect by themselves after the change.")])
+            h("div", { style: { marginTop: "8px", fontWeight: 600 } }, "If you run " + other + " yourself:"),
+            h("ul", { class: "tb-steps", style: { color: "inherit", marginTop: "2px" } }, [
+              h("li", ["Set up with tailbond's Linux installer (most VPSs): on it, run the installer again with ", h("code", "sudo ./install.sh --subnet " + free), " (" + free + " is free here)"]),
+              h("li", ["A GL router as server (over SSH): ", h("code", "uci set tailbond.server.subnet=" + free + "; uci commit tailbond; /etc/init.d/tailbond restart")]),
+              h("li", ["Another Linux server: in ", h("code", "/etc/tailbond/tailbond.json"), " set ", h("code", "\"server\": {\"subnet\": \"" + free + "\"}"), " and restart tailbond"])
+            ]),
+            h("div", { class: "tb-small" }, "Devices already connected to " + other + " reconnect by themselves after the change. Then ask again here."),
+            h("div", { style: { marginTop: "8px" } }, ["Someone else runs it? ", this.btn(h, "Copy a message to send them", function () { self0.copyMsg(msg); }, "small")])
           ]];
         }
         if (code === "paste") return [null, "Paste the whole link. It starts with tailbond://pair"];
         return [null, this.humanError({ error: code })];
+      },
+      // client.kill_switch in UCI; the hooks read it the next time the tunnel comes up
+      setKillSwitch: function (on) {
+        var self = this;
+        return this.runE("ks", rpc("set_kill_switch", { on: on }).then(function (r) {
+          if (r && r.ok === false) throw { error: r.error || "failed" };
+          if (self.info) self.$set(self.info, "kill_switch", on); else self.info = { kill_switch: on };
+        }), on ? "Kill switch on. Takes effect the next time the tunnel reconnects." : "Kill switch off. Takes effect the next time the tunnel reconnects.")
+          .catch(function (e) { self.actErr = self.humanError(e); });
       },
       copyMsg: function (text) {
         var self = this;
@@ -812,7 +821,8 @@
         } else if (e.kind === "device") {
           var mac = e.mac || (e.macTyped || "").trim().toLowerCase().replace(/-/g, ":");
           if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return e.macTyped ? "That isn't a MAC address. It looks like aa:bb:cc:dd:ee:ff." : "Pick a device from the list.";
-          out.push({ kind: "device", match: mac, ip: e.ip || undefined, note: e.name || undefined });
+          // host: the device's DHCP name; the agent also follows new (private) Wi-Fi addresses under it
+          out.push({ kind: "device", match: mac, ip: e.ip || undefined, host: e.mac && e.name ? e.name : undefined, note: e.name || undefined });
         } else {
           words(e.addr).forEach(function (a) {
             a = a.toLowerCase();
@@ -1199,6 +1209,7 @@
               h("span", { class: "tb-chip " + stateChip[0] }, stateChip[1])
             ]),
             this.rHomeKv(h, true),
+            this.rKillSwitch(h),
             h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
               this.btn(h, "Ask to connect again", function () { self.repair(); }, "small"),
               this.btn(h, "Unpair", function () { self.unpair(); }, "small danger"),
@@ -1225,6 +1236,19 @@
           var suffix = this.peers && this.peers.magic_dns_suffix;
           var name = (hit && hit.dns_name) || (/\./.test(host) && !/^[\d.]+$/.test(host) ? host : suffix ? srv + "." + suffix : host);
           return "http://" + name + ":8077/";
+        },
+        // The kill switch: everything "nothing goes out unprotected" and "always tailbond" rest on.
+        rKillSwitch: function (h) {
+          var self = this, ks = !(this.info && this.info.kill_switch === false);
+          return h("div", { class: "tb-row", style: { marginTop: "14px", borderTop: "1px solid #ebeef5", paddingTop: "12px" } }, [
+            h("div", { class: "tb-grow" }, [
+              h("div", ["Kill switch: block devices here while tailbond can't connect ", h("span", { class: "tb-chip " + (ks ? "ok" : "warn"), style: { marginLeft: "4px" } }, ks ? "On (recommended)" : "Off")]),
+              h("div", { class: "tb-muted tb-small", style: { lineHeight: 1.5 } }, (ks
+                ? "If no server can be reached (or while it switches), devices here wait instead of using this internet unprotected. Rules that skip tailbond still work."
+                : "If no server can be reached, devices here use this internet directly, without tailbond.") + " A change takes effect the next time the tunnel reconnects.")
+            ]),
+            this.sw(h, ks, function () { self.setKillSwitch(!ks); }, false, this.busy.ks, "Kill switch")
+          ]);
         },
         addInFlight: function () {
           var j = this.join;
@@ -1281,7 +1305,7 @@
                 } } }, [h("div", { class: "tb-mode-t" }, o.t), h("div", { class: "tb-mode-b" }, o.b)]);
               })),
               paused ? h("div", { class: "tb-alert info", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [
-                h("b", "Paused: you picked " + st.active_server + (fo.since ? " at " + fmtHM(fo.since) : "") + ". "),
+                h("b", "Paused: " + st.active_server + " was picked by hand" + (fo.since ? " at " + fmtHM(fo.since) : "") + ". "),
                 ss[0].state === "standby" ? h("a", { class: "tb-link", on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
                   : "Automatic switching comes back if " + st.active_server + " stops working, or when you pick " + first + "."])]) : null,
               h("div", { class: "tb-help" }, "How it decides: tailbond checks the standby servers every 10 s with one small packet. It switches when " + first + " hasn't worked for " + fmtDur(fo.switch_after_sec || 15) +
@@ -1289,6 +1313,7 @@
             ]),
             this.rHistory(h),
             h("div", { class: "tb-sec" }, [this.rHomeKv(h, false)]),
+            this.rKillSwitch(h),
             h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
               this.srvAdd || this.addInFlight() ? null : this.btn(h, "Add another server", function () { self.openAddServer(); }, "small")
             ]),
@@ -1310,7 +1335,7 @@
           var why = function (x) {
             if (x.reason === "failover") return x.detail || x.from + " stopped answering";
             if (x.reason === "failback") return x.from === "" ? "back to " + x.to : x.to + " answered again";
-            if (x.reason === "manual") return "you picked " + x.to;
+            if (x.reason === "manual") return x.to + " picked by hand";
             if (x.reason === "policy") return "“Always use " + x.to + "”";
             if (x.reason === "list") return "server list changed";
             return x.detail || "";
@@ -1439,10 +1464,11 @@
             var r = row.rules[0], main, sub = [];
             if (r.kind === "domain") { main = r.match; if (r.note) sub.push(r.note); }
             else if (r.kind === "device") {
-              var c = self.lanByMac(r.match);
+              var c = self.lanByMac(r.match) || (r.host ? A(self.lan).filter(function (x) { return x.name === r.host; })[0] : null);
               main = (c && c.name) || r.note || r.match || r.ip;
               sub.push(c && c.name ? (r.match || r.ip) : (r.match ? "device " + r.match : "device"));
-              sub.push(!c ? "not seen on this router: if its Wi-Fi address changed, the rule doesn't match it now" : c.online ? "connected now" : "not connected now");
+              sub.push(!c ? "not seen on this router yet" : c.online ? "connected now" : "not connected now");
+              sub.push(r.host ? "follows it by name, even with a new private Wi-Fi address" : "follows this address only");
             } else if (r.kind === "ip") { main = r.match; sub.push(r.note || "address"); }
             else {
               var ports = row.rules.map(function (x) { return x.match.split("/")[1]; });
@@ -1475,7 +1501,8 @@
           body.push(h("div", { class: "tb-muted", style: { marginBottom: "4px" } }, "Everything else goes through " + (this.serverShort || "your home server") + ". " + (ks ? "Rules that skip tailbond keep working while it's down." : "")));
           body.push(h("div", list));
           body.push(h("div", { class: "tb-sec tb-row", style: { flexWrap: "wrap" } }, [h("span", { class: "tb-muted tb-small" }, "Quick add:"), presets()]));
-          if (hasDomain) body.push(h("div", { class: "tb-help" }, "Website rules match the addresses the router looks up for each name (sites sharing those addresses skip too), and can miss devices that use their own secure DNS (Private DNS on Android, Secure DNS in Chrome): use a device rule for those."));
+          if (hasDomain) body.push(h("div", { class: "tb-help" }, "Website rules match the addresses the router looks up for each name (sites sharing those addresses skip too). A device with its own secure DNS (Private DNS on Android, Secure DNS in Chrome) isn't matched: turn that off for this Wi-Fi on the device, or add the site's addresses as an address rule."));
+          body.push(h("div", { class: "tb-help" }, "Skipped websites are looked up through the connection they use; everything else, IPv6 included, follows the same rules."));
           return this.card(h, "Bypass tailbond", body, addBtn);
         },
 
@@ -1485,10 +1512,10 @@
           if (!/dnsmasq-full/.test(r)) return [h("div", r)];
           var pk = /ipset/.test(r) ? " ipset" : "";
           // download first, then swap; put dnsmasq back if the install fails
-          var cmd = "cd /tmp && opkg update && opkg download dnsmasq-full && opkg remove dnsmasq && opkg install ./dnsmasq-full*.ipk || opkg install dnsmasq";
+          var cmd = "cd /tmp && opkg update && opkg download dnsmasq-full dnsmasq && opkg remove dnsmasq && { opkg install ./dnsmasq-full_*.ipk || opkg install ./dnsmasq_*.ipk; }";
           return [
             h("div", "This router's DNS part (dnsmasq) can't do website rules yet. Until it can, these websites keep going through tailbond as before, so a bank that blocks VPNs may stay blocked. Device, address and port rules work now."),
-            short ? null : h("div", { style: { marginTop: "6px" } }, ["To turn website rules on, install ", h("b", "dnsmasq-full" + (pk ? " and ipset" : "")), ": in GL's ", h("b", "APPLICATIONS → Plug-ins"), ", search for it and click Install, then turn tailbond off and on here. If the Plug-ins page refuses, run this over SSH (it downloads first, and puts the old one back if the install fails)" + (pk ? ", then install ipset the same way" : "") + ", then turn tailbond off and on:"]),
+            short ? null : h("div", { style: { marginTop: "6px" } }, ["To turn website rules on, install ", h("b", "dnsmasq-full" + (pk ? " and ipset" : "")), ": in GL's ", h("b", "APPLICATIONS → Plug-ins"), ", search for it and click Install, then turn tailbond off and on here. Do it on a working connection, or leave it to whoever set the router up. If the Plug-ins page refuses, run this over SSH (it downloads both first, so the old one can go back if the install fails)" + (pk ? ", then install ipset the same way" : "") + ", then turn tailbond off and on:"]),
             short ? null : h("div", { class: "tb-row", style: { marginTop: "6px", alignItems: "flex-start" } }, [
               h("code", { class: "tb-grow", style: { display: "block", padding: "6px 8px", wordBreak: "break-all" } }, cmd),
               self.btn(h, "Copy", function () { self.copy(cmd); }, "small")
@@ -1522,7 +1549,7 @@
               ? "Each one includes all its pages and parts (www.netflix.com, api.netflix.com…)."
               : "Includes all its pages and parts, like www.mybank.com and login.mybank.com." + (e.preset === "bank" ? " The bank then sees this router's internet, not a VPN. It covers the bank's app too on phones and tablets connected to this router, when the app uses the same website." : "")));
             if (sup.domains === "none" && sup.reason) body.push(h("div", { class: "tb-alert", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [h("b", "Saved, but waits for now. ")].concat(this.rDnsFix(h, sup, true)))]));
-            body.push(h("div", { class: "tb-help" }, "It matches the addresses the router looks up for that name, so other sites on the same addresses (big hosting providers) may skip tailbond too. Devices that use their own secure DNS (Private DNS on Android, Secure DNS in Chrome) may not be matched."));
+            body.push(h("div", { class: "tb-help" }, "It matches the addresses the router looks up for that name, so other sites on the same addresses (big hosting providers) may skip tailbond too. A device with its own secure DNS (Private DNS on Android, Secure DNS in Chrome) isn't matched: turn that off for this Wi-Fi on the device, or add the site's addresses as an address rule."));
             body.push(h("div", { class: "tb-help" }, "On this router a website rule covers every name under it; the tailbond phone app covers only the usual ones (www, login, …)."));
           } else if (e.kind === "device") {
             var taken = {};
@@ -1544,12 +1571,14 @@
             })));
             body.push(h("div", { class: "tb-label" }, "Not listed? Its MAC address"));
             body.push(h("input", { class: "tb-input", attrs: { placeholder: "aa:bb:cc:dd:ee:ff" }, domProps: { value: e.macTyped }, on: { input: function (ev) { e.macTyped = ev.target.value; e.mac = ""; e.ip = ""; e.name = ""; } } }));
-            body.push(h("div", { class: "tb-help" }, "Pick the device while it's connected here. On the laptop or phone, turn off “Private Wi-Fi address” for this router's Wi-Fi (Windows: “Random hardware addresses”; Android: use the device MAC), so it keeps the same address. If its address changes anyway, it goes through tailbond like everything else, but website rules then apply to it."));
+            body.push(h("div", { class: "tb-help" }, e.mac && e.name
+              ? "tailbond follows " + e.name + " by its name too, so the rule keeps working if it gets a new private Wi-Fi address."
+              : "A typed address is followed as it is: if the device switches to a new private Wi-Fi address, the rule stops matching it (and website rules then apply to it). Picking it from the list while it's connected also follows it by name."));
           } else {
             body.push(h("div", { class: "tb-label" }, "Addresses or ports"));
             body.push(h("input", { class: "tb-input", attrs: { placeholder: "e.g. 203.0.113.9, 203.0.113.0/24, udp/4500, tcp/5060-5061" }, domProps: { value: e.addr }, on: { input: function (ev) { e.addr = ev.target.value; } } }));
             body.push(h("div", { class: "tb-help" }, e.preset === "wificall"
-              ? "Phones place Wi-Fi calls over UDP ports 500 and 4500. Many carriers refuse them through a VPN, so these skip tailbond."
+              ? "Phones place Wi-Fi calls over UDP ports 500 and 4500. Many carriers refuse them through a VPN, so these skip tailbond. This also lets IPsec VPNs (some work VPNs) skip tailbond; for a work laptop, add a device rule set to “Always use tailbond”."
               : "Separate several with commas. A port looks like udp/4500 or tcp/5060-5061."));
           }
           // where it goes

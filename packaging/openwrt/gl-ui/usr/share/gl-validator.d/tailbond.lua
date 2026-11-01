@@ -7,4 +7,5 @@ return {
 	info = true,
 	service = { action = '^[a-z]+$' },
 	set_role = { role = '^[a-z]+$' },
+	set_kill_switch = true,
 }
