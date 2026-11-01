@@ -73,10 +73,11 @@ fun TailbondApp(
     val scope = rememberCoroutineScope()
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
-    val copy: (String) -> Unit = { text ->
+    val copyAs: (String, String) -> Unit = { text, said ->
         clipboard.setText(AnnotatedString(text))
-        scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar("Copied $text") }
+        scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar(said) }
     }
+    val copy: (String) -> Unit = { text -> copyAs(text, "Copied $text") }
     LaunchedEffect(startSnackbar) { startSnackbar?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Indefinite) } }
 
     val p = state.profile
@@ -189,11 +190,17 @@ fun TailbondApp(
         }
         state.serverProblem?.let { (name, check) ->
             Words.addProblem(name, check)?.let { (title, body) ->
+                val clash = check as? dev.tailbond.app.model.AddCheck.SubnetClash
                 AlertDialog(
                     onDismissRequest = actions::dismissServerProblem,
                     title = { Text(title) },
                     text = { Text(body) },
                     confirmButton = { TextButton(onClick = actions::dismissServerProblem) { Text("OK") } },
+                    dismissButton = clash?.let { c ->
+                        {
+                            TextButton(onClick = { copyAs(Words.clashMessage(name, c.existing, c.subnet), "Message copied: paste it into a chat with whoever runs $name") }) { Text("Copy a message to send them") }
+                        }
+                    },
                 )
             }
         }
@@ -224,7 +231,7 @@ fun HandoffDialog(kind: Handoff, state: UiState, actions: UiActions) {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "To go back later, tap Switch back to Tailscale on tailbond's main screen.",
+                    "To go back later, tap Hand the VPN back to Tailscale at the bottom of tailbond's main screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

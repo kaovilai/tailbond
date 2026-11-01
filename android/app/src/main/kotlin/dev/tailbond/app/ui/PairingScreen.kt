@@ -27,7 +27,9 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -87,7 +89,7 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
         Point(
             Icons.Filled.SwapHoriz,
             "One VPN at a time",
-            "Android allows one VPN app. While tailbond is on, Tailscale's VPN is off on this phone. Switch back to Tailscale any time.",
+            "Android allows one VPN app. While tailbond is on, Tailscale's VPN is off on this phone. Hand it back to Tailscale any time.",
         )
         Spacer(Modifier.height(8.dp))
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Get started") }
@@ -156,7 +158,13 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             )
         }
 
-        AskCard(state.ask, server, { server = it }, actions, adding, primary)
+        // machines the phone already knows from the server in use (its tailnet list), as one-tap suggestions
+        val known = state.servers.map { it.name.lowercase() }.toSet()
+        val suggestions = if (!adding) emptyList() else state.peers.list?.peers.orEmpty()
+            .filter { it.online && it.hostname.isNotBlank() && it.hostname.lowercase() !in known }
+            .sortedWith(compareBy({ it.os.lowercase() != "linux" }, { it.hostname.lowercase() }))
+            .take(8).map { it.hostname }
+        AskCard(state.ask, server, { server = it }, actions, adding, primary, suggestions)
         // after a failed ask the field shows the asked name; the page button uses it too
         val named = server.ifBlank { askedServer(state.ask) }
 
@@ -290,7 +298,15 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
 
 /** First choice while Tailscale still has the VPN: ask the home server, approve it there. */
 @Composable
-private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, actions: UiActions, adding: Boolean = false, primary: String = "") {
+private fun AskCard(
+    ask: AskState,
+    typed: String,
+    onServer: (String) -> Unit,
+    actions: UiActions,
+    adding: Boolean = false,
+    primary: String = "",
+    suggestions: List<String> = emptyList(),
+) {
     // after a failed try the field keeps (or gets back) the name that was asked
     val server = typed.ifBlank { askedServer(ask) }
     val busy = ask is AskState.Asking || ask is AskState.Waiting
@@ -302,7 +318,8 @@ private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, ac
             if (!busy) {
                 Text(
                     if (adding) "Type the other server's name as it appears in the Tailscale app, and tap Ask to connect. " +
-                        "This works while tailbond is on (through $primary) or with Tailscale on. Someone approves this phone on that server."
+                        "This works while tailbond is on (through $primary) or with Tailscale on. Then whoever runs that server " +
+                        "approves this phone at the top of its tailbond page (its name and :8077, e.g. http://vps:8077); tailbond waits and carries on by itself."
                     else "Keep Tailscale on for now. Type your home server's name as it appears in the Tailscale app, " +
                         "and tap Ask to connect. Someone approves this phone on the home server; that's it.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -316,6 +333,14 @@ private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, ac
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (suggestions.isNotEmpty()) {
+                    Text("Or tap one of your Tailscale machines to ask it:", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        suggestions.forEach { name ->
+                            AssistChip(onClick = { onServer(name); actions.askToConnect(name) }, label = { Text(name) })
+                        }
+                    }
+                }
             }
             if (msg != null) {
                 Row(verticalAlignment = Alignment.Top) {

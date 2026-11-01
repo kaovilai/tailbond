@@ -36,13 +36,15 @@ import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.RouteMode
 import dev.tailbond.app.model.ServerProfile
+import dev.tailbond.app.model.SwitchLog
+import dev.tailbond.app.model.SwitchRecord
 import dev.tailbond.app.model.TunnelPlan
 import dev.tailbond.app.model.WebsiteBypass
 import dev.tailbond.app.model.WebsiteBypassPlan
 import dev.tailbond.app.model.Words
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.ui.MainActivity
-import dev.tailbond.app.ui.formatBps
+import dev.tailbond.app.ui.notificationText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -133,6 +135,10 @@ class TailbondVpnService : MqvpnVpnService() {
                 endRun()
                 if (session != null) stopTunnel() else finish()
                 return START_NOT_STICKY
+            }
+            ACTION_RESUME_AUTO -> {
+                if (running) { engine?.resumeAutomatic(); publishFailover() } else if (session == null) stopSelf()
+                return if (running) START_STICKY else START_NOT_STICKY
             }
             ACTION_USE_SERVER -> {
                 val id = intent.getStringExtra(EXTRA_SERVER)
@@ -236,7 +242,15 @@ class TailbondVpnService : MqvpnVpnService() {
 
     private fun switchTo(sw: Switch) {
         val to = serverById(sw.to) ?: return
-        Log.i(TAG, "server switch ${sw.kind}: ${serverById(sw.from)?.name} -> ${to.name}")
+        val fromName = serverById(sw.from)?.name ?: sw.from
+        Log.i(TAG, "server switch ${sw.kind}: $fromName -> ${to.name}")
+        val reason = when (sw.kind) {
+            SwitchKind.FAILOVER -> SwitchLog.DOWN
+            SwitchKind.FAILBACK -> SwitchLog.BACK
+            SwitchKind.MANUAL -> SwitchLog.PICKED
+            SwitchKind.POLICY -> SwitchLog.SETTING
+        }
+        repo.addSwitch(SwitchRecord(System.currentTimeMillis(), fromName, to.name, reason))
         if (session != null) {
             pendingServer = to.id
             restartPending = true
@@ -565,8 +579,9 @@ class TailbondVpnService : MqvpnVpnService() {
             } else null
             val note = Words.serverNoteShort(lv.failover, servers.associate { it.id to it.name })
             notifyText(
-                getString(R.string.notif_connected, s2?.server?.name ?: getString(R.string.home_server)),
-                listOfNotNull(note, summary, "↓ ${formatBps(rxBps)}  ↑ ${formatBps(txBps)}").joinToString(" · "),
+                if (lv.state == ConnState.CONNECTED) getString(R.string.notif_connected, s2?.server?.name ?: getString(R.string.home_server))
+                else getString(R.string.state_connecting),
+                notificationText(note, summary, rxBps, txBps),
             )
         }
     }
@@ -643,6 +658,7 @@ class TailbondVpnService : MqvpnVpnService() {
         const val ACTION_CONNECT = "dev.tailbond.app.CONNECT"
         const val ACTION_DISCONNECT = "dev.tailbond.app.DISCONNECT"
         const val ACTION_USE_SERVER = "dev.tailbond.app.USE_SERVER"
+        const val ACTION_RESUME_AUTO = "dev.tailbond.app.RESUME_AUTO"
         const val EXTRA_SERVER = "server"
 
         /** VPN permission must already be granted (VpnService.prepare == null). */
@@ -654,6 +670,11 @@ class TailbondVpnService : MqvpnVpnService() {
 
         fun disconnect(ctx: Context) {
             ctx.startService(Intent(ctx, TailbondVpnService::class.java).setAction(ACTION_DISCONNECT))
+        }
+
+        /** "Go back to automatic" after "Use this server now". */
+        fun resumeAutomatic(ctx: Context) {
+            ctx.startService(Intent(ctx, TailbondVpnService::class.java).setAction(ACTION_RESUME_AUTO))
         }
 
         /** "Use this server now"; only acts while tailbond is on. */

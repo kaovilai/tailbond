@@ -40,8 +40,15 @@ object WebsiteBypass {
         return s
     }
 
-    /** Names looked up for a website: the name itself and its www. name. */
-    fun namesFor(domain: String): List<String> = listOf(domain, "www.$domain")
+    /**
+     * Usual sub-names looked up besides the website itself. A phone can only
+     * leave out addresses it looked up itself (no DNS interception inside the
+     * VPN), so it can't learn other sub-names; a travel router covers all of them.
+     */
+    val SUBNAMES = listOf("www", "login", "secure", "online", "auth", "account", "accounts", "my", "m", "app", "api")
+
+    /** Names looked up for a website: the name itself and its usual sub-names. */
+    fun namesFor(domain: String): List<String> = listOf(domain) + SUBNAMES.map { "$it.$domain" }
 
     /**
      * Excluded prefixes for resolved addresses: one /32 or /128 each, minus
@@ -98,7 +105,7 @@ object WebsiteBypass {
         Preset(
             "Banking",
             "Banks may block a login that seems to come from somewhere else. Type your bank's website in the box above, e.g. mybank.com " +
-                "(add login.mybank.com too if your bank signs you in there). Use your bank's app? Add the app under Apps that skip tailbond instead.",
+                "(its login., secure. and other usual names come with it). Use your bank's app? Add the app under Apps that skip tailbond instead.",
             emptyList(), "Bank",
         ),
         Preset(

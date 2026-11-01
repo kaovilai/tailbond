@@ -6,6 +6,8 @@ import androidx.core.content.edit
 import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.ServerList
 import dev.tailbond.app.model.ServerProfile
+import dev.tailbond.app.model.SwitchLog
+import dev.tailbond.app.model.SwitchRecord
 import dev.tailbond.app.pairing.PairingPayload
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +42,17 @@ class Repository private constructor(ctx: Context) {
     private val _peers = MutableStateFlow(prefs.getString(KEY_PEERS, null)?.let { PeerList.fromJson(it) })
     /** Last machine list from the home server (kept so it shows while disconnected). */
     val peers: StateFlow<PeerList?> = _peers.asStateFlow()
+
+    private val _switches = MutableStateFlow(SwitchLog.fromJson(prefs.getString(KEY_SWITCHES, null)))
+    /** The last server switches, newest first ("Recent switches"). */
+    val switches: StateFlow<List<SwitchRecord>> = _switches.asStateFlow()
+
+    @Synchronized
+    fun addSwitch(r: SwitchRecord) {
+        val next = SwitchLog.add(_switches.value, r)
+        prefs.edit { putString(KEY_SWITCHES, SwitchLog.toJson(next)) }
+        _switches.value = next
+    }
 
     fun savePeers(p: PeerList) {
         prefs.edit { putString(KEY_PEERS, p.toJson()) }
@@ -140,6 +153,7 @@ class Repository private constructor(ctx: Context) {
         /** One-server app's pairing; migrated to [KEY_SERVERS] on first load. */
         private const val KEY_PROFILE = "profile_sealed"
         private const val KEY_SERVERS = "servers_sealed"
+        private const val KEY_SWITCHES = "switches_json"
         private const val KEY_SETTINGS = "settings_json"
         private const val KEY_CELL_MONTH = "cell_month"
         private const val KEY_CELL_BYTES = "cell_bytes"

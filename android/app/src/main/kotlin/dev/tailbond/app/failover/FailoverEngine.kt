@@ -161,6 +161,9 @@ class FailoverEngine(
         return switchTo(id, SwitchKind.MANUAL)
     }
 
+    /** "Go back to automatic" after a manual pick: failback and failover rules apply again. */
+    fun resumeAutomatic() { manual = null }
+
     /** Whether the active server should change now; at most one switch per call. */
     fun tick(): Switch? {
         if (active !in ids) return switchTo(startServer(), SwitchKind.POLICY)

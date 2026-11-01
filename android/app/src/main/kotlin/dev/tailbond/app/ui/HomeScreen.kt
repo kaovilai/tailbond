@@ -45,6 +45,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -89,17 +90,8 @@ fun HomeScreen(
         item { StatusCard(state, actions) }
         if (live.state == ConnState.ERROR) item { ErrorCard(state, actions, onRepair) }
         if (state.wifiSignIn && state.settings.captivePrompts && state.settings.path(PathKind.WIFI).enabled) item { WifiSignInCard(state, actions) }
-        if (state.settings.handedToTailscale && live.state == ConnState.DISCONNECTED) {
-            item { HandedBackCard(state, actions) }
-        } else {
-            item {
-                OutlinedButton(onClick = actions::switchToTailscale, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                    Icon(Icons.Filled.SwapHoriz, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Switch back to Tailscale")
-                }
-            }
-        }
+        val handedBack = state.settings.handedToTailscale && live.state == ConnState.DISCONNECTED
+        if (handedBack) item { HandedBackCard(state, actions) }
 
         if (state.servers.size > 1) {
             item { SectionHeader("Servers") }
@@ -163,7 +155,15 @@ fun HomeScreen(
                 modifier = Modifier.clickable(onClick = onSettings),
             )
         }
-
+        // turns tailbond off: kept away from the status and failover notes
+        if (!handedBack) item {
+            ListItem(
+                headlineContent = { Text("Hand the VPN back to Tailscale") },
+                supportingContent = { Text("Turns tailbond off and opens the Tailscale app") },
+                leadingContent = { Icon(Icons.Filled.SwapHoriz, null) },
+                modifier = Modifier.clickable(onClick = actions::switchToTailscale),
+            )
+        }
     }
 }
 
@@ -228,8 +228,13 @@ private fun StatusCard(state: UiState, actions: UiActions) {
                     Column {
                         Text(note.line, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         note.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        val cardInk = androidx.compose.material3.LocalContentColor.current
                         note.action?.let { a ->
-                            Button(onClick = { actions.useServerNow(a.serverId) }, modifier = Modifier.padding(top = 8.dp)) { Text(a.label) }
+                            val run = { if (a.vpnSettings) actions.openVpnSettings() else a.serverId?.let { actions.useServerNow(it) } ?: Unit }
+                            if (a.filled) Button(onClick = run, modifier = Modifier.padding(top = 8.dp)) { Text(a.label) }
+                            else TextButton(onClick = run, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                                Text(a.label, color = cardInk, fontWeight = FontWeight.SemiBold, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
+                            }
                         }
                     }
                 }
@@ -417,7 +422,7 @@ private fun ThisDevice(state: UiState) {
                 )
                 Text(
                     if (ip != null) "Not a Tailscale address: your Tailscale machines see this phone as ${state.serverName} and allow it whatever they allow ${state.serverName}. " +
-                        "They can open connections to the phone at this address only if ${state.serverName}'s tailbond route is approved in the Tailscale admin console (your access rules apply)."
+                        "Optional: for them to open connections to this phone, approve ${state.serverName}'s tailbond route in the Tailscale admin console. Nothing else needs it."
                     else "This phone reaches your tailnet through ${state.serverName}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

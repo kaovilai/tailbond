@@ -50,6 +50,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val live = LiveState.live
     val profile = repo.profile
     val servers = repo.servers
+    val switches = repo.switches
 
     private val _target = MutableStateFlow<PairTarget?>(null)
     /** What the pairing screen is for (add a backup, pair one again); null = first pairing. */
@@ -265,6 +266,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             TailbondVpnService.useServer(getApplication(), id)
         }
     }
+
+    fun resumeAutomatic() = TailbondVpnService.resumeAutomatic(getApplication())
 
     fun setFailoverPolicy(policy: FailoverPolicy, server: String?) =
         repo.updateSettings { it.copy(failoverPolicy = policy, alwaysServerId = if (policy == FailoverPolicy.ALWAYS) server else null) }

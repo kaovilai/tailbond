@@ -168,6 +168,7 @@ class MainActivity : ComponentActivity() {
             vm.setPairTarget(target?.let { PairTarget.Replace(it) })
         }
         override fun useServerNow(id: String) = vm.useServerNow(id)
+        override fun resumeAutomatic() = vm.resumeAutomatic()
         override fun moveServer(id: String, delta: Int) = vm.moveServer(id, delta)
         override fun removeServer(id: String) = vm.removeServer(id)
         override fun setFailoverPolicy(policy: FailoverPolicy, server: String?) = vm.setFailoverPolicy(policy, server)
@@ -194,6 +195,7 @@ class MainActivity : ComponentActivity() {
             ask = vm.ask.collectAsStateWithLifecycle().value,
             wifiSignIn = vm.wifiSignIn.collectAsStateWithLifecycle().value,
             servers = vm.servers.collectAsStateWithLifecycle().value,
+            switches = vm.switches.collectAsStateWithLifecycle().value,
             pairTarget = vm.pairTarget.collectAsStateWithLifecycle().value,
             pendingTarget = vm.pendingTarget.collectAsStateWithLifecycle().value,
             serverProblem = vm.serverProblem.collectAsStateWithLifecycle().value,

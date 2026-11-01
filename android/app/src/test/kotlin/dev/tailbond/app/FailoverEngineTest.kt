@@ -186,6 +186,18 @@ class FailoverEngineTest {
         assertEquals(SwitchKind.FAILOVER, back?.kind)
     }
 
+    @Test fun goBackToAutomaticAfterAManualPick() {
+        val e = engine()
+        run(e, 5_000, { true })
+        e.useNow(vps)
+        assertNull(run(e, 5 * 60_000L, { true }, { true }))
+        e.resumeAutomatic()
+        assertEquals(FailoverReason.PRIMARY_DOWN, e.view().reason)
+        // homebox has been answering all along: the failback comes at the next tick
+        assertEquals(SwitchKind.FAILBACK, e.tick()?.kind)
+        assertEquals(home, e.active)
+    }
+
     @Test fun manualPrimaryAfterFailoverIsImmediate() {
         val e = engine()
         run(e, 20_000, { it == vps }, { false })

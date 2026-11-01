@@ -42,6 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.tailbond.app.failover.FailoverPolicy
+import dev.tailbond.app.failover.FailoverReason
+import dev.tailbond.app.model.SwitchLog
 import dev.tailbond.app.failover.ServerState
 import dev.tailbond.app.model.ServerProfile
 import dev.tailbond.app.model.Words
@@ -135,6 +137,14 @@ fun ServersSection(state: UiState, actions: UiActions, onRepair: (String) -> Uni
             Words.preferLabel(names), Words.preferExplain(names.first(), s),
             selected = s.failoverPolicy == FailoverPolicy.PREFER,
         ) { actions.setFailoverPolicy(FailoverPolicy.PREFER, null) }
+        val f = state.live.failover
+        if (on && s.failoverPolicy == FailoverPolicy.PREFER && f?.reason == FailoverReason.MANUAL) {
+            val picked = state.serverNames[f.activeId] ?: "a server"
+            Row(Modifier.padding(start = 56.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Paused: you picked $picked", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                TextButton(onClick = actions::resumeAutomatic) { Text("Go back to automatic") }
+            }
+        }
         servers.forEach { srv ->
             val selected = s.failoverPolicy == FailoverPolicy.ALWAYS && (s.alwaysServerId ?: servers.first().id) == srv.id
             PolicyRow("Always use ${srv.name}", "Never switches by itself.", selected) {
@@ -147,6 +157,18 @@ fun ServersSection(state: UiState, actions: UiActions, onRepair: (String) -> Uni
             color = muted,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
+
+        SectionHeader("Recent switches")
+        if (state.switches.isEmpty()) {
+            Hint("None yet.")
+        } else {
+            state.switches.take(SwitchLog.MAX).forEach { r ->
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 3.dp)) {
+                    Text(Words.dayTime(r.atMs), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.width(96.dp))
+                    Text(Words.switchText(r), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
     }
 
     removing?.let { s ->

@@ -37,7 +37,7 @@ object Words {
         ConnState.RECONNECTING -> "Lost touch with $server, trying again" + (live.message?.let { " ($it)" } ?: "")
         ConnState.ERROR -> "Stopped. See below for how to fix it."
         ConnState.DISCONNECTED ->
-            "Stopped. Turn on to reach $server and your Tailscale machines, or switch back to Tailscale below."
+            "Stopped. Turn on to reach $server and your Tailscale machines, or hand the VPN back to Tailscale below."
     }
 
     /** "Wi-Fi + mobile data": link kinds carrying traffic right now. */
@@ -133,7 +133,8 @@ object Words {
         servers.size > 1 && kind != ErrorKind.NOT_PAIRED -> ErrorText(
             "Can't reach any of your servers",
             "tailbond tried ${ServerList.joinNames(servers)} and none of them answered, so it stopped. " +
-                "Your phone is using its normal internet now, without tailbond. Try again in a moment; if it keeps happening, " +
+                "Your phone is using its normal internet now, without tailbond (Android's \"Block connections without VPN\" stops that; see Settings). " +
+                "Try again in a moment; if it keeps happening, " +
                 "tell whoever set up your servers that ${if (servers.size == 2) "neither ${servers[0]} nor ${servers[1]}" else "none of ${ServerList.joinNames(servers)}"} answers.",
             Fix.RETRY,
         )
@@ -190,8 +191,8 @@ object Words {
         java.time.Instant.ofEpochMilli(wallMs).atZone(java.time.ZoneId.systemDefault()).toLocalTime()
             .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
 
-    /** A button next to the failover note: switch to [serverId] now (or stay on it). */
-    data class NoteAction(val label: String, val serverId: String)
+    /** A button with the failover note: switch to [serverId] (or stay on it), or open Android's VPN settings. */
+    data class NoteAction(val label: String, val serverId: String?, val vpnSettings: Boolean = false, val filled: Boolean = false)
 
     /** The failover note: [line] in bold, [detail] under it, an optional button. */
     data class ServerNote(val line: String, val detail: String? = null, val action: NoteAction? = null)
@@ -219,14 +220,16 @@ object Words {
         if (switching && f.reason != FailoverReason.MANUAL) {
             return ServerNote(
                 "Switching to $active… ($primary isn't answering)",
-                "For these few seconds apps use the phone's own connection, unless Android's \"Block connections without VPN\" is on.",
+                "For these few seconds your phone uses its normal internet, unless Android's \"Block connections without VPN\" " +
+                    "is on (recommended with backup servers).",
+                NoteAction("Open Android VPN settings", null, vpnSettings = true),
             )
         }
         return when (f.reason) {
             FailoverReason.MANUAL -> ServerNote(
                 "Using $active$since (you picked it)",
                 "Stays on $active until you pick $primary or $active stops working.",
-                NoteAction("Go back to $primary", primaryId),
+                NoteAction("Go back to $primary", primaryId, filled = true),
             )
             FailoverReason.POLICY -> ServerNote("Always using $active", "You chose this in Settings → When to switch.")
             else -> {
@@ -234,7 +237,7 @@ object Words {
                 if (fb != null && f.failbackInMs != null) {
                     ServerNote(
                         "Using $active$since (${n(fb)} is answering again)",
-                        "Back to ${n(fb)} in ${mmss(f.failbackInMs)}. Calls may pause for a few seconds then.",
+                        "Back to ${n(fb)} in ${mmss(f.failbackInMs)}. Calls may pause for a few seconds then. Nothing to do.",
                         NoteAction("Stay on $active", f.activeId),
                     )
                 } else {
@@ -296,11 +299,48 @@ object Words {
         is AddCheck.Duplicate -> "$newName is already in your list" to
             "This phone already has ${c.existing}. To renew its pairing, use Pair again next to ${c.existing} in Settings."
         is AddCheck.SubnetClash -> "$newName uses the same addresses as ${c.existing}" to
-            "Both servers use ${c.subnet} inside the tunnel, so tailbond can't switch between them. " +
-            "On $newName, change \"subnet\" under \"server\" in /etc/tailbond/tailbond.json to a free range such as 10.78.0.0/24 " +
-            "and restart tailbond there (or ask whoever runs $newName), then add it again. " +
-            "Asking over Tailscale does this by itself while $newName has no other devices."
+            "${c.existing} keeps working; nothing changed on this phone. Both servers use ${c.subnet} inside the tunnel, so " +
+            "tailbond can't switch between them. A new server with no devices yet moves to a free range by itself when you " +
+            "ask it over Tailscale. $newName didn't (it already has devices, or it came from a link or code), so whoever runs " +
+            "$newName needs to change its range, then you add it again. Copy a message to send them."
     }
+
+    /** The message "Copy a message to send them" puts on the clipboard for a subnet clash. */
+    fun clashMessage(newName: String, existing: String, subnet: Cidr): String =
+        "Hi! Could you change tailbond's tunnel range on $newName? It uses $subnet, the same as $existing, so my phone " +
+            "can't use both. Pick a free range such as 10.78.0.0/24: on a VPS installed with install.sh, run it again with " +
+            "--subnet 10.78.0.0/24; on a GL.iNet router, use the tailbond panel or " +
+            "uci set tailbond.server.subnet=10.78.0.0/24; otherwise set \"subnet\" under \"server\" in " +
+            "/etc/tailbond/tailbond.json. Then restart tailbond there. Thanks!"
+
+    // --- recent switches ---
+
+    /** "14:02" today, "Oct 31, 14:02" before. */
+    fun dayTime(ms: Long, nowMs: Long = System.currentTimeMillis()): String {
+        val zone = java.time.ZoneId.systemDefault()
+        val t = java.time.Instant.ofEpochMilli(ms).atZone(zone)
+        val today = java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+        val hm = t.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+        return if (t.toLocalDate() == today) hm else t.format(java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.ENGLISH)) + ", " + hm
+    }
+
+    /** "homebox → vps: homebox stopped answering". */
+    fun switchText(r: SwitchRecord): String = "${r.from} → ${r.to}: " + when (r.reason) {
+        SwitchLog.DOWN -> "${r.from} stopped answering"
+        SwitchLog.BACK -> "${r.to} was working again"
+        SwitchLog.PICKED -> "you picked ${r.to}"
+        else -> "your setting changed"
+    }
+
+    // --- staying protected ---
+
+    /** Settings: what Android's "Block connections without VPN" does here. */
+    fun blockAdvice(multi: Boolean): String =
+        if (multi) "Recommended with backup servers: also turn on \"Block connections without VPN\". Then apps wait instead of " +
+            "using the phone's normal internet for the few seconds tailbond switches servers, or while it can't reach any. " +
+            "With it on, hotel Wi-Fi sign-in pages can't open and you can't hand the VPN back to Tailscale: turn it off for those."
+        else "\"Block connections without VPN\" keeps apps off the phone's normal internet whenever tailbond isn't connected. " +
+            "With it on, hotel Wi-Fi sign-in pages can't open and you can't hand the VPN back to Tailscale: turn it off for those."
 
     // --- internet traffic ---
 
@@ -321,7 +361,18 @@ object Words {
     // --- website bypass ---
 
     /** What a website rule covers, for its row. */
-    fun websiteCovers(domain: String): String = "$domain and www.$domain"
+    fun websiteCovers(domain: String): String =
+        "$domain and its usual names (" + WebsiteBypass.SUBNAMES.take(4).joinToString(", ") { "$it." } + " …)"
+
+    /** The full list of names a rule covers. */
+    fun websiteNames(domain: String): String = WebsiteBypass.namesFor(domain).joinToString(", ")
+
+    const val WEBSITES_OTHER_NAMES =
+        "Other names aren't covered: add them as their own website, or put the bank's app in Apps that skip tailbond. " +
+            "(A tailbond travel router covers every name under a website; a phone can only cover names it looks up itself.)"
+
+    const val WEBSITES_ON_ROUTER =
+        "On a tailbond travel router's Wi-Fi, these phone rules apply first; the router's own rules then treat the phone like any other device."
 
     fun websitesSummary(s: AppSettings, sdkInt: Int): String = when {
         !WebsiteBypass.supported(sdkInt) -> "Needs Android 13 or newer"

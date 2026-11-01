@@ -33,7 +33,12 @@ class WebsiteBypassTest {
         assertNull(WebsiteBypass.normalize("203.0.113.7"))
         assertNull(WebsiteBypass.normalize("bad_name.com"))
         assertNull(WebsiteBypass.normalize(""))
-        assertEquals(listOf("bank.example", "www.bank.example"), WebsiteBypass.namesFor("bank.example"))
+        val names = WebsiteBypass.namesFor("bank.example")
+        assertEquals("bank.example", names.first())
+        for (sub in listOf("www", "login", "secure", "online", "auth", "account", "accounts", "my", "m", "app", "api")) {
+            assertTrue(sub, "$sub.bank.example" in names)
+        }
+        assertEquals(12, names.size)
     }
 
     @Test fun resolvedAddressesBecomeHostPrefixes() {

@@ -16,6 +16,26 @@ data class ServerProfile(val id: String, val payload: PairingPayload) {
     val subnet: Cidr get() = ServerList.subnetOf(payload)
 }
 
+/** One server switch, kept for "Recent switches" (newest first, at most [SwitchLog.MAX]). */
+@Serializable
+data class SwitchRecord(val atMs: Long, val from: String, val to: String, val reason: String)
+
+object SwitchLog {
+    const val MAX = 20
+    /** [reason] values: why the server changed. */
+    const val DOWN = "down"
+    const val BACK = "back"
+    const val PICKED = "picked"
+    const val SETTING = "setting"
+
+    private val json = Json { ignoreUnknownKeys = true }
+    private val ser = ListSerializer(SwitchRecord.serializer())
+
+    fun add(list: List<SwitchRecord>, r: SwitchRecord): List<SwitchRecord> = (listOf(r) + list).take(MAX)
+    fun toJson(list: List<SwitchRecord>): String = json.encodeToString(ser, list)
+    fun fromJson(s: String?): List<SwitchRecord> = s?.let { runCatching { json.decodeFromString(ser, it) }.getOrNull() } ?: emptyList()
+}
+
 /** Why a server can't join the list. */
 sealed interface AddCheck {
     data object Ok : AddCheck

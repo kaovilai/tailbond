@@ -11,7 +11,12 @@ import dev.tailbond.app.model.AddCheck
 import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.Cidr
 import dev.tailbond.app.model.ServerProfile
+import dev.tailbond.app.data.PeerNode
+import dev.tailbond.app.model.SwitchLog
+import dev.tailbond.app.model.SwitchRecord
 import dev.tailbond.app.model.WebsiteRule
+import dev.tailbond.app.model.Words
+import dev.tailbond.app.ui.notificationText
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.ErrorKind
@@ -25,6 +30,11 @@ import dev.tailbond.app.ui.UiState
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -54,6 +64,10 @@ class BypassFailoverScreens : UxRender() {
         ),
     )
     private val now = 1_000_000L
+    /** The tailnet list from homebox, which also has vps (the add-server page suggests it). */
+    private val peersWithVps = UxFixtures.peers.copy(
+        peers = (UxFixtures.peers.peers + PeerNode("vps", "vps.tail1234.ts.net", listOf("100.101.9.9"), "linux", true)).sortedBy { it.hostname },
+    )
 
     private fun view(
         active: String,
@@ -75,16 +89,37 @@ class BypassFailoverScreens : UxRender() {
     )
 
     /** Today at [h]:[m] in the renderer's time zone, so the PNGs say "since 14:02". */
-    private fun at(h: Int, m: Int) = LocalDate.of(2026, 11, 1).atTime(h, m).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    /** Today at [h]:[m] (so the history reads "14:02", like the home card), or [daysAgo] days earlier. */
+    private fun at(h: Int, m: Int, daysAgo: Long = 0) =
+        LocalDate.now().minusDays(daysAgo).atTime(h, m).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    // one story: yesterday's blip, homebox down at 14:02, back at 14:20, vps picked by hand at 15:10
+    private val yesterday = listOf(
+        SwitchRecord(at(9, 40, 1), "vps", "homebox", SwitchLog.BACK),
+        SwitchRecord(at(9, 15, 1), "homebox", "vps", SwitchLog.DOWN),
+    )
+    private val down1402 = SwitchRecord(at(14, 2), "homebox", "vps", SwitchLog.DOWN)
+    private val back1420 = SwitchRecord(at(14, 20), "vps", "homebox", SwitchLog.BACK)
+    private val picked1510 = SwitchRecord(at(15, 10), "homebox", "vps", SwitchLog.PICKED)
+    private val onVpsLog = listOf(down1402) + yesterday
+    private val backLog = listOf(back1420, down1402) + yesterday
+    private val pickedLog = listOf(picked1510, back1420, down1402) + yesterday
     private val toVps = Switch("v", "h", SwitchKind.FAILOVER, now - 25 * 60_000L)
 
-    private fun state(live: Live, f: FailoverView?, servers: List<ServerProfile> = listOf(home, vps), s: AppSettings = settings) = UiState(
+    private fun state(
+        live: Live,
+        f: FailoverView?,
+        servers: List<ServerProfile> = listOf(home, vps),
+        s: AppSettings = settings,
+        log: List<SwitchRecord> = onVpsLog,
+    ) = UiState(
+        switches = if (servers.size > 1) log else emptyList(),
         profile = servers.first().payload,
         servers = servers,
         settings = s,
         live = live.copy(failover = f),
         cellularBytes = 1_230_000_000,
-        peers = PeersUi(UxFixtures.peers),
+        peers = PeersUi(peersWithVps),
         tailscaleInstalled = true,
     )
 
@@ -110,13 +145,36 @@ class BypassFailoverScreens : UxRender() {
     @Test fun usingBackup() = app("41-home-using-vps-homebox-unreachable", state(onVps, usingVps), tall = 1150)
     @Test fun usingBackupNotification() = app("41b-home-using-vps-first-screen", state(onVps, usingVps))
     @Test fun failingBack() = app("42-home-back-to-homebox-in-1-20", state(onVps, failingBack), tall = 1150)
-    @Test fun backOnPrimary() = app("43-home-back-on-homebox", state(UxFixtures.connectedBoth, backOn))
+    @Test fun backOnPrimary() = app("43-home-back-on-homebox", state(UxFixtures.connectedBoth, backOn, log = backLog))
     @Test fun switching() = app(
         "43b-home-switching-to-vps",
         state(Live(state = ConnState.CONNECTING), view("v", ServerState.UNREACHABLE, ServerState.CONNECTING, FailoverReason.PRIMARY_DOWN, last = Switch("v", "h", SwitchKind.FAILOVER, now - 3_000), since = at(14, 2))),
     )
-    @Test fun pickedBackup() = app("41c-home-using-vps-you-picked-it", state(onVps, pickedVps))
+    @Test fun pickedBackup() = app("41c-home-using-vps-you-picked-it", state(onVps, pickedVps, log = pickedLog))
     @Test fun settingsCountdown() = app("44c-settings-servers-homebox-answering-again", state(onVps, failingBack), tall = 1300, route = Routes.SETTINGS)
+    @Test fun settingsPaused() = app(
+        "44d-settings-servers-paused-you-picked-vps", state(onVps, pickedVps, log = pickedLog), tall = 1500, route = Routes.SETTINGS,
+    )
+
+    // the tunnel notification, drawn like Android's shade with the service's own text
+    @Test fun notificationOnVps() = shot("41d-notification-using-vps") {
+        NotificationMock(
+            listOf(
+                "Connected through vps" to notificationText(
+                    Words.serverNoteShort(usingVps, mapOf("h" to "homebox", "v" to "vps")),
+                    "Using both Wi-Fi and mobile data", 61_100_000, 7_000_000,
+                ),
+                "Connected through vps" to notificationText(
+                    Words.serverNoteShort(failingBack, mapOf("h" to "homebox", "v" to "vps")),
+                    "Using both Wi-Fi and mobile data", 58_300_000, 6_400_000,
+                ),
+                "Connected through homebox" to notificationText(
+                    Words.serverNoteShort(backOn, mapOf("h" to "homebox", "v" to "vps")),
+                    "Using both Wi-Fi and mobile data", 63_900_000, 7_800_000,
+                ),
+            ),
+        )
+    }
     @Test fun allDown() = app(
         "49-home-error-no-server-reachable",
         state(UxFixtures.errorTimeout.copy(errorKind = ErrorKind.UNREACHABLE), view("v", ServerState.UNREACHABLE, ServerState.CONNECTING, FailoverReason.PRIMARY_DOWN)),
@@ -184,4 +242,28 @@ class BypassFailoverScreens : UxRender() {
         "48-settings-skip-rows-android-12",
         state(UxFixtures.connectedBoth, null, servers = listOf(home)).copy(sdkInt = 32), tall = 1500, route = Routes.SETTINGS,
     )
+}
+
+/** A notification as Android's shade shows it (renders only; the text comes from the service's own builder). */
+@androidx.compose.runtime.Composable
+private fun NotificationMock(items: List<Pair<String, String>>) {
+    androidx.compose.foundation.layout.Column(
+        androidx.compose.ui.Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF1F1F23)).padding(12.dp),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+    ) {
+        androidx.compose.material3.Text("14:30  ·  notifications, three moments", color = androidx.compose.ui.graphics.Color(0xFFBBBBBB), style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+        items.forEach { (title, text) ->
+            androidx.compose.material3.Card(
+                colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color(0xFF2E2E33)),
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+            ) {
+                androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(14.dp)) {
+                    androidx.compose.material3.Text("tailbond", color = androidx.compose.ui.graphics.Color(0xFFAAB4FF), style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                    androidx.compose.material3.Text(title, color = androidx.compose.ui.graphics.Color.White, style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                    androidx.compose.material3.Text(text, color = androidx.compose.ui.graphics.Color(0xFFDDDDDD), style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
+                    androidx.compose.material3.Text("Disconnect", color = androidx.compose.ui.graphics.Color(0xFFAAB4FF), style = androidx.compose.material3.MaterialTheme.typography.labelLarge, modifier = androidx.compose.ui.Modifier.padding(top = 8.dp))
+                }
+            }
+        }
+    }
 }

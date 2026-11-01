@@ -6,6 +6,7 @@ import dev.tailbond.app.failover.FailoverPolicy
 import dev.tailbond.app.model.AddCheck
 import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.ServerProfile
+import dev.tailbond.app.model.SwitchRecord
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.PathSetting
@@ -60,6 +61,8 @@ data class UiState(
     val pendingTarget: PairTarget? = null,
     /** A server that can't be added: its name and why. */
     val serverProblem: Pair<String, AddCheck>? = null,
+    /** The last server switches, newest first. */
+    val switches: List<SwitchRecord> = emptyList(),
     /** Build.VERSION.SDK_INT (renders fake older phones). */
     val sdkInt: Int = 35,
 ) {
@@ -124,6 +127,8 @@ interface UiActions {
     /** Opens the pairing screen to pair [id] again (null: the server in use). */
     fun startRepair(id: String?) {}
     fun useServerNow(id: String) {}
+    /** "Go back to automatic" after picking a server by hand. */
+    fun resumeAutomatic() {}
     fun moveServer(id: String, delta: Int) {}
     fun removeServer(id: String) {}
     fun setFailoverPolicy(policy: FailoverPolicy, server: String?) {}

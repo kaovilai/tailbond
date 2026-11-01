@@ -76,7 +76,8 @@ fun WebsitesScreen(state: UiState, actions: UiActions, onApps: () -> Unit, modif
                         Text(
                             "This phone runs an older Android, which can't let single websites skip a VPN. " +
                                 "Use Apps that skip tailbond instead and pick the app, such as your bank's app. " +
-                                "Everything that app does then skips tailbond, so for a browser use a separate one just for banking.",
+                                "Everything that app does then skips tailbond. No bank app? Install a second browser (for example Firefox " +
+                                "from the Play Store), use it only for your bank's website, and pick that browser.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(onClick = onApps) {
@@ -129,7 +130,7 @@ fun WebsitesScreen(state: UiState, actions: UiActions, onApps: () -> Unit, modif
         }
         item {
             Text(
-                Words.WEBSITES_LIMIT,
+                Words.WEBSITES_LIMIT + " " + Words.WEBSITES_ON_ROUTER,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -184,8 +185,8 @@ fun AddWebsiteDialog(
                     Text(
                         when {
                             bad -> "Type a website name like mybank.com"
-                            typed != null -> "Covers ${Words.websiteCovers(typed)} only; add other names (like login.$typed) separately"
-                            else -> "Covers the name and its www. name only; add other names (like login.mybank.com) separately"
+                            typed != null -> "Covers ${Words.websiteCovers(typed)}"
+                            else -> "Covers the name and its usual names (www., login., secure., my., app. …)"
                         },
                     )
                 },
@@ -202,6 +203,7 @@ fun AddWebsiteDialog(
                     )
                 }
             }
+            Text(Words.WEBSITES_OTHER_NAMES, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             preset?.let { p ->
                 Text(p.explain, style = MaterialTheme.typography.bodyMedium)
                 if (p.domains.isEmpty() && p.note.isNotEmpty()) {

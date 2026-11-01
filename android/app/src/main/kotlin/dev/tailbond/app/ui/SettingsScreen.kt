@@ -105,13 +105,14 @@ fun SettingsScreen(
             modifier = Modifier.clickable(onClick = onWebsites),
         )
         ListItem(
-            headlineContent = { Text("Switch back to Tailscale") },
+            headlineContent = { Text("Hand the VPN back to Tailscale") },
             supportingContent = { Text(if (state.tailscaleInstalled) "Turns tailbond off and opens the Tailscale app. Turn Tailscale on there if it says Disconnected" else "Turns tailbond off. Tailscale isn't installed: opens its store page") },
             leadingContent = { Icon(Icons.Filled.SwapHoriz, null) },
             modifier = Modifier.clickable(onClick = actions::switchToTailscale),
         )
 
-        SectionHeader("Keep tailbond on all the time (optional)")
+        val multi = state.servers.size > 1
+        SectionHeader(if (multi) "Keep tailbond on all the time (recommended)" else "Keep tailbond on all the time (optional)")
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 "To keep tailbond on all the time, turn on Always-on VPN for tailbond in Android's VPN settings. " +
@@ -119,13 +120,13 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "Leave \"Block connections without VPN\" off if you want to switch back to Tailscale easily.",
-                style = MaterialTheme.typography.bodySmall,
-                color = muted,
+                Words.blockAdvice(multi),
+                style = if (multi) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                color = if (multi) MaterialTheme.colorScheme.onSurface else muted,
             )
             OutlinedButton(onClick = actions::openVpnSettings) {
                 Icon(Icons.Filled.VpnKey, null)
-                Text("  Open VPN settings")
+                Text("  Open Android VPN settings")
             }
         }
 

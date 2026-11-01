@@ -13,6 +13,8 @@ import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.Cidr
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.RouteMode
+import dev.tailbond.app.model.SwitchLog
+import dev.tailbond.app.model.SwitchRecord
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.Words
 import dev.tailbond.app.model.Words.LinkStatus
@@ -134,11 +136,13 @@ class WordsTest {
         val manual = note(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.MANUAL))!!
         assertEquals("Using vps (you picked it)", manual.line)
         assertEquals("Stays on vps until you pick homebox or vps stops working.", manual.detail)
-        assertEquals(Words.NoteAction("Go back to homebox", "h"), manual.action)
+        assertEquals(Words.NoteAction("Go back to homebox", "h", filled = true), manual.action)
         assertEquals("Always using vps", note(view("v", ServerState.STANDBY, ServerState.ACTIVE, FailoverReason.POLICY))?.line)
 
         val switching = view("v", ServerState.UNREACHABLE, ServerState.CONNECTING, last = Switch("v", "h", SwitchKind.FAILOVER, 1_000_000 - 3_000))
         assertEquals("Switching to vps… (homebox isn't answering)", note(switching)?.line)
+        assertTrue(note(switching)!!.action!!.vpnSettings)
+        assertFalse(counting.action!!.filled) // the countdown is the message; staying is a quiet option
         assertNull(Words.serverNote(null, names))
     }
 
@@ -165,8 +169,13 @@ class WordsTest {
     @Test fun addProblemsSayWhatToDo() {
         val clash = Words.addProblem("vps", AddCheck.SubnetClash("homebox", Cidr("10.77.0.0", 24), Cidr("10.77.0.0", 24)))!!
         assertEquals("vps uses the same addresses as homebox", clash.first)
-        assertTrue(clash.second.contains("\"subnet\" under \"server\""))
+        assertTrue(clash.second.contains("homebox keeps working"))
         assertTrue(clash.second.contains("10.77.0.0/24"))
+        assertTrue(clash.second.contains("no devices yet moves to a free range by itself"))
+        val msg = Words.clashMessage("vps", "homebox", Cidr("10.77.0.0", 24))
+        assertTrue(msg.contains("--subnet 10.78.0.0/24"))
+        assertTrue(msg.contains("uci set tailbond.server.subnet=10.78.0.0/24"))
+        assertTrue(msg.contains("\"subnet\" under \"server\""))
         assertNull(Words.addProblem("vps", AddCheck.Ok))
         assertTrue(Words.addProblem("homebox", AddCheck.Duplicate("homebox"))!!.second.contains("Pair again"))
     }
@@ -183,5 +192,28 @@ class WordsTest {
     @Test fun websitesSummaryNamesTheAndroidLimit() {
         assertEquals("Needs Android 13 or newer", Words.websitesSummary(AppSettings(), 32))
         assertEquals("None", Words.websitesSummary(AppSettings(), 33))
+    }
+
+    @Test fun recentSwitches() {
+        var log = emptyList<SwitchRecord>()
+        repeat(25) { i -> log = SwitchLog.add(log, SwitchRecord(i.toLong(), "homebox", "vps", SwitchLog.DOWN)) }
+        assertEquals(SwitchLog.MAX, log.size)
+        assertEquals(24L, log.first().atMs) // newest first
+        assertEquals(log, SwitchLog.fromJson(SwitchLog.toJson(log)))
+        assertEquals(emptyList<SwitchRecord>(), SwitchLog.fromJson("nope"))
+        assertEquals("homebox → vps: homebox stopped answering", Words.switchText(SwitchRecord(0, "homebox", "vps", SwitchLog.DOWN)))
+        assertEquals("vps → homebox: homebox was working again", Words.switchText(SwitchRecord(0, "vps", "homebox", SwitchLog.BACK)))
+        assertEquals("homebox → vps: you picked vps", Words.switchText(SwitchRecord(0, "homebox", "vps", SwitchLog.PICKED)))
+        val zone = java.time.ZoneId.systemDefault()
+        val day = java.time.LocalDate.of(2026, 10, 21)
+        val t = day.atTime(14, 2).atZone(zone).toInstant().toEpochMilli()
+        val before = day.minusDays(1).atTime(14, 2).atZone(zone).toInstant().toEpochMilli()
+        assertEquals("14:02", Words.dayTime(t, t + 3_600_000))
+        assertEquals("Oct 20, 14:02", Words.dayTime(before, t))
+    }
+
+    @Test fun blockConnectionsIsRecommendedWithBackups() {
+        assertTrue(Words.blockAdvice(multi = true).startsWith("Recommended with backup servers"))
+        assertFalse(Words.blockAdvice(multi = false).contains("Recommended"))
     }
 }

@@ -116,7 +116,7 @@ Laid out like the official Tailscale app (`ui/HomeScreen.kt`):
 
 - **Top bar**: the home server's name and "via home server · <tailnet>", gear → Settings.
 - **Status card**: one big switch; *Connected* / *Connecting…* / *Reconnecting…* /
-  *Disconnected* ("Stopped. …"). Below it, **Switch back to Tailscale**.
+  *Disconnected* ("Stopped. …"). **Hand the VPN back to Tailscale** is the last row of the main screen.
 - **Errors** say what happened and offer the fix: home server unreachable →
   check it's on / the router forwards UDP 443 → *Try again*; certificate
   mismatch → *Try again* or *Pair again*; key rejected → *Pair again*.
@@ -140,7 +140,7 @@ Laid out like the official Tailscale app (`ui/HomeScreen.kt`):
 
 **VPN handoff**: before Android's own VPN dialog the app explains that turning
 tailbond on turns off Tailscale (shown when another VPN is up, or on the first
-connect). **Switch back to Tailscale** stops tailbond, remembers that choice
+connect). **Hand the VPN back to Tailscale** (at the bottom of the main screen) stops tailbond, remembers that choice
 (`handedToTailscale`; cleared the next time tailbond starts) and opens
 `com.tailscale.ipn` (declared in `<queries>`), or its store page.
 
@@ -264,6 +264,15 @@ failover](architecture.md#multiple-servers-and-failover).
   A server that fails before connecting (no answer, wrong certificate, key
   refused) is retried every 3 s until the 15 s are up; when every server has
   failed that way in a row, tailbond stops and says so, like with one server.
+- **Staying protected**: during a switch (a few seconds) and when no server
+  answers, Android sends apps over the phone's normal internet unless its
+  *Block connections without VPN* is on. With backup servers Settings
+  recommends turning it on (with an *Open Android VPN settings* button), and
+  the switching note links there. It also blocks hotel Wi-Fi sign-in pages
+  and handing the VPN back to Tailscale, so turn it off for those.
+- **Recent switches**: the app keeps the last 20 (time, from, to, why) and
+  lists them under the servers in Settings. After *Use this server now*,
+  "When to switch" shows "Paused: you picked vps" with *Go back to automatic*.
 - **Wording**: the home card says "Using vps since 14:02 (homebox is
   unreachable)", "Back to homebox in 1:20" while counting down (with **Stay
   on vps**), "Using vps since 15:10 (you picked it)" (with **Go back to
@@ -281,7 +290,8 @@ Two ways to let traffic use the phone's own connection instead of tailbond:
   left out of the VPN (`addDisallowedApplication`). The surest way: it covers
   everything the app does.
 - **Websites that skip tailbond** (**Android 13 or newer** only): the app
-  looks up each website and its `www.` name through the tunnel's DNS when the
+  looks up each website and its usual sub-names (`www`, `login`, `secure`,
+  `online`, `auth`, `account(s)`, `my`, `m`, `app`, `api`) through the tunnel's DNS when the
   tunnel comes up and every 10 minutes (`data/DnsLookup.kt`), and leaves those
   addresses out of the VPN with `VpnService.Builder.excludeRoute`. Addresses
   in the server's subnet, its DNS and the tailnet ranges stay in the tunnel.
@@ -295,9 +305,12 @@ Two ways to let traffic use the phone's own connection instead of tailbond:
   `netflix.com`, `nflxvideo.net`; for a streaming app, skip the app instead),
   **Wi-Fi calling** (nothing to add: the phone's own Wi-Fi calling already
   goes straight over Wi-Fi; calling apps are apps).
-  Each website covers its name and its `www.` name only (Android can only
-  leave out addresses it looked up itself, so it can't know
-  `login.mybank.com` in advance): add other names as their own rows. The
+  A rule covers exactly those names (Android can only leave out addresses it
+  looked up itself, with no DNS interception inside the VPN, so it can't learn
+  other sub-names); add other names as their own rows, or put the bank's app
+  in *Apps that skip tailbond*. A tailbond travel router covers every name
+  under a website. On a tailbond travel router's Wi-Fi the phone's own rules
+  apply first; the router's rules then treat the phone like any other device. The
   lookups are answered by the server in use, so a site may pick its servers
   for where that server is rather than where the phone is.
   The limit, as the page says it: it goes by addresses, so parts of a site
@@ -334,7 +347,9 @@ you don't turn tailbond off. Once Android validates the Wi-Fi, the monitor
 offers it and it joins the bond by itself. The prompt can be turned off in
 Settings (**Tell me when Wi-Fi needs a sign-in**); bonding never uses an
 unvalidated Wi-Fi either way. With "Block connections without VPN" on,
-Android's sign-in can't load, so leave it off ([setup tips](setup-tips.md)).
+Android's sign-in can't load: turn it off while you sign in, then on again
+(it's recommended with backup servers, see [Servers and failover](#servers-and-failover);
+[setup tips](setup-tips.md)).
 
 ## Known limitations
 

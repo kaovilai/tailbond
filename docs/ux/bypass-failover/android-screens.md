@@ -3,7 +3,9 @@
 Phone screenshots (1080x2400 unless the page is long, then the whole
 scrolling page). `-dark` = same screen in dark theme. The data is a test
 fixture: the phone has two servers, **homebox** (at home, the main one) and
-**vps** (a rented server, the backup).
+**vps** (a rented server, the backup). One story runs through the screens:
+yesterday a short switch at 09:15–09:40; today homebox stopped answering at
+14:02, tailbond went back to it at 14:20, and at 15:10 vps was picked by hand.
 
 Renders: `out/ux/bypass-failover/android/` (not committed), from
 `android/app/src/test/kotlin/dev/tailbond/app/ux/BypassFailoverScreens.kt`:
@@ -17,13 +19,15 @@ android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.By
 |---|---|
 | 40-home-on-homebox-vps-on-standby (+ -dark) | Main screen, connected through homebox; vps waits as a backup |
 | 41-home-using-vps-homebox-unreachable (+ 41b first screen only) | homebox stopped answering at 14:02; tailbond switched to vps by itself |
-| 41c-home-using-vps-you-picked-it | After tapping "Use this server now" on vps in Settings |
+| 41c-home-using-vps-you-picked-it | After tapping "Use this server now" on vps in Settings (at 15:10) |
+| 41d-notification-using-vps | The phone's notification at three moments: on vps, counting down, back on homebox (drawn like Android's notification shade, with the app's own text) |
 | 42-home-back-to-homebox-in-1-20 | homebox answers again; tailbond goes back to it after a countdown (or stays on vps if asked) |
 | 43-home-back-on-homebox | Shortly after it went back (at 14:20) |
 | 43b-home-switching-to-vps | The few seconds while it switches |
 | 49-home-error-no-server-reachable | Neither server works (phone offline, or both down) |
 | 44-settings-servers (+ -dark) | After tapping the gear icon, while on vps |
 | 44c-settings-servers-homebox-answering-again | Same page during the countdown back to homebox |
+| 44d-settings-servers-paused-you-picked-vps | Settings after picking vps by hand, with the recent switches |
 | 44b-settings-one-server-add-backup | Same page for someone with one server |
 | 45-add-another-server | After tapping "Add a backup server" / "Add another server" |
 | 45b-add-another-server-confirm | After vps approved the request |
@@ -50,3 +54,16 @@ one line on how switching decides; website rows and the dialog say which
 names they cover; the refresh blip is described; Android 12 warns that the
 whole app skips tailbond; the all-servers error drops the technical detail and
 says the phone uses its normal internet.
+
+Changes after round 2 ([triage](round-2/triage.md), Android items H1, H3,
+M3–M6, M11–M14, M20, M21, M24, M25): website rules also cover the usual
+sub-names (www, login, secure, online, auth, account(s), my, m, app, api) and
+say so, with the router difference stated; "Block connections without VPN" is
+recommended with backup servers (Settings and the switching note open
+Android's VPN settings); "Recent switches" (last 20) in Settings; "Paused: you
+picked vps" with "Go back to automatic"; "Hand the VPN back to Tailscale"
+moved to the bottom of the main screen; "Stay on vps" is a quiet link; the
+clash dialog explains who fixes it and copies a message to send them; the
+add-server page suggests tailnet machines and says who approves where; the
+route approval is optional; the notification is rendered; one consistent
+timeline.
