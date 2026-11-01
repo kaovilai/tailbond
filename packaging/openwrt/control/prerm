@@ -1,0 +1,11 @@
+#!/bin/sh
+[ -n "$IPKG_INSTROOT" ] && exit 0
+/etc/init.d/tailbond stop
+/etc/init.d/tailbond disable
+# Package removal (not upgrade): drop the network/firewall/dnsmasq/route
+# config the hooks added.
+if [ "$1" != "upgrade" ]; then
+	TB_PURGE=1 TB_TUN=tb0 /usr/lib/tailbond/hooks/client-down >/dev/null 2>&1
+	TB_PURGE=1 TB_TUN=tb0 /usr/lib/tailbond/hooks/server-down >/dev/null 2>&1
+fi
+exit 0

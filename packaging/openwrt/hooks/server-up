@@ -1,0 +1,95 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# server-up: mqvpn server started (home router, SERVER role, e.g. Flint 3).
+# Env: TB_TUN, TB_SUBNET, TB_SUBNET6, TB_PORT, TB_DNS_IP.
+#
+# - firewall: UDP $TB_PORT open on the wan zone
+# - network 'tailbond' on $TB_TUN, zone 'tailbond' forwarding to wan (the
+#   wan zone's masquerade is the clients' internet NAT) and, with
+#   server.allow_lan, to the home LAN
+# - tailnet: forwarding tailbond <-> the zone holding tailscale0 (created as
+#   'tailbond_ts' if the firmware has none), masquerade of $TB_SUBNET toward
+#   it, and the subnet advertised with tailscale set --advertise-routes
+# - dnsmasq kept off $TB_TUN, so the agent's DNS forwarder can bind $TB_DNS_IP
+. "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
+
+port="${TB_PORT:-443}"
+subnet="${TB_SUBNET:-10.77.0.0/24}"
+wan="$(zone_of_network wan)" || wan=wan
+lan="$(zone_of_network lan)" || lan=lan
+
+ensure_network
+commit_reload network network && log "network: added interface tailbond ($TB_TUN)"
+
+# Clients may query the agent's DNS forwarder and ping the server; nothing else.
+ensure_zone REJECT
+uset firewall.tailbond_dns rule
+uset firewall.tailbond_dns.name tailbond-dns
+uset firewall.tailbond_dns.src tailbond
+uset firewall.tailbond_dns.proto 'tcp udp'
+uset firewall.tailbond_dns.dest_port 53
+uset firewall.tailbond_dns.target ACCEPT
+uset firewall.tailbond_icmp rule
+uset firewall.tailbond_icmp.name tailbond-icmp
+uset firewall.tailbond_icmp.src tailbond
+uset firewall.tailbond_icmp.proto icmp
+uset firewall.tailbond_icmp.target ACCEPT
+
+uset firewall.tailbond_wan_in rule
+uset firewall.tailbond_wan_in.name tailbond-mqvpn
+uset firewall.tailbond_wan_in.src "$wan"
+uset firewall.tailbond_wan_in.proto udp
+uset firewall.tailbond_wan_in.dest_port "$port"
+uset firewall.tailbond_wan_in.target ACCEPT
+
+ensure_forwarding tailbond_wan tailbond "$wan"
+if is_true "$(tbcfg_or server.allow_lan 1)"; then
+	ensure_forwarding tailbond_lan tailbond "$lan"
+else
+	udel firewall.tailbond_lan
+fi
+
+# Tailnet. GL firmware's Tailscale may or may not put tailscale0 in a zone.
+ts="$(zone_of_network tailscale0)" || ts="$(zone_of_network tailscale)" || {
+	ts=tailbond_ts
+	uset firewall.tailbond_ts zone
+	uset firewall.tailbond_ts.name tailbond_ts
+	uset firewall.tailbond_ts.device tailscale0
+	uset firewall.tailbond_ts.input REJECT
+	uset firewall.tailbond_ts.output ACCEPT
+	uset firewall.tailbond_ts.forward REJECT
+}
+ensure_forwarding tailbond_to_ts tailbond "$ts"
+ensure_forwarding tailbond_from_ts "$ts" tailbond
+# Bonded clients are one tailnet device: NAT them to the server's tailnet IP.
+uset firewall.tailbond_ts_nat nat
+uset firewall.tailbond_ts_nat.name tailbond-tailnet-masq
+uset firewall.tailbond_ts_nat.src "$ts"
+uset firewall.tailbond_ts_nat.src_ip "$subnet"
+uset firewall.tailbond_ts_nat.target MASQUERADE
+uset firewall.tailbond_ts_nat.proto all
+commit_reload firewall firewall && log "firewall: udp/$port open on $wan, zone tailbond -> $wan${lan:+/$lan}/$ts"
+
+# The agent's DNS forwarder owns $TB_DNS_IP:53.
+ulist 'dhcp.@dnsmasq[0].notinterface' tailbond
+commit_reload dhcp dnsmasq && log "dnsmasq: no longer listening on tailbond"
+
+# Advertise the tunnel subnet, keeping routes advertised by others (GL UI).
+if command -v tailscale >/dev/null && is_true "$(tbcfg_or server.advertise_routes 1)"; then
+	routes="$(tailscale debug prefs 2>/dev/null | jsonfilter -e '@.AdvertiseRoutes[*]' 2>/dev/null | tr '\n' ' ')"
+	case " $routes " in
+	*" $subnet "*) ;;
+	*)
+		new="$(echo "$routes $subnet" | xargs | tr ' ' ',')"
+		if tailscale set --advertise-routes="$new"; then
+			log "tailscale: advertising $new (approve $subnet once in the admin console)"
+		else
+			log "tailscale: could not advertise $subnet"
+		fi
+		;;
+	esac
+fi
+
+log "server-up: mqvpn on udp/$port, subnet $subnet via $TB_TUN"
+exit 0

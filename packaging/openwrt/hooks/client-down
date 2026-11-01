@@ -1,0 +1,90 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# client-down: tunnel down (CLIENT role). Same env as client-up.
+#
+# Kill switch on (tailbond.client.kill_switch=1): LAN traffic keeps its
+# policy rules but table $table becomes a blackhole, so nothing leaks to
+# the WANs until client-up restores the tunnel route. Off: the LAN rules go
+# away and the LAN uses the WANs directly.
+#
+# Also run by /etc/init.d/tailbond:
+#   start:  arms the kill switch before the first connect
+#   stop:   TB_RELEASE=1, LAN back on the WANs whatever the kill switch says
+#   prerm:  TB_PURGE=1, additionally deletes the UCI network/firewall config
+. "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
+
+table="$(tbcfg_or client.route_table 77)"
+prio="$(tbcfg_or client.rule_priority 1077)"
+lans="$(tbcfg client.lan_network)"
+[ -n "$lans" ] || lans=lan
+
+killswitch=0
+if [ -z "$TB_RELEASE$TB_PURGE" ] && is_true "$(tbcfg_or client.kill_switch 1)"; then
+	killswitch=1
+fi
+
+for lan in $lans; do
+	dev="$(net_device "$lan")"
+	[ -n "$dev" ] || continue
+	for fam in -4 -6; do
+		if [ "$killswitch" = 1 ]; then
+			rule_ensure "$fam" iif "$dev" lookup main suppress_prefixlength 0 priority $((prio - 1))
+			rule_ensure "$fam" iif "$dev" lookup "$table" priority "$prio"
+		else
+			rule_del_all "$fam" iif "$dev" lookup main suppress_prefixlength 0 priority $((prio - 1))
+			rule_del_all "$fam" iif "$dev" lookup "$table" priority "$prio"
+		fi
+	done
+done
+
+if [ "$killswitch" = 1 ]; then
+	ip route replace blackhole default table "$table"
+	ip -6 route replace blackhole default table "$table" 2>/dev/null
+else
+	ip route flush table "$table" 2>/dev/null
+	ip -6 route flush table "$table" 2>/dev/null
+fi
+
+server_ip="${TB_SERVER_IP:-$(cat "$TB_STATE/server_ip" 2>/dev/null)}"
+if [ -n "$server_ip" ]; then
+	case "$server_ip" in *:*) fam=-6 ;; *) fam=-4 ;; esac
+	rule_del_all "$fam" to "$server_ip" lookup main priority $((prio - 2))
+	rm -f "$TB_STATE/server_ip"
+fi
+
+for r in $(split_list "$TB_TAILNET_ROUTES"); do
+	case "$r" in *:*) ip -6 route del "$r" dev "$TB_TUN" 2>/dev/null ;; *) ip route del "$r" dev "$TB_TUN" 2>/dev/null ;; esac
+done
+
+# Restore dnsmasq as client-up found it.
+if [ -f "$TB_STATE/dns_saved" ]; then
+	{
+		read -r noresolv
+		read -r dns
+	} <"$TB_STATE/dns_saved"
+	udel_list 'dhcp.@dnsmasq[0].server' "$dns"
+	if [ -n "$noresolv" ]; then
+		uset 'dhcp.@dnsmasq[0].noresolv' "$noresolv"
+	else
+		uci -q delete 'dhcp.@dnsmasq[0].noresolv'
+	fi
+	commit_reload dhcp dnsmasq && log "dnsmasq: restored"
+	rm -f "$TB_STATE/dns_saved"
+fi
+
+if [ -n "$TB_PURGE" ]; then
+	for lan in $lans; do udel "firewall.tailbond_$lan"; done
+	udel firewall.tailbond
+	commit_reload firewall firewall
+	remove_network
+	commit_reload network network
+	log "client-down: removed tailbond network/firewall config"
+fi
+
+if [ "$killswitch" = 1 ]; then
+	log "client-down: kill switch armed, LAN ($lans) blocked until the tunnel is back"
+else
+	log "client-down: LAN ($lans) back on the WANs"
+fi
+exit 0

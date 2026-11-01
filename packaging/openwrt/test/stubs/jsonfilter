@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Fake jsonfilter: -i FILE (else stdin) -e EXPR, for paths like
+@.a.b[0].c and @.list[*]. Prints scalars one per line; exit 1 if none."""
+import json
+import re
+import sys
+
+args, src, expr = sys.argv[1:], None, None
+while args:
+    if args[0] == "-i":
+        src, args = args[1], args[2:]
+    elif args[0] == "-e":
+        expr, args = args[1], args[2:]
+    else:
+        args = args[1:]
+try:
+    doc = json.load(open(src) if src else sys.stdin)
+except Exception:
+    sys.exit(1)
+
+vals = [doc]
+for name, idx in re.findall(r"\.([A-Za-z0-9_]+)|\[(\*|\d+)\]", expr[1:]):
+    nxt = []
+    for v in vals:
+        if name:
+            if isinstance(v, dict) and name in v:
+                nxt.append(v[name])
+        elif isinstance(v, list):
+            nxt.extend(v if idx == "*" else v[int(idx):int(idx) + 1])
+    vals = nxt
+out = []
+for v in vals:
+    if isinstance(v, bool):
+        out.append("true" if v else "false")
+    elif isinstance(v, (dict, list)):
+        out.append(json.dumps(v))
+    else:
+        out.append(str(v))
+if not out:
+    sys.exit(1)
+print("\n".join(out))

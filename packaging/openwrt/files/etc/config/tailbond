@@ -1,0 +1,73 @@
+# tailbond: WAN bonding to your own home server (mqvpn + tailbondd)
+#
+# Edit, then: /etc/init.d/tailbond restart
+# The init script re-renders /etc/tailbond/tailbond.json whenever this file
+# changes. Empty options keep the value already in tailbond.json (e.g. what
+# the web UI on :8077 saved there).
+
+config tailbond 'main'
+	# 'client' (travel router, e.g. Slate 7) or 'server' (home, e.g. Flint 3)
+	option role 'client'
+	option enabled '0'
+	# speed | streaming | redundant | failover
+	option mode 'speed'
+	# Web UI / API listen address. Client role: the LAN. Server role: see
+	# docs/glinet.md (127.0.0.1 + the Tailscale IP is the agent default).
+	option listen ':8077'
+	# Web UI password; empty = keep the one in tailbond.json (none by default)
+	option ui_password ''
+	option hooks_dir '/usr/lib/tailbond/hooks'
+	option state_dir '/etc/tailbond/state'
+
+config server 'server'
+	# UDP port mqvpn listens on (opened on the wan zone by the server-up hook)
+	option port '443'
+	# Public address or DDNS name put in pairing links
+	option public_addr ''
+	option subnet '10.77.0.0/24'
+	option subnet6 'fd77:77::/112'
+	option use_tailscale_cert '1'
+	# Advertise the tunnel subnet to the tailnet (tailscale set --advertise-routes)
+	option advertise_routes '1'
+	# Withdraw that route again when the server stops
+	option withdraw_routes_on_stop '0'
+	# Let bonded clients reach the home LAN (forwarding tailbond -> lan)
+	option allow_lan '1'
+
+config client 'client'
+	# tailbond://pair?d=... from the server; empty = keep the imported one
+	option pairing_uri ''
+	# Block LAN traffic while the tunnel is down instead of falling back to
+	# the WANs (kill switch)
+	option kill_switch '1'
+	# LAN networks routed through the tunnel
+	list lan_network 'lan'
+	# Point dnsmasq at the tunnel DNS (10.77.0.1) while connected
+	option tunnel_dns '1'
+	# ip rule priority base for the LAN policy routing (uses base-1 .. base+1)
+	option rule_priority '1077'
+	# Routing table for LAN traffic through the tunnel
+	option route_table '77'
+
+# One section per WAN to bond. 'iface' is a Linux device (eth0, wwan0, usb0)
+# or an OpenWrt network name (wan, wwan, tethering), resolved to its device
+# when the config is rendered. See docs/glinet.md for the Slate 7 mapping.
+config path
+	option iface 'wan'
+	option enabled '1'
+	# primary | secondary | backup
+	option priority 'primary'
+	# backup paths drop out after this many MB (0 = no cap)
+	option data_cap_mb '0'
+
+config path
+	option iface 'wwan'
+	option enabled '1'
+	option priority 'secondary'
+	option data_cap_mb '0'
+
+config path
+	option iface 'tethering'
+	option enabled '1'
+	option priority 'secondary'
+	option data_cap_mb '0'

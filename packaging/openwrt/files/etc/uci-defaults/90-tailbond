@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# First boot after install/upgrade: render /etc/tailbond/tailbond.json from
+# UCI. Removed by the system once it exits 0.
+mkdir -p /etc/tailbond/state
+chmod 700 /etc/tailbond /etc/tailbond/state
+/usr/lib/tailbond/render-config --force || exit 1
+exit 0

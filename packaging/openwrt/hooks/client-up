@@ -1,0 +1,78 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# client-up: tunnel connected (travel router, CLIENT role).
+# Env: TB_TUN, TB_TUNNEL_IP, TB_SERVER_IP (resolved public server address),
+#      TB_TAILNET_ROUTES (comma separated).
+#
+# - network 'tailbond' (proto none, device $TB_TUN) and firewall zone
+#   'tailbond' with masquerade; forwarding lan -> tailbond
+# - LAN policy routing: traffic arriving from the LAN devices goes to table
+#   $table (default via $TB_TUN); routes in main other than the default
+#   (LAN, guest, other local subnets) still win. The router's own traffic,
+#   including mqvpn's per-WAN sockets to $TB_SERVER_IP, keeps the WANs.
+# - kill switch: client-down replaces the tunnel default with a blackhole
+# - optional: dnsmasq forwards to the tunnel DNS while connected
+. "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
+
+table="$(tbcfg_or client.route_table 77)"
+prio="$(tbcfg_or client.rule_priority 1077)"
+lans="$(tbcfg client.lan_network)"
+[ -n "$lans" ] || lans=lan
+
+ensure_network
+commit_reload network network && log "network: added interface tailbond ($TB_TUN)"
+
+ensure_zone REJECT
+uset firewall.tailbond.masq 1
+uset firewall.tailbond.masq6 1
+for lan in $lans; do
+	zone="$(zone_of_network "$lan")" || zone="$lan"
+	ensure_forwarding "tailbond_$lan" "$zone" tailbond
+done
+commit_reload firewall firewall && log "firewall: zone tailbond, forwarding $lans -> tailbond"
+
+# Policy routing (v4 + v6). Rule order per family:
+#   prio-1  iif <lan> lookup main suppress_prefixlength 0   (non-default routes)
+#   prio    iif <lan> lookup $table                          (default via tunnel)
+ip route replace default dev "$TB_TUN" table "$table"
+ip -6 route replace default dev "$TB_TUN" table "$table" 2>/dev/null ||
+	ip -6 route replace unreachable default table "$table" 2>/dev/null
+for lan in $lans; do
+	dev="$(net_device "$lan")"
+	[ -n "$dev" ] || { log "no device for network $lan; skipped"; continue; }
+	for fam in -4 -6; do
+		rule_ensure "$fam" iif "$dev" lookup main suppress_prefixlength 0 priority $((prio - 1))
+		rule_ensure "$fam" iif "$dev" lookup "$table" priority "$prio"
+	done
+done
+# The server endpoint never goes through the tunnel, whatever else routes.
+if [ -n "$TB_SERVER_IP" ]; then
+	case "$TB_SERVER_IP" in *:*) fam=-6 ;; *) fam=-4 ;; esac
+	rule_ensure "$fam" to "$TB_SERVER_IP" lookup main priority $((prio - 2))
+	echo "$TB_SERVER_IP" >"$TB_STATE/server_ip"
+fi
+
+# Tailnet routes for the router itself (LAN clients already default to the
+# tunnel). Skipped when the router runs Tailscale itself.
+if [ ! -e "$TB_SYSNET/tailscale0" ]; then
+	for r in $(split_list "$TB_TAILNET_ROUTES"); do
+		case "$r" in *:*) ip -6 route replace "$r" dev "$TB_TUN" ;; *) ip route replace "$r" dev "$TB_TUN" ;; esac
+	done
+fi
+
+# DNS through the tunnel while connected: dnsmasq forwards only to the
+# tunnel DNS (noresolv). client-down restores the previous noresolv.
+if is_true "$(tbcfg_or client.tunnel_dns 1)"; then
+	dns="$(tbcfg_or client.tunnel_dns_ip 10.77.0.1)"
+	[ -f "$TB_STATE/dns_saved" ] || {
+		echo "$(uci -q get 'dhcp.@dnsmasq[0].noresolv')" >"$TB_STATE/dns_saved"
+		echo "$dns" >>"$TB_STATE/dns_saved"
+	}
+	ulist 'dhcp.@dnsmasq[0].server' "$dns"
+	uset 'dhcp.@dnsmasq[0].noresolv' 1
+	commit_reload dhcp dnsmasq && log "dnsmasq: forwarding to $dns only"
+fi
+
+log "client-up: LAN ($lans) routed via $TB_TUN (table $table), server $TB_SERVER_IP"
+exit 0

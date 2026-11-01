@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Fake uci(1) for the hook tests. Enough of the CLI for the hooks:
+get/set/add/add_list/del_list/delete/changes/commit/export/show, -q, and
+@type[N] section references. State lives in $FAKE_ROOT/uci.json; it is
+seeded from the UCI text files in $FAKE_ROOT/etc/config on first use.
+Reads see pending (uncommitted) changes, like the real uci."""
+import json
+import os
+import re
+import shlex
+import sys
+
+ROOT = os.environ["FAKE_ROOT"]
+STATE = os.path.join(ROOT, "uci.json")
+CONFDIR = os.path.join(ROOT, "etc", "config")
+
+
+def parse_conf(text):
+    secs, cur, n = [], None, 0
+    for line in text.splitlines():
+        t = shlex.split(line, comments=True)
+        if not t:
+            continue
+        if t[0] == "config":
+            name = t[2] if len(t) > 2 else None
+            cur = {"type": t[1], "name": name or "cfg%02x%04x" % (len(secs), n), "anon": name is None, "opts": {}}
+            n += 1
+            secs.append(cur)
+        elif t[0] == "option":
+            cur["opts"][t[1]] = t[2] if len(t) > 2 else ""
+        elif t[0] == "list":
+            cur["opts"].setdefault(t[1], [])
+            cur["opts"][t[1]].append(t[2])
+    return secs
+
+
+def load():
+    if os.path.exists(STATE):
+        with open(STATE) as f:
+            return json.load(f)
+    st = {"committed": {}, "pending": {}}
+    if os.path.isdir(CONFDIR):
+        for c in sorted(os.listdir(CONFDIR)):
+            with open(os.path.join(CONFDIR, c)) as f:
+                st["committed"][c] = parse_conf(f.read())
+    return st
+
+
+def save(st):
+    with open(STATE, "w") as f:
+        json.dump(st, f, indent=1)
+
+
+def view(st, conf):
+    return st["pending"].get(conf, st["committed"].get(conf))
+
+
+def writable(st, conf):
+    if conf not in st["pending"]:
+        st["pending"][conf] = json.loads(json.dumps(st["committed"].get(conf, [])))
+    return st["pending"][conf]
+
+
+def find(secs, ref):
+    if secs is None:
+        return None
+    m = re.fullmatch(r"@([^\[]+)\[(-?\d+)\]", ref)
+    if m:
+        of = [s for s in secs if s["type"] == m.group(1)]
+        i = int(m.group(2))
+        try:
+            return of[i]
+        except IndexError:
+            return None
+    for s in secs:
+        if s["name"] == ref:
+            return s
+    return None
+
+
+def split(path):
+    p = path.split(".", 2)
+    return p + [None] * (3 - len(p))
+
+
+def export(secs, conf):
+    out = ["package " + conf, ""]
+    for s in secs or []:
+        out.append("config %s%s" % (s["type"], "" if s["anon"] else " '%s'" % s["name"]))
+        for k, v in s["opts"].items():
+            for item in (v if isinstance(v, list) else [v]):
+                out.append("\t%s %s '%s'" % ("list" if isinstance(v, list) else "option", k, item))
+        out.append("")
+    return "\n".join(out)
+
+
+def main(argv):
+    quiet = False
+    while argv and argv[0].startswith("-"):
+        if argv[0] == "-q":
+            quiet = True
+        argv = argv[1:]
+    if not argv:
+        return 1
+    cmd, args = argv[0], argv[1:]
+    st = load()
+
+    def fail(msg):
+        if not quiet:
+            print("uci: " + msg, file=sys.stderr)
+        return 1
+
+    if cmd == "get":
+        conf, sec, opt = split(args[0])
+        s = find(view(st, conf), sec)
+        if s is None:
+            return fail("Entry not found")
+        if opt is None:
+            print(s["type"])
+            return 0
+        if opt not in s["opts"]:
+            return fail("Entry not found")
+        v = s["opts"][opt]
+        print(" ".join(v) if isinstance(v, list) else v)
+        return 0
+    if cmd in ("set", "add_list", "del_list"):
+        lhs, _, val = args[0].partition("=")
+        conf, sec, opt = split(lhs)
+        secs = writable(st, conf)
+        s = find(secs, sec)
+        if opt is None and cmd == "set":
+            if s is None:
+                secs.append({"type": val, "name": sec, "anon": False, "opts": {}})
+            else:
+                s["type"] = val
+        else:
+            if s is None:
+                return fail("Invalid argument")
+            if cmd == "set":
+                s["opts"][opt] = val
+            elif cmd == "add_list":
+                cur = s["opts"].get(opt, [])
+                s["opts"][opt] = (cur if isinstance(cur, list) else [cur]) + [val]
+            else:
+                cur = s["opts"].get(opt, [])
+                if isinstance(cur, list) and val in cur:
+                    cur.remove(val)
+        save(st)
+        return 0
+    if cmd == "add":
+        conf, typ = args
+        secs = writable(st, conf)
+        name = "cfg%06x" % (len(secs) + 0x100)
+        secs.append({"type": typ, "name": name, "anon": True, "opts": {}})
+        save(st)
+        print(name)
+        return 0
+    if cmd == "delete":
+        conf, sec, opt = split(args[0])
+        secs = writable(st, conf)
+        s = find(secs, sec)
+        if s is None:
+            return fail("Entry not found")
+        if opt is None:
+            secs.remove(s)
+        elif opt in s["opts"]:
+            del s["opts"][opt]
+        else:
+            return fail("Entry not found")
+        save(st)
+        return 0
+    if cmd == "changes":
+        for conf in ([args[0]] if args else sorted(st["pending"])):
+            if conf in st["pending"] and st["pending"][conf] != st["committed"].get(conf, []):
+                print("%s: pending" % conf)
+        return 0
+    if cmd == "commit":
+        for conf in ([args[0]] if args else list(st["pending"])):
+            if conf in st["pending"]:
+                st["committed"][conf] = st["pending"].pop(conf)
+        save(st)
+        return 0
+    if cmd in ("export", "show"):
+        print(export(view(st, args[0].split(".")[0]), args[0]))
+        return 0
+    return fail("unsupported command " + cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

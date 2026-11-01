@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Fake ip(8): records rules and routes in $FAKE_ROOT/ip.json so the tests
+can check idempotency. `rule del` fails when no identical rule exists, like
+the real one; `rule add` stacks duplicates, like the real one."""
+import json
+import os
+import sys
+
+STATE = os.path.join(os.environ["FAKE_ROOT"], "ip.json")
+with open(os.path.join(os.environ["FAKE_ROOT"], "calls.log"), "a") as f:
+    f.write("ip " + " ".join(sys.argv[1:]) + "\n")
+
+st = {"rules": [], "routes": {}}
+if os.path.exists(STATE):
+    with open(STATE) as f:
+        st = json.load(f)
+
+a = sys.argv[1:]
+fam = "-4"
+if a and a[0] in ("-4", "-6"):
+    fam, a = a[0], a[1:]
+obj, verb, rest = a[0], a[1], a[2:]
+rc = 0
+if obj == "rule":
+    key = fam + " " + " ".join(rest)
+    if verb == "add":
+        st["rules"].append(key)
+    elif verb == "del":
+        if key in st["rules"]:
+            st["rules"].remove(key)
+        else:
+            rc = 2
+elif obj == "route":
+    table = rest[rest.index("table") + 1] if "table" in rest else "main"
+    if verb == "flush":
+        st["routes"] = {k: v for k, v in st["routes"].items() if not k.startswith(fam + " " + table + " ")}
+    else:
+        # dest = first word that is not a route type
+        words = [w for w in rest if w not in ("blackhole", "unreachable")]
+        key = "%s %s %s" % (fam, table, words[0])
+        if verb == "replace":
+            st["routes"][key] = " ".join(rest)
+        elif verb == "del":
+            if key in st["routes"]:
+                del st["routes"][key]
+            else:
+                rc = 2
+with open(STATE, "w") as f:
+    json.dump(st, f, indent=1)
+sys.exit(rc)

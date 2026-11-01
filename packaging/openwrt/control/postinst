@@ -1,0 +1,13 @@
+#!/bin/sh
+# Not while building a firmware image (IPKG_INSTROOT set): first boot runs
+# the uci-defaults script then.
+[ -n "$IPKG_INSTROOT" ] && exit 0
+if [ -f /etc/uci-defaults/90-tailbond ]; then
+	sh /etc/uci-defaults/90-tailbond && rm -f /etc/uci-defaults/90-tailbond
+fi
+/etc/init.d/tailbond enable
+/etc/init.d/tailbond restart
+# Menus: LuCI index cache, GL admin panel menu
+rm -f /tmp/luci-indexcache* 2>/dev/null
+[ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd reload 2>/dev/null
+exit 0

@@ -1,0 +1,141 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# Render /etc/tailbond/tailbond.json (the agent config, docs/architecture.md)
+# from UCI /etc/config/tailbond.
+#
+#   render-config            render if UCI changed since the last render
+#   render-config --force    render unconditionally
+#
+# Empty UCI strings keep the value already in tailbond.json, so what the web
+# UI saved there (UI password, imported pairing) survives a re-render; so do
+# the agent-managed server.users and client.disconnected. Path sections in
+# UCI replace client.paths; with none, the current paths are kept.
+# Env (tests): TB_CONF (default /etc/tailbond/tailbond.json), TB_JSHN.
+
+. "${TB_JSHN:-/usr/share/libubox/jshn.sh}"
+
+CONF="${TB_CONF:-/etc/tailbond/tailbond.json}"
+SUM="${CONF%.json}.uci.md5"
+
+cfg() { uci -q get "tailbond.$1"; }
+# cfg_or SECTION.OPTION DEFAULT
+cfg_or() {
+	local v
+	v="$(cfg "$1")"
+	echo "${v:-$2}"
+}
+# old JSONPATH: value from the current tailbond.json
+old() { [ -f "$CONF" ] && jsonfilter -i "$CONF" -e "$1" 2>/dev/null; }
+# keep SECTION.OPTION JSONPATH DEFAULT: UCI, else current JSON, else default
+keep() {
+	local v
+	v="$(cfg "$1")"
+	[ -n "$v" ] || v="$(old "$2")"
+	echo "${v:-$3}"
+}
+bool() {
+	case "$1" in 1 | on | true | yes | enabled) echo 1 ;; *) echo 0 ;; esac
+}
+
+# A network name (wan, wwan, tethering) -> its Linux device; devices pass through.
+resolve_iface() {
+	local n="$1" dev
+	[ -e "/sys/class/net/$n" ] && { echo "$n"; return; }
+	dev="$(ifstatus "$n" 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null)"
+	[ -n "$dev" ] || dev="$(uci -q get "network.$n.device")"
+	[ -n "$dev" ] || dev="$(uci -q get "network.$n.ifname")"
+	echo "${dev:-$n}"
+}
+
+# Re-add the current tailbond.json's server.users (agent-managed credentials).
+keep_users() {
+	local i=0 name
+	json_add_array users
+	while name="$(old "@.server.users[$i].name")" && [ -n "$name" ]; do
+		json_add_object ""
+		json_add_string name "$name"
+		json_add_string key "$(old "@.server.users[$i].key")"
+		json_add_int created "$(old "@.server.users[$i].created" || echo 0)"
+		json_close_object
+		i=$((i + 1))
+	done
+	json_close_array
+}
+
+# Re-add the current client.paths (when UCI has no path sections).
+keep_paths() {
+	local i=0 iface
+	while iface="$(old "@.client.paths[$i].iface")" && [ -n "$iface" ]; do
+		json_add_object ""
+		json_add_string iface "$iface"
+		json_add_boolean enabled "$(bool "$(old "@.client.paths[$i].enabled")")"
+		json_add_string priority "$(old "@.client.paths[$i].priority" || echo primary)"
+		json_add_int data_cap_mb "$(old "@.client.paths[$i].data_cap_mb" || echo 0)"
+		json_close_object
+		i=$((i + 1))
+	done
+}
+
+add_path() {
+	local s="$1" iface
+	iface="$(uci -q get "tailbond.$s.iface")"
+	[ -n "$iface" ] || return 0
+	json_add_object ""
+	json_add_string iface "$(resolve_iface "$iface")"
+	json_add_boolean enabled "$(bool "$(uci -q get "tailbond.$s.enabled" || echo 1)")"
+	json_add_string priority "$(uci -q get "tailbond.$s.priority" || echo primary)"
+	json_add_int data_cap_mb "$(uci -q get "tailbond.$s.data_cap_mb" || echo 0)"
+	json_close_object
+}
+
+render() {
+	local role
+	role="$(cfg_or main.role client)"
+
+	json_init
+	json_add_string role "$role"
+	json_add_string mqvpn_bin /usr/bin/mqvpn
+	json_add_string state_dir "$(cfg_or main.state_dir /etc/tailbond/state)"
+	json_add_string hooks_dir "$(cfg_or main.hooks_dir /usr/lib/tailbond/hooks)"
+	json_add_string listen "$(cfg_or main.listen :8077)"
+	json_add_string ui_password "$(keep main.ui_password @.ui_password '')"
+	json_add_string mode "$(keep main.mode @.mode speed)"
+
+	json_add_object server
+	json_add_int port "$(cfg_or server.port 443)"
+	json_add_string public_addr "$(keep server.public_addr @.server.public_addr '')"
+	json_add_string subnet "$(cfg_or server.subnet 10.77.0.0/24)"
+	json_add_string subnet6 "$(cfg_or server.subnet6 fd77:77::/112)"
+	json_add_boolean use_tailscale_cert "$(bool "$(cfg_or server.use_tailscale_cert 1)")"
+	keep_users
+	json_close_object
+
+	json_add_object client
+	json_add_string pairing_uri "$(keep client.pairing_uri @.client.pairing_uri '')"
+	# Routing, NAT and the kill switch belong to the OpenWrt hooks.
+	json_add_boolean manage_routes 0
+	[ "$(old @.client.disconnected)" = true ] && json_add_boolean disconnected 1
+	json_add_array paths
+	# config_foreach without /lib/functions.sh: walk anonymous 'path' sections.
+	local i=0
+	while uci -q get "tailbond.@path[$i]" >/dev/null; do
+		add_path "@path[$i]"
+		i=$((i + 1))
+	done
+	[ "$i" -gt 0 ] || keep_paths
+	json_close_array
+	json_close_object
+
+	mkdir -p "$(dirname "$CONF")"
+	umask 077 # ui_password and the pairing key live in here
+	json_dump -i >"$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+}
+
+sum="$(uci export tailbond 2>/dev/null | md5sum | cut -d' ' -f1)"
+if [ "$1" != "--force" ] && [ -f "$CONF" ] && [ "$(cat "$SUM" 2>/dev/null)" = "$sum" ]; then
+	exit 0
+fi
+render || exit 1
+echo "$sum" >"$SUM"
+logger -t tailbond "rendered $CONF from UCI" 2>/dev/null || true
