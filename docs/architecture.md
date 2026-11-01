@@ -15,6 +15,7 @@ Every component below MUST follow this document. Change it here first.
 | Fedora package | `packaging/fedora/` | Fedora 43+ | RPM: `tailbond-server` (mqvpn + tailbondd + units + firewalld service) |
 | OpenWrt / GL.iNet package | `packaging/openwrt/` | Flint 3 (GL-BE9300), Slate 7 (GL-BE3600), any aarch64_cortex-a53 OpenWrt | `.ipk` with static musl mqvpn + tailbondd, init.d, UCI, GL admin panel (VPN → tailbond: oui view + `/rpc` Lua object, [glinet.md](glinet.md)) |
 | Android app | `android/` | Android 8+ arm64 | fork of mqvpn's Android app, rebranded `dev.tailbond.app` |
+| Generic Linux server bundle | `packaging/linux/` (+ Ansible role `packaging/ansible/roles/tailbond/`) | Debian/Ubuntu, Alma/RHEL/Rocky 9–10, Fedora; x86_64 | static mqvpn + tailbondd, `install.sh` (ports, subnet, firewall, systemd memory limits), for a VPS server ([vps.md](vps.md)) |
 
 Roles of `tailbondd` (`--role` / config `role`):
 - `server`: home endpoint (Fedora box or Flint 3). Runs `mqvpn --mode server`.
@@ -116,7 +117,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/pair-requests` | server, additive (admin): every live request `{"id","name","kind","device","dns_name","hostname","os","user","user_name","ip","status","created","expires","client","repair"}` |
 | POST | `/api/pair-requests/{id}/approve`, `/decline` | server, additive (admin): body `{"name"}` optional. Refused (403) from the requesting address |
 | GET | `/api/discover?refresh=1` | client, additive: tailbond servers among online tailnet peers `{"tailscale_installed","tailscale_running","self","tailnet","servers":[{"name","dns_name","ip","os","version"}],"checked","at"}` |
-| GET/POST/DELETE | `/api/join` | client, additive: ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel. Additive: `"add": true` adds the approved server to the [server list](#multiple-servers-and-failover) as a backup instead of replacing the primary; `error` may then be `subnet_in_use` |
+| GET/POST/DELETE | `/api/join` | client, additive: ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel. Additive: `"add": true` adds the approved server to the [server list](#multiple-servers-and-failover) as a backup instead of replacing the primary; `error` may then be `subnet_in_use` or `exists`, with `conflict` (the server already in the list) and `subnet` |
 | DELETE | `/api/pair` | client, additive: forget the pairing, every server in the list (tunnel stops, LAN back on the WANs) |
 | GET | `/api/peers` | client, additive: the server's list (below), fetched through the tunnel with this client's token, cached 20 s |
 | POST/DELETE | `/api/captive/signin` | client, additive: `{"name": <network or device>}` sign-in mode on a WAN behind a portal (409 otherwise) / off ([captive portals](#captive-portals)) |
@@ -248,7 +249,8 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 ## Build outputs
 
 - `scripts/build-mqvpn-native.sh` → `third_party/mqvpn/build/mqvpn` (Fedora).
-- `scripts/build-mqvpn-aarch64-musl.sh` → static `out/aarch64/mqvpn` via `podman` + `docker.io/library/alpine` (linux/arm64, qemu-user-static).
+- `scripts/build-mqvpn-musl.sh <aarch64|x86_64>` → static `out/<arch>/mqvpn` via `podman` + `docker.io/library/alpine` (native when the host has that arch, else qemu-user-static); `scripts/build-mqvpn-aarch64-musl.sh` is the aarch64 shorthand.
+- `packaging/linux/build-bundle.sh` → `out/linux/tailbond-linux-<arch>.tar.gz` (installer, static binaries, hooks, unit).
 - `agent`: `CGO_ENABLED=0 go build` for linux/amd64 and linux/arm64.
 - RPM: `packaging/fedora/build-rpm.sh` → `out/rpm/`.
 - IPK: `packaging/openwrt/build-ipk.sh` → `out/ipk/tailbond_<ver>_aarch64_cortex-a53.ipk` (plain ar/tar ipk; no OpenWrt SDK needed since binaries are static).
@@ -273,6 +275,7 @@ Every hook also gets `TB_ROLE`, `TB_MODE`, `TB_STATE_DIR` and `TB_CONFIG` (path 
 `bypass-apply` exists only on OpenWrt; Fedora and the generic Linux installer have no client role, so they ship none (a missing hook is not an error).
 
 - Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`, `TB_WEB_PORTS` from tailnet source ranges only), `tailscale set --advertise-routes`. Without a running firewalld they fall back to mqvpn's NAT script plus iptables masquerade toward `tailscale0`.
+- Generic Linux hooks (`packaging/linux/hooks/`, installed to `/usr/local/lib/tailbond/hooks` and set as `hooks_dir`): firewalld like Fedora, else an nftables `table inet tailbond`, else iptables (plus FORWARD accepts when that policy is DROP); same Tailscale route handling.
 - OpenWrt hooks (`packaging/openwrt/hooks/`): UCI network/firewall zone `tailbond` for `tb0`, forwarding `lan → tailbond`, policy routing of LAN through `tb0`, server-role equivalents for Flint 3.
 - The agent runs mqvpn with `manage_routes = false` on OpenWrt and lets hooks route. On Fedora (server only), internet NAT comes from the firewalld `tailbond-out` policy, or from mqvpn's own NAT script when firewalld isn't running.
 
@@ -493,7 +496,7 @@ On the travel router, LAN traffic can skip the tunnel by rule
 
 | Priority | Rule | Purpose |
 |---|---|---|
-| P-7 (1070) | `fwmark T/mask lookup main suppress_prefixlength 0` | "Always use tailbond" still reaches the LAN and other local routes |
+| P-7 (1070) | `fwmark T/mask lookup main suppress_prefixlength 0`, same for each `W<i>` | marked traffic (and its marked replies) still reaches the LAN and other local routes |
 | P-6 (1071) | `fwmark T/mask lookup 77` | "Always use tailbond": the tunnel, or the kill switch's blackhole while it's down |
 | P-5 (1072) | `fwmark D/mask lookup main` | "Use the internet directly" |
 | P-4 (1073) | `fwmark W<i>/mask lookup 7900+i` | "Use only <WAN>": that WAN's default route (table refreshed on WAN changes) |
@@ -503,6 +506,14 @@ On the travel router, LAN traffic can skip the tunnel by rule
 | P (1077) | `iif <lan> lookup 77` | everything else: the tunnel (or the kill switch's blackhole) |
 
 Marks: `T` = `0x02000000`, `D` = `0x01000000`, `W<i>` = `0x03000000 + i<<24` (up to 5 WANs), each within the mask.
+
+Replies carry their connection's mark too (restored from conntrack on every
+interface), and the hook turns on `net.ipv4.conf.all.src_valid_mark` (as
+wg-quick does; the previous value comes back on `clear`). The kernel checks
+a reply's source by looking up routes as if it came from the LAN device; that
+lookup would otherwise land in table 77, which is a blackhole while the kill
+switch is armed, so with `rp_filter` on every reply to a bypassed device would
+be dropped exactly when bypassing matters.
 
 Interplay:
 - **Kill switch**: bypassed traffic is intentional, so `direct`/`wan` rules keep working while the tunnel is down. Everything else stays blocked, and so does `tunnel`-target traffic.
