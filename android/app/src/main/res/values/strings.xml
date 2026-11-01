@@ -4,10 +4,7 @@
     <string name="home_server">home server</string>
     <string name="state_connecting">Connecting…</string>
     <string name="state_reconnecting">Reconnecting…</string>
-    <string name="state_connected">Connected</string>
     <string name="notif_connected">Connected through %1$s</string>
-    <string name="state_error">Can\'t connect</string>
-    <string name="tile_off">Disconnected</string>
     <string name="action_disconnect">Disconnect</string>
     <string name="err_not_paired">This phone isn\'t paired with a home server yet</string>
 </resources>

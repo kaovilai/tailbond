@@ -24,7 +24,13 @@ the commands in [android.md](../android.md#screen-renders).
 | 0 | before | 5 / 14 / 10 | 4 / 17 / 6 | 4 / 10 / 6 | 13 / 41 / 22 |
 | 1 | after-1 | 1 / 3 / 9 | 1 / 5 / 11 | 3 / 7 / 3 | 5 / 15 / 23 |
 | 2 | after-2 | 0 / 2 / 7 | 0 / 3 / 7 | 1 / 5 / 10 | 1 / 10 / 24 |
-ROUNDS_PLACEHOLDER
+| 3 | after-3 | 0 / 1 / 7 | 0 / 4 / 6 | 0 / 4 / 10 | 0 / 9 / 23 |
+| 4 | after-4 | 0 / 3 / 6 | 0 / 1 / 7 | 0 / 3 / 7 | 0 / 7 / 20 |
+
+**Outcome: the exit condition (no medium or high from any persona) was not met
+within the 4-round cap.** Highs went 13 → 5 → 1 → 0 → 0. The 7 mediums left
+in round 4 are mostly limits already triaged as partial or reject (below),
+plus one wording regression fixed after round 4 without a re-review.
 
 ## Round 0 → redesign
 
@@ -109,4 +115,53 @@ The redesign (commit `bdb3fc9`, agent `cc24a66`, web `68cfd1f`):
 | 22 | "Remove from this phone" confirmation not visible (C) | L | **reject**: it does confirm (dialog); not rendered |
 | 23 | "Can't reach" error doesn't say whether it retries (B) | L | **reject**: it doesn't retry by itself after a hard failure; *Try again* is the action |
 | 24 | Jargon in the confirm dialog (address, Technical details) (C) | L | **reject**: the address line was asked for by B in round 1; details are collapsed |
-ROUND2_PLACEHOLDER
+
+## Round 3 triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | After switching back, the status line says "Tailscale stays off too…" while the card says "Tailscale is in charge" (B, C) | M | **fix**: status line "Stopped. Tailscale is in charge on this phone." |
+| 2 | Cert error says don't re-pair but shows a *Pair again* button (C, B) | M | **fix**: only *Try again*; re-pairing after a reinstall goes through Settings. This is the third pass at this card, each one moving toward the safe default, not back and forth |
+| 3 | This device: whose is "(100.101.1.1)"? Is 10.77.0.2 useful? (A, B, C) | M/L | **partial**: says tailnet machines can reach the phone at this address through homebox (true once the server's 10.77.0.0/24 route is approved, which the server hooks advertise); the server's 100.x is gone from this row. A per-phone 100.x stays out of scope (round 1 #6) |
+| 4 | Switch back doesn't turn Tailscale on by itself (B, A, C) | M/L | **partial**: Android lets only the Tailscale app start its own VPN; tailbond opens it, and the card and Settings say the same thing (turn it on there if it says Disconnected) |
+| 5 | Installing past Android's "outside the Play Store" warning (C) | M | **partial**: adds "Unsure? Ask whoever set up the server to install it for you". Store distribution is out of scope |
+| 6 | After installing, the app asks for a name instead of sending you back to the page (C) | M | **fix**: the pairing screen's first line says "Came here from your home server's page? Go back to it in your browser and tap Add this phone." |
+| 7 | Subnet routes and exit-node choice (B) | M | **reject**: as round 1 #14 and round 2 #20 |
+| 8 | "Tailscale stays off too until you switch back" sounds like the Tailscale app won't work (B, A, C) | L | **fix**: "…or switch back to Tailscale below" |
+| 9 | Machines note says "Not connected" while Connecting… (A) | L | **fix**: "Connecting… This is the list from …" |
+| 10 | "1 app(s)" (A, B) | L | **fix** |
+| 11 | "Remove from this phone" not styled as destructive (A, C) | L | **fix**: error colour (it confirms in a dialog) |
+| 12 | Handoff title "Turn off Tailscale's VPN?" invites Cancel (C) | L | **fix**: "Switch from Tailscale to tailbond?" |
+| 13 | Pairing never says internet traffic leaves from home (B) | L | **fix**: confirm dialog says so and that Settings changes it |
+| 14 | "Advanced: link roles" is jargon (B) | L | **fix**: "Advanced: choose which connection is main or backup" |
+| 15 | Many data-sounding controls on More options (A, C) | L | **reject**: the home switch is the one control; the page explains it, and the rest is under Advanced or separately labelled |
+| 16 | Four address kinds on the machine page (C) | L | **reject**: same as Tailscale's machine page |
+| 17 | Red paste error / red unreachable card (C) | L | **reject**: errors need to stand out; the words are plain now |
+| 18 | "Not working right now" gives no reason (B) | L | **reject**: as round 1 #25 |
+| 19 | "Opening tailbond···" dots (B) | L | **reject**: that's the browser font's ellipsis glyph |
+
+## Round 4 (last round) triage
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Can't find the server's page or name without asking someone (A, C) | M | **partial, stands** (round 2 #1): the admin has an invite link; the phone can't discover the server while Tailscale owns the VPN |
+| 2 | Installing outside the Play Store (C) | M | **partial, stands** (round 3 #5) |
+| 3 | This device: 10.77.0.2 instead of a 100.x / MagicDNS name; how ACLs see the phone (A, B) | M | **partial, stands** (round 1 #6): bonded phones are behind the server (masqueraded as it toward the tailnet; reachable at the tunnel IP once the route is approved). Documented in [android.md](../android.md#known-limitations) |
+| 4 | Full tunnel by default, unlike Tailscale's "no exit node" (A, B) | M/L | **reject, stands** (round 2 #19): bonding all traffic is the product; the dialog says so and Settings changes it |
+| 5 | Cert error "(Settings → Pair again)" invites a family member to re-pair (C, A, B) | M/L | **fix, after round 4 (not re-reviewed)**: "Try again later, and tell whoever set up homebox. Don't pair this phone again unless they ask you to." Renders: `out/ux/after-final/` |
+| 6 | After switching back, the Connections area still says "Will use…" / "Ready" (A, B, C) | L | open (low) |
+| 7 | Data limit with no Wi-Fi: does the tunnel drop? (B) | L | open (low): at the cap, mobile data stops carrying tunnel paths, so with no Wi-Fi tailbond can't connect; worth one sentence |
+| 8 | Copy icon semantics, "Not working" reason, red errors, machines below the fold, several data controls (A, B, C) | L | rejected earlier (round 1 #21, #25; round 3 #15–17); not re-litigated |
+
+## Before / after (key screens)
+
+| Screen | Before | After (round 4 / final) |
+|---|---|---|
+| Onboarding | `out/ux/before/01-onboarding-pairing.png` | `out/ux/after-4/01-onboarding.png`, `02-pairing.png` |
+| Dashboard / home, connected | `out/ux/before/10-dashboard-connected-full.png` | `out/ux/after-4/10-home-connected.png` (+ `-full`, `-dark`) |
+| Machines list | (none) | `out/ux/after-4/18-machines-search-copied.png`, `19-machine-detail.png` |
+| Connections | `out/ux/before/10-dashboard-connected-full.png` (cards), `20-mode-picker.png` | `out/ux/after-4/20-connections.png`, `21-connections-save-data.png`, `16-save-data-standby.png` |
+| VPN handoff dialog | (none) | `out/ux/after-4/04-handoff-other-vpn.png`, `05-handoff-first-permission.png` |
+| Errors | `out/ux/before/13-error-unreachable.png`, `14-error-cert.png` | `out/ux/after-final/13-error-unreachable.png`, `14-error-cert.png` |
+| Web "Add this phone" | (none) | `out/ux/web/web-01-add-this-phone.png`, `web-02-after-tap.png`, `web-03-devices-scan-code.png` |
+

@@ -129,8 +129,8 @@ object Words {
         ErrorKind.IDENTITY -> ErrorText(
             "Can't confirm this is your home server",
             "tailbond stopped because the server answering isn't the $server this phone was paired with. " +
-                "Try again later, and tell whoever set it up. If $server was just reinstalled, " +
-                "they can add this phone again (Settings → Pair again).",
+                "Try again later, and tell whoever set up $server. Don't pair this phone again " +
+                "unless they ask you to.",
             Fix.RETRY,
         )
         ErrorKind.REJECTED -> ErrorText(
