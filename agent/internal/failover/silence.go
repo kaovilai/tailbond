@@ -62,3 +62,18 @@ func (s *Silence) Silent(now time.Time) bool {
 	}
 	return true
 }
+
+// Since is when the tunnel went silent (the last path's first unanswered
+// send), or zero when it isn't silent.
+func (s *Silence) Since(now time.Time) time.Time {
+	if !s.Silent(now) {
+		return time.Time{}
+	}
+	var t time.Time
+	for _, p := range s.paths {
+		if p.since.After(t) {
+			t = p.since
+		}
+	}
+	return t
+}

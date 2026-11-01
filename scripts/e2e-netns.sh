@@ -790,7 +790,7 @@ SRV_PID=""
 T0=$(date +%s)
 if wait_for 30 "switched to the vps" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.active_server == \"vps\" and .state == \"connected\"'"; then
   dt=$(( $(date +%s) - T0 ))
-  [ "$dt" -le 22 ] && ok "switched to the vps and connected ${dt}s after home went dark (silence 5 s + switch_after 6 s)" || bad "switch took ${dt}s"
+  [ "$dt" -le 20 ] && ok "switched to the vps and connected ${dt}s after home went dark (switch_after 6 s from the last answered packet)" || bad "switch took ${dt}s"
 else
   bad "no switch: $(cstatus | jq -c '{active_server, state, failover, servers}')"
 fi

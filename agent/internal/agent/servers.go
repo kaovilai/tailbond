@@ -193,6 +193,9 @@ func (a *Agent) serverWatcher(ctx context.Context) {
 		}
 		working := a.tunnelWorking()
 		a.mu.Lock()
+		if !working {
+			cs.fo.Backdate(cs.silence.Since(now))
+		}
 		to := cs.fo.Step(now, working)
 		a.mu.Unlock()
 		if to != "" {

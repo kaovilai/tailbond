@@ -44,6 +44,9 @@ func TestSilence(t *testing.T) {
 	if !s.Silent(now) {
 		t.Fatal("not silent after 5 s of unanswered sends")
 	}
+	if got := now.Sub(s.Since(now)); got != 5*time.Second {
+		t.Fatalf("silent for %v", got)
+	}
 	// an answer on one path ends it
 	tick(base+8, 10, base+8, 21)
 	if s.Silent(now) {

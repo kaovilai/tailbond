@@ -160,6 +160,15 @@ func (m *Machine) Manual(name string, now time.Time) string {
 	return m.switchTo(name, now)
 }
 
+// Backdate says the active tunnel actually stopped working at t (detected
+// later, e.g. after a silence threshold), so the switch timer counts from
+// there.
+func (m *Machine) Backdate(t time.Time) {
+	if !t.IsZero() && m.lastWorking.After(t) && !t.Before(m.activeSince) {
+		m.lastWorking = t
+	}
+}
+
 // Probe records a standby server's probe result.
 func (m *Machine) Probe(name string, ok bool, now time.Time) {
 	if name == m.active || m.index(name) < 0 {

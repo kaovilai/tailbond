@@ -260,3 +260,20 @@ func TestNoPingPongBetweenDeadServers(t *testing.T) {
 		t.Fatalf("active %s, want homebox once it answers", s.m.Active())
 	}
 }
+
+func TestBackdate(t *testing.T) {
+	m := New(prefer(), []string{"homebox", "vps"}, "homebox", t0)
+	// silent since 11 s, but it still counts as working until that's
+	// detected at 16 s: switch at 11+15 = 26 s, not 15+15 = 30 s
+	for i := 1; i <= 15; i++ {
+		m.Step(t0.Add(time.Duration(i)*time.Second), true)
+	}
+	m.Step(t0.Add(16*time.Second), false)
+	m.Backdate(t0.Add(11 * time.Second))
+	if to := m.Step(t0.Add(25*time.Second), false); to != "" {
+		t.Fatal("too early")
+	}
+	if to := m.Step(t0.Add(26*time.Second), false); to != "vps" {
+		t.Fatalf("got %q at 26 s", to)
+	}
+}
