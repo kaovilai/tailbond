@@ -17,6 +17,16 @@ concurrency:
 env:
   TB_JOBS: 4
   JOBS: 4
+  # Compiled into every tailbondd (scripts/release/ldflags.sh, docs/updates.md):
+  # the update signing public key (repository variable, base64 of the raw
+  # ed25519 key from scripts/release/gen-update-key.sh; unset = builds
+  # without an update key, which never update themselves) and the default
+  # update source, the rolling "channels" release the release job writes.
+  TB_UPDATE_PUBKEY: ${{ vars.TB_UPDATE_PUBKEY }}
+  TB_UPDATE_SOURCE: https://github.com/${{ github.repository }}/releases/download/channels
+  # The release version on v* tags (the build scripts drop the v); empty
+  # otherwise, so they use git describe (dev builds never self-update).
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
 
 jobs:
   agent:
@@ -58,9 +68,12 @@ jobs:
       - name: OpenWrt hooks and init (busybox sh)
         run: |
           mapfile -t files < <(git ls-files 'packaging/openwrt/hooks/*' 'packaging/openwrt/control/postinst' \
-            'packaging/openwrt/control/prerm' 'packaging/openwrt/files/etc/init.d/*' \
-            'packaging/openwrt/files/etc/uci-defaults/*' 'packaging/openwrt/files/usr/lib/tailbond/*')
+            'packaging/openwrt/control/prerm' 'packaging/openwrt/control/postrm' 'packaging/openwrt/files/etc/init.d/*' \
+            'packaging/openwrt/files/etc/uci-defaults/*' 'packaging/openwrt/files/usr/lib/tailbond/*' \
+            'packaging/openwrt/files/lib/upgrade/*')
           shellcheck -S warning --shell=busybox -x "${files[@]}"
+      - name: Release scripts self-test (update key, manifest, signature)
+        run: scripts/release/test-release-scripts.sh
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -94,6 +107,8 @@ jobs:
         run: sudo scripts/smoke-client-control.sh
       - name: e2e-netns
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
+      - name: e2e-updates (auto-updates, mirror, rollback, backup/restore)
+        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-updates.sh
       - name: Server memory and CPU under load (informational)
         continue-on-error: true
         run: MB=100 MQVPN="$PWD/out/native/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/measure-server-mem.sh
@@ -101,6 +116,10 @@ jobs:
   android:
     name: Android APK
     runs-on: ubuntu-24.04
+    env:
+      # Release signing (docs/updates.md): secret TB_RELEASE_KEYSTORE_B64 is
+      # the base64 of a .jks; without it only the debug APK is built.
+      TB_HAS_RELEASE_KEY: ${{ secrets.TB_RELEASE_KEYSTORE_B64 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -129,6 +148,26 @@ jobs:
           name: android-apk
           path: out/android/tailbond-debug.apk
           if-no-files-found: error
+      - name: Release APK (signed with the release key)
+        if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
+        env:
+          TB_RELEASE_KEYSTORE_B64: ${{ secrets.TB_RELEASE_KEYSTORE_B64 }}
+          TB_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.TB_RELEASE_KEYSTORE_PASSWORD }}
+          TB_RELEASE_KEY_ALIAS: ${{ secrets.TB_RELEASE_KEY_ALIAS }}
+          TB_RELEASE_KEY_PASSWORD: ${{ secrets.TB_RELEASE_KEY_PASSWORD }}
+        run: |
+          export TB_RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$TB_RELEASE_KEYSTORE"' EXIT
+          (umask 077; printf '%s' "$TB_RELEASE_KEYSTORE_B64" | base64 -d >"$TB_RELEASE_KEYSTORE")
+          android/scripts/build-release-apk.sh
+      - uses: actions/upload-artifact@v7
+        if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
+        with:
+          name: android-release-apk
+          path: |
+            out/android/tailbond-*.apk
+            !out/android/tailbond-debug.apk
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -155,6 +194,19 @@ jobs:
         with:
           name: android-apk
           path: out/android/
+      # The signed release APK, when built: the app a home server offers
+      # must be the one phones update to (debug and release can't update
+      # each other).
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: android-release-apk
+          path: out/android-release/
+      - name: Use the release APK when there is one
+        run: |
+          for f in out/android-release/tailbond-*.apk; do
+            if [ -f "$f" ]; then echo "TAILBOND_APK=$PWD/$f" >>"$GITHUB_ENV"; fi
+          done
       - name: mqvpn submodule revision
         id: mq
         run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
@@ -167,6 +219,9 @@ jobs:
       - name: Static aarch64 mqvpn
         run: scripts/build-mqvpn-aarch64-musl.sh
       - name: Build ipk
+        env:
+          # tailbond_<version>-r1_<arch>.ipk on v* tags (else 0.1.0-r<n>)
+          TB_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}-r1', github.ref_name) || '' }}
         run: packaging/openwrt/build-ipk.sh
       - name: Install test in OpenWrt 23.05 arm64
         run: scripts/test-openwrt-ipk.sh
@@ -295,6 +350,16 @@ jobs:
         with:
           name: android-apk
           path: out/android/
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: android-release-apk
+          path: out/android-release/
+      - name: Use the release APK when there is one
+        run: |
+          for f in out/android-release/tailbond-*.apk; do
+            if [ -f "$f" ]; then echo "TAILBOND_APK=$PWD/$f" >>"$GITHUB_ENV"; fi
+          done
       - name: Build RPM
         run: packaging/fedora/build-rpm.sh
       - name: Install and remove test
@@ -318,22 +383,33 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist/
-      - name: Checksums
-        run: |
-          find dist -type f \( -name '*.apk' -o -name '*.ipk' -o -name '*.rpm' -o -name tailbondd -o -name 'tailbond-linux-*.tar.gz' \) \
-            -exec sha256sum {} + | sed 's|  dist/|  |' > SHA256SUMS
-          cat SHA256SUMS
-      - name: Publish GitHub release
+      - name: Collect assets and checksums
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
+          mkdir -p assets
+          cp dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz assets/
+          if compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
+            cp dist/android-release-apk/tailbond-*.apk assets/
+          else
+            echo "::warning::no release APK (secret TB_RELEASE_KEYSTORE_B64 is not set): attaching the debug APK, which the update channels don't offer"
+            cp dist/android-apk/tailbond-debug.apk assets/
+          fi
           for d in dist/tailbondd/linux-*; do
-            tar -czf "tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
+            tar -czf "assets/tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
           done
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag \
-            dist/android-apk/*.apk dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz \
-            tailbondd-*.tar.gz SHA256SUMS
+          (cd assets && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
+      # The version release with every asset and the signed manifests, then
+      # stable.json/beta.json (+ .sig) into the rolling "channels" release
+      # (docs/updates.md). A pre-release tag (v1.2.3-beta.1) is a GitHub
+      # pre-release and only updates beta.json.
+      - name: Publish the release and the update channels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TB_UPDATE_KEY: ${{ secrets.TB_UPDATE_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/publish-channels.sh "$TAG" assets

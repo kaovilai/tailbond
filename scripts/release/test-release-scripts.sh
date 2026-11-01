@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329 # helpers are called through check()
 # SPDX-License-Identifier: Apache-2.0
 #
 # Self-test of the release scripts: a throwaway key (gen-update-key.sh), a
@@ -94,6 +95,29 @@ sig2="$(TB_UPDATE_KEY="$(cat "$TB_UPDATE_KEY_FILE")" "$HERE/sign-manifest.sh" "$
 check "key from TB_UPDATE_KEY (env) works too" test "$(jq -r .key_id "$sig2")" = "$TB_UPDATE_KEY_ID"
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$W/ec.pem" 2>/dev/null
 if "$HERE/sign-manifest.sh" "$m" "$W/ec.pem" >/dev/null 2>&1; then bad "a non-ed25519 key is refused"; else ok "a non-ed25519 key is refused"; fi
+
+echo "== publish-channels.sh (dry run)"
+P="$HERE/publish-channels.sh"
+gt() { "$P" --semver-gt "$1" "$2"; }
+order() { gt 1.2.3 1.2.3-rc.1 && gt 1.2.3-rc.1 1.2.3-beta.10 && gt 1.2.3-beta.10 1.2.3-beta.9 && gt 1.2.3-beta.9 1.2.2; }
+check "semver order: 1.2.3 > 1.2.3-rc.1 > 1.2.3-beta.10 > 1.2.3-beta.9 > 1.2.2" order
+if gt 1.2.3-beta.1 1.2.3 || gt 1.2.3 1.2.3; then bad "semver: beta and equal are not newer"; else ok "semver: beta and equal are not newer"; fi
+has() { grep -q -- "$1" <<<"$out"; }
+hasnt() { ! grep -q -- "$1" <<<"$out"; }
+out="$(GITHUB_REPOSITORY=o/r TB_UPDATE_KEY="$(cat "$TB_UPDATE_KEY_FILE")" "$P" v0.2.0 "$D" --dry-run 2>&1)"
+check "plain tag: release with assets + signed manifests" \
+    has '^+ gh release create v0.2.0 --repo o/r --generate-notes --verify-tag .*tailbond-0.2.0.apk.*stable.json.*stable.json.sig'
+check "plain tag: not a pre-release" hasnt 'create v0.2.0.*--prerelease'
+check "plain tag: stable and beta to the channels release" \
+    has '^+ gh release upload channels --repo o/r --clobber .*/stable.json .*/stable.json.sig .*/beta.json .*/beta.json.sig$'
+out="$(GITHUB_REPOSITORY=o/r TB_UPDATE_KEY="$(cat "$TB_UPDATE_KEY_FILE")" "$P" v1.2.3-beta.4 "$B" --dry-run 2>&1)"
+check "beta tag: GitHub pre-release" has '^+ gh release create v1.2.3-beta.4 .*--prerelease'
+check "beta tag: beta.json to the channels release" has '^+ gh release upload channels .*/beta.json .*/beta.json.sig$'
+check "beta tag: no stable.json" hasnt '/stable.json'
+out="$(env -u TB_UPDATE_KEY GITHUB_REPOSITORY=o/r "$P" v0.2.0 "$D" --dry-run 2>&1)"
+check "no key: a warning" has '^::warning::TB_UPDATE_KEY'
+check "no key: unsigned manifests on the version release" has 'create v0.2.0 .*stable.json'
+check "no key: no signatures, channels untouched" hasnt 'json.sig\|release upload channels'
 
 echo
 [ "$fail" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"
