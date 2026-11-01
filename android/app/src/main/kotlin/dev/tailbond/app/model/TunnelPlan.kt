@@ -5,9 +5,12 @@ import dev.tailbond.app.pairing.PairingPayload
 
 /** Pairing + settings → what the VPN service needs to bring the tunnel up. */
 object TunnelPlan {
-    /** Tunnel subnet (contract "Network layout"); routed in split mode so the server and DNS stay reachable. */
-    val TUNNEL_SUBNET = Cidr("10.77.0.0", 24)
+    /** Default tunnel subnet (contract "Network layout"); each server may have its own ([ServerList.subnetOf]). */
+    val TUNNEL_SUBNET = ServerList.DEFAULT_SUBNET
     const val DEFAULT_DNS = "10.77.0.1"
+
+    /** The pairing's DNS, else the server's own tunnel address (x.y.z.1 of its subnet). */
+    fun dns(p: PairingPayload): List<String> = p.dns.ifEmpty { listOf(ServerList.serverTunnelIp(p)) }
 
     fun effectiveMode(p: PairingPayload, s: AppSettings): Mode = s.mode ?: Mode.fromWire(p.mode) ?: Mode.SPEED
 
@@ -19,7 +22,7 @@ object TunnelPlan {
             authKey = p.key,
             insecure = p.insecure,
             certSha256 = p.certSha256?.takeIf { it.isNotBlank() },
-            dnsServers = p.dns.ifEmpty { listOf(DEFAULT_DNS) },
+            dnsServers = dns(p),
             // Holding a transport's network is what keeps e.g. cellular up
             // next to Wi-Fi; a disabled one is neither held nor used.
             wifiPathEnabled = s.path(PathKind.WIFI).enabled,
@@ -34,11 +37,31 @@ object TunnelPlan {
     fun routes(p: PairingPayload, s: AppSettings, dns: List<String>): List<Cidr> = when (s.routeMode) {
         RouteMode.FULL -> listOf(Cidr("0.0.0.0", 0), Cidr("::", 0))
         RouteMode.TAILNET_LAN -> buildList {
-            add(TUNNEL_SUBNET)
+            add(ServerList.subnetOf(p))
             p.tailnetRoutes.mapNotNull { Cidr.parse(it) }.forEach { add(it) }
             // DNS servers outside the routed prefixes still have to go through the tunnel
             dns.mapNotNull { Cidr.parse(it) }.filter { d -> none { it.contains(d) } }.forEach { add(it) }
         }.distinct()
+    }
+
+    /**
+     * What stays in the tunnel even when a website's address falls inside it:
+     * the server's subnet, its DNS servers and the tailnet routes.
+     */
+    fun keepInTunnel(p: PairingPayload, dns: List<String>): List<Cidr> = buildList {
+        add(ServerList.subnetOf(p))
+        p.tailnetRoutes.mapNotNull { Cidr.parse(it) }.forEach { add(it) }
+        dns.mapNotNull { Cidr.parse(it) }.forEach { add(it) }
+    }
+
+    /**
+     * Prefixes for VpnService.Builder.excludeRoute: the bypassed websites'
+     * addresses, only on Android 13+ and only when internet traffic goes
+     * through the tunnel at all (in "Only Tailscale machines" it doesn't).
+     */
+    fun excludedRoutes(p: PairingPayload, s: AppSettings, dns: List<String>, addresses: Collection<String>, sdkInt: Int): List<Cidr> {
+        if (!WebsiteBypass.supported(sdkInt) || s.routeMode != RouteMode.FULL || s.activeWebsites.isEmpty()) return emptyList()
+        return WebsiteBypass.prefixes(addresses, keepInTunnel(p, dns))
     }
 
     private fun Cidr.contains(host: Cidr): Boolean {

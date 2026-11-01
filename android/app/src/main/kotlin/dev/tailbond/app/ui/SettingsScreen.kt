@@ -42,37 +42,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Language
 import dev.tailbond.app.model.RouteMode
+import dev.tailbond.app.model.Words
 
 @Composable
 fun SettingsScreen(
     state: UiState,
     actions: UiActions,
     onApps: () -> Unit,
-    onRepair: () -> Unit,
+    onWebsites: () -> Unit,
+    onRepair: (String) -> Unit,
+    onAddServer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val profile = state.profile
-    var forgetOpen by remember { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-        SectionHeader("Home server")
-        if (profile != null) {
-            ListItem(
-                headlineContent = { Text(state.serverName) },
-                supportingContent = {
-                    Column {
-                        Text(profile.sni ?: profile.host)
-                        Text("Reached at ${profile.server} · this phone is \"${profile.name.ifBlank { profile.user }}\"", style = MaterialTheme.typography.bodySmall, color = muted)
-                    }
-                },
-                leadingContent = { Icon(Icons.Filled.Dns, null) },
-            )
-            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onRepair) { Text("Pair again") }
-                TextButton(onClick = { forgetOpen = true }) { Text("Remove from this phone", color = MaterialTheme.colorScheme.error) }
-            }
-        }
+        if (state.servers.isNotEmpty()) ServersSection(state, actions, onRepair, onAddServer)
 
         SectionHeader("Internet traffic")
         RouteMode.entries.forEach { r ->
@@ -112,6 +98,13 @@ fun SettingsScreen(
             modifier = Modifier.clickable(onClick = onApps),
         )
         ListItem(
+            headlineContent = { Text("Websites that skip tailbond") },
+            supportingContent = { Text(Words.websitesSummary(state.settings, state.sdkInt)) },
+            leadingContent = { Icon(Icons.Filled.Language, null) },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+            modifier = Modifier.clickable(onClick = onWebsites),
+        )
+        ListItem(
             headlineContent = { Text("Switch back to Tailscale") },
             supportingContent = { Text(if (state.tailscaleInstalled) "Turns tailbond off and opens the Tailscale app. Turn Tailscale on there if it says Disconnected" else "Turns tailbond off. Tailscale isn't installed: opens its store page") },
             leadingContent = { Icon(Icons.Filled.SwapHoriz, null) },
@@ -138,15 +131,6 @@ fun SettingsScreen(
 
     }
 
-    if (forgetOpen) {
-        AlertDialog(
-            onDismissRequest = { forgetOpen = false },
-            title = { Text("Remove ${state.serverName} from this phone?") },
-            text = { Text("tailbond turns off and forgets this home server. To use it again, add this phone from the home server's page.") },
-            confirmButton = { TextButton(onClick = { forgetOpen = false; actions.forgetPairing() }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { forgetOpen = false }) { Text("Cancel") } },
-        )
-    }
 }
 
 /** Split tunnel: apps that bypass tailbond (VpnService addDisallowedApplication). */

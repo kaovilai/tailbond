@@ -101,6 +101,11 @@ fun HomeScreen(
             }
         }
 
+        if (state.servers.size > 1) {
+            item { SectionHeader("Servers") }
+            item { ServersOverview(state, onSettings) }
+        }
+
         item { SectionHeader("Connections") }
         item { ConnectionsSummary(state, onConnections) }
         item {
@@ -208,6 +213,15 @@ private fun StatusCard(state: UiState, actions: UiActions) {
                 Text(Words.stateTitle(live.state), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 Text(Words.stateLine(live, state.serverName, state.settings.handedToTailscale), style = MaterialTheme.typography.bodyMedium)
+                val serverLine = if (on) Words.serverLine(live.failover, state.serverNames) else null
+                if (serverLine != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Dns, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(serverLine, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    }
+                }
             }
             Spacer(Modifier.width(12.dp))
             Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f))
@@ -218,7 +232,8 @@ private fun StatusCard(state: UiState, actions: UiActions) {
 @Composable
 private fun ErrorCard(state: UiState, actions: UiActions, onRepair: () -> Unit) {
     val p = state.profile ?: return
-    val e = Words.error(state.live.errorKind, state.serverName, p.server, state.live.message)
+    val all = if (state.servers.size > 1 && state.live.failover != null) state.servers.map { it.name } else emptyList()
+    val e = Words.error(state.live.errorKind, state.serverName, state.activeServer?.payload?.server ?: p.server, state.live.message, all)
     val run: (Words.Fix) -> Unit = { f ->
         when (f) {
             Words.Fix.RETRY -> actions.retry()

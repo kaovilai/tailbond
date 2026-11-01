@@ -99,14 +99,19 @@ object PairRequestClient {
             else throw AskException(Failure.NOT_TAILNET, "$host is ${addrs.first().hostAddress}, not a Tailscale address")
     }
 
-    /** Asks the server at [addr] to pair this phone as [name]. Blocking. */
-    fun ask(addr: InetAddress, name: String): Created {
+    /**
+     * Asks the server at [addr] to pair this phone as [name]. [avoidSubnets]:
+     * the tunnel subnets of the servers this phone already has, so a new
+     * server without clients can move off them. Blocking.
+     */
+    fun ask(addr: InetAddress, name: String, avoidSubnets: List<String> = emptyList()): Created {
         val hello = try { transport.exchange(addr, PORT, "GET", "/api/hello", null, null) } catch (e: IOException) {
             throw AskException(Failure.UNREACHABLE, e.message ?: "unreachable")
         }
         val h = runCatching { json.decodeFromString(Hello.serializer(), hello.second) }.getOrNull()
         if (hello.first != 200 || h?.tailbond != true || h.role != "server") throw AskException(Failure.NOT_SERVER, "not a tailbond server")
-        val body = """{"name":${jsonString(name)},"kind":"phone"}"""
+        val avoid = if (avoidSubnets.isEmpty()) "" else ",\"avoid_subnets\":[" + avoidSubnets.joinToString(",") { jsonString(it) } + "]"
+        val body = """{"name":${jsonString(name)},"kind":"phone"$avoid}"""
         val (code, text) = try { transport.exchange(addr, PORT, "POST", "/api/pair-requests", body, null) } catch (e: IOException) {
             throw AskException(Failure.UNREACHABLE, e.message ?: "unreachable")
         }
@@ -130,7 +135,7 @@ object PairRequestClient {
     private fun jsonString(s: String) = JsonPrimitive(s).toString()
 
     /** Minimal HTTP/1.0 over a socket (the server closes after replying). */
-    private fun socketExchange(addr: InetAddress, port: Int, method: String, path: String, body: String?, token: String?): Pair<Int, String> {
+    internal fun socketExchange(addr: InetAddress, port: Int, method: String, path: String, body: String?, token: String?): Pair<Int, String> {
         Socket().use { s ->
             s.connect(InetSocketAddress(addr, port), 5_000)
             s.soTimeout = 8_000

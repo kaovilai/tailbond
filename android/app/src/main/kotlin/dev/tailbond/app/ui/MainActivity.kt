@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.tailbond.app.failover.FailoverPolicy
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.PathSetting
@@ -161,6 +162,20 @@ class MainActivity : ComponentActivity() {
         override fun dismissHandoff() = vm.askHandoff(null)
         override fun switchToTailscale() = this@MainActivity.switchToTailscale()
         override fun openVpnSettings() = startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+        override fun startAddServer() = vm.setPairTarget(PairTarget.Add)
+        override fun startRepair(id: String?) {
+            val target = id ?: vm.servers.value.firstOrNull { it.id == vm.live.value.failover?.activeId }?.id ?: vm.servers.value.firstOrNull()?.id
+            vm.setPairTarget(target?.let { PairTarget.Replace(it) })
+        }
+        override fun useServerNow(id: String) = vm.useServerNow(id)
+        override fun moveServer(id: String, delta: Int) = vm.moveServer(id, delta)
+        override fun removeServer(id: String) = vm.removeServer(id)
+        override fun setFailoverPolicy(policy: FailoverPolicy, server: String?) = vm.setFailoverPolicy(policy, server)
+        override fun dismissServerProblem() = vm.dismissServerProblem()
+        override fun clearPairTarget() = vm.setPairTarget(null)
+        override fun addWebsite(domain: String, note: String) = vm.addWebsite(domain, note)
+        override fun setWebsiteEnabled(domain: String, on: Boolean) = vm.setWebsiteEnabled(domain, on)
+        override fun removeWebsite(domain: String) = vm.removeWebsite(domain)
     }
 
     @Composable
@@ -178,6 +193,11 @@ class MainActivity : ComponentActivity() {
             apps = vm.apps.collectAsStateWithLifecycle().value,
             ask = vm.ask.collectAsStateWithLifecycle().value,
             wifiSignIn = vm.wifiSignIn.collectAsStateWithLifecycle().value,
+            servers = vm.servers.collectAsStateWithLifecycle().value,
+            pairTarget = vm.pairTarget.collectAsStateWithLifecycle().value,
+            pendingTarget = vm.pendingTarget.collectAsStateWithLifecycle().value,
+            serverProblem = vm.serverProblem.collectAsStateWithLifecycle().value,
+            sdkInt = Build.VERSION.SDK_INT,
         )
         TailbondApp(state, actions)
     }

@@ -11,7 +11,12 @@ import dev.tailbond.app.data.PeersClient
 import dev.tailbond.app.data.Repository
 import dev.tailbond.app.data.next
 import dev.tailbond.app.data.phoneRequestName
+import dev.tailbond.app.failover.FailoverPolicy
+import dev.tailbond.app.model.AddCheck
 import dev.tailbond.app.model.Mode
+import dev.tailbond.app.model.ServerList
+import dev.tailbond.app.model.WebsiteBypass
+import dev.tailbond.app.model.WebsiteRule
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.PathSetting
 import dev.tailbond.app.model.RouteMode
@@ -44,6 +49,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val live = LiveState.live
     val profile = repo.profile
+    val servers = repo.servers
+
+    private val _target = MutableStateFlow<PairTarget?>(null)
+    /** What the pairing screen is for (add a backup, pair one again); null = first pairing. */
+    val pairTarget: StateFlow<PairTarget?> = _target.asStateFlow()
+    private val _pendingTarget = MutableStateFlow<PairTarget?>(null)
+    /** Where the pending pairing goes once confirmed (null = first pairing). */
+    val pendingTarget: StateFlow<PairTarget?> = _pendingTarget.asStateFlow()
+
+    private val _serverProblem = MutableStateFlow<Pair<String, AddCheck>?>(null)
+    val serverProblem: StateFlow<Pair<String, AddCheck>?> = _serverProblem.asStateFlow()
     val settings = repo.settings
     val cellularBytes = repo.cellularBytes
 
@@ -91,12 +107,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** The server in use (failover's active one), else the main one. */
+    private fun activeServer() = servers.value.firstOrNull { it.id == live.value.failover?.activeId } ?: servers.value.firstOrNull()
+
     private suspend fun refreshPeersNow() {
-        val key = profile.value?.key ?: return
+        val server = activeServer() ?: return
+        val key = server.payload.key
+        val host = ServerList.serverTunnelIp(server.payload)
         peerStatus.value = peerStatus.value.copy(loading = true)
         val err = withContext(Dispatchers.IO) {
             try {
-                repo.savePeers(PeersClient.fetch(key)); null
+                repo.savePeers(PeersClient.fetch(key, host)); null
             } catch (e: Exception) {
                 e.message ?: e.javaClass.simpleName
             }
@@ -116,10 +137,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val server = PairRequestClient.hostOf(typed).substringBefore('.').ifEmpty { typed.trim() }
         _ask.value = AskState.Asking(server)
         askJob = viewModelScope.launch {
+            val avoid = avoidSubnets()
             val (addr, created) = try {
                 withContext(Dispatchers.IO) {
                     val a = PairRequestClient.locate(typed)
-                    a to PairRequestClient.ask(a, phoneRequestName(Build.MODEL ?: "phone"))
+                    a to PairRequestClient.ask(a, phoneRequestName(Build.MODEL ?: "phone"), avoid)
                 }
             } catch (e: PairRequestClient.AskException) {
                 _ask.value = AskState.Failed(server, e.failure); return@launch
@@ -163,21 +185,105 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         disconnect()
     }
 
-    /** Returns true when [text] parsed; the payload then waits in [pending]. */
+    /** Subnets of the servers this phone keeps (sent as avoid_subnets when asking a new one). */
+    private fun avoidSubnets(): List<String> {
+        val list = servers.value
+        return when (val t = _target.value) {
+            PairTarget.Add -> list.map { it.subnet.toString() }
+            is PairTarget.Replace -> list.filter { it.id != t.id }.map { it.subnet.toString() }
+            null -> emptyList()
+        }
+    }
+
+    fun setPairTarget(t: PairTarget?) {
+        if (_target.value != t) cancelAsk()
+        _target.value = t
+        _pairError.value = null
+    }
+
+    /** Returns true when [text] parsed; the payload then waits in [pending] (or [serverProblem] says why it can't be added). */
     fun offerPairing(text: String): Boolean = when (val r = Pairing.parse(text)) {
-        is PairingResult.Ok -> { _pending.value = r.payload; _pairError.value = null; true }
+        is PairingResult.Ok -> { offer(r.payload); _pairError.value = null; true }
         is PairingResult.Invalid -> { _pairError.value = r.reason; false }
+    }
+
+    private fun offer(p: PairingPayload) {
+        val list = servers.value
+        val target: PairTarget? = if (list.isEmpty()) null else when (val t = _target.value) {
+            is PairTarget.Replace -> t
+            PairTarget.Add -> PairTarget.Add
+            // a link from outside: renews the server it belongs to, else adds it as a backup
+            null -> ServerList.matching(list, p)?.let { PairTarget.Replace(it.id) } ?: PairTarget.Add
+        }
+        val check = when (target) {
+            null -> AddCheck.Ok
+            PairTarget.Add -> ServerList.check(list, p)
+            is PairTarget.Replace -> ServerList.check(list, p, replacing = target.id)
+        }
+        if (check != AddCheck.Ok) {
+            _serverProblem.value = ServerList.nameOf(p) to check
+            return
+        }
+        _pendingTarget.value = target
+        _pending.value = p
     }
 
     fun confirmPairing() {
         val p = _pending.value ?: return
-        repo.saveProfile(p)
-        // start from the server's suggested mode
-        repo.updateSettings { it.copy(mode = null, onboarded = true) }
+        when (val t = _pendingTarget.value) {
+            null -> {
+                repo.saveProfile(p)
+                // start from the server's suggested mode
+                repo.updateSettings { it.copy(mode = null, onboarded = true) }
+            }
+            PairTarget.Add -> repo.addServer(p)
+            is PairTarget.Replace -> {
+                repo.saveProfile(p, replacing = t.id)
+                if (servers.value.firstOrNull()?.id == t.id) repo.updateSettings { it.copy(mode = null, onboarded = true) }
+            }
+        }
         _pending.value = null
+        _pendingTarget.value = null
+        _target.value = null
     }
 
-    fun dismissPairing() { _pending.value = null }
+    fun dismissPairing() { _pending.value = null; _pendingTarget.value = null }
+    fun dismissServerProblem() { _serverProblem.value = null }
+
+    // --- servers ---
+
+    fun moveServer(id: String, delta: Int) = repo.moveServer(id, delta)
+    fun removeServer(id: String) {
+        if (servers.value.size <= 1) forgetPairing() else repo.removeServer(id)
+    }
+
+    /** "Use this server now": with "Always use …" it becomes the always-used server. */
+    fun useServerNow(id: String) {
+        if (repo.settings.value.failoverPolicy == FailoverPolicy.ALWAYS) {
+            repo.updateSettings { it.copy(alwaysServerId = id) }
+        } else {
+            TailbondVpnService.useServer(getApplication(), id)
+        }
+    }
+
+    fun setFailoverPolicy(policy: FailoverPolicy, server: String?) =
+        repo.updateSettings { it.copy(failoverPolicy = policy, alwaysServerId = if (policy == FailoverPolicy.ALWAYS) server else null) }
+
+    // --- websites ---
+
+    fun addWebsite(domain: String, note: String) {
+        val d = WebsiteBypass.normalize(domain) ?: return
+        repo.updateSettings { s ->
+            if (s.websites.any { it.domain == d } || s.websites.size >= WebsiteBypass.MAX_RULES) s
+            else s.copy(websites = s.websites + WebsiteRule(d, true, note.trim().take(64)))
+        }
+    }
+
+    fun setWebsiteEnabled(domain: String, on: Boolean) = repo.updateSettings { s ->
+        s.copy(websites = s.websites.map { if (it.domain == domain) it.copy(enabled = on) else it })
+    }
+
+    fun removeWebsite(domain: String) = repo.updateSettings { s -> s.copy(websites = s.websites.filter { it.domain != domain }) }
     fun clearPairError() { _pairError.value = null }
 
     fun forgetPairing() {

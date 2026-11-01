@@ -1,6 +1,7 @@
 package dev.tailbond.app.service
 
 import com.mqvpn.sdk.core.model.MqvpnError
+import dev.tailbond.app.failover.FailoverView
 import dev.tailbond.app.model.PathKind
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,6 +61,10 @@ data class Live(
     val txHistory: List<Long> = emptyList(),
     val paths: List<PathSample> = emptyList(),
     val standbyActive: Boolean = false,
+    /** Server failover state; null with a single server. */
+    val failover: FailoverView? = null,
+    /** Website bypass: addresses currently left out of the tunnel. */
+    val bypassAddresses: Int = 0,
 )
 
 /** In-process live tunnel state, written by the VPN service, read by UI, tile and notification. */
@@ -78,6 +83,11 @@ object LiveState {
 
     fun reset(state: ConnState = ConnState.DISCONNECTED, message: String? = null, errorKind: ErrorKind? = null) {
         _live.value = Live(state = state, message = message, errorKind = errorKind)
+    }
+
+    /** A new session to another (or the same) server: fresh tunnel state, failover state kept. */
+    fun restart(state: ConnState) {
+        set { Live(state = state, failover = it.failover) }
     }
 }
 

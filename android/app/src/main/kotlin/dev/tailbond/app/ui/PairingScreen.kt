@@ -54,6 +54,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import dev.tailbond.app.data.AskState
 import dev.tailbond.app.data.PairRequestClient
+import dev.tailbond.app.model.ServerList
+import dev.tailbond.app.model.ServerProfile
+import dev.tailbond.app.model.TunnelPlan
 import dev.tailbond.app.model.serverShortName
 import dev.tailbond.app.pairing.PairingPayload
 
@@ -134,9 +137,26 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
         modifier.verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Add this phone to your home server", style = MaterialTheme.typography.headlineSmall)
+        val adding = state.pairTarget == PairTarget.Add
+        val repairing = (state.pairTarget as? PairTarget.Replace)?.let { t -> state.servers.firstOrNull { it.id == t.id } }
+        val primary = state.servers.firstOrNull()?.name ?: "your home server"
+        Text(
+            when {
+                adding -> "Add a backup server"
+                repairing != null -> "Pair this phone again with ${repairing.name}"
+                else -> "Add this phone to your home server"
+            },
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        if (adding) {
+            Text(
+                "A backup server is a second tailbond server, like a VPS. tailbond keeps using $primary and switches to the backup by itself when $primary is down. " +
+                    "Add this phone to it the same way as to $primary.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
 
-        AskCard(state.ask, server, { server = it }, actions)
+        AskCard(state.ask, server, { server = it }, actions, adding, primary)
         // after a failed ask the field shows the asked name; the page button uses it too
         val named = server.ifBlank { askedServer(state.ask) }
 
@@ -154,7 +174,7 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Or use the home server's page", style = MaterialTheme.typography.titleMedium)
+                Text(if (adding) "Or use the other server's page" else "Or use the home server's page", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Came here from your home server's page? Go back to it in your browser and tap step 2, Open tailbond and ask.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -267,7 +287,7 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
 
 /** First choice while Tailscale still has the VPN: ask the home server, approve it there. */
 @Composable
-private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, actions: UiActions) {
+private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, actions: UiActions, adding: Boolean = false, primary: String = "") {
     // after a failed try the field keeps (or gets back) the name that was asked
     val server = typed.ifBlank { askedServer(ask) }
     val busy = ask is AskState.Asking || ask is AskState.Waiting
@@ -275,18 +295,20 @@ private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, ac
     val bad = ask is AskState.Failed || ask is AskState.Declined || ask is AskState.Expired
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Ask your home server", style = MaterialTheme.typography.titleMedium)
+            Text(if (adding) "Ask the other server" else "Ask your home server", style = MaterialTheme.typography.titleMedium)
             if (!busy) {
                 Text(
-                    "Keep Tailscale on for now. Type your home server's name as it appears in the Tailscale app, " +
+                    if (adding) "Type the other server's name as it appears in the Tailscale app, and tap Ask to connect. " +
+                        "This works while tailbond is on (through $primary) or with Tailscale on. Someone approves this phone on that server."
+                    else "Keep Tailscale on for now. Type your home server's name as it appears in the Tailscale app, " +
                         "and tap Ask to connect. Someone approves this phone on the home server; that's it.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 OutlinedTextField(
                     value = server,
                     onValueChange = { onServer(it.trim()) },
-                    label = { Text("Home server's name in Tailscale") },
-                    placeholder = { Text("e.g. homebox") },
+                    label = { Text(if (adding) "Other server's name in Tailscale" else "Home server's name in Tailscale") },
+                    placeholder = { Text(if (adding) "e.g. vps" else "e.g. homebox") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                     modifier = Modifier.fillMaxWidth(),
@@ -321,17 +343,44 @@ private fun AskCard(ask: AskState, typed: String, onServer: (String) -> Unit, ac
     }
 }
 
-/** Confirmation before a scanned/pasted/deep-linked pairing is saved. */
+/** Confirmation before a scanned/pasted/deep-linked pairing is saved. [target]: null = first pairing. */
 @Composable
-fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+fun ConfirmPairingDialog(
+    p: PairingPayload,
+    target: PairTarget?,
+    servers: List<ServerProfile>,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     var details by rememberSaveable { mutableStateOf(false) }
     val server = serverShortName(p)
+    val replaced = (target as? PairTarget.Replace)?.let { t -> servers.firstOrNull { it.id == t.id } }
+    val adding = target == PairTarget.Add
+    val renewing = replaced != null && replaced.name.equals(server, ignoreCase = true)
+    val replacing = replaced != null && !renewing
+    val primary = servers.firstOrNull()?.name ?: "your home server"
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (replacing) "Switch this phone to $server?" else "Add this phone to $server?") },
+        title = {
+            Text(
+                when {
+                    adding -> "Add $server as a backup server?"
+                    renewing -> "Pair again with $server?"
+                    replacing -> "Switch this phone to $server?"
+                    else -> "Add this phone to $server?"
+                },
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it. They see this phone as $server (not as your own phone), so they allow it whatever they allow $server.")
+                if (adding) {
+                    Text("tailbond keeps using $primary and switches to $server by itself when $primary is down, then back to $primary once it works again. You can change the order in Settings.")
+                    Text("Through $server your Tailscale machines stay reachable too, and they see this phone as $server.")
+                } else if (renewing) {
+                    Text("This renews this phone's pairing with $server. Nothing else changes.")
+                } else {
+                    Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it. They see this phone as $server (not as your own phone), so they allow it whatever they allow $server.")
+                }
                 Text(
                     "It connects over the internet to ${p.server}, and your internet traffic goes out from home (you can change that in Settings).",
                     style = MaterialTheme.typography.bodySmall,
@@ -355,19 +404,30 @@ fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () ->
                         Text("  Secure connection to $server", style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                if (replacing) Text("This replaces the home server this phone uses now.", style = MaterialTheme.typography.bodySmall)
+                if (replacing) Text("This replaces ${replaced?.name} on this phone.", style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { details = !details }) { Text(if (details) "Hide details" else "Technical details") }
                 if (details) {
                     val small = MaterialTheme.typography.bodySmall
                     Text("Address: ${p.server}", style = small)
                     p.sni?.let { Text("Name: $it", style = small) }
-                    Text("Mode: ${p.mode} · DNS: ${p.dns.joinToString().ifEmpty { "10.77.0.1" }}", style = small)
+                    Text("Mode: ${p.mode} · DNS: ${TunnelPlan.dns(p).joinToString()} · Tunnel: ${ServerList.subnetOf(p)}", style = small)
                     if (p.tailnetRoutes.isNotEmpty()) Text("Tailnet routes: ${p.tailnetRoutes.joinToString()}", style = small)
                     p.certSha256?.let { Text("Certificate SHA-256: ${it.take(16)}…", style = small) }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(if (replacing) "Switch" else "Add phone") } },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    when {
+                        adding -> "Add backup"
+                        renewing -> "Pair again"
+                        replacing -> "Switch"
+                        else -> "Add phone"
+                    },
+                )
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

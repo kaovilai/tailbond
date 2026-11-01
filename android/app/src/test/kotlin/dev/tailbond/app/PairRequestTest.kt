@@ -76,6 +76,15 @@ class PairRequestTest {
         assertEquals("tailbond://pair?d=xyz", got)
     }
 
+    @Test fun askSendsAvoidSubnets() {
+        PairRequestClient.transport = fakeServer()
+        PairRequestClient.ask(home, "pixel-8", listOf("10.77.0.0/24", "10.83.142.0/24"))
+        assertEquals(
+            "POST /api/pair-requests - {\"name\":\"pixel-8\",\"kind\":\"phone\",\"avoid_subnets\":[\"10.77.0.0/24\",\"10.83.142.0/24\"]}",
+            calls[1],
+        )
+    }
+
     @Test fun askFailures() {
         PairRequestClient.transport = fakeServer(429 to """{"ok":false}""")
         expectFailure(Failure.TOO_MANY) { PairRequestClient.ask(home, "x") }

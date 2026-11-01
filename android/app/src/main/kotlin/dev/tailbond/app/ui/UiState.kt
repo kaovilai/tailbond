@@ -2,7 +2,10 @@ package dev.tailbond.app.ui
 
 import dev.tailbond.app.data.AskState
 import dev.tailbond.app.data.PeerList
+import dev.tailbond.app.failover.FailoverPolicy
+import dev.tailbond.app.model.AddCheck
 import dev.tailbond.app.model.AppSettings
+import dev.tailbond.app.model.ServerProfile
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.PathSetting
@@ -24,6 +27,14 @@ enum class Handoff {
     FIRST_PERMISSION,
 }
 
+/** Where a confirmed pairing goes. */
+sealed interface PairTarget {
+    /** "Add another server": appended as a backup. */
+    data object Add : PairTarget
+    /** "Pair again" for this server (or a deep link for a server already in the list). */
+    data class Replace(val id: String) : PairTarget
+}
+
 /** Everything the screens render. Built by MainActivity from the view model; faked in screen renders. */
 data class UiState(
     val profile: PairingPayload? = null,
@@ -40,12 +51,29 @@ data class UiState(
     val ask: AskState = AskState.Idle,
     /** A Wi-Fi network wants a sign-in (captive portal). */
     val wifiSignIn: Boolean = false,
+    /** The ordered server list (first = main); [profile] is the main one's pairing. */
+    val servers: List<ServerProfile> = emptyList(),
+    /** What the pairing screen and confirm dialog are for; null = first pairing (or decided by the link). */
+    val pairTarget: PairTarget? = null,
+    /** Where [pending] goes once confirmed (null = first pairing). */
+    val pendingTarget: PairTarget? = null,
+    /** A server that can't be added: its name and why. */
+    val serverProblem: Pair<String, AddCheck>? = null,
+    /** Build.VERSION.SDK_INT (renders fake older phones). */
+    val sdkInt: Int = 35,
 ) {
+    /** The server the tunnel uses (or will use): failover's active one, else the main one. */
+    val activeServer: ServerProfile?
+        get() = servers.firstOrNull { it.id == live.failover?.activeId } ?: servers.firstOrNull()
+
+    val serverNames: Map<String, String> get() = servers.associate { it.id to it.name }
+
     val mode: Mode get() = profile?.let { TunnelPlan.effectiveMode(it, settings) } ?: (settings.mode ?: Mode.SPEED)
 
     /** "homebox": the server's tailnet host name when known, else from the pairing. */
     val serverName: String
-        get() = peers.list?.server?.takeIf { it.isNotBlank() } ?: profile?.let { serverShortName(it) } ?: "home server"
+        get() = if (servers.size > 1) activeServer?.name ?: "home server"
+        else peers.list?.server?.takeIf { it.isNotBlank() } ?: profile?.let { serverShortName(it) } ?: "home server"
 
     /** "tail1234.ts.net" */
     val tailnet: String?
@@ -87,6 +115,20 @@ interface UiActions {
     /** Stops tailbond and opens the Tailscale app (or its store page). */
     fun switchToTailscale() {}
     fun openVpnSettings() {}
+    /** Opens the pairing screen to add a backup server. */
+    fun startAddServer() {}
+    /** Opens the pairing screen to pair [id] again (null: the server in use). */
+    fun startRepair(id: String?) {}
+    fun useServerNow(id: String) {}
+    fun moveServer(id: String, delta: Int) {}
+    fun removeServer(id: String) {}
+    fun setFailoverPolicy(policy: FailoverPolicy, server: String?) {}
+    fun dismissServerProblem() {}
+    /** Leaving the pairing screen without pairing. */
+    fun clearPairTarget() {}
+    fun addWebsite(domain: String, note: String) {}
+    fun setWebsiteEnabled(domain: String, on: Boolean) {}
+    fun removeWebsite(domain: String) {}
 }
 
 object NoActions : UiActions

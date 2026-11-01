@@ -1,5 +1,9 @@
 package dev.tailbond.app.model
 
+import dev.tailbond.app.failover.FailoverReason
+import dev.tailbond.app.failover.FailoverView
+import dev.tailbond.app.failover.ServerState
+import dev.tailbond.app.failover.SwitchKind
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.ErrorKind
@@ -124,7 +128,18 @@ object Words {
 
     enum class Fix(val label: String) { RETRY("Try again"), REPAIR("Pair again"), PAIR("Pair this phone") }
 
-    fun error(kind: ErrorKind?, server: String, address: String, detail: String?): ErrorText = when (kind) {
+    /** [servers]: every server's name when the phone has more than one (all of them were tried). */
+    fun error(kind: ErrorKind?, server: String, address: String, detail: String?, servers: List<String> = emptyList()): ErrorText = when {
+        servers.size > 1 && kind != ErrorKind.NOT_PAIRED -> ErrorText(
+            "Can't reach any of your servers",
+            "tailbond tried ${ServerList.joinNames(servers)} and none of them worked" + (detail?.let { " ($it)" } ?: "") + ". " +
+                "Check that this phone is online and that at least one of them is turned on, then try again.",
+            Fix.RETRY,
+        )
+        else -> errorOne(kind, server, address, detail)
+    }
+
+    private fun errorOne(kind: ErrorKind?, server: String, address: String, detail: String?): ErrorText = when (kind) {
         ErrorKind.UNREACHABLE -> ErrorText(
             "Can't reach your home server",
             "$server didn't answer at $address. Check that it's turned on and try again. " +
@@ -156,6 +171,99 @@ object Words {
         )
     }
 
+    // --- servers and failover ---
+
+    /** "1:20" for a countdown (rounded up to the second). */
+    fun mmss(ms: Long): String {
+        val sec = ((ms.coerceAtLeast(0) + 999) / 1000)
+        return "${sec / 60}:${"%02d".format(sec % 60)}"
+    }
+
+    /** How long "Back on homebox" stays on screen after a failback. */
+    const val BACK_ON_MS = 5 * 60_000L
+
+    /**
+     * The failover sentence for the home card and the notification:
+     * "Using vps (homebox is unreachable)", "Back to homebox in 1:20",
+     * "Back on homebox"; null when the primary is in use as normal.
+     */
+    fun serverLine(f: FailoverView?, names: Map<String, String>): String? {
+        f ?: return null
+        fun n(id: String?) = id?.let { names[it] } ?: "the other server"
+        val active = n(f.activeId)
+        val primaryId = f.primaryId
+        val primary = n(primaryId)
+        if (f.failbackTo != null && f.failbackInMs != null) return "Back to ${n(f.failbackTo)} in ${mmss(f.failbackInMs)}"
+        if (f.activeId == primaryId) {
+            val sw = f.lastSwitch
+            val recent = sw != null && sw.kind == SwitchKind.FAILBACK && sw.to == primaryId && f.nowMs - sw.atMs <= BACK_ON_MS
+            return if (recent && f.state(f.activeId) == ServerState.ACTIVE) "Back on $primary" else null
+        }
+        return when (f.reason) {
+            FailoverReason.MANUAL -> "Using $active (you picked it)"
+            FailoverReason.POLICY -> "Always using $active"
+            else -> when (f.state(primaryId ?: "")) {
+                ServerState.UNREACHABLE -> "Using $active ($primary is unreachable)"
+                ServerState.STANDBY -> "Using $active ($primary is answering again)"
+                else -> "Using $active ($primary stopped working)"
+            }
+        }
+    }
+
+    /** Status of one server in the lists, and its dot: green, red, grey (null). */
+    fun serverStatus(id: String, f: FailoverView?, on: Boolean, isPrimary: Boolean): Pair<String, Boolean?> {
+        if (!on || f == null) return (if (isPrimary) "Main server" else "Backup") to null
+        val st = f.state(id) ?: return "Not checked yet" to null
+        return when (st) {
+            ServerState.ACTIVE -> "In use" to true
+            ServerState.CONNECTING -> "Connecting…" to null
+            ServerState.STANDBY -> (if (isPrimary) "Answering again" else "Ready as backup") to true
+            ServerState.UNREACHABLE -> "Unreachable" to false
+            ServerState.UNKNOWN -> "Checking…" to null
+        }
+    }
+
+    /** The policy choices in Settings, in plain words. */
+    fun preferLabel(names: List<String>): String = when (names.size) {
+        0, 1 -> "Use ${names.firstOrNull() ?: "the main server"}"
+        2 -> "Prefer ${names[0]}, use ${names[1]} if ${names[0]} is down"
+        else -> "Prefer ${names[0]}, then ${ServerList.joinNames(names.drop(1))} if ${names[0]} is down"
+    }
+
+    fun preferExplain(primary: String, s: AppSettings): String =
+        "Switches after ${seconds(s.failoverTiming.switchAfterMs)} without a working connection, and goes back to $primary " +
+            "once it has answered for ${seconds(s.failoverTiming.failbackAfterMs)} in a row."
+
+    private fun seconds(ms: Long): String {
+        val s = ms / 1000
+        return if (s % 60 == 0L && s >= 60) (if (s == 60L) "1 minute" else "${s / 60} minutes") else "$s seconds"
+    }
+
+    /** Why a server can't be added: title and what to do. */
+    fun addProblem(newName: String, c: AddCheck): Pair<String, String>? = when (c) {
+        AddCheck.Ok -> null
+        is AddCheck.Duplicate -> "$newName is already in your list" to
+            "This phone already has ${c.existing}. To renew its pairing, use Pair again next to ${c.existing} in Settings."
+        is AddCheck.SubnetClash -> "$newName uses the same addresses as ${c.existing}" to
+            "Both servers use ${c.subnet} inside the tunnel, so tailbond can't switch between them. " +
+            "On $newName, change \"subnet\" under \"server\" in /etc/tailbond/tailbond.json to a free range such as 10.78.0.0/24 " +
+            "and restart tailbond there (or ask whoever runs $newName), then add it again. " +
+            "Asking over Tailscale does this by itself while $newName has no other devices."
+    }
+
+    // --- website bypass ---
+
+    fun websitesSummary(s: AppSettings, sdkInt: Int): String = when {
+        !WebsiteBypass.supported(sdkInt) -> "Needs Android 13 or newer"
+        s.websites.isEmpty() -> "None"
+        else -> s.activeWebsites.size.let { n -> if (n == 1) "1 website uses the phone's own connection" else "$n websites use the phone's own connection" }
+    }
+
+    const val WEBSITES_LIMIT =
+        "tailbond goes by each website's addresses, looked up through your server when it connects and every 10 minutes, " +
+            "so parts of a site loaded from other names still use tailbond, other sites sharing those addresses (big hosting " +
+            "networks) skip it too, and apps with their own private DNS may not follow it."
+
     /** Short tile / notification text. */
     fun tileSubtitle(live: Live): String = when (live.state) {
         ConnState.CONNECTED -> activeKinds(live).ifEmpty { "Connected" }
@@ -166,11 +274,8 @@ object Words {
     }
 }
 
-/** "homebox" from the pairing's TLS name (homebox.tail1234.ts.net) or server address. */
-fun serverShortName(p: PairingPayload): String {
-    val name = p.sni?.takeIf { it.isNotBlank() } ?: p.host
-    return if (Cidr.isIpLiteral(name)) name else name.substringBefore('.')
-}
+/** "homebox": the payload's server_name, else the first label of its TLS name, else the server's host. */
+fun serverShortName(p: PairingPayload): String = ServerList.nameOf(p)
 
 /** "tail1234.ts.net" when the server has a MagicDNS name, else null. */
 fun tailnetDomain(p: PairingPayload): String? =

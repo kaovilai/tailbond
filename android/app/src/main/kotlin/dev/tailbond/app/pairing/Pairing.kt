@@ -25,6 +25,10 @@ data class PairingPayload(
     val dns: List<String> = emptyList(),
     val mode: String = "speed",
     @SerialName("tailnet_routes") val tailnetRoutes: List<String> = emptyList(),
+    /** Additive: the server's own short name ("homebox", "vps"). */
+    @SerialName("server_name") val serverName: String? = null,
+    /** Additive: the server's IPv4 tunnel subnet ("10.77.0.0/24"). */
+    val subnet: String? = null,
 ) {
     /** Host part of [server] (brackets stripped for IPv6 literals). */
     val host: String get() = splitHostPort(server).first
@@ -170,6 +174,13 @@ object Pairing {
         }
         for (d in p.dns) {
             if (!Cidr.isIpLiteral(d)) return PairingResult.Invalid("bad DNS server $d")
+        }
+        p.subnet?.takeIf { it.isNotBlank() }?.let { sn ->
+            val c = Cidr.parse(sn)
+            if (c == null || c.isV6 || '/' !in sn) return PairingResult.Invalid("bad subnet $sn")
+        }
+        p.serverName?.let { n ->
+            if (n.length > 63 || n.any { it.code !in 0x21..0x7E }) return PairingResult.Invalid("bad server_name")
         }
         return PairingResult.Ok(p.copy(certSha256 = pin?.lowercase()?.ifEmpty { null }))
     }
