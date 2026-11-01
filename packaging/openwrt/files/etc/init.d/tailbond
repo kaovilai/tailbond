@@ -3,6 +3,7 @@
 #
 # tailbond: tailbondd agent supervising mqvpn (client or server role).
 # Config: /etc/config/tailbond (UCI) -> /etc/tailbond/tailbond.json.
+# shellcheck disable=SC2034  # START/STOP/USE_PROCD are read by /etc/rc.common
 
 START=99
 STOP=10

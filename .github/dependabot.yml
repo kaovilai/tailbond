@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /agent
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    groups:
+      android:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # mqvpn (data plane). A bump can break patches/mqvpn/*.patch or the
+  # Android SDK fork in android/mqvpn-sdk; CI's e2e and Android jobs catch it.
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: weekly

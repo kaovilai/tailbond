@@ -1,0 +1,4 @@
+# OpenWrt shell idioms: busybox ash supports `local`; /lib/functions.sh and
+# friends are sourced from paths only present on the router.
+shell=busybox
+disable=SC1090,SC3043
