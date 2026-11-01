@@ -1,0 +1,13 @@
+Package: tailbond
+Version: @VERSION@
+Depends: kmod-tun, ip-full, jshn, jsonfilter
+Source: https://github.com/mp0rta/mqvpn (data plane), tailbond (agent)
+License: Apache-2.0
+Section: net
+Architecture: @ARCH@
+Installed-Size: @SIZE@
+Maintainer: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+Description: Speedify-style WAN bonding to your own home server.
+ Bonds every WAN (ethernet, repeater Wi-Fi, USB tethering, cellular) into one
+ Multipath QUIC tunnel (mqvpn, static) to a tailbond server, with the tailnet
+ reachable through it. Agent and web UI (tailbondd) on port 8077.

@@ -1,0 +1,39 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# server-down: mqvpn server stopped. Same env as server-up.
+#
+# The UCI firewall/network config stays (it only matches $TB_TUN, which is
+# gone), so a restart reloads nothing. With server.withdraw_routes_on_stop
+# the subnet is withdrawn from Tailscale. TB_PURGE=1 (package removal)
+# removes everything server-up added.
+. "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
+
+subnet="${TB_SUBNET:-$(tbcfg_or server.subnet 10.77.0.0/24)}"
+
+if command -v tailscale >/dev/null &&
+	{ [ -n "$TB_PURGE" ] || is_true "$(tbcfg_or server.withdraw_routes_on_stop 0)"; }; then
+	routes="$(tailscale debug prefs 2>/dev/null | jsonfilter -e '@.AdvertiseRoutes[*]' 2>/dev/null | tr '\n' ' ')"
+	case " $routes " in
+	*" $subnet "*)
+		new="$(for r in $routes; do [ "$r" = "$subnet" ] || echo "$r"; done | xargs | tr ' ' ',')"
+		tailscale set --advertise-routes="$new" && log "tailscale: withdrew $subnet"
+		;;
+	esac
+fi
+
+if [ -n "$TB_PURGE" ]; then
+	for s in tailbond tailbond_dns tailbond_icmp tailbond_wan_in tailbond_wan tailbond_lan \
+		tailbond_ts tailbond_to_ts tailbond_from_ts tailbond_ts_nat; do
+		udel "firewall.$s"
+	done
+	commit_reload firewall firewall
+	udel_list 'dhcp.@dnsmasq[0].notinterface' tailbond
+	commit_reload dhcp dnsmasq
+	remove_network
+	commit_reload network network
+	log "server-down: removed tailbond network/firewall config"
+fi
+
+log "server-down: done"
+exit 0

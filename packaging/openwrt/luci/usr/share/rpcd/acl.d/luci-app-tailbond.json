@@ -1,0 +1,8 @@
+{
+	"luci-app-tailbond": {
+		"description": "Grant access to the tailbond page",
+		"read": {
+			"uci": [ "tailbond" ]
+		}
+	}
+}
