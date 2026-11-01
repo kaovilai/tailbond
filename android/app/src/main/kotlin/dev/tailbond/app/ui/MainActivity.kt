@@ -127,6 +127,8 @@ class MainActivity : ComponentActivity() {
         override fun dismissPairing() = vm.dismissPairing()
         override fun clearPairError() = vm.clearPairError()
         override fun openHomeServerPage(server: String) = this@MainActivity.openHomeServerPage(server)
+        override fun askToConnect(server: String) = vm.askToConnect(server)
+        override fun cancelAsk() = vm.cancelAsk()
         override fun forgetPairing() = vm.forgetPairing()
         override fun setMode(m: Mode) = vm.setMode(m)
         override fun setPath(kind: PathKind, s: PathSetting) = vm.setPath(kind, s)
@@ -156,6 +158,7 @@ class MainActivity : ComponentActivity() {
             handoff = vm.handoff.collectAsStateWithLifecycle().value,
             tailscaleInstalled = tailscaleInstalled,
             apps = vm.apps.collectAsStateWithLifecycle().value,
+            ask = vm.ask.collectAsStateWithLifecycle().value,
         )
         TailbondApp(state, actions)
     }

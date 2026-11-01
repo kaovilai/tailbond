@@ -1,6 +1,8 @@
 package dev.tailbond.app.ux
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.tailbond.app.data.AskState
+import dev.tailbond.app.data.PairRequestClient
 import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.service.Live
@@ -53,6 +55,11 @@ class Screens : UxRender() {
         UiState(settings = AppSettings(onboarded = true), pairError = "pairing data is not base64url"),
         tall = 1100, search = "tailbond://pair?d=eyJ2IjoxLCJuYW1lIjoicGl4ZWwt",
     )
+    // "Ask to connect" over Tailscale
+    @Test fun askWaiting() = app("02b-pairing-ask-waiting", UiState(settings = AppSettings(onboarded = true), ask = AskState.Waiting("homebox", "pixel-8")), tall = 1100)
+    @Test fun askNotFound() = app("02c-pairing-ask-not-found", UiState(settings = AppSettings(onboarded = true), ask = AskState.Failed("homebox", PairRequestClient.Failure.NOT_FOUND)), tall = 1100)
+    @Test fun askDeclined() = app("02d-pairing-ask-declined", UiState(settings = AppSettings(onboarded = true), ask = AskState.Declined("homebox")), tall = 1100)
+    @Test fun askApproved() = app("02e-pairing-ask-approved-confirm", UiState(settings = AppSettings(onboarded = true), pending = UxFixtures.profile), route = Routes.PAIR)
     @Test fun deepLinkConfirm() = app("03-deeplink-confirm", UiState(settings = AppSettings(onboarded = true), pending = UxFixtures.profile))
     @Test fun handoff() = app("04-handoff-other-vpn", home(UxFixtures.disconnected).copy(handoff = Handoff.OTHER_VPN_ACTIVE))
     @Test fun handoffDark() = app("04-handoff-other-vpn-dark", home(UxFixtures.disconnected).copy(handoff = Handoff.OTHER_VPN_ACTIVE), dark = true)

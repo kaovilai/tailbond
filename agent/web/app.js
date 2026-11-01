@@ -348,7 +348,11 @@ function renderPairRequests(st) {
   box.classList.toggle('hidden', !reqs.length);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), ...reqs.map((r) => {
+  const pw = state.settings && state.settings.password_set;
+  const who = h('p', { class: 'muted small', text: pw
+    ? 'Only people with the tailbond password can approve.'
+    : 'Who can approve: anyone who can open this page, i.e. anyone on your Tailscale account (and anyone you shared this machine with). To require a password, set "ui_password" in /etc/tailbond/tailbond.json (see the Fedora server guide).' });
+  box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), who, ...reqs.map((r) => {
     const what = r.kind === 'router' ? 'Travel router' : r.kind === 'phone' ? 'Phone' : 'Device';
     const decide = async (action, btn) => {
       btn.disabled = true;

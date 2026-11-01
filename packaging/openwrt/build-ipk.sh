@@ -85,6 +85,13 @@ install -m 0644 "$PKG/hooks/lib.sh" "$data/usr/lib/tailbond/hook-lib.sh"
 for h in client-up client-down server-up server-down; do
     install -m 0755 "$PKG/hooks/$h" "$data/usr/lib/tailbond/hooks/$h"
 done
+# Pristine copies of files that change after install (edited config, the
+# uci-defaults script removes itself): a home server on a GL router serves
+# the package it runs as GET /tailbond-glinet.ipk, rebuilt from opkg's file
+# list, and uses these instead of the live files.
+install -d -m 0755 "$data/usr/share/tailbond/pristine/etc/config" "$data/usr/share/tailbond/pristine/etc/uci-defaults"
+install -m 0600 "$PKG/files/etc/config/tailbond" "$data/usr/share/tailbond/pristine/etc/config/tailbond"
+install -m 0755 "$PKG/files/etc/uci-defaults/90-tailbond" "$data/usr/share/tailbond/pristine/etc/uci-defaults/90-tailbond"
 # sysupgrade keeps the agent config and state (server users, pairing)
 echo /etc/tailbond/ >"$data/lib/upgrade/keep.d/tailbond"
 chmod 0644 "$data/lib/upgrade/keep.d/tailbond"

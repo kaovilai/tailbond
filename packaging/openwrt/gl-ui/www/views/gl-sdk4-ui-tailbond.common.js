@@ -286,7 +286,7 @@
         disc: null, discovering: false, typed: "", showOther: false, pasteUri: "", pasteErr: "",
         busy: {}, toast: "", confirm: null, capEdit: null, capValue: "",
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
-        wantOn: null, actErr: "", showTyped: false
+        wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: ""
       };
     },
     computed: {
@@ -371,7 +371,8 @@
       },
       exampleName: function () {
         var p = this.peers || {}, first = A(p.peers)[0];
-        return (first && first.dns_name) || "nas." + (p.magic_dns_suffix || "your-tailnet.ts.net");
+        var suffix = p.magic_dns_suffix || ((this.st && this.st.server) || "").split(".").slice(1).join(".");
+        return (first && first.dns_name) || "nas." + (suffix || "your-tailnet.ts.net");
       },
       say: function (msg) {
         var self = this;
@@ -987,7 +988,7 @@
                   self.btn(h, "Approve", function () { self.decide(r, true); }, "primary", self.busy["req-" + r.id])
                 ])
               ]);
-            }), h("span", { class: "tb-chip warn" }, this.pending.length + " new"), "tb-pending"));
+            }).concat([this.whoApproves(h)]), h("span", { class: "tb-chip warn" }, this.pending.length + " new"), "tb-pending"));
           }
 
           // unfinished setup first, else devices first
@@ -1044,6 +1045,14 @@
           ]);
         },
 
+        whoApproves: function (h) {
+          var s = this.settings || {}, ts = this.ts || {};
+          var page = "http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077";
+          return h("div", { class: "tb-muted tb-small", style: { lineHeight: 1.55 } }, s.password_set
+            ? "Who can approve: anyone logged in to this admin panel, or with the tailbond password at " + page + "."
+            : "Who can approve: anyone logged in to this admin panel, and anyone on your Tailscale account who opens " + page + ". To require a password there, set one under Internet and Tailscale.");
+        },
+
         // What's left before travel routers can connect from anywhere.
         setupSteps: function () {
           var ts = this.ts, s = this.settings, out = [];
@@ -1080,6 +1089,12 @@
               this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
             h("div", "Port"), h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "Is your internet cable plugged straight into this router? Then nothing else to do. If it's plugged into another box (your internet provider's modem-router), that box must forward UDP " + (s.port || 443) + " to this router; see the box's manual under \"port forwarding\".")]),
             h("div", "Tailscale name"), h("div", { class: "tb-mono" }, ts.dns_name || "—"),
+            h("div", "tailbond page password"), this.pwEdit ? h("div", { class: "tb-row" }, [
+              h("input", { class: "tb-input", attrs: { type: "password", placeholder: "New password (empty: none)", autocomplete: "new-password" }, domProps: { value: this.pwValue }, on: { input: function (e) { self.pwValue = e.target.value; } } }),
+              this.btn(h, "Save", function () { self.run("pw", api("POST", "/api/settings", { ui_password: self.pwValue || "" }), self.pwValue ? "Password set" : "Password removed").then(function () { self.pwEdit = false; self.pwValue = ""; }); }, "primary small", this.busy.pw),
+              this.btn(h, "Cancel", function () { self.pwEdit = false; }, "small text")
+            ]) : h("div", { class: "tb-row" }, [h("span", s.password_set ? "Set: needed to open http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077" : "None: anyone on your Tailscale account can open http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077"),
+              this.btn(h, s.password_set ? "Change" : "Set", function () { self.pwEdit = true; }, "small text")]),
             h("div", "Secure connection"), h("div", s.tls === "tailscale" ? "Certificate from Tailscale for " + (s.tls_name || "") : "This router's own certificate, checked by each device")
           ]));
           return this.card(h, steps.length ? "Finish setting up" : "Internet and Tailscale", items);
@@ -1097,10 +1112,13 @@
         // How to put tailbond on a GL travel router (the install itself
         // happens on that router, which doesn't have tailbond yet).
         rRouterGuide: function (h) {
+          var s = this.settings || {};
           return this.card(h, "Add a GL.iNet travel router", [
             h("ol", { class: "tb-steps-n" }, [
-              h("li", ["Get the router package on your computer: the tailbond file ending in ", h("b", "_neon-vfpv4.ipk"), " (from the tailbond releases page, or from a Fedora home server's tailbond page)."]),
-              h("li", ["On the travel router's admin page: ", h("b", "SYSTEM → Advanced Settings → Go To LuCI"), " (log in with the same password), then ", h("b", "System → Software → Upload Package…"), ", pick the file and click ", h("b", "Install"), "."]),
+              h("li", s.glinet_ipk
+                ? [h("a", { class: "tb-btn small primary", attrs: { href: "/tailbond-glinet.ipk", download: "tailbond_aarch64_cortex-a53_neon-vfpv4.ipk" } }, "Download the router package"), " to this computer. It's the same tailbond this router runs."]
+                : ["Get the router package on your computer: the tailbond file ending in ", h("b", "_neon-vfpv4.ipk"), "."]),
+              h("li", ["On the travel router's admin page: ", h("b", "SYSTEM → Advanced Settings → Go To LuCI"), " (log in with the same password), then ", h("b", "System → Software → Upload Package…"), ", pick the file and click ", h("b", "Install"), " (leave the other options as they are). The router's internet keeps working."]),
               h("li", ["Back on the travel router's admin page, open ", h("b", "APPLICATIONS → tailbond"), " and click ", h("b", "Ask to connect"), ". It shows up at the top of this page; click ", h("b", "Approve"), "."])
             ])
           ]);

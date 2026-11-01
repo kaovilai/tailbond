@@ -436,12 +436,6 @@ func (a *Agent) hAPK(w http.ResponseWriter, r *http.Request) {
 	serveDownload(w, r, a.store.Get().APKPath(), "tailbond.apk", "application/vnd.android.package-archive")
 }
 
-// hIPK offers the GL.iNet router package (additive), for installing on a
-// travel router from the laptop that opened the home server's page.
-func (a *Agent) hIPK(w http.ResponseWriter, r *http.Request) {
-	serveDownload(w, r, a.store.Get().GLiNetIPKPath(), "tailbond_aarch64_cortex-a53_neon-vfpv4.ipk", "application/octet-stream")
-}
-
 func serveDownload(w http.ResponseWriter, r *http.Request, path, name, ctype string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -466,7 +460,7 @@ func apkAvailable(path string) bool {
 
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: apkAvailable(cfg.GLiNetIPKPath())}
+	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: a.glinetIPKAvailable()}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo

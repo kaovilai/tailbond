@@ -58,6 +58,12 @@ pid=$!
 i=0; while [ $i -lt 30 ] && ! uclient-fetch -q -O /dev/null http://127.0.0.1:8077/api/status 2>/dev/null; do sleep 1; i=$((i+1)); done
 uclient-fetch -q -O - http://127.0.0.1:8077/api/status | jsonfilter -e '@.role' | grep -qx client && ok "agent serves /api/status" || { bad "agent"; cat /tmp/agent.log; }
 
+uclient-fetch -q -O /tmp/self.ipk http://127.0.0.1:8077/tailbond-glinet.ipk &&
+	tar -xzOf /tmp/self.ipk ./control.tar.gz | tar -xzOf - ./control | grep -q '^Package: tailbond' &&
+	tar -xzOf /tmp/self.ipk ./data.tar.gz | tar -tzf - | grep -qx './etc/uci-defaults/90-tailbond' &&
+	! tar -xzOf /tmp/self.ipk ./data.tar.gz | tar -tzf - | grep -q '^./etc/tailbond/' &&
+	ok "GET /tailbond-glinet.ipk rebuilds the installed package (pristine uci-defaults, no state)" || bad "self package"
+
 echo "== GL /rpc backend module"
 cat >/tmp/rpc.lua <<'LUA'
 local cjson = require "cjson"

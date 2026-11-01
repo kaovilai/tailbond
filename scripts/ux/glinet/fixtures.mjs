@@ -80,7 +80,7 @@ const serverBase = (statusOver = {}, tsOver = {}, setOver = {}) => ({
   info: { installed: true, version: '0.1.0-r42', role: 'server', enabled: true, running: true, model: 'GL.iNet GL-BE9300' },
   api: {
     'GET /api/status': serverStatus(statusOver),
-    'GET /api/settings': { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', ...setOver },
+    'GET /api/settings': { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', glinet_ipk: true, ...setOver },
     'GET /api/tailscale': { installed: true, running: true, self: 'homebox', dns_name: 'homebox.tail1234.ts.net', tailnet: 'alex@example.com', route: '10.77.0.0/24', route_advertised: true, routes_approved: true, admin_url: 'https://login.tailscale.com/admin/machines', ...tsOver },
     'GET /api/peers': { ...peers, client: '' },
   },

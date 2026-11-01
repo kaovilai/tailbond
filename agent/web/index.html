@@ -128,24 +128,24 @@
   </section>
 
   <section class="tab hidden" id="tab-clients">
-    <form class="card add-client" id="add-client">
-      <div>
-        <h3>Add a device</h3>
-        <p class="muted">Each phone or travel router gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link on the router's tailbond page (Other ways to connect). On the phone itself, open this page and use <b>Add this phone</b>.</p>
-      </div>
-      <div class="row">
-        <input id="client-name" placeholder="name, e.g. pixel" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required autocomplete="off">
-        <button class="btn primary" type="submit"><svg class="ico sm"><use href="#i-plus"/></svg>Add</button>
-      </div>
-    </form>
     <div class="card router-guide">
-      <h3>Add a GL.iNet travel router</h3>
+      <h3>Add a GL.iNet travel router (recommended)</h3>
       <ol class="muted">
         <li><span id="ipk-yes" class="hidden"><a class="btn small" href="/tailbond-glinet.ipk" download>Download the router package</a> to this computer.</span><span id="ipk-no">Get the router package (the file ending in <b>_neon-vfpv4.ipk</b>) from whoever set up tailbond.</span></li>
         <li>On the travel router's admin page: <b>SYSTEM → Advanced Settings → Go To LuCI</b>, then <b>System → Software → Upload Package…</b>, pick the file, <b>Install</b>.</li>
         <li>Back in the router's admin page, open <b>APPLICATIONS → tailbond</b> and tap <b>Ask to connect</b>. Approve it here when it shows up at the top.</li>
       </ol>
     </div>
+    <form class="card add-client" id="add-client">
+      <div>
+        <h3>Add a device with a code (no Tailscale on it)</h3>
+        <p class="muted">Routers and phones on your Tailscale account don't need this: they ask to connect and show up at the top of this page. For others: each gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link on the router's tailbond page (Other ways to connect). On the phone itself, open this page and use <b>Add this phone</b>.</p>
+      </div>
+      <div class="row">
+        <input id="client-name" placeholder="name, e.g. pixel" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required autocomplete="off">
+        <button class="btn primary" type="submit"><svg class="ico sm"><use href="#i-plus"/></svg>Add</button>
+      </div>
+    </form>
     <div class="card invite">
       <h3>Invite someone's phone</h3>
       <p class="muted">Send this link to a family member. They open it on their phone while Tailscale is on, and tap <b>Add this phone</b>.</p>

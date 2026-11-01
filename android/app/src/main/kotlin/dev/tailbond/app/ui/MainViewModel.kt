@@ -2,10 +2,15 @@ package dev.tailbond.app.ui
 
 import android.app.Application
 import android.content.Intent
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.tailbond.app.data.AskState
+import dev.tailbond.app.data.PairRequestClient
 import dev.tailbond.app.data.PeersClient
 import dev.tailbond.app.data.Repository
+import dev.tailbond.app.data.next
+import dev.tailbond.app.data.phoneRequestName
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.PathSetting
@@ -17,6 +22,7 @@ import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.LiveState
 import dev.tailbond.app.service.TailbondVpnService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -49,6 +55,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _apps = MutableStateFlow<List<AppEntry>>(emptyList())
     val apps: StateFlow<List<AppEntry>> = _apps.asStateFlow()
+
+    private val _ask = MutableStateFlow<AskState>(AskState.Idle)
+    val ask: StateFlow<AskState> = _ask.asStateFlow()
+    private var askJob: Job? = null
 
     private val _handoff = MutableStateFlow<Handoff?>(null)
     val handoff: StateFlow<Handoff?> = _handoff.asStateFlow()
@@ -84,6 +94,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshPeers() { viewModelScope.launch { refreshPeersNow() } }
+
+    /**
+     * "Ask to connect": find [typed] on the tailnet (Tailscale's VPN is still
+     * on), ask it to pair this phone, wait for the approval, then show the
+     * usual confirmation with the pairing it sent.
+     */
+    fun askToConnect(typed: String) {
+        askJob?.cancel()
+        val server = PairRequestClient.hostOf(typed).substringBefore('.').ifEmpty { typed.trim() }
+        _ask.value = AskState.Asking(server)
+        askJob = viewModelScope.launch {
+            val (addr, created) = try {
+                withContext(Dispatchers.IO) {
+                    val a = PairRequestClient.locate(typed)
+                    a to PairRequestClient.ask(a, phoneRequestName(Build.MODEL ?: "phone"))
+                }
+            } catch (e: PairRequestClient.AskException) {
+                _ask.value = AskState.Failed(server, e.failure); return@launch
+            } catch (e: Exception) {
+                _ask.value = AskState.Failed(server, PairRequestClient.Failure.UNREACHABLE); return@launch
+            }
+            var waiting = AskState.Waiting(server, created.name)
+            _ask.value = waiting
+            val deadline = System.currentTimeMillis() + 15 * 60_000
+            while (System.currentTimeMillis() < deadline) {
+                delay(3_000)
+                val p = try { withContext(Dispatchers.IO) { PairRequestClient.poll(addr, created) } } catch (_: Exception) { continue }
+                val next = waiting.next(p) { uri -> offerPairing(uri) }
+                if (next != null) { _ask.value = next; return@launch }
+                waiting = waiting.copy(name = p.name.ifEmpty { waiting.name })
+            }
+            _ask.value = AskState.Expired(server)
+        }
+    }
+
+    fun cancelAsk() {
+        askJob?.cancel()
+        _ask.value = AskState.Idle
+    }
 
     fun finishOnboarding() = repo.updateSettings { it.copy(onboarded = true) }
 
