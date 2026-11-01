@@ -199,6 +199,7 @@ func (a *Agent) serverStatus(ctx context.Context) *status.Status {
 	a.rater.Begin()
 	st.Clients, st.Totals, st.UptimeSec = status.Server(a.rater, time.Now(), mst, mstats, names)
 	a.rater.End()
+	a.noteOutside(st.Clients)
 	st.Tailscale = a.tsStatus(ctx)
 	a.mu.Lock()
 	a.pairReqs.gc(time.Now())

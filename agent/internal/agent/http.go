@@ -58,6 +58,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/join", a.hJoinGet)
 	mux.HandleFunc("POST /api/join", a.hJoin)
 	mux.HandleFunc("DELETE /api/join", a.hJoinCancel)
+	mux.HandleFunc("GET /api/health", a.hHealth)
 	// Captive portals (client role)
 	mux.HandleFunc("POST /api/captive/signin", a.hCaptiveSignin)
 	mux.HandleFunc("DELETE /api/captive/signin", a.hCaptiveSigninEnd)

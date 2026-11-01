@@ -64,6 +64,8 @@ type Agent struct {
 	apiPort string
 	disc    discoveryCache
 	rescan  chan struct{}
+	nc      netcheckCache
+	outside *outsideSeen // server: last client seen from the internet (a.mu)
 	// listIfs discovers interfaces (tests stub it).
 	listIfs func() ([]netif.Iface, error)
 	// glRead reads GL firmware's repeater portal state (tests stub it).

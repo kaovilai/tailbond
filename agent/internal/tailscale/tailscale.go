@@ -48,6 +48,11 @@ type Node struct {
 	OS           string    `json:"os"`
 	Online       bool      `json:"online"`
 	LastSeen     time.Time `json:"last_seen,omitzero"`
+	// Additive: how this machine reaches the peer right now. "direct"
+	// (CurAddr set), "relay" (only a DERP relay, e.g. "fra"), or "" when
+	// there is no active connection.
+	Conn  string `json:"conn,omitempty"`
+	Relay string `json:"relay,omitempty"`
 }
 
 type nodeJSON struct {
@@ -57,6 +62,8 @@ type nodeJSON struct {
 	TailscaleIPs []string
 	Online       bool
 	LastSeen     time.Time
+	CurAddr      string
+	Relay        string
 }
 
 func (n nodeJSON) node() Node {
@@ -65,6 +72,12 @@ func (n nodeJSON) node() Node {
 		ips = []string{}
 	}
 	out := Node{HostName: n.HostName, DNSName: strings.TrimSuffix(n.DNSName, "."), TailscaleIPs: ips, OS: n.OS, Online: n.Online}
+	switch {
+	case n.CurAddr != "":
+		out.Conn = "direct"
+	case n.Relay != "" && n.Online:
+		out.Conn, out.Relay = "relay", n.Relay
+	}
 	// tailscale reports the zero time ("0001-01-01T00:00:00Z") for never/now-online peers
 	if !n.LastSeen.IsZero() && n.LastSeen.Year() > 1 {
 		out.LastSeen = n.LastSeen.UTC()
@@ -347,4 +360,70 @@ func IsTailnetIP(ip netip.Addr) bool {
 // NewFake returns a CLI that always reports info (tests).
 func NewFake(info *Info) *CLI {
 	return &CLI{cached: info, fetched: time.Now().Add(100 * 365 * 24 * time.Hour), fake: true}
+}
+
+// Netcheck is the part of `tailscale netcheck --format=json` the setup
+// health check uses.
+type Netcheck struct {
+	UDP                   bool   `json:"udp"`
+	IPv4                  bool   `json:"ipv4"`
+	IPv6                  bool   `json:"ipv6"`
+	GlobalV4              string `json:"global_v4,omitempty"`
+	MappingVariesByDestIP bool   `json:"mapping_varies_by_dest_ip"` // hard NAT
+	UPnP                  bool   `json:"upnp"`
+	PMP                   bool   `json:"pmp"`
+	PCP                   bool   `json:"pcp"`
+	PreferredDERP         int    `json:"preferred_derp,omitempty"`
+}
+
+type netcheckJSON struct {
+	UDP                   bool
+	IPv4                  bool
+	IPv6                  bool
+	GlobalV4              string
+	MappingVariesByDestIP optBool
+	UPnP                  optBool
+	PMP                   optBool
+	PCP                   optBool
+	PreferredDERP         int
+}
+
+// optBool reads Tailscale's opt.Bool ("true" / "false" / "") or a JSON bool.
+type optBool bool
+
+func (b *optBool) UnmarshalJSON(d []byte) error {
+	*b = optBool(strings.Trim(string(d), `"`) == "true")
+	return nil
+}
+
+func deref(b optBool) bool { return bool(b) }
+
+// ParseNetcheck decodes `tailscale netcheck --format=json`.
+func ParseNetcheck(out []byte) (*Netcheck, error) {
+	var n netcheckJSON
+	if err := json.Unmarshal(out, &n); err != nil {
+		return nil, errors.New("parse tailscale netcheck: " + err.Error())
+	}
+	return &Netcheck{UDP: n.UDP, IPv4: n.IPv4, IPv6: n.IPv6, GlobalV4: n.GlobalV4,
+		MappingVariesByDestIP: deref(n.MappingVariesByDestIP), UPnP: deref(n.UPnP), PMP: deref(n.PMP), PCP: deref(n.PCP),
+		PreferredDERP: n.PreferredDERP}, nil
+}
+
+// Netcheck runs `tailscale netcheck` (a few seconds); callers cache it.
+func (c *CLI) Netcheck(ctx context.Context) (*Netcheck, error) {
+	if c.Disabled || c.fake {
+		return nil, errors.New("tailscale integration disabled")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, c.bin(), "netcheck", "--format=json").Output()
+	if err != nil {
+		return nil, err
+	}
+	return ParseNetcheck(out)
+}
+
+// ParseStatusForTest exposes parseStatus to other packages' tests.
+func ParseStatusForTest(out []byte, route string, info *Info) error {
+	return parseStatus(out, route, info)
 }

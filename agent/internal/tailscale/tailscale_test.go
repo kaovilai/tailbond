@@ -83,3 +83,34 @@ func TestIsTailnetIP(t *testing.T) {
 		}
 	}
 }
+
+func TestPeerConn(t *testing.T) {
+	info := &Info{}
+	err := parseStatus([]byte(`{"BackendState":"Running","Self":{"HostName":"homebox","DNSName":"homebox.t.ts.net.","TailscaleIPs":["100.101.1.1"]},
+	 "Peer":{"a":{"HostName":"nas","Online":true,"CurAddr":"192.168.1.20:41641","Relay":"fra"},
+	         "b":{"HostName":"slate7","Online":true,"CurAddr":"","Relay":"fra"},
+	         "c":{"HostName":"idle","Online":true,"CurAddr":"","Relay":""},
+	         "d":{"HostName":"old","Online":false,"CurAddr":"","Relay":"nyc"}}}`), "", info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range info.PeerList {
+		got[p.HostName] = p.Conn + "/" + p.Relay
+	}
+	if got["nas"] != "direct/" || got["slate7"] != "relay/fra" || got["idle"] != "/" || got["old"] != "/" {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestParseNetcheck(t *testing.T) {
+	// tailscale netcheck --format=json (opt.Bool fields are strings)
+	n, err := ParseNetcheck([]byte(`{"UDP":true,"IPv4":true,"GlobalV4":"203.0.113.7:41641","IPv6":false,
+	 "MappingVariesByDestIP":"true","UPnP":"false","PMP":"","PCP":"true","PreferredDERP":4}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !n.UDP || !n.MappingVariesByDestIP || n.UPnP || n.PMP || !n.PCP || n.GlobalV4 != "203.0.113.7:41641" || n.PreferredDERP != 4 {
+		t.Fatalf("%+v", n)
+	}
+}
