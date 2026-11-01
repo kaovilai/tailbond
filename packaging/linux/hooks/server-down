@@ -1,0 +1,31 @@
+#!/bin/bash
+# tailbond server-down hook (generic Linux, packaging/linux). Run by tailbondd
+# after mqvpn's server stops. Removes the runtime NAT/forwarding state added
+# by server-up. firewalld's permanent config, the persistent ufw rules and
+# the Tailscale route advertisement stay, so a restart needs no new route
+# approval.
+set -u
+
+TB_TUN="${TB_TUN:-tb0}"
+TAILNET4=100.64.0.0/10
+
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  echo "firewalld: leaving tailbond zone/policies in place (inactive without $TB_TUN)"
+fi
+if command -v nft >/dev/null 2>&1 && nft list table inet tailbond >/dev/null 2>&1; then
+  nft delete table inet tailbond && echo "nftables: removed table inet tailbond"
+fi
+c=(-m comment --comment tailbond)
+for t in iptables ip6tables; do
+  command -v "$t" >/dev/null 2>&1 || continue
+  "$t" -D FORWARD -i "$TB_TUN" -j ACCEPT "${c[@]}" 2>/dev/null
+  "$t" -D FORWARD -o "$TB_TUN" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT "${c[@]}" 2>/dev/null
+done
+if command -v iptables >/dev/null 2>&1; then
+  iptables -D FORWARD -i tailscale0 -o "$TB_TUN" -s "$TAILNET4" -j ACCEPT "${c[@]}" 2>/dev/null
+  [ -n "${TB_SUBNET:-}" ] && iptables -t nat -D POSTROUTING -s "$TB_SUBNET" ! -o "$TB_TUN" -j MASQUERADE "${c[@]}" 2>/dev/null
+fi
+if [ -n "${TB_SUBNET6:-}" ] && command -v ip6tables >/dev/null 2>&1; then
+  ip6tables -t nat -D POSTROUTING -s "$TB_SUBNET6" ! -o "$TB_TUN" -j MASQUERADE "${c[@]}" 2>/dev/null
+fi
+exit 0
