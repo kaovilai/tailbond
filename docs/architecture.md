@@ -111,7 +111,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/logs?since=<seq>&limit=<n>` | additive: `{"entries":[{"seq","t","src":"agent\|mqvpn\|hook","line"}]}` ring buffer |
 | GET/POST | `/api/settings` | additive: read role/TLS/pairing info; set `public_addr`, `ui_password`, `captive_portal_detect` (client) |
 | POST | `/api/logout` | additive |
-| GET | `/api/hello` | additive, **unauthenticated**: `{"tailbond":true,"name","version","role"}` ([pairing over Tailscale](#pairing-over-tailscale)) |
+| GET | `/api/hello` | additive, **unauthenticated**: `{"tailbond":true,"name","version","role"}` ([pairing over Tailscale](#pairing-over-tailscale)); additive: `protocol` ([updates](#updates)) |
 | POST | `/api/pair-requests` | server, additive, **tailnet sources only**: `{"name","kind":"router"\|"phone"}` → 202 `{"id","token","status":"pending","name","expires"}` |
 | GET | `/api/pair-requests/{id}` | server, additive: the requester polls with `Authorization: Bearer <token>` from the same address → `{"id","status","name","expires"}`, plus `"uri"` once approved |
 | GET | `/api/pair-requests` | server, additive (admin): every live request `{"id","name","kind","device","dns_name","hostname","os","user","user_name","ip","status","created","expires","client","repair"}` |
@@ -313,6 +313,7 @@ Additive keys (all optional):
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;
 - `client.captive_portal_detect` (default `true`), `client.captive_probe_urls` (default: Google's `generate_204`, Firefox's `success.txt`).
 - `client.servers`: `[{"name","pairing_uri","enabled"}]`, the ordered server list (first = primary); `client.failover`: `{"policy":"prefer"|"always","server","switch_after_sec":15,"failback_after_sec":120,"probe_every_sec":10}` ([multiple servers](#multiple-servers-and-failover));
+- `update`: auto-updates and the server's update mirror ([updates](#updates)); `backup`: scheduled encrypted backups ([backup and restore](#backup-and-restore));
 - `client.bypass`: `[{"id","kind","match","ip","host","target","wan","enabled","note"}]` ([bypass rules](#bypass-rules-client-role)); `client.leases_file` (default `/tmp/dhcp.leases`); `client.bypass_mark_mask` (default `"0x07000000"`), `client.bypass_local_dns` (default `true`).
 
 **Migration.** A config with `client.pairing_uri` and no `client.servers`
@@ -546,6 +547,238 @@ Per-website bypass, on Android 13+ (API 33):
 - it adds the resulting addresses to the VPN with `VpnService.Builder.excludeRoute`, which needs a tunnel rebuild (a short reconnect) when the addresses change;
 - older Android versions show the limit instead.
 See [android.md](android.md#skipping-the-tunnel).
+
+## Updates
+
+Every tailbond install can update itself from a **signed manifest**. A home
+server also acts as an **update mirror**, so routers and phones don't need
+to reach GitHub (hotel Wi-Fi, captive portals, no GitHub remote at all).
+Details for users: [updates.md](updates.md).
+
+### Manifest and signature
+
+A channel (`stable`, `beta`) is one file `<channel>.json` plus
+`<channel>.json.sig` under the update source (`update.source`, a base URL;
+default set at build time, e.g.
+`https://github.com/OWNER/REPO/releases/download/channels`; CI re-uploads
+both files to that rolling release on every tag). Format 1:
+
+```json
+{
+  "format": 1,
+  "channel": "stable",
+  "version": "0.2.0",
+  "released": "2026-11-02T10:00:00Z",
+  "protocol": 2,
+  "requires_server_protocol": 1,
+  "security": false,
+  "notes_url": "https://github.com/OWNER/REPO/releases/tag/v0.2.0",
+  "artifacts": [
+    {"name": "tailbond-linux-x86_64.tar.gz", "kind": "linux", "arch": "x86_64",
+     "url": "https://…/v0.2.0/tailbond-linux-x86_64.tar.gz", "sha256": "…", "size": 9123456},
+    {"name": "tailbond_0.2.0-r1_aarch64_cortex-a53.ipk", "kind": "ipk", "arch": "aarch64_cortex-a53", "url": "…", "sha256": "…", "size": 0},
+    {"name": "tailbond_0.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk", "kind": "ipk", "arch": "aarch64_cortex-a53_neon-vfpv4", "url": "…", "sha256": "…", "size": 0},
+    {"name": "tailbond-server-0.2.0-1.fc44.x86_64.rpm", "kind": "rpm", "arch": "x86_64", "url": "…", "sha256": "…", "size": 0},
+    {"name": "tailbond-0.2.0.apk", "kind": "apk", "arch": "arm64-v8a", "url": "…", "sha256": "…", "size": 0,
+     "version_code": 20000}
+  ]
+}
+```
+
+- `version`: semver (`MAJOR.MINOR.PATCH[-pre]`); a leading `v` and an
+  OpenWrt `-rN` revision are ignored for ordering. A build whose own version
+  isn't semver (`dev`, a git hash, `-dirty`) never installs anything by itself.
+- `protocol`: the agent protocol this release speaks (`update.Protocol`;
+  `GET /api/hello` and `/api/status` report it as `protocol`).
+  `requires_server_protocol`: a **client** (router, phone) installs this
+  release only if its active server reports at least this protocol. Servers
+  install first; clients follow.
+- `security: true`: install even while traffic would otherwise defer it
+  (the maintenance window still applies to servers).
+- `linux` tarballs contain `tailbondd`, `mqvpn` and `hooks/`, all static.
+
+`<channel>.json.sig` is JSON: `{"key_id": "<hex of the first 8 bytes of
+SHA-256(public key)>", "sig": "<base64 ed25519 signature of the exact bytes
+of <channel>.json>"}`. Plain ed25519 (RFC 8032), no prehash. Trusted public
+keys (raw 32 bytes, base64) are compiled in at build time
+(`-X …/update.BuildKeys=<key>[,<key>]`, CI variable `TB_UPDATE_PUBKEY`;
+Android `BuildConfig.UPDATE_KEYS`) plus `update.trusted_keys` in the config
+(self-hosted builds, tests). With no trusted key, updates are off
+("this build has no update key"). Keys: `scripts/release/gen-update-key.sh`.
+Every artifact is checked against `sha256` and `size` before use.
+
+### Config (`update`, additive, all optional)
+
+```json
+"update": {"policy": "auto", "channel": "stable", "source": "", "window": "03:00-05:00",
+           "check_every_hours": 6, "pin": "", "defer_kbps": 300,
+           "mirror": true, "mirror_max_mb": 600, "trusted_keys": []}
+```
+
+- `policy`: `auto` (default; servers install inside `window`, local time;
+  clients any time unless deferred), `notify` (check and show, install only
+  on request), `off` (no checks). `pin`: install exactly this version (from
+  the manifest or the mirror cache) and nothing newer, for IaC (Ansible
+  `tailbond_update_policy: pinned`).
+- `defer_kbps`: clients don't install while the tunnel carried more than this
+  (tx+rx) on average over the last minute (a call or a stream), unless the
+  release is `security`.
+- `mirror`, `mirror_max_mb` (server role): mirror the channel, keep the
+  current and the previous version (keep-last-2) within the cap.
+
+Status (`/api/status`, additive): `protocol`, and
+
+```json
+"update": {"current": "0.1.0", "available": "0.2.0", "policy": "auto", "channel": "stable",
+           "state": "idle", "source": "mirror", "last_check": "…", "last_result": "…",
+           "notes_url": "…", "security": false, "deferred": "", "window": "03:00-05:00",
+           "outdated": [{"name": "slate7", "kind": "router", "version": "0.1.0"}]}
+```
+
+- `state`: `idle` | `checking` | `downloading` | `waiting` (window or
+  deferral; `deferred` says why) | `installing` | `trial` (new version
+  running, health check pending) | `failed` | `rolled_back` | `off`.
+- `source`: `mirror` (the home server) | `public` (update.source) | `upload`.
+- `outdated` (server role): registered clients whose last reported version
+  is older than this server's.
+
+Clients report their version to their server: every request a paired
+client makes with its API token (`GET /api/peers`, `/updates/…`,
+`/api/pairing`) carries `X-Tailbond-Version` and `X-Tailbond-Kind`
+(`router` | `android`); the server records them per client
+(`clients[].version`, `clients[].kind`, additive).
+
+### HTTP (additive)
+
+| Method | Path | Body / result |
+|---|---|---|
+| GET | `/api/update` | the `update` status object plus `manifest` (summary of the verified manifest) |
+| POST | `/api/update/check` | check now |
+| POST | `/api/update/install` | install `available` now (ignores the window and deferral, not compatibility); `{"version"}` optional (a cached version, e.g. to go back) |
+| POST | `/api/update/policy` | `{"policy","channel","window","source","pin"}` (any subset) |
+| POST | `/api/update/upload?name=<file>` | server, admin: `Content-Type: application/octet-stream`, one file (a manifest, its `.sig`, or an artifact) into the mirror cache, for offline setups; the manifest is verified once both it and its `.sig` are there, artifacts against it |
+| GET | `/updates/<channel>.json`, `/updates/<channel>.json.sig` | server mirror: the cached, verified manifest and signature (byte-identical) |
+| GET | `/updates/files/<name>` | server mirror: a cached artifact |
+| GET | `/api/pairing` | server, client token: this client's current pairing URI (same credential), so a client learns a new public address after the server moved |
+
+`/updates/…` and `GET /api/pairing` are served on the admin listener and the
+tunnel address; they need a client API token, an admin session, or a
+tailnet / loopback source (the mirror holds only public, signed files).
+Clients try the mirror first (`http://<active server tunnel IP>:8077`, then
+its Tailscale name) and fall back to `update.source`.
+
+### Applying an update
+
+**Linux (Fedora RPM, generic bundle)**: package-owned files are never
+replaced (`rpm -V` stays clean, `ProtectSystem=full` is fine).
+- Updates unpack to `<state_dir>/update/versions/<v>/{tailbondd,mqvpn,hooks/}`.
+- `<state_dir>/update/state.json` records `{active, prev, trial, failed}`.
+- The package's `tailbondd` (the *base*) checks that file first at every
+  start. If `active` is newer than itself, it `exec`s that version's binary;
+  the running agent then uses the same version's `mqvpn`.
+- **Install**: download → verify → unpack → `trial = {version, deadline
+  (now + 90 s), boots: 0, clients_before}` → the agent exits with status 75;
+  systemd's `Restart=on-failure` (`RestartSec` short) starts the base again.
+- **Health check** (the new version, within 90 s): the API serves, mqvpn
+  runs (server: control API answers; client: tunnel connected if it was
+  before), and a server that had connected clients sees one again. Pass →
+  `active` stays and `trial` clears. Fail → the version is added to `failed`,
+  `active = prev`, exit 75.
+- **The base**: at each start during a trial it increments `boots`. If
+  `boots > 3` or the deadline has passed, it rolls back before exec'ing.
+  So a version that crashes or hangs on start is rolled back by the base.
+  A `failed` version is never installed again automatically.
+- An RPM or bundle upgrade whose base is newer than `active` wins: the base
+  runs itself.
+
+**OpenWrt / GL.iNet**: the agent picks the ipk whose `arch` is in
+`opkg print-architecture`, verifies it, keeps it in `/etc/tailbond/pkg/`
+(kept across sysupgrade by keep.d; current + previous), and runs
+`/usr/lib/tailbond/update-ipk <new.ipk> <prev.ipk>` detached:
+`opkg install`, restart, wait up to 90 s for the API and the tunnel/role,
+else reinstall the previous ipk. After a firmware upgrade a kept
+`/etc/tailbond/pkg/reinstall`, run from a line in the kept `/etc/rc.local`,
+reinstalls the package from that cache (or the home mirror) on first boot
+([glinet.md](glinet.md), [updates.md](updates.md)).
+
+**Android**: the app reads the manifest (mirror first), downloads and
+verifies the APK, installs it with a `PackageInstaller` session
+(`REQUEST_INSTALL_PACKAGES`; Android 12+ `setRequireUserAction(
+USER_ACTION_NOT_REQUIRED)`, silent once the app installed itself the first
+time). Release APKs are signed with the release key; debug and release
+builds can't update each other.
+
+## Backup and restore
+
+An encrypted backup file `.tbbackup` (format 1):
+
+```
+TBBACKUP1\n
+{"v":1,"kdf":"scrypt","n":32768,"r":8,"p":1,"salt":"<b64, 16 bytes>","nonce":"<b64, 12 bytes>",
+ "role":"server","platform":"fedora|openwrt|linux|android","host":"homebox","agent_version":"0.2.0",
+ "created":"2026-11-02T10:00:00Z"}\n
+<base64 of AES-256-GCM(key = scrypt(passphrase, salt, n, r, p, 32), nonce, plaintext, aad = the header line bytes)>\n
+```
+
+- AES-GCM, not XChaCha20-Poly1305: Android has no XChaCha in the platform,
+  and the per-file random salt gives every file its own key, so nonce reuse
+  can't happen. The header is authenticated (AAD).
+- A wrong passphrase and a corrupted file both fail the GCM check
+  ("wrong passphrase or damaged file").
+
+Plaintext: JSON `{"format":1,"config":<tailbond.json>,"files":{"<name>":"<b64>"},"uci":"<uci export tailbond>"}`.
+- `config` is the whole config: users and keys, pairings and servers,
+  approvers, bypass rules, modes, paths, update policy, UI password.
+- `files`: the state files that matter: `server.crt`, `server.key`
+  (self-signed TLS, so clients' pins keep working) and `global.key`.
+  `ts-cert.pem`/`ts-key.pem` are left out; Tailscale reissues them.
+- `uci`: `/etc/config/tailbond` on OpenWrt.
+- Android's backup is the app's own JSON (profiles/servers, settings,
+  excluded apps, websites), same container, `"platform":"android"`.
+
+There is never an unencrypted export of secrets. `tailbondd backup --plain`
+/ `GET /api/backup/summary` give a JSON summary without keys or passwords,
+for inspection.
+
+**Restore**:
+- A backup is restored onto the same role. Another machine is fine: a new
+  VPS, a new home server.
+- Restore first saves the current config as an encrypted rollback copy
+  (`<state_dir>/backups/before-restore-<time>.tbbackup`, same passphrase),
+  then replaces the config and the files and restarts the agent.
+- Clients keep working: same users and keys, and the same pinned certificate
+  when it was self-signed.
+- If the public address changed: set `server.public_addr`. Clients then fetch
+  their refreshed pairing (`GET /api/pairing`, same credential) from the
+  server's Tailscale name, every 6 h, and right away when every server has
+  been unreachable for 2 minutes. Phones re-ask over Tailscale (the server
+  re-issues the same credential, `ts_node`), or scan the client's link again.
+
+**Scheduled backups** (`backup`, additive, server and router):
+`{"passphrase": "", "every_hours": 24, "keep": 7, "push": true}`.
+- With a passphrase set, the agent writes `<state_dir>/backups/<host>-<time>.tbbackup`
+  and keeps the newest `keep`.
+- A client with `push` sends its newest backup to its server
+  (`POST /api/backups/push`, client token, ≤ 1 MiB, opaque). The server
+  keeps the newest 3 per client in `<state_dir>/client-backups/<name>/`.
+
+| Method | Path | Body / result |
+|---|---|---|
+| POST | `/api/backup` | `{"passphrase"}` (≥ 10 characters) → the `.tbbackup` file (`application/octet-stream`, attachment) |
+| GET | `/api/backup/summary` | what a backup would contain, no secrets |
+| POST | `/api/restore/preview` | `{"file": "<base64>", "passphrase"}` → `{"role","host","created","agent_version","changes":[{"what","from","to"}],"warnings":[…]}` (role mismatch is an error) |
+| POST | `/api/restore` | same body plus `"confirm": true` → restores, keeps the rollback copy, restarts |
+| GET | `/api/backups` | admin: the local scheduled backups and the clients' pushed ones `[{"name","client","size","created"}]` |
+| GET | `/api/backups/{name}` | admin: download one (still encrypted) |
+| POST | `/api/backups/push` | client token: a client's own encrypted backup |
+| POST | `/api/backup/settings` | `{"passphrase","every_hours","keep","push"}` |
+
+Request bodies for these endpoints may be up to 2 MiB.
+
+CLI:
+- `tailbondd backup --out FILE [--passphrase-file F]`: the passphrase comes from the file, from `TB_BACKUP_PASSPHRASE`, or a prompt.
+- `tailbondd backup --plain` prints the summary.
+- `tailbondd restore FILE [--yes] [--passphrase-file F]`: run it with the service stopped, or it asks the running agent to do it.
 
 ## Captive portals
 
