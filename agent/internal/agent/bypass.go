@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tailbond/tailbond/agent/internal/bypass"
 	"github.com/tailbond/tailbond/agent/internal/config"
 	"github.com/tailbond/tailbond/agent/internal/hooks"
 )
@@ -31,9 +32,10 @@ type bypassState struct {
 	countersAt time.Time
 }
 
+// bypassCounter: connections a rule sent past the tunnel (its first
+// packet; later packets follow the connection's saved mark).
 type bypassCounter struct {
-	Packets uint64 `json:"packets"`
-	Bytes   uint64 `json:"bytes"`
+	Connections uint64 `json:"connections"`
 }
 
 // bypassSupport is what the hook found on this router (TB_BYPASS_STATUS).
@@ -110,19 +112,55 @@ func (a *Agent) applyBypass(force bool) {
 			rules = append(rules, r)
 		}
 	}
-	b, _ := json.MarshalIndent(map[string]any{"rules": rules}, "", "  ")
+	mask, _ := cfg.Client.MarkMask()
+	opt := bypass.Options{Mask: mask, LocalDNS: cfg.Client.LocalDNSForBypass(), WANDNS: map[string][]string{}, WANDev: map[string]string{}}
 	a.mu.Lock()
-	same := a.client.bypass.applied == string(b)
-	a.client.bypass.applied = string(b)
+	for dev, it := range a.client.ifs {
+		if it.WAN && it.Usable() && len(it.DNS) > 0 {
+			opt.WANDNS[it.Key()] = it.DNS
+			opt.WANDev[it.Key()] = dev
+		}
+	}
+	a.mu.Unlock()
+	f := bypass.Render(rules, opt)
+	for _, id := range f.Skipped {
+		a.Logf("bypass rule %s: at most %d \"only this connection\" choices; rule not applied", id, bypass.MaxWANs)
+	}
+	files := map[string]string{
+		"bypass.json":        mustJSON(map[string]any{"rules": rules}),
+		"bypass.nft":         f.Nft,
+		"bypass.ipset":       f.IPSet,
+		"bypass.iptables":    f.IPTables,
+		"bypass.ip6tables":   f.IP6Tables,
+		"bypass-nftset.conf": f.DnsmasqNftset,
+		"bypass-ipset.conf":  f.DnsmasqIPSet,
+		"bypass-wans":        f.WANList(),
+		"bypass-domains":     strings.Join(f.Domains, "\n"),
+	}
+	var all strings.Builder
+	for _, k := range slices.Sorted(maps.Keys(files)) {
+		all.WriteString(k + "\x00" + files[k] + "\x00")
+	}
+	a.mu.Lock()
+	same := a.client.bypass.applied == all.String()
+	a.client.bypass.applied = all.String()
 	a.mu.Unlock()
 	if same && !force {
 		return
 	}
-	if err := writeFileAtomic(a.bypassFile(), b, 0o600); err != nil {
-		a.Logf("bypass rules: %v", err)
-		return
+	dir := filepath.Dir(a.bypassFile())
+	for name, body := range files {
+		if err := writeFileAtomic(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			a.Logf("bypass rules: %v", err)
+			return
+		}
 	}
 	a.runHook(hooks.BypassApply, a.bypassEnv("apply", a.bypassStatusFile()))
+}
+
+func mustJSON(v any) string {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	return string(b)
 }
 
 func (a *Agent) readBypassSupport() bypassSupport {

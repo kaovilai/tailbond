@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -111,6 +113,10 @@ type Client struct {
 	Bypass []BypassRule `json:"bypass,omitempty"`
 	// Additive: DHCP leases for GET /api/lan-clients (default /tmp/dhcp.leases).
 	LeasesFile string `json:"leases_file,omitempty"`
+	// Additive: fwmark bits the bypass rules use (default 0x07000000), and
+	// whether bypassed domains resolve through the WAN's DNS (default on).
+	BypassMarkMask string `json:"bypass_mark_mask,omitempty"`
+	BypassLocalDNS *bool  `json:"bypass_local_dns,omitempty"`
 }
 
 // ServerEntry is one paired server in the client's list.
@@ -161,6 +167,23 @@ func (c *Client) FailoverOrDefault() Failover {
 	}
 	return f
 }
+
+// MarkMask parses client.bypass_mark_mask (0 = the default). It must be
+// one run of at least 3 bits (direct, tunnel, one WAN).
+func (c *Client) MarkMask() (uint32, error) {
+	if c.BypassMarkMask == "" {
+		return 0, nil
+	}
+	v, err := strconv.ParseUint(strings.TrimPrefix(strings.ToLower(c.BypassMarkMask), "0x"), 16, 32)
+	m := uint32(v)
+	low := m & -m
+	if err != nil || m == 0 || (m+low)&m != 0 || m/low < 3 {
+		return 0, fmt.Errorf("client.bypass_mark_mask %q: one run of at least 2 bits, e.g. 0x07000000", c.BypassMarkMask)
+	}
+	return m, nil
+}
+
+func (c *Client) LocalDNSForBypass() bool { return c.BypassLocalDNS == nil || *c.BypassLocalDNS }
 
 // DefaultLeasesFile is OpenWrt dnsmasq's lease file.
 const DefaultLeasesFile = "/tmp/dhcp.leases"
@@ -362,6 +385,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	if err := ValidateBypass(c.Client.Bypass); err != nil {
+		return err
+	}
+	if _, err := c.Client.MarkMask(); err != nil {
 		return err
 	}
 	return nil

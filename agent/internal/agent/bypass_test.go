@@ -21,7 +21,7 @@ echo "$TB_BYPASS_ACTION" >> ` + filepath.Join(out, "actions") + `
 case "$TB_BYPASS_ACTION" in
 apply) cp "$TB_BYPASS_FILE" ` + filepath.Join(out, "rules.json") + `
        echo '{"domains":"nftset","firewall":"nft"}' > "$TB_BYPASS_STATUS" ;;
-counters) echo '{"counters":{"r1":{"packets":3,"bytes":1200}}}' > "$TB_BYPASS_STATUS" ;;
+counters) echo '{"counters":{"r1":{"connections":3}}}' > "$TB_BYPASS_STATUS" ;;
 esac
 `
 	if err := os.WriteFile(filepath.Join(a.store.Get().HooksDir, "bypass-apply"), []byte(hook), 0o755); err != nil {
@@ -70,6 +70,11 @@ esac
 	if strings.Contains(string(b), "udp/4500") {
 		t.Fatalf("disabled rule handed to the hook: %s", b)
 	}
+	nft, _ := os.ReadFile(filepath.Join(a.store.Get().StateDir, "bypass.nft"))
+	conf, _ := os.ReadFile(filepath.Join(a.store.Get().StateDir, "bypass-nftset.conf"))
+	if !strings.Contains(string(nft), `ether saddr aa:bb:cc:dd:ee:ff counter name "c_`) || !strings.Contains(string(conf), "nftset=/www.bank.example/") {
+		t.Fatalf("rendered files:\n%s\n%s", nft, conf)
+	}
 
 	var got struct {
 		Rules    []config.BypassRule
@@ -78,7 +83,7 @@ esac
 		Counters map[string]bypassCounter
 	}
 	decode(t, req(t, a, "GET", "/api/bypass", lan, "", nil), &got)
-	if len(got.Rules) != 3 || got.Support.Domains != "nftset" || got.Counters["r1"].Bytes != 1200 {
+	if len(got.Rules) != 3 || got.Support.Domains != "nftset" || got.Counters["r1"].Connections != 3 {
 		t.Fatalf("GET %+v", got)
 	}
 	if len(got.WANs) != 2 || got.WANs[0].Name != "wan" || !got.WANs[0].Up || got.WANs[1].Up {

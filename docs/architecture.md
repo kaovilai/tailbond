@@ -130,7 +130,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | POST | `/api/servers/active` | client, additive: `{"name"}` "Use this server now" (switches immediately; no automatic failback until it fails) |
 | POST | `/api/servers/order` | client, additive: `{"names":[…]}` the full list in the new order; the first is the primary |
 | POST | `/api/servers/policy` | client, additive: `{"policy":"prefer"\|"always","server"?,"switch_after_sec"?,"failback_after_sec"?}` |
-| GET | `/api/bypass` | client, additive: `{"rules":[…],"support":{…},"wans":[{"name","label","up"}],"counters":{"<id>":{"packets","bytes"}}}` ([bypass rules](#bypass-rules-client-role)) |
+| GET | `/api/bypass` | client, additive: `{"rules":[…],"support":{…},"wans":[{"name","label","up"}],"counters":{"<id>":{"connections"}}}` (connections a rule sent past the tunnel since it was applied) ([bypass rules](#bypass-rules-client-role)) |
 | POST | `/api/bypass` | client, additive: one rule; without `id` (or an unknown one) it is added, else replaced. Returns the stored rule (with its `id`) |
 | DELETE | `/api/bypass/{id}` | client, additive |
 | GET | `/api/lan-clients` | client, additive: devices on the LAN `[{"mac","ip","name","online"}]` from the DHCP leases (`client.leases_file`, default `/tmp/dhcp.leases`) and the neighbour table, online first, then by name |
@@ -264,7 +264,7 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 | `server-down` | after mqvpn server stops | same |
 | `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES`; additive: `TB_SERVER_NAME`, `TB_SUBNET` (the active server's tunnel subnet), `TB_DNS_IP` (its tunnel DNS, `""` when it has none) |
 | `client-down` | tunnel down | the env `client-up` got for that tunnel (a server switch tears down the old server's routes, then brings up the new one's); `TB_RELEASE=1` when the user turned tailbond off or unpaired (the LAN goes back to the WANs whatever the kill switch says); additive: `TB_SWITCH=1` when another server is about to take over |
-| `bypass-apply` | client, additive: start, rule changes, WAN up/down (SIGHUP), stop | env `TB_BYPASS_FILE` (JSON `{"rules":[enabled rules]}`), `TB_BYPASS_STATUS` (the hook writes `{"domains":"nftset"\|"ipset"\|"none","firewall":"nft"\|"iptables","reason"}` there), `TB_BYPASS_ACTION` = `apply` \| `counters` (write `{"counters":{"<id>":{"packets","bytes"}}}` to `TB_BYPASS_STATUS`) \| `clear` (agent stopping or unpaired: remove everything) |
+| `bypass-apply` | client, additive: start, rule changes, WAN up/down (SIGHUP), every 5 minutes, stop | env `TB_BYPASS_FILE` (JSON `{"rules":[enabled rules]}`; next to it the agent renders every variant: `bypass.nft`, `bypass.ipset`, `bypass.iptables`, `bypass.ip6tables`, `bypass-nftset.conf`, `bypass-ipset.conf`, `bypass-wans` (`<network> <mark> <table>` per line), `bypass-domains`), `TB_BYPASS_STATUS` (the hook writes `{"domains":"nftset"\|"ipset"\|"none","firewall":"nft"\|"iptables"\|"none","reason"}` there), `TB_BYPASS_ACTION` = `apply` \| `counters` (write `{"counters":{"<id>":{"connections"}}}` to `TB_BYPASS_STATUS`) \| `clear` (agent stopping: remove everything) |
 | `portal-open` | sign-in mode on for one WAN (client) | env `TB_PORTAL_DEV`, `TB_PORTAL_NET`, `TB_PORTAL_DNS` (the WAN's DHCP DNS, comma separated), `TB_PORTAL_URL`, `TB_PORTAL_SOURCE` (`tailbond`\|`glinet`) |
 | `portal-close` | sign-in mode off (open, timeout, stopped, shutdown) | same |
 
@@ -310,7 +310,7 @@ Additive keys (all optional):
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;
 - `client.captive_portal_detect` (default `true`), `client.captive_probe_urls` (default: Google's `generate_204`, Firefox's `success.txt`).
 - `client.servers`: `[{"name","pairing_uri","enabled"}]`, the ordered server list (first = primary); `client.failover`: `{"policy":"prefer"|"always","server","switch_after_sec":15,"failback_after_sec":120,"probe_every_sec":10}` ([multiple servers](#multiple-servers-and-failover));
-- `client.bypass`: `[{"id","kind","match","ip","target","wan","enabled","note"}]` ([bypass rules](#bypass-rules-client-role)); `client.leases_file` (default `/tmp/dhcp.leases`).
+- `client.bypass`: `[{"id","kind","match","ip","target","wan","enabled","note"}]` ([bypass rules](#bypass-rules-client-role)); `client.leases_file` (default `/tmp/dhcp.leases`); `client.bypass_mark_mask` (default `"0x07000000"`), `client.bypass_local_dns` (default `true`).
 
 **Migration.** A config with `client.pairing_uri` and no `client.servers`
 loads as a one-server list (`[{"name": <payload server_name>, "pairing_uri"}]`)
@@ -510,9 +510,14 @@ Interplay:
 **UCI mirror.** `config bypass` sections in `/etc/config/tailbond`
 (`option kind/match/ip/target/wan/note`, `option enabled`) replace
 `client.bypass` when present (like `config path`); otherwise the rules saved
-from the panel are kept across re-renders. `client.bypass_mark_mask` and
-`client.bypass_local_dns` (default `1`: the per-domain WAN DNS above) are UCI
-options of `config client`.
+from the panel are kept across re-renders. UCI `client.bypass_mark_mask` and
+`client.bypass_local_dns` (default `1`: the per-domain WAN DNS above) render
+to the JSON keys of the same name.
+
+**Counters.** Each rule has an nft named counter (`c_<id>`) or an iptables
+rule counter (comment `tb:<id>`). It counts the first packet of every
+connection the rule matched; later packets follow the connection's saved
+mark. The panel shows "N connections".
 
 **Android**: per-app exclusion already exists (`addDisallowedApplication`).
 Per-website bypass, on Android 13+ (API 33):

@@ -186,3 +186,18 @@ func TestValidateBypassList(t *testing.T) {
 		t.Fatal("config with a bad rule validated")
 	}
 }
+
+func TestMarkMask(t *testing.T) {
+	for in, want := range map[string]uint32{"": 0, "0x07000000": 0x07000000, "0f00": 0xf00, "0x3": 3} {
+		c := Client{BypassMarkMask: in}
+		if got, err := c.MarkMask(); err != nil || got != want {
+			t.Errorf("%q: %#x %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"0x05000000", "0x01000000", "zz", "0"} {
+		c := Client{BypassMarkMask: in}
+		if _, err := c.MarkMask(); err == nil {
+			t.Errorf("%q accepted", in)
+		}
+	}
+}
