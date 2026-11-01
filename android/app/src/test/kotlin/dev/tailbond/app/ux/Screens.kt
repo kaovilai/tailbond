@@ -23,7 +23,7 @@ import org.robolectric.annotation.Config
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [35])
 class Screens : UxRender() {
-    private val settings = AppSettings(onboarded = true, cellularCapMb = 5000)
+    private val settings = AppSettings(onboarded = true, cellularCapMb = 5000, excludedApps = setOf("com.netflix.mediaclient"))
     private val paired = UiState(
         profile = UxFixtures.profile,
         settings = settings,
@@ -96,7 +96,7 @@ class Screens : UxRender() {
     @Test fun settingsDark() = app("30-settings-dark", home(UxFixtures.connectedBoth), dark = true, route = Routes.SETTINGS)
     @Test fun apps() = app(
         "31-apps-skip-tailbond",
-        home(UxFixtures.connectedBoth, settings.copy(excludedApps = setOf("com.netflix.mediaclient"))).copy(apps = APPS),
+        home(UxFixtures.connectedBoth).copy(apps = APPS),
         route = Routes.APPS,
     )
 

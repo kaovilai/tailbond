@@ -12,6 +12,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -92,6 +94,19 @@ fun ConnectionsScreen(state: UiState, actions: UiActions, modifier: Modifier = M
             }
         }
         Hint("Changing this reconnects for a moment.")
+        if (state.mode == Mode.FAILOVER) {
+            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Faster switch to backup (experimental)")
+                    Text(
+                        "Keeps mobile data warmed up so switching from Wi-Fi is quicker. Uses a little mobile data.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = state.settings.experimentalBackupFec, onCheckedChange = actions::setBackupFec)
+            }
+        }
 
         SectionHeader("Mobile data limit")
         DataLimit(state, actions)
@@ -159,7 +174,10 @@ private fun RolePicker(p: Priority, enabled: Boolean, onPick: (Priority) -> Unit
             Text("Role")
             Text(p.explain, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        TextButton(onClick = { open = true }, enabled = enabled) { Text(p.label) }
+        TextButton(onClick = { open = true }, enabled = enabled) {
+            Text(p.label)
+            Icon(Icons.Filled.ArrowDropDown, "Change role")
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             Priority.entries.forEach {
                 DropdownMenuItem(

@@ -51,9 +51,24 @@
   <!-- server role, on a phone (or opened from the app as #add-phone): one tap pairs this phone -->
   <section class="card add-phone hidden" id="add-phone" aria-labelledby="add-phone-title">
     <div class="add-phone-head"><svg class="ico"><use href="#i-device"/></svg><h2 id="add-phone-title">Add this phone</h2></div>
-    <p class="muted">Gives this phone its own key and opens it in the tailbond app. No code to scan.</p>
-    <label class="field" for="phone-name"><span>Name for this phone</span>
-      <input id="phone-name" maxlength="63" autocomplete="off" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+    <p class="muted">This is your home server's page. Two steps, then tailbond takes over from Tailscale on this phone. No code to scan.</p>
+    <div class="step">
+      <span class="num">1</span>
+      <div>
+        <b>Get the tailbond app</b> <span class="muted small">(skip if it's installed)</span>
+        <div id="apk-yes" class="hidden"><a class="btn" href="tailbond.apk" download>Download tailbond for Android</a>
+          <p class="muted small">Open the downloaded file to install it. Android may ask you to allow installs from your browser.</p></div>
+        <p id="apk-no" class="muted small">Ask whoever set up this home server for the tailbond app.</p>
+      </div>
+    </div>
+    <div class="step">
+      <span class="num">2</span>
+      <div class="grow">
+        <b>Add this phone</b>
+        <label class="field" for="phone-name"><span>Name for this phone</span>
+          <input id="phone-name" maxlength="63" autocomplete="off" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+      </div>
+    </div>
     <button class="btn primary big" type="button" id="add-phone-btn"><svg class="ico sm"><use href="#i-plus"/></svg>Add this phone</button>
     <div class="add-phone-done hidden" id="add-phone-done">
       <p><b>Opening tailbond…</b> In the app, tap <b>Add phone</b>, then turn tailbond on. Android turns Tailscale's VPN off; your Tailscale machines stay reachable through <span class="server-name">this server</span>.</p>
@@ -61,13 +76,10 @@
         <a class="btn primary" id="phone-open" href="#">Open in tailbond</a>
         <button class="btn" type="button" id="phone-copy"><svg class="ico sm"><use href="#i-copy"/></svg>Copy link</button>
       </div>
-      <p class="muted small">Nothing opened? Install the tailbond app first, then tap <b>Open in tailbond</b>. The link holds this phone's key: don't share it.</p>
+      <p class="muted small">Nothing opened? Install the app (step 1), then tap <b>Open in tailbond</b>. Keep this link to yourself: it lets a phone use your home server.</p>
     </div>
-    <ol class="steps muted small">
-      <li>Tap <b>Add this phone</b>. The tailbond app opens.</li>
-      <li>Tap <b>Add phone</b> in the app, then turn it on.</li>
-      <li>To go back to Tailscale later, tap <b>Switch back to Tailscale</b> in the app.</li>
-    </ol>
+    <p class="muted small">Later, to go back to Tailscale, tap <b>Switch back to Tailscale</b> in the tailbond app.</p>
+    <button class="linkish small" type="button" id="show-dashboard">Show the home server's own dashboard (for whoever runs it)</button>
   </section>
 
   <section class="hero card" aria-label="Throughput">
@@ -94,10 +106,10 @@
   </section>
 
   <section class="modes" role="radiogroup" aria-label="Bonding mode" id="modes">
-    <button role="radio" data-mode="speed"><svg class="ico"><use href="#i-speed"/></svg><span><b>Speed</b><small>Combine every link</small></span></button>
-    <button role="radio" data-mode="streaming"><svg class="ico"><use href="#i-streaming"/></svg><span><b>Streaming</b><small>Calls stay up</small></span></button>
-    <button role="radio" data-mode="redundant"><svg class="ico"><use href="#i-redundant"/></svg><span><b>Redundant</b><small>Every packet twice</small></span></button>
-    <button role="radio" data-mode="failover"><svg class="ico"><use href="#i-failover"/></svg><span><b>Failover</b><small>Backup on standby</small></span></button>
+    <button role="radio" data-mode="speed" title="speed"><svg class="ico"><use href="#i-speed"/></svg><span><b>Fastest</b><small>All links together</small></span></button>
+    <button role="radio" data-mode="streaming" title="streaming"><svg class="ico"><use href="#i-streaming"/></svg><span><b>Smooth calls</b><small>Calls and video stay up</small></span></button>
+    <button role="radio" data-mode="redundant" title="redundant"><svg class="ico"><use href="#i-redundant"/></svg><span><b>Most reliable</b><small>Every packet twice</small></span></button>
+    <button role="radio" data-mode="failover" title="failover"><svg class="ico"><use href="#i-failover"/></svg><span><b>Save mobile data</b><small>Backup only on failure</small></span></button>
   </section>
 
   <nav class="tabs" id="tabs">

@@ -14,12 +14,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DataSaverOn
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -43,6 +45,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.tailbond.app.data.PeerNode
+import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.Words
 import dev.tailbond.app.service.ConnState
@@ -87,10 +91,31 @@ fun HomeScreen(
         if (live.state == ConnState.ERROR) item { ErrorCard(state, actions, onRepair) }
         if (state.settings.handedToTailscale && live.state == ConnState.DISCONNECTED) {
             item { HandedBackCard(state, actions) }
+        } else {
+            item {
+                TextButton(onClick = actions::switchToTailscale, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    Icon(Icons.Filled.SwapHoriz, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Switch back to Tailscale")
+                }
+            }
         }
 
         item { SectionHeader("Connections") }
         item { ConnectionsSummary(state, onConnections) }
+        item {
+            val saving = state.mode == Mode.FAILOVER
+            ListItem(
+                headlineContent = { Text("Save mobile data") },
+                supportingContent = { Text("Use mobile data only when Wi-Fi stops working") },
+                leadingContent = { Icon(Icons.Filled.DataSaverOn, null) },
+                trailingContent = { Switch(checked = saving, onCheckedChange = null) },
+                modifier = Modifier.toggleable(
+                    value = saving, role = Role.Switch,
+                    onValueChange = { actions.setMode(if (it) Mode.FAILOVER else Mode.SPEED) },
+                ),
+            )
+        }
 
         item {
             ListItem(
@@ -133,23 +158,6 @@ fun HomeScreen(
         }
         if (list != null && machines.isEmpty() && q.isNotEmpty()) item { Hint("No machine matches \"$query\".") }
 
-        item { Spacer(Modifier.height(16.dp)) }
-        item {
-            OutlinedButton(
-                onClick = actions::switchToTailscale,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            ) {
-                Icon(Icons.Filled.SwapHoriz, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Switch back to Tailscale")
-            }
-            Text(
-                "Turns tailbond off and opens the Tailscale app, so Tailscale's VPN can connect again.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
-            )
-        }
     }
 }
 
@@ -240,7 +248,8 @@ private fun HandedBackCard(state: UiState, actions: UiActions) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Tailscale is in charge on this phone", style = MaterialTheme.typography.titleMedium)
             Text(
-                "You switched back to Tailscale. tailbond stays off until you turn it on again.",
+                "tailbond is off and stays off until you turn it on again. " +
+                    "If Tailscale isn't connected yet, open it and turn on its switch.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (state.tailscaleInstalled) {
@@ -346,13 +355,21 @@ private fun ThisDevice(state: UiState) {
     val copy = LocalCopy.current
     val ip = state.live.tunnelIp
     val name = state.profile?.name?.ifBlank { null } ?: state.profile?.user?.ifBlank { null } ?: "This phone"
+    val serverIp = state.peers.list?.self?.ipv4
     ListItem(
-        headlineContent = { Text(name, fontWeight = FontWeight.SemiBold) },
+        headlineContent = { Text("$name (this phone)", fontWeight = FontWeight.SemiBold) },
         supportingContent = {
             Column {
-                Text(ip ?: "No address while disconnected")
                 Text(
-                    "Your Tailscale machines see this phone as ${state.serverName}",
+                    ip ?: if (state.live.state == ConnState.CONNECTING || state.live.state == ConnState.RECONNECTING) {
+                        "Getting an address…"
+                    } else {
+                        "No address while disconnected"
+                    },
+                )
+                Text(
+                    "This phone isn't a Tailscale machine itself. Its traffic reaches your tailnet from " +
+                        state.serverName + (serverIp?.let { " ($it)" } ?: "") + ".",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

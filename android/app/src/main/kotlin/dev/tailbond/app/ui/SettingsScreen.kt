@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -127,18 +126,6 @@ fun SettingsScreen(
             }
         }
 
-        SectionHeader("Advanced")
-        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Faster switch to backup (experimental)")
-                Text(
-                    "Only for \"Save mobile data\": keeps mobile data warmed up so switching from Wi-Fi is quicker. Uses a little mobile data.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = muted,
-                )
-            }
-            Switch(checked = state.settings.experimentalBackupFec, onCheckedChange = actions::setBackupFec)
-        }
     }
 
     if (forgetOpen) {

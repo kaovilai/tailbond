@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,5 +116,27 @@ func TestListenAddrsIncludeTunnel(t *testing.T) {
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("listen %q: %v, want %v", listen, got, want)
 		}
+	}
+}
+
+func TestAPKDownload(t *testing.T) {
+	a := peersAgent(t, "")
+	if w := do(t, a, "GET", "/tailbond.apk", "127.0.0.1:8077", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("missing apk: %d, want 404", w.Code)
+	}
+	apk := filepath.Join(t.TempDir(), "app.apk")
+	if err := os.WriteFile(apk, []byte("PK\x03\x04"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.Update(func(c *config.Config) error { c.AndroidAPK = apk; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	w := do(t, a, "GET", "/tailbond.apk", "127.0.0.1:8077", "")
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/vnd.android.package-archive" {
+		t.Fatalf("apk: %d %s", w.Code, w.Header())
+	}
+	// not offered to bonded clients on the tunnel side
+	if w := do(t, a, "GET", "/tailbond.apk", "10.77.0.1:8077", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("apk via tunnel: %d, want 404", w.Code)
 	}
 }

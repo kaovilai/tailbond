@@ -14,10 +14,10 @@ import kotlin.math.sin
 /** Fake state for the screen renders: no tunnel, no Keystore, no network. */
 object UxFixtures {
     val profile = PairingPayload(
-        name = "pixel",
+        name = "pixel-8",
         server = "home.example.net:443",
         sni = "homebox.tail1234.ts.net",
-        user = "pixel",
+        user = "pixel-8",
         key = "not-a-real-key",
         dns = listOf("10.77.0.1"),
         mode = "speed",

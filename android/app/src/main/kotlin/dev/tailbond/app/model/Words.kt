@@ -36,18 +36,19 @@ object Words {
             .distinct().sortedBy { it.ordinal }.joinToString(" + ") { it.phrase }
 
     /** Status of one link, as the Connections cards show it. */
-    enum class LinkStatus(val label: String, val good: Boolean) {
+    /** [good]: green dot (true), red (false), grey (null: waiting or not in use by choice). */
+    enum class LinkStatus(val label: String, val good: Boolean?) {
         IN_USE("In use", true),
-        BACKUP("Backup only", true),
-        SAVING("Saving data · backup only", true),
-        TAKING_OVER("Taking over", true),
-        STARTING("Starting…", true),
+        BACKUP("Backup only · not in use", null),
+        SAVING("Not in use · saving data", null),
+        TAKING_OVER("In use · taking over", true),
+        STARTING("Starting…", null),
         WEAK("Struggling", false),
-        NOT_WORKING("Not working", false),
+        NOT_WORKING("Not working right now", false),
         CAP_REACHED("Paused · monthly limit reached", false),
-        OFF("Not used by tailbond", false),
-        UNAVAILABLE("Not available", false),
-        IDLE("Ready", true),
+        OFF("Not used by tailbond", null),
+        UNAVAILABLE("Not available", null),
+        IDLE("Ready", null),
     }
 
     private fun rank(status: Int): Int = when (status) {
@@ -114,15 +115,17 @@ object Words {
     fun error(kind: ErrorKind?, server: String, address: String, detail: String?): ErrorText = when (kind) {
         ErrorKind.UNREACHABLE -> ErrorText(
             "Can't reach your home server",
-            "$server didn't answer at $address. Check that it's turned on and that your home router " +
-                "forwards UDP port ${address.substringAfterLast(':', "443")} to it, then try again.",
+            "$server didn't answer at $address. Check that it's turned on and try again. " +
+                "If it keeps happening, the home router may need to forward UDP port ${address.substringAfterLast(':', "443")} " +
+                "to it: if someone else set up your home server, show them this message.",
             Fix.RETRY,
         )
         ErrorKind.IDENTITY -> ErrorText(
-            "Your home server's identity changed",
-            "$server's security certificate doesn't match the one this phone was paired with. " +
-                "If you reinstalled or renamed it, pair this phone again. Otherwise, don't connect on this network.",
-            Fix.REPAIR, Fix.RETRY,
+            "Can't confirm this is your home server",
+            "tailbond stopped because the server answering isn't the $server this phone was paired with. " +
+                "This is expected right after $server was reinstalled: then pair this phone again. " +
+                "If nobody changed it, try again on another network and tell whoever set it up.",
+            Fix.RETRY, Fix.REPAIR,
         )
         ErrorKind.REJECTED -> ErrorText(
             "Your home server doesn't recognise this phone",

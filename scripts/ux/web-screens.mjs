@@ -30,7 +30,8 @@ for (const scheme of ['light', 'dark']) {
     await page.screenshot({ path: `${out}/web-02-after-tap.png` });
     const href = await page.getAttribute('#phone-open', 'href');
     if (!href.startsWith('tailbond://pair?d=')) throw new Error('no pairing deep link: ' + href);
-    // the desktop-style path: Devices tab, Add a device → code to scan
+    // the other-screen path: reveal the dashboard, Devices tab, Add a device → code to scan
+    await page.click('#show-dashboard');
     await page.click('#tabs button[data-tab="clients"]');
     await page.fill('#client-name', 'tablet');
     await page.click('#add-client button[type=submit]');

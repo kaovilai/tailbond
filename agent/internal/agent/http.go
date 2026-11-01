@@ -45,6 +45,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/peers", a.hPeers)
 	mux.HandleFunc("GET /api/settings", a.hSettingsGet)
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
+	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpErr(w, http.StatusNotFound, errNotFound) })
 
 	var assets fs.FS = web.FS
@@ -397,11 +398,35 @@ type settingsView struct {
 	PairedAs    string `json:"paired_as,omitempty"`
 	ManageRoute bool   `json:"manage_routes,omitempty"`
 	Version     string `json:"version"`
+	AndroidAPK  bool   `json:"android_apk"`
+}
+
+// hAPK offers the Android app to phones opening the dashboard (additive).
+func (a *Agent) hAPK(w http.ResponseWriter, r *http.Request) {
+	f, err := os.Open(a.store.Get().APKPath())
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition", `attachment; filename="tailbond.apk"`)
+	http.ServeContent(w, r, "tailbond.apk", st.ModTime(), f)
+}
+
+func apkAvailable(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version}
+	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath())}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo

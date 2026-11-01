@@ -143,7 +143,7 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                     value = server,
                     onValueChange = { server = it.trim() },
                     label = { Text("Home server's Tailscale name") },
-                    placeholder = { Text("e.g. homebox") },
+                    placeholder = { Text("e.g. homebox or homebox.tail1234.ts.net") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                     modifier = Modifier.fillMaxWidth(),
@@ -153,7 +153,8 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                     Text("  Open home server page")
                 }
                 Text(
-                    "Find the name in the Tailscale app's machine list (the home server).",
+                    "It's the machine that runs tailbond, listed in the Tailscale app's Machines. " +
+                        "Not sure which one? Ask whoever set it up for the name, or for a link to its page.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -203,10 +204,7 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                     maxLines = 4,
                     isError = error != null,
                     supportingText = {
-                        if (error != null) Column {
-                            Text(pairErrorText(error))
-                            Text("Details: $error", style = MaterialTheme.typography.labelSmall)
-                        }
+                        if (error != null) Text(pairErrorText(error))
                     },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -232,6 +230,7 @@ fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () ->
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it.")
+                Text("It connects over the internet to ${p.server}.", style = MaterialTheme.typography.bodySmall)
                 if (p.name.isNotBlank()) Text("This phone will be called \"${p.name}\" on $server.")
                 when {
                     p.certSha256 != null -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -248,7 +247,7 @@ fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () ->
                     }
                     else -> Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Lock, null, Modifier.size(18.dp))
-                        Text("  Secure: $server's certificate is checked", style = MaterialTheme.typography.bodySmall)
+                        Text("  Secure connection to $server", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (replacing) Text("This replaces the home server this phone uses now.", style = MaterialTheme.typography.bodySmall)

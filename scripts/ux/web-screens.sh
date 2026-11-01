@@ -25,10 +25,11 @@ PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').versi
 
 (cd "$REPO/agent" && CGO_ENABLED=0 go build -o "$TMP/tailbondd" ./cmd/tailbondd)
 mkdir -p "$TMP/state" "$TMP/hooks" "$OUT"
+printf 'PK\003\004' > "$TMP/tailbond.apk"  # offered as GET /tailbond.apk
 printf '#!/bin/sh\necho "mqvpn server ready"\nexec sleep 3600\n' > "$TMP/mqvpn" && chmod +x "$TMP/mqvpn"
 cat > "$TMP/tailbond.json" <<JSON
 {"role":"server","mqvpn_bin":"$TMP/mqvpn","state_dir":"$TMP/state","hooks_dir":"$TMP/hooks",
- "listen":"127.0.0.1:18077","disable_tailscale":true,
+ "listen":"127.0.0.1:18077","disable_tailscale":true,"android_apk":"$TMP/tailbond.apk",
  "server":{"port":443,"public_addr":"home.example.net:443","subnet":"10.77.0.0/24","subnet6":"fd77:77::/112","use_tailscale_cert":false}}
 JSON
 "$TMP/tailbondd" -config "$TMP/tailbond.json" -quiet &

@@ -178,7 +178,11 @@ const IS_PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent) || matchMedia(
 
 function setRole(role) {
   // the phone flow only makes sense on the server, viewed from the phone being added
-  $('#add-phone').classList.toggle('hidden', !(role === 'server' && (IS_PHONE || location.hash === '#add-phone')));
+  const phoneFlow = role === 'server' && (IS_PHONE || location.hash === '#add-phone');
+  $('#add-phone').classList.toggle('hidden', !phoneFlow);
+  // a phone here is being added: hide the server's own switch, modes and stats until asked
+  if (!state.dashboardShown) document.body.classList.toggle('phone-add', phoneFlow);
+  if (phoneFlow && !state.settings) loadSettings();
   state.role = role;
   for (const b of document.querySelectorAll('#tabs button[data-role]')) b.classList.toggle('hidden', b.dataset.role !== role);
   if (role === 'client') loadSettings();
@@ -402,6 +406,8 @@ async function loadSettings() {
   } catch { return; }
   const s = state.settings;
   if (s.role === 'server') {
+    $('#apk-yes').classList.toggle('hidden', !s.android_apk);
+    $('#apk-no').classList.toggle('hidden', !!s.android_apk);
     const w = $('#addr-warning');
     if (s.public_addr_guessed) {
       w.innerHTML = '';
@@ -580,6 +586,11 @@ function setupAddPhone() {
     $('#add-phone-done').classList.remove('hidden');
     btn.classList.add('hidden');
     location.href = uri; // the tailbond app handles tailbond://pair
+  });
+  $('#show-dashboard').addEventListener('click', () => {
+    state.dashboardShown = true;
+    document.body.classList.remove('phone-add');
+    $('#show-dashboard').classList.add('hidden');
   });
   $('#phone-copy').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(uri); } catch { /* insecure context: fall through */ }
