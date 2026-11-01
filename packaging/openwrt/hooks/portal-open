@@ -26,7 +26,7 @@ prio="$(tbcfg_or client.rule_priority 1077)"
 lans="$(tbcfg client.lan_network)"
 [ -n "$lans" ] || lans=lan
 
-gw="$(ip -4 route show default dev "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
+gw="$(ip -4 route show dev "$dev" 2>/dev/null | awk '$1 == "default" && $2 == "via" {print $3; exit}')"
 if [ -n "$gw" ]; then
 	ip -4 route replace default via "$gw" dev "$dev" table "$ptable"
 else

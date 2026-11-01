@@ -34,6 +34,8 @@ jobs:
       - name: go test -race
         working-directory: agent
         run: go test -race ./...
+      - name: OpenWrt bypass hook on real OpenWrt userland (podman)
+        run: scripts/test-openwrt-bypass-hook.sh
       - name: Build linux/amd64 + linux/arm64
         run: agent/build.sh
       - uses: actions/upload-artifact@v7

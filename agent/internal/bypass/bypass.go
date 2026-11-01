@@ -26,7 +26,7 @@ import (
 
 const (
 	DefaultMask      = 0x07000000
-	DefaultTableBase = 7900
+	DefaultTableBase = 80
 	MaxWANs          = 5
 	Table            = "tailbond"         // nft table (inet family)
 	Chain            = "tailbond_bypass"  // iptables mangle chain, LAN input

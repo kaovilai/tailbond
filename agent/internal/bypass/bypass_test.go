@@ -91,10 +91,10 @@ func TestRenderNft(t *testing.T) {
 		t.Errorf("rule order wrong\n%s", n)
 	}
 	// WAN marks by first use: wwan (domain "stream") comes after wan (ip "net")
-	if len(f.WANs) != 2 || f.WANs[0].Name != "wan" || f.WANs[0].Table != 7900 || f.WANs[1].Name != "wwan" || f.WANs[1].Mark != 0x04000000 {
+	if len(f.WANs) != 2 || f.WANs[0].Name != "wan" || f.WANs[0].Table != 80 || f.WANs[1].Name != "wwan" || f.WANs[1].Mark != 0x04000000 {
 		t.Errorf("wans %+v", f.WANs)
 	}
-	if f.WANList() != "wan 0x03000000 7900\nwwan 0x04000000 7901\n" {
+	if f.WANList() != "wan 0x03000000 80\nwwan 0x04000000 81\n" {
 		t.Errorf("wan list %q", f.WANList())
 	}
 }

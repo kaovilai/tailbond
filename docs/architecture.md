@@ -499,7 +499,7 @@ On the travel router, LAN traffic can skip the tunnel by rule
 | P-7 (1070) | `fwmark T/mask lookup main suppress_prefixlength 0`, same for each `W<i>` | marked traffic (and its marked replies) still reaches the LAN and other local routes |
 | P-6 (1071) | `fwmark T/mask lookup 77` | "Always use tailbond": the tunnel, or the kill switch's blackhole while it's down |
 | P-5 (1072) | `fwmark D/mask lookup main` | "Use the internet directly" |
-| P-4 (1073) | `fwmark W<i>/mask lookup 7900+i` | "Use only <WAN>": that WAN's default route (table refreshed on WAN changes) |
+| P-4 (1073) | `fwmark W<i>/mask lookup 80+i` | "Use only <WAN>": that WAN's default route (table refreshed on WAN changes) |
 | P-3 (1074) | `iif <lan> lookup 78` | captive-portal sign-in mode |
 | P-2 (1075) | `to <server> lookup main` | the active server's address never enters the tunnel |
 | P-1 (1076) | `iif <lan> lookup main suppress_prefixlength 0` | LAN-to-LAN and other non-default routes |

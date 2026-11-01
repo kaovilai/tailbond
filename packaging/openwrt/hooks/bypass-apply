@@ -163,13 +163,16 @@ fw_apply_ipt() {
 # src_valid_mark on (remembering what it was, for clear)
 valid_mark_on() {
 	local f=/proc/sys/net/ipv4/conf/all/src_valid_mark
-	[ -w "$f" ] || return 0
+	[ -r "$f" ] || return 0
+	[ "$(cat "$f")" = 1 ] && return 0
 	[ -f "$TB_STATE/bypass_src_valid_mark" ] || cat "$f" >"$TB_STATE/bypass_src_valid_mark"
-	[ "$(cat "$f")" = 1 ] || echo 1 >"$f"
+	{ echo 1 >"$f"; } 2>/dev/null ||
+		log "bypass: couldn't turn on src_valid_mark; with rp_filter on, bypassed replies may be dropped while the kill switch blocks"
 }
 valid_mark_restore() {
+	local f=/proc/sys/net/ipv4/conf/all/src_valid_mark
 	[ -f "$TB_STATE/bypass_src_valid_mark" ] || return 0
-	cat "$TB_STATE/bypass_src_valid_mark" >/proc/sys/net/ipv4/conf/all/src_valid_mark 2>/dev/null
+	{ cat "$TB_STATE/bypass_src_valid_mark" >"$f"; } 2>/dev/null
 	rm -f "$TB_STATE/bypass_src_valid_mark"
 }
 
@@ -203,8 +206,9 @@ wan_table() {
 	dev="$(net_device "$1")"
 	gw="" gw6=""
 	if [ -n "$dev" ] && [ -e "$TB_SYSNET/$dev" ]; then
-		gw="$(ip -4 route show default dev "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
-		gw6="$(ip -6 route show default dev "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
+		# (busybox ip has no "show default" selector)
+		gw="$(ip -4 route show dev "$dev" 2>/dev/null | awk '$1 == "default" && $2 == "via" {print $3; exit}')"
+		gw6="$(ip -6 route show dev "$dev" 2>/dev/null | awk '$1 == "default" && $2 == "via" {print $3; exit}')"
 		if [ -n "$gw" ]; then
 			ip -4 route replace default via "$gw" dev "$dev" table "$2"
 		else
