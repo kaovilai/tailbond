@@ -9,7 +9,7 @@
 #   firewall3:        bypass.ipset + bypass.ip(6)tables + bypass-ipset.conf
 #
 # then the ip rules that send marked traffic past the tunnel:
-#   P-7 fwmark T lookup main suppress_prefixlength 0   (tunnel override, LAN routes)
+#   P-7 fwmark T|W<i> lookup main suppress_prefixlength 0   (LAN and local routes)
 #   P-6 fwmark T lookup $table                          (always tailbond)
 #   P-5 fwmark D lookup main                            (direct, best WAN)
 #   P-4 fwmark W<i> lookup <wan table>                  (only that WAN)
@@ -20,6 +20,12 @@
 # $TB_BYPASS_STATUS. Idempotent: the nft table / iptables chain is rebuilt
 # from the files every run, ip rules are replaced, dnsmasq restarts only
 # when its drop-in changed.
+#
+# Replies carry their connection's mark too, and net.ipv4.conf.all.
+# src_valid_mark is turned on (as wg-quick does): the kernel's reverse-path
+# check for a reply to a LAN device looks up routes as if from the LAN,
+# which would otherwise end in the kill switch's blackhole (table $table)
+# and drop the reply wherever rp_filter is on.
 #
 # Test seams (env): TB_BYPASS_FIREWALL (nft | iptables | none),
 # TB_DNSMASQ (binary), TB_DNSMASQ_DIR (conf-dir), TB_DNSMASQ_RESTART
@@ -87,17 +93,30 @@ has_rules() { grep -q '"id"' "$file" 2>/dev/null; }
 # --- firewall ----------------------------------------------------------
 
 fw_clear() {
-	local d fam
+	fw_clear_nft
+	fw_clear_ipt
+}
+
+fw_clear_nft() {
 	if command -v nft >/dev/null; then
 		nft delete table inet tailbond 2>/dev/null
 	fi
+	rm -f "$TB_STATE/bypass.nft.applied"
+	return 0
+}
+
+fw_clear_ipt() {
+	local d fam s
 	for fam in iptables ip6tables; do
 		command -v "$fam" >/dev/null || continue
 		for d in $(lan_devs); do
 			while "$fam" -t mangle -D PREROUTING -i "$d" -j tailbond_bypass 2>/dev/null; do :; done
 		done
-		"$fam" -t mangle -F tailbond_bypass 2>/dev/null
-		"$fam" -t mangle -X tailbond_bypass 2>/dev/null
+		while "$fam" -t mangle -D PREROUTING -j tailbond_restore 2>/dev/null; do :; done
+		for c in tailbond_bypass tailbond_restore; do
+			"$fam" -t mangle -F "$c" 2>/dev/null
+			"$fam" -t mangle -X "$c" 2>/dev/null
+		done
 	done
 	if command -v ipset >/dev/null; then
 		for s in $(ipset list -n 2>/dev/null | grep '^tb_'); do ipset destroy "$s" 2>/dev/null; done
@@ -107,7 +126,12 @@ fw_clear() {
 
 fw_apply_nft() {
 	local d
-	nft -f "$dir/bypass.nft" || return 1
+	# reload only when the rules changed or the table is gone (a firewall
+	# reload): reloading resets the per-rule counters
+	if ! cmp -s "$dir/bypass.nft" "$TB_STATE/bypass.nft.applied" || ! nft list table inet tailbond >/dev/null 2>&1; then
+		nft -f "$dir/bypass.nft" || return 1
+		cp "$dir/bypass.nft" "$TB_STATE/bypass.nft.applied"
+	fi
 	for d in $(lan_devs); do
 		nft add element inet tailbond lan_ifs "{ \"$d\" }"
 	done
@@ -131,7 +155,22 @@ fw_apply_ipt() {
 			"$fam" -t mangle -C PREROUTING -i "$d" -j tailbond_bypass 2>/dev/null ||
 				"$fam" -t mangle -I PREROUTING -i "$d" -j tailbond_bypass
 		done
+		"$fam" -t mangle -C PREROUTING -j tailbond_restore 2>/dev/null ||
+			"$fam" -t mangle -I PREROUTING -j tailbond_restore
 	done
+}
+
+# src_valid_mark on (remembering what it was, for clear)
+valid_mark_on() {
+	local f=/proc/sys/net/ipv4/conf/all/src_valid_mark
+	[ -w "$f" ] || return 0
+	[ -f "$TB_STATE/bypass_src_valid_mark" ] || cat "$f" >"$TB_STATE/bypass_src_valid_mark"
+	[ "$(cat "$f")" = 1 ] || echo 1 >"$f"
+}
+valid_mark_restore() {
+	[ -f "$TB_STATE/bypass_src_valid_mark" ] || return 0
+	cat "$TB_STATE/bypass_src_valid_mark" >/proc/sys/net/ipv4/conf/all/src_valid_mark 2>/dev/null
+	rm -f "$TB_STATE/bypass_src_valid_mark"
 }
 
 # --- ip rules ----------------------------------------------------------
@@ -147,6 +186,7 @@ rules_clear() {
 		while read -r name m t; do
 			[ -n "$t" ] || continue
 			for fam in -4 -6; do
+				rule_del_all "$fam" fwmark "$m/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
 				rule_del_all "$fam" fwmark "$m/$mask" lookup "$t" priority $((prio - 4))
 				ip "$fam" route flush table "$t" 2>/dev/null
 			done
@@ -184,7 +224,20 @@ wan_table() {
 
 rules_apply() {
 	local fam name m t
-	rules_clear
+	# WAN choices no longer used; the rest is replaced in place, so traffic
+	# keeps its route while the rules are re-asserted
+	if [ -f "$TB_STATE/bypass_wans" ]; then
+		while read -r name m t; do
+			[ -n "$t" ] || continue
+			grep -q "^$name $m $t\$" "$dir/bypass-wans" 2>/dev/null && continue
+			for fam in -4 -6; do
+				rule_del_all "$fam" fwmark "$m/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
+				rule_del_all "$fam" fwmark "$m/$mask" lookup "$t" priority $((prio - 4))
+				ip "$fam" route flush table "$t" 2>/dev/null
+			done
+		done <"$TB_STATE/bypass_wans"
+		rm -f "$TB_STATE/bypass_wans"
+	fi
 	for fam in -4 -6; do
 		rule_ensure "$fam" fwmark "$tunnel/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
 		rule_ensure "$fam" fwmark "$tunnel/$mask" lookup "$table" priority $((prio - 6))
@@ -195,6 +248,8 @@ rules_apply() {
 			[ -n "$t" ] || continue
 			wan_table "$name" "$t"
 			for fam in -4 -6; do
+				# replies to the LAN (marked too) still find the LAN
+				rule_ensure "$fam" fwmark "$m/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
 				rule_ensure "$fam" fwmark "$m/$mask" lookup "$t" priority $((prio - 4))
 			done
 		done <"$dir/bypass-wans"
@@ -270,6 +325,7 @@ clear)
 	fw_clear
 	rules_clear
 	dns_clear
+	valid_mark_restore
 	rm -f "$TB_STATE/bypass_marks"
 	log "bypass: rules removed"
 	exit 0
@@ -302,6 +358,7 @@ if ! has_rules; then
 	fw_clear
 	rules_clear
 	dns_clear
+	valid_mark_restore
 	write_status "$reason"
 	exit 0
 fi
@@ -311,13 +368,26 @@ if [ "$fw" = none ]; then
 	exit 1
 fi
 
-fw_clear
+# a different mark mask than last time: the old rules go first
+if [ -s "$TB_STATE/bypass_marks" ] && [ "$(cat "$TB_STATE/bypass_marks")" != "$mask $direct $tunnel" ]; then
+	new="$mask $direct $tunnel"
+	read -r mask direct tunnel <"$TB_STATE/bypass_marks"
+	rules_clear
+	read -r mask direct tunnel <<EOF
+$new
+EOF
+fi
+# nft -f replaces the table in one transaction; only the other backend's
+# leftovers (after a firewall3 -> firewall4 upgrade, say) are removed
 if [ "$fw" = nft ]; then
+	fw_clear_ipt
 	fw_apply_nft || { reason="nft refused the rules (see the log)"; write_status "$reason"; log "bypass: $reason"; exit 1; }
 else
+	fw_clear_nft
 	fw_apply_ipt || { reason="iptables refused the rules (see the log)"; write_status "$reason"; log "bypass: $reason"; exit 1; }
 fi
 rules_apply
+valid_mark_on
 echo "$mask $direct $tunnel" >"$TB_STATE/bypass_marks"
 dns_apply
 write_status "$reason"
