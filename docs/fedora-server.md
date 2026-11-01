@@ -2,6 +2,8 @@
 
 This guide sets up the **home end** of tailbond on Fedora 43 or newer. Your phone or travel router bonds its Wi-Fi, 5G and Ethernet links to this server. Its traffic then leaves through your home internet connection, and your Tailscale tailnet is reachable through it.
 
+For a VPS as a second (backup) server, or another distribution (Debian, Ubuntu, AlmaLinux/RHEL), see [vps.md](vps.md).
+
 ## 1. Install
 
 ```sh
@@ -47,7 +49,7 @@ What the package changes in firewalld (the `server-up` hook, every start, both t
   sudo firewall-cmd --reload
   ```
 
-UDP 443 is also what HTTP/3 uses: if this machine runs a web server with HTTP/3, set another port (`"server": {"port": 8443}`) and forward that one instead. SELinux needs no changes: the service runs unconfined as root, like other VPN servers.
+UDP 443 is also what HTTP/3 uses: if this machine runs a web server with HTTP/3, set another port (`"server": {"port": 8443}`) and forward that one instead. ([vps.md](vps.md#2-ports-on-a-box-that-already-runs-a-web-server) has more on sharing a box with a web server.) SELinux needs no changes: the service runs unconfined as root, like other VPN servers.
 
 ## 2. Make the server reachable: forward UDP 443
 
