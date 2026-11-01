@@ -358,7 +358,7 @@
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
         wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false,
         // client: more servers (failover) and bypass rules
-        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0,
+        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", histAll: false,
         bp: null, lan: null, bpEdit: null
       };
     },
@@ -591,6 +591,10 @@
         var fo = this.foInfo();
         return (fo && fo.line ? fo.line + " · " : "") + line;
       },
+      onBackup: function () {
+        var ss = this.servers;
+        return ss.length > 1 && !!this.st.active_server && this.st.active_server !== ss[0].name;
+      },
       // Failover in words for the top card, or null (one server, or on the first choice).
       // act: [link text, handler] shown after the line.
       foInfo: function () {
@@ -603,15 +607,17 @@
         var goFirst = function () { self.useServer({ name: first }); };
         if (st.state === "connecting" && fo.reason === "primary_down") return { title: first + " is unreachable · switching to " + act + "…" };
         if (st.state !== "connected") return null;
+        // what changes while a backup carries the tunnel
+        var note = "On " + act + ": websites see " + act + "'s internet address, connections that were open restart once, and your Tailscale machines see devices here as coming from " + act + ".";
         if (fo.reason === "primary_down") {
-          return back ? { title: "Using " + act + " (" + first + " is answering again)", line: "Back to " + first + " in " + fmtClock(fo.failback_in_sec), act: ["Stay on " + act, stay] }
-            : { title: "Using " + act + (since ? " since " + since : "") + " (" + first + " is unreachable)", line: "Goes back to " + first + " by itself once it answers again" };
+          return back ? { title: "Using " + act + " (" + first + " is answering again)", line: "Back to " + first + " in " + fmtClock(fo.failback_in_sec) + ". Calls may pause for a few seconds then", act: ["Stay on " + act + " for now", stay], note: note }
+            : { title: "Using " + act + (since ? " since " + since : "") + " (" + first + " is unreachable)", line: "You're still online; nothing to do. It goes back to " + first + " by itself once it answers again", note: note };
         }
         if (fo.reason === "manual") {
           var firstOk = ss[0].state === "standby";
-          return { title: "Using " + act + (since ? " since " + since : "") + " (you picked it)", line: "Stays on " + act + " until you pick " + first + " or " + act + " stops working", act: firstOk ? ["Go back to " + first, goFirst] : null };
+          return { title: "Using " + act + (since ? " since " + since : "") + " (you picked it)", line: "Stays on " + act + " until you pick " + first + " or " + act + " stops working", act: firstOk ? ["Go back to " + first, goFirst] : null, note: note };
         }
-        if (fo.reason === "policy") return { title: "Always using " + act };
+        if (fo.reason === "policy") return { title: "Always using " + act, note: act === first ? null : note };
         if (!fo.reason && this.backOnUntil > Date.now()) return { title: "Connected to " + act, line: "Back on " + act + (since ? " since " + since : "") };
         return null;
       },
@@ -691,7 +697,7 @@
       // [title, body] for a server that can't be added (409 or the join error).
       // [title, body] for a server that can't be added (409 or the join error).
       addSrvErr: function (h, code, conflict, newName, subnet) {
-        var ss = this.servers;
+        var ss = this.servers, self0 = this;
         if (!conflict && ss.length === 1) conflict = ss[0].name;
         var nn = newName || "This server", other = newName || "the new server";
         if (code === "exists") return [nn + " is already in your list", (conflict ? "It's listed as " + conflict + ". " : "") + "Nothing to add; " + (conflict || "it") + " keeps working as before."];
@@ -699,18 +705,38 @@
           // suggest a range that isn't the clashing one
           var n = /^10\.(\d+)\./.exec(subnet || "");
           var free = "10." + (n && +n[1] >= 78 && +n[1] < 99 ? +n[1] + 1 : 78) + ".0.0/24";
+          var asked = !!newName, me = (this.settings && this.settings.paired_as) || "my travel router";
+          var msg = "Hi! I'd like to add " + (newName || "your tailbond server") + " as a backup server for " + me + ", but it uses the tunnel addresses " + (subnet || "") + ", like " + (conflict || "my other server") +
+            ". Could you move it to another range, for example " + free + "? With tailbond's Linux installer: sudo ./install.sh --subnet " + free +
+            ". On a GL router: uci set tailbond.server.subnet=" + free + "; uci commit tailbond; /etc/init.d/tailbond restart. Otherwise set \"server\": {\"subnet\": \"" + free + "\"} in /etc/tailbond/tailbond.json and restart tailbond. Devices already connected to it reconnect by themselves. Thanks!";
           return [nn + " can't be added yet: it uses the same tunnel addresses as " + (conflict || "one of your servers"), [
-            h("div", (conflict || "Your server") + " keeps working; nothing was changed. Each server needs its own range of tunnel addresses" + (subnet ? " (" + subnet + " is taken)" : "") + ", so whoever runs " + other + " picks another range there, then you ask again:"),
-            h("ul", { class: "tb-steps", style: { color: "inherit", marginTop: "4px" } }, [
-              h("li", ["A VPS set up with tailbond's Linux installer: run it again with ", h("code", "sudo ./install.sh --subnet " + free)]),
-              h("li", ["A GL router as server (over SSH): ", h("code", "uci set tailbond.server.subnet=" + free + "; uci commit tailbond; /etc/init.d/tailbond restart")]),
-              h("li", ["Another Linux server: in ", h("code", "/etc/tailbond/tailbond.json"), " set ", h("code", "\"server\": {\"subnet\": \"" + free + "\"}"), " and restart tailbond"])
-            ]),
-            h("div", { class: "tb-small", style: { marginTop: "4px" } }, "Devices already connected to " + other + " reconnect by themselves after the change.")
+            h("div", (conflict || "Your server") + " keeps working; nothing was changed. Each server needs its own range of tunnel addresses" + (subnet ? " (" + subnet + " is taken)" : "") + "."),
+            h("div", { style: { marginTop: "6px" } }, asked
+              ? "A new server with no devices yet moves to a free range by itself when you ask it over Tailscale. " + other + " already has devices, so whoever runs it changes its range, then you ask again."
+              : "A new server with no devices yet moves to a free range by itself when you ask it over Tailscale (a pasted link can't do that): try “Its name in Tailscale” above. If it already has devices, whoever runs it changes its range."),
+            h("div", { style: { marginTop: "8px" } }, [this.btn(h, "Copy a message to send them", function () { self0.copyMsg(msg); }, "small primary")]),
+            h("details", { style: { marginTop: "8px" } }, [h("summary", { class: "tb-small", style: { cursor: "pointer" } }, "How they change it"),
+              h("ul", { class: "tb-steps", style: { color: "inherit", marginTop: "4px" } }, [
+                h("li", ["A VPS set up with tailbond's Linux installer: run it again with ", h("code", "sudo ./install.sh --subnet " + free)]),
+                h("li", ["A GL router as server (over SSH): ", h("code", "uci set tailbond.server.subnet=" + free + "; uci commit tailbond; /etc/init.d/tailbond restart")]),
+                h("li", ["Another Linux server: in ", h("code", "/etc/tailbond/tailbond.json"), " set ", h("code", "\"server\": {\"subnet\": \"" + free + "\"}"), " and restart tailbond"])
+              ]),
+              h("div", { class: "tb-small" }, "Devices already connected to " + other + " reconnect by themselves after the change.")])
           ]];
         }
         if (code === "paste") return [null, "Paste the whole link. It starts with tailbond://pair"];
         return [null, this.humanError({ error: code })];
+      },
+      copyMsg: function (text) {
+        var self = this;
+        var done = function () { self.say("Message copied. Paste it in a chat or email to whoever runs that server."); };
+        if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, done);
+        else {
+          var ta = document.createElement("textarea");
+          ta.value = text; document.body.appendChild(ta); ta.select();
+          try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+          document.body.removeChild(ta); done();
+        }
       },
       moveServer: function (i, d) {
         var names = this.servers.map(function (s) { return s.name; }), j = i + d;
@@ -749,7 +775,13 @@
       targetWords: function (r) {
         if (r.target === "tunnel") return "Always uses tailbond";
         if (r.target === "wan") return "Uses only " + this.wanLabel(r.wan);
-        return "Uses the internet directly";
+        var d = this.defaultWan();
+        return "Uses the internet directly" + (d ? " (now: " + d + ")" : "");
+      },
+      // the WAN carrying the router's default route (GL's pick)
+      defaultWan: function () {
+        var w = A(this.bp && this.bp.wans).filter(function (x) { return x.default; })[0];
+        return w ? w.label || w.name : "";
       },
       openBypass: function (preset) {
         var e = { kind: "domain", text: "", multi: false, mac: "", ip: "", name: "", macTyped: "", addr: "", target: "direct", touched: false, note: "", preset: preset || "", err: "", more: false };
@@ -975,6 +1007,7 @@
           ]) : null;
           var line = this.summary();
           if (fo && fo.act) line = [line, " · ", h("a", { class: "tb-link", on: { click: fo.act[1] } }, fo.act[0])];
+          if (fo && fo.note) line = [h("div", line), h("div", { class: "tb-small tb-muted", style: { marginTop: "4px" } }, fo.note)];
           out.push(this.hero(h, iconCls, title, line,
             this.paired ? this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "tailbond on/off") : null, rates));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
@@ -1181,7 +1214,7 @@
             withAddr ? h("div", [h("span", { class: "tb-mono" }, hostOf(s.paired_with || st.server || "—")), " over the internet (UDP port " + (portOf(s.paired_with) || "443") + ")"]) : null,
             h("div", "Tailnet names"), h("div", "Work on every device connected to this router while tailbond is on. Use the full name, like " + this.exampleName() + "."),
             h("div", "This router's tunnel address"), this.servers.length > 1
-              ? h("div", [h("span", { class: "tb-mono" }, st.tunnel_ip || "—"), " on " + (st.active_server || "") + ". It changes with the server; for your Tailscale machines to reach devices here through each server, approve each server's route in Tailscale."])
+              ? h("div", [h("span", { class: "tb-mono" }, st.tunnel_ip || "—"), " on " + (st.active_server || "") + ". It changes with the server. Optional: to reach devices behind this router from your Tailscale machines, approve each server's route in Tailscale."])
               : h("div", { class: "tb-mono" }, st.tunnel_ip || "—")
           ]);
         },
@@ -1220,12 +1253,15 @@
                 h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move down", "aria-label": "Move " + sv.name + " down", disabled: i === ss.length - 1 || !!busy }, on: { click: function () { self.moveServer(i, 1); } } }, [icon(h, "down", 16)]),
                 sv.active || sv.state === "unreachable" || sv.state === "off" ? h("span", { class: "tb-btn small", style: { visibility: "hidden" }, attrs: { "aria-hidden": "true" } }, "Use now")
                   : self.btn(h, "Use now", function () { self.useServer(sv); }, "small", busy || !self.isOn()),
-                self.btn(h, "Remove", function () { self.removeServer(sv); }, "small text", busy)
+                self.srvMore === sv.name
+                  ? self.btn(h, "Remove " + sv.name, function () { self.srvMore = ""; self.removeServer(sv); }, "small danger", busy)
+                  : self.btn(h, "More", function () { self.srvMore = sv.name; }, "small text", busy)
               ])
             ]);
           });
           // the switching choice, in the servers' own names
           var cur = fo.policy === "always" ? "always:" + fo.server : "prefer";
+          var paused = cur === "prefer" && fo.reason === "manual";
           var preferLabel = ss.length === 2 ? "Prefer " + first + ", use " + ss[1].name + " if " + first + " is down" : "Prefer " + first + ", then the next one in the list that works";
           var opts = [{ key: "prefer", t: preferLabel, b: "Switches by itself when " + first + " is down, and back when it's up again." }]
             .concat(ss.map(function (sv) { return { key: "always:" + sv.name, t: "Always use " + sv.name, b: "Never switches by itself, even if " + sv.name + " is down." }; }));
@@ -1233,7 +1269,7 @@
           var ks = !(this.info && this.info.kill_switch === false);
           return this.card(h, "Servers", [
             h("div", { class: "tb-muted", style: { marginBottom: "4px", lineHeight: 1.5 } }, "tailbond uses one server at a time. If it stops answering, the next one in the list takes over. " +
-              (ks ? "While it switches, devices here wait a few seconds; nothing goes out unprotected." : "While it switches, devices here use the internet directly for a few seconds.")),
+              (ks ? "While it switches, devices here wait a few seconds; with the kill switch on (the default), nothing goes out unprotected." : "While it switches, devices here use the internet directly for a few seconds.")),
             h("div", rows),
             h("div", { class: "tb-sec" }, [
               h("div", { class: "tb-sec-t" }, "When to switch"),
@@ -1244,9 +1280,14 @@
                   if (o.key === "prefer") self.setPolicy("prefer"); else self.setPolicy("always", o.key.slice(7));
                 } } }, [h("div", { class: "tb-mode-t" }, o.t), h("div", { class: "tb-mode-b" }, o.b)]);
               })),
+              paused ? h("div", { class: "tb-alert info", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [
+                h("b", "Paused: you picked " + st.active_server + (fo.since ? " at " + fmtHM(fo.since) : "") + ". "),
+                ss[0].state === "standby" ? h("a", { class: "tb-link", on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
+                  : "Automatic switching comes back if " + st.active_server + " stops working, or when you pick " + first + "."])]) : null,
               h("div", { class: "tb-help" }, "How it decides: tailbond checks the standby servers every 10 s with one small packet. It switches when " + first + " hasn't worked for " + fmtDur(fo.switch_after_sec || 15) +
-                ", and comes back once " + first + " has answered for " + fmtDur(fo.failback_after_sec || 120) + ".")
+                ", and comes back once " + first + " has answered for " + fmtDur(fo.failback_after_sec || 120) + ". It watches only whether " + first + " answers tailbond: a slow connection or a website that doesn't load doesn't make it switch.")
             ]),
+            this.rHistory(h),
             h("div", { class: "tb-sec" }, [this.rHomeKv(h, false)]),
             h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
               this.srvAdd || this.addInFlight() ? null : this.btn(h, "Add another server", function () { self.openAddServer(); }, "small")
@@ -1255,6 +1296,33 @@
             h("div", { class: "tb-sec tb-small tb-muted", style: { textAlign: "right" } }, ["Stop using tailbond on this router: ",
               h("a", { class: "tb-link", style: { color: "#f56c6c" }, on: { click: function () { self.unpair(); } } }, "Forget all servers")])
           ], me ? h("span", { class: "tb-muted tb-small", style: { fontWeight: 400 } }, "This router is " + me) : null);
+        },
+
+        // "Recent switches" from failover.history (newest first).
+        rHistory: function (h) {
+          var self = this, hist = A(this.st.failover && this.st.failover.history);
+          if (!hist.length) return null;
+          var today = new Date().toDateString();
+          var when = function (t) {
+            var d = new Date(t);
+            return (d.toDateString() === today ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " ") + fmtHM(t);
+          };
+          var why = function (x) {
+            if (x.reason === "failover") return x.detail || x.from + " stopped answering";
+            if (x.reason === "failback") return x.from === "" ? "back to " + x.to : x.to + " answered again";
+            if (x.reason === "manual") return "you picked " + x.to;
+            if (x.reason === "policy") return "“Always use " + x.to + "”";
+            if (x.reason === "list") return "server list changed";
+            return x.detail || "";
+          };
+          var shown = this.histAll ? hist : hist.slice(0, 3);
+          return h("div", { class: "tb-sec" }, [
+            h("div", { class: "tb-sec-t" }, "Recent switches"),
+            h("div", { class: "tb-kv tb-small", style: { gridTemplateColumns: "110px 1fr" } }, [].concat.apply([], shown.map(function (x) {
+              return [h("div", when(x.at)), h("div", [h("b", (x.from || "—") + " → " + x.to), h("span", { class: "tb-muted" }, " · " + why(x))])];
+            }))),
+            hist.length > 3 ? h("div", { class: "tb-small", style: { marginTop: "6px" } }, [h("a", { class: "tb-link", on: { click: function () { self.histAll = !self.histAll; } } }, this.histAll ? "Show fewer" : "Show all (" + hist.length + ")")]) : null
+          ]);
         },
 
         // "Add another server": ask over Tailscale (join with add) or paste a link.
@@ -1292,8 +1360,10 @@
             } else if (jAdd && jAdd.state === "expired") {
               body.push(this.alert(h, "", "Nobody approved it in time", "The request expired after 10 minutes. Ask again when someone can approve it."));
             }
+            // a server that just failed to be added isn't offered again right below its error
+            var failed = jAdd && jAdd.state === "error" ? (jAdd.server_name || "").toLowerCase() : "";
             var found = A(d && d.servers).filter(function (s) {
-              return !have[(s.name || "").toLowerCase()] && !have[shortName(s.dns_name).toLowerCase()] && !have[(s.ip || "").toLowerCase()];
+              return (s.name || "").toLowerCase() !== failed && !have[(s.name || "").toLowerCase()] && !have[shortName(s.dns_name).toLowerCase()] && !have[(s.ip || "").toLowerCase()];
             });
             if (this.discovering && !d) body.push(h("div", { class: "tb-row tb-muted", style: { padding: "4px 0 12px" } }, [h("div", { class: "tb-spin" }), "Looking for other tailbond servers on your tailnet…"]));
             found.forEach(function (s) {
@@ -1372,7 +1442,7 @@
               var c = self.lanByMac(r.match);
               main = (c && c.name) || r.note || r.match || r.ip;
               sub.push(c && c.name ? (r.match || r.ip) : (r.match ? "device " + r.match : "device"));
-              sub.push(!c ? "not seen on this router (its Wi-Fi address may have changed)" : c.online ? "connected now" : "not connected now");
+              sub.push(!c ? "not seen on this router: if its Wi-Fi address changed, the rule doesn't match it now" : c.online ? "connected now" : "not connected now");
             } else if (r.kind === "ip") { main = r.match; sub.push(r.note || "address"); }
             else {
               var ports = row.rules.map(function (x) { return x.match.split("/")[1]; });
@@ -1387,10 +1457,10 @@
             return h("div", { class: "tb-rule" + (row.on ? "" : " off") }, [
               h("div", { class: "tb-wan-icon" }, [icon(h, row.note === "Wi-Fi calling" ? "call" : BP_KIND_ICON[r.kind] || "unknown")]),
               h("div", { class: "tb-grow" }, [
-                h("div", { class: "tb-wan-t", style: { overflowWrap: "anywhere" } }, [main,
-                  r.kind === "domain" && waiting ? h("span", { class: "tb-chip warn", style: { marginLeft: "8px", verticalAlign: "1px" } }, "Waiting") : null]),
+                h("div", { class: "tb-wan-t", style: { overflowWrap: "anywhere" } }, main),
                 h("div", { class: "tb-small", style: { marginTop: "2px" } }, [
-                  h("span", { class: "tb-tgt " + (r.target || "direct") }, row.on ? self.targetWords(r) : "Off"),
+                  r.kind === "domain" && waiting && row.on ? h("span", { class: "tb-tgt wan" }, "Waiting: goes through tailbond until website rules work")
+                    : h("span", { class: "tb-tgt " + (r.target || "direct") }, row.on ? self.targetWords(r) : "Off"),
                   sub.length ? h("span", { class: "tb-muted" }, " · " + sub.join(" · ")) : null
                 ])
               ]),
@@ -1405,7 +1475,7 @@
           body.push(h("div", { class: "tb-muted", style: { marginBottom: "4px" } }, "Everything else goes through " + (this.serverShort || "your home server") + ". " + (ks ? "Rules that skip tailbond keep working while it's down." : "")));
           body.push(h("div", list));
           body.push(h("div", { class: "tb-sec tb-row", style: { flexWrap: "wrap" } }, [h("span", { class: "tb-muted tb-small" }, "Quick add:"), presets()]));
-          if (hasDomain) body.push(h("div", { class: "tb-help" }, "Website rules can miss devices that use their own secure DNS (for example Private DNS on Android or Secure DNS in Chrome). Use a device rule for those."));
+          if (hasDomain) body.push(h("div", { class: "tb-help" }, "Website rules match the addresses the router looks up for each name (sites sharing those addresses skip too), and can miss devices that use their own secure DNS (Private DNS on Android, Secure DNS in Chrome): use a device rule for those."));
           return this.card(h, "Bypass tailbond", body, addBtn);
         },
 
@@ -1414,10 +1484,11 @@
           var self = this, r = sup.reason || "";
           if (!/dnsmasq-full/.test(r)) return [h("div", r)];
           var pk = /ipset/.test(r) ? " ipset" : "";
-          var cmd = "opkg update && cd /tmp && opkg download dnsmasq-full && opkg remove dnsmasq && opkg install /tmp/dnsmasq-full*.ipk" + pk + " && /etc/init.d/tailbond restart";
+          // download first, then swap; put dnsmasq back if the install fails
+          var cmd = "cd /tmp && opkg update && opkg download dnsmasq-full && opkg remove dnsmasq && opkg install ./dnsmasq-full*.ipk || opkg install dnsmasq";
           return [
-            h("div", "This router's DNS part (dnsmasq) can't do website rules yet. Meanwhile these websites keep going through tailbond as before; nothing breaks. Device, address and port rules work now."),
-            short ? null : h("div", { style: { marginTop: "6px" } }, ["To turn website rules on, install ", h("b", "dnsmasq-full" + (pk ? " and ipset" : "")), ": in GL's ", h("b", "APPLICATIONS → Plug-ins"), ", search for it and click Install, then turn tailbond off and on here. If the Plug-ins page refuses, run this over SSH:"]),
+            h("div", "This router's DNS part (dnsmasq) can't do website rules yet. Until it can, these websites keep going through tailbond as before, so a bank that blocks VPNs may stay blocked. Device, address and port rules work now."),
+            short ? null : h("div", { style: { marginTop: "6px" } }, ["To turn website rules on, install ", h("b", "dnsmasq-full" + (pk ? " and ipset" : "")), ": in GL's ", h("b", "APPLICATIONS → Plug-ins"), ", search for it and click Install, then turn tailbond off and on here. If the Plug-ins page refuses, run this over SSH (it downloads first, and puts the old one back if the install fails)" + (pk ? ", then install ipset the same way" : "") + ", then turn tailbond off and on:"]),
             short ? null : h("div", { class: "tb-row", style: { marginTop: "6px", alignItems: "flex-start" } }, [
               h("code", { class: "tb-grow", style: { display: "block", padding: "6px 8px", wordBreak: "break-all" } }, cmd),
               self.btn(h, "Copy", function () { self.copy(cmd); }, "small")
@@ -1451,7 +1522,8 @@
               ? "Each one includes all its pages and parts (www.netflix.com, api.netflix.com…)."
               : "Includes all its pages and parts, like www.mybank.com and login.mybank.com." + (e.preset === "bank" ? " The bank then sees this router's internet, not a VPN. It covers the bank's app too on phones and tablets connected to this router, when the app uses the same website." : "")));
             if (sup.domains === "none" && sup.reason) body.push(h("div", { class: "tb-alert", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [h("b", "Saved, but waits for now. ")].concat(this.rDnsFix(h, sup, true)))]));
-            body.push(h("div", { class: "tb-help" }, "Devices that use their own secure DNS (Private DNS on Android, Secure DNS in Chrome) may not be matched."));
+            body.push(h("div", { class: "tb-help" }, "It matches the addresses the router looks up for that name, so other sites on the same addresses (big hosting providers) may skip tailbond too. Devices that use their own secure DNS (Private DNS on Android, Secure DNS in Chrome) may not be matched."));
+            body.push(h("div", { class: "tb-help" }, "On this router a website rule covers every name under it; the tailbond phone app covers only the usual ones (www, login, …)."));
           } else if (e.kind === "device") {
             var taken = {};
             rules.forEach(function (r) { if (r.kind === "device" && r.match) taken[r.match.toLowerCase()] = true; });
@@ -1472,7 +1544,7 @@
             })));
             body.push(h("div", { class: "tb-label" }, "Not listed? Its MAC address"));
             body.push(h("input", { class: "tb-input", attrs: { placeholder: "aa:bb:cc:dd:ee:ff" }, domProps: { value: e.macTyped }, on: { input: function (ev) { e.macTyped = ev.target.value; e.mac = ""; e.ip = ""; e.name = ""; } } }));
-            body.push(h("div", { class: "tb-help" }, "Pick the device while it's connected here. On the laptop or phone, turn off “Private Wi-Fi address” for this router's Wi-Fi (Windows: “Random hardware addresses”; Android: use the device MAC), so it keeps the same address and the rule keeps matching."));
+            body.push(h("div", { class: "tb-help" }, "Pick the device while it's connected here. On the laptop or phone, turn off “Private Wi-Fi address” for this router's Wi-Fi (Windows: “Random hardware addresses”; Android: use the device MAC), so it keeps the same address. If its address changes anyway, it goes through tailbond like everything else, but website rules then apply to it."));
           } else {
             body.push(h("div", { class: "tb-label" }, "Addresses or ports"));
             body.push(h("input", { class: "tb-input", attrs: { placeholder: "e.g. 203.0.113.9, 203.0.113.0/24, udp/4500, tcp/5060-5061" }, domProps: { value: e.addr }, on: { input: function (ev) { e.addr = ev.target.value; } } }));
@@ -1482,13 +1554,14 @@
           }
           // where it goes
           var wans = A(b.wans);
-          var opts = [["direct", "Use the internet directly"]].concat(wans.map(function (w) { return ["wan:" + w.name, "Use only " + (w.label || w.name) + (w.up ? "" : " (not connected now)")]; }), [["tunnel", "Always use tailbond"]]);
+          var dw = this.defaultWan();
+          var opts = [["direct", "Use the internet directly" + (dw ? " (now: " + dw + ")" : "")]].concat(wans.map(function (w) { return ["wan:" + w.name, "Use only " + (w.label || w.name) + (w.up ? "" : " (not connected now)")]; }), [["tunnel", "Always use tailbond"]]);
           var tgt = e.target.indexOf("wan:") === 0 ? "wan" : e.target;
           var wl = tgt === "wan" ? this.wanLabel(e.target.slice(4)) : "";
           var help = {
-            direct: "Skips tailbond and uses the router's main internet connection, as without tailbond." + (ks ? " Keeps working while tailbond can't reach your servers." : ""),
+            direct: "Skips tailbond and uses the router's main internet connection" + (dw ? " (now " + dw + ")" : "") + ", as without tailbond." + (ks ? " Keeps working while tailbond can't reach your servers." : ""),
             wan: "Skips tailbond and goes out " + wl + " only.",
-            tunnel: (e.kind === "device" ? "Everything from this device goes through the server in use (" + home + " now), even websites or ports set to skip tailbond." : "Goes through the server in use (" + home + " now) even if another rule says to skip tailbond.") + (ks ? " If tailbond is down, it waits rather than going around it." : "")
+            tunnel: (e.kind === "device" ? "Everything from this device goes through the server in use (" + home + " now), even websites or ports set to skip tailbond." : "Goes through the server in use (" + home + " now) even if another rule says to skip tailbond.") + (ks ? " With the kill switch on (the default), " + (e.kind === "device" ? "it has" : "these have") + " no internet while tailbond can't connect." : "")
           }[tgt];
           body.push(h("div", { class: "tb-label" }, e.kind === "device" ? "This device should" : "It should"));
           body.push(h("select", { class: "tb-input", attrs: { "aria-label": "Where it goes" }, domProps: { value: e.target }, on: { change: function (ev) { e.target = ev.target.value; e.touched = true; } } },
@@ -1525,7 +1598,8 @@
               h("div", { class: "tb-muted", style: { marginBottom: "10px" } }, serverSide
                 ? "Devices connected through tailbond reach these machines by name or 100.x address. “Direct” / “via relay” is how this router reaches each one."
                 : "Laptops and phones on this router's Wi-Fi or LAN reach these through the bond to " + (this.serverShort || "your home server") + " (not this router's own Tailscale), by their full name, e.g. " + this.exampleName() + ", or by their 100.x address. “Direct” / “via relay” is how " + (this.serverShort || "your home server") + " reaches each machine." +
-                  (this.wans.some(function (w) { return w.captive === "portal" && w.signinUntil; }) ? " While devices are signing in to a hotel page they go out directly, so they don't reach these until that's done." : "")),
+                  (this.wans.some(function (w) { return w.captive === "portal" && w.signinUntil; }) ? " While devices are signing in to a hotel page they go out directly, so they don't reach these until that's done." : "") +
+                  (this.onBackup() ? " You're on " + this.st.active_server + " now: if " + this.servers[0].name + "'s home is down, machines there may not answer even if this list shows them online." : "")),
               A(p.peers).length > 6 ? h("input", { class: "tb-input", style: { marginBottom: "8px" }, attrs: { placeholder: "Search machines" }, domProps: { value: this.peerFilter }, on: { input: function (e) { self.peerFilter = e.target.value; } } }) : null,
               h("div", { class: "tb-list" }, list.map(function (m) {
                 var ip = A(m.tailscale_ips)[0] || "";

@@ -35,6 +35,8 @@ async function shot(name, fixture, vp, act, page0) {
     return route.fulfill({ status: 200, body: f[0], contentType: f[1] });
   });
   await page.addInitScript((fx) => { window.__TB = fx; }, fixture);
+  // a fixture's story time: Date is fixed there, timers keep running
+  if (fixture.clock) await page.clock.setFixedTime(new Date(fixture.clock));
   await page.goto(`http://gl.test/${page0 || 'shell.html'}`);
   if (!page0) {
     await page.waitForFunction(() => window.__mounted === true);

@@ -250,25 +250,31 @@ const srv = (name, role, state, active, lastOkSec, subnet, server) =>
   ({ name, role, state, active, ...(lastOkSec == null ? {} : { last_ok: ago(lastOkSec) }), subnet, server });
 const failover = (over = {}) => ({ policy: 'prefer', server: '', switch_after_sec: 15, failback_after_sec: 120, reason: '', ...over });
 const oneServer = { servers: [srv('homebox', 'primary', 'active', true, 1, '10.77.0.0/24', 'home.example.net:443')], active_server: 'homebox', failover: failover() };
-const homeAndVps = {
-  servers: [srv('homebox', 'primary', 'active', true, 1, '10.77.0.0/24', 'home.example.net:443'), srv('vps', 'backup', 'standby', false, 5, '10.83.142.0/24', '203.0.113.9:8443')],
-  active_server: 'homebox', failover: failover(),
-};
-// homebox stopped answering 2 min ago; the vps carries the tunnel
-const onVps = {
-  server: '203.0.113.9:8443', tunnel_ip: '10.83.142.2', uptime_sec: 118,
-  servers: [srv('homebox', 'primary', 'unreachable', false, 140, '10.77.0.0/24', 'home.example.net:443'), srv('vps', 'backup', 'active', true, 1, '10.83.142.0/24', '203.0.113.9:8443')],
-  active_server: 'vps', failover: failover({ reason: 'primary_down', since: ago(125) }),
-};
-// homebox answers again: switching back after 2 min of answers
-const failingBack = {
-  ...onVps, uptime_sec: 9 * 60,
-  servers: [srv('homebox', 'primary', 'standby', false, 4, '10.77.0.0/24', 'home.example.net:443'), srv('vps', 'backup', 'active', true, 1, '10.83.142.0/24', '203.0.113.9:8443')],
-  failover: failover({ reason: 'primary_down', since: ago(9 * 60), failback_in_sec: 80 }),
-};
-const pickedVps = { ...onVps, servers: [srv('homebox', 'primary', 'standby', false, 6, '10.77.0.0/24', 'home.example.net:443'), onVps.servers[1]], failover: failover({ reason: 'manual', since: ago(600) }) };
+// One story on one clock (the panel's Date is fixed per screen, see `clock`):
+// minute 2 homebox stops answering → vps; 23 back on homebox; 38 someone
+// picks vps; 40.5 picks homebox again. Times shown (since, history,
+// "answered … ago") all come from this timeline.
+const T0 = Math.floor(now / 60000) * 60000 - 30 * 60000;
+const at = (min) => new Date(T0 + min * 60000).toISOString();
+const srvAt = (name, role, state, active, lastOkMin, subnet, server) => ({ name, role, state, active, ...(lastOkMin == null ? {} : { last_ok: at(lastOkMin) }), subnet, server });
+const home = (state, active, lastOkMin) => srvAt('homebox', 'primary', state, active, lastOkMin, '10.77.0.0/24', 'home.example.net:443');
+const vps = (state, active, lastOkMin) => srvAt('vps', 'backup', state, active, lastOkMin, '10.83.142.0/24', '203.0.113.9:8443');
+const sw = (min, from, to, reason, detail) => ({ at: at(min), from, to, reason, ...(detail ? { detail } : {}) });
+const h2 = sw(2, 'homebox', 'vps', 'failover', 'homebox stopped answering for 15 s');
+const h23 = sw(23, 'vps', 'homebox', 'failback');
+const h38 = sw(38, 'homebox', 'vps', 'manual');
+const h40 = sw(40.5, 'vps', 'homebox', 'manual');
+const onVpsAt = (st) => ({ server: '203.0.113.9:8443', tunnel_ip: '10.83.142.2', active_server: 'vps', ...st });
+// minute 60: homebox in use, vps on standby; four switches so far
+const homeAndVps = { uptime_sec: 19.5 * 60, servers: [home('active', true, 59.98), vps('standby', false, 59.92)], active_server: 'homebox', failover: failover({ since: at(40.5), history: [h40, h38, h23, h2] }) };
+// minute 4: homebox stopped answering at 1:45; vps since 2
+const onVps = onVpsAt({ uptime_sec: 120, servers: [home('unreachable', false, 1.75), vps('active', true, 3.98)], failover: failover({ reason: 'primary_down', since: at(2), history: [h2] }) });
+// minute 21:40: homebox answers again, back in 1:20 (at 23)
+const failingBack = onVpsAt({ uptime_sec: 19 * 60 + 40, servers: [home('standby', false, 21.6), vps('active', true, 21.65)], failover: failover({ reason: 'primary_down', since: at(2), failback_in_sec: 80, history: [h2] }) });
+// minute 40: someone picked vps at 38
+const pickedVps = onVpsAt({ uptime_sec: 120, servers: [home('standby', false, 39.9), vps('active', true, 39.98)], failover: failover({ reason: 'manual', since: at(38), history: [h38, h23, h2] }) });
 
-const bpWans = [{ name: 'wan', label: 'Ethernet', up: false }, { name: 'wwan', label: 'Repeater', up: true }, { name: 'tethering', label: 'Tethering', up: true }];
+const bpWans = [{ name: 'wan', label: 'Ethernet', up: false }, { name: 'wwan', label: 'Repeater', up: true, default: true }, { name: 'tethering', label: 'Tethering', up: true }];
 const lanClients = [
   { mac: '3c:22:fb:10:aa:01', ip: '192.168.8.23', name: 'work-laptop', online: true },
   { mac: 'a4:83:e7:5c:21:9e', ip: '192.168.8.31', name: 'alex-iphone', online: true },
@@ -303,16 +309,17 @@ export const bfStates = {
     bpRules[1],
   ], { domains: 'none', firewall: 'nft', reason: "This router's DNS server (dnsmasq) can't fill nftables sets, so website rules wait. Install dnsmasq-full; device, address and port rules work now." })),
   'servers-single-home': bf({}, discoverVps),
-  'servers-home-active-vps-standby': bf(homeAndVps),
-  'failover-using-vps-home-unreachable': bf(onVps, {}),
-  'failback-countdown': bf(failingBack, {}),
-  'failover-you-picked-vps': bf(pickedVps, {}),
+  'servers-home-active-vps-standby': { ...bf(homeAndVps), clock: at(60) },
+  'failover-using-vps-home-unreachable': { ...bf(onVps), clock: at(4) },
+  'failback-countdown': { ...bf(failingBack), clock: at(21 + 40 / 60) },
+  'failover-you-picked-vps': { ...bf(pickedVps), clock: at(40) },
   'add-server-waiting-approval': bf(joinVps({ state: 'waiting' }), discoverVps),
   'add-server-subnet-clash': bf(joinVps({ state: 'error', error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' }), discoverVps),
   // the panel was open while homebox came back: one status on vps, then on homebox
-  'back-on-homebox-since': { ...bf(homeAndVps), settle: 2600, seq: { 'GET /api/status': [
-    bf({ ...failingBack, failover: failover({ reason: 'primary_down', since: ago(20 * 60), failback_in_sec: 1 }) }).api['GET /api/status'],
-    bf({ ...homeAndVps, uptime_sec: 3 * 60, failover: failover({ since: ago(3 * 60) }) }).api['GET /api/status'],
+  // the panel was open while homebox came back at minute 23 (clock 26)
+  'back-on-homebox-since': { ...bf(homeAndVps), clock: at(26), settle: 2600, seq: { 'GET /api/status': [
+    bf({ ...failingBack, servers: [home('standby', false, 25.9), vps('active', true, 25.95)], failover: failover({ reason: 'primary_down', since: at(2), failback_in_sec: 1, history: [h2] }) }).api['GET /api/status'],
+    bf({ uptime_sec: 180, servers: [home('active', true, 25.98), vps('standby', false, 25.9)], active_server: 'homebox', failover: failover({ since: at(23), history: [h23, h2] }) }).api['GET /api/status'],
   ] } },
 };
 // steps: {text} clicks the first element with that text, {click} a selector,
@@ -325,6 +332,7 @@ export const bfActions = {
   // after clicking Add in that dialog: the card with the new row (and the toast)
   'bypass-wifi-calling-added': { base: 'bypass-empty', full: true, after: { 'POST /api/bypass': bypassApi(bpRules.slice(3), bpOk, { a7b8: { connections: 0 }, a7b9: { connections: 0 } }) },
     steps: [{ click: '.tb-card button.tb-preset >> text=Wi-Fi calling' }, { click: '.tb-dialog .tb-btn.primary' }, { wait: 500 }] },
+  'servers-recent-switches-all': { base: 'servers-home-active-vps-standby', full: true, steps: [{ text: 'Show all (4)' }] },
   'add-server-open': { base: 'servers-single-home', full: true, steps: [{ text: 'Add a backup server' }] },
   'add-server-paste-clash': { base: 'servers-single-home', full: true, api: { 'POST /api/servers': { __err: 409, data: { ok: false, error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' } } },
     steps: [{ text: 'Add a backup server' }, { text: 'No Tailscale there? Paste a pairing link from it' }, { fill: ['.tb-sec textarea', 'tailbond://pair?d=eyJ2IjoxLCJzIjoiMjAzLjAuMTEzLjk6ODQ0MyJ9'] }, { button: 'Add' }] },

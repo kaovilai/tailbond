@@ -5,7 +5,9 @@ Tethering). Test fixture data (`scripts/ux/glinet/fixtures.mjs`, `bfStates` /
 `bfActions`). Render with `scripts/ux/glinet/glinet-screens.sh bypass-failover`
 → `out/ux/bypass-failover/glinet/<name>-desktop.png` (1280x800 window; pages
 full length, dialogs at window size) and `<name>-phone.png` (390x844) for the
-three marked "phone too". Every client screen has the bypass card (the four
+three marked "phone too". The failover screens follow one story on one
+clock: homebox stops answering at minute 2 (→ vps), comes back at minute 23,
+someone picks vps at 38 and homebox again at 40.5. Every client screen has the bypass card (the four
 rules below unless the row says otherwise).
 
 | Name | Situation |
@@ -23,7 +25,8 @@ rules below unless the row says otherwise).
 | add-server-waiting-approval | After "Ask to add": waiting for someone to approve on vps |
 | add-server-subnet-clash | vps approved, but it uses the same tunnel addresses as homebox: what to change on vps |
 | add-server-paste-clash | Same clash, after pasting a pairing link instead |
-| servers-home-active-vps-standby | Two servers: homebox in use, vps on standby (answered 5 s ago), "When to switch" |
+| servers-home-active-vps-standby | Two servers: homebox in use, vps on standby, "When to switch", the last 3 of 4 recent switches |
+| servers-recent-switches-all | Same, after clicking "Show all (4)" under Recent switches |
 | failover-using-vps-home-unreachable | homebox stopped answering; tailbond switched to vps. Phone too |
 | failback-countdown | homebox answers again: back to homebox in 1:20 |
 | failover-you-picked-vps | Someone clicked "Use now" on vps |
