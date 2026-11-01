@@ -344,3 +344,6 @@ export const bfActions = {
 };
 // also rendered at phone width
 export const bfPhone = ['bypass-rules', 'bypass-add-device-picker', 'failover-using-vps-home-unreachable'];
+
+// building blocks for other screen sets (ub-fixtures.mjs: updates and backups)
+export { connected, serverBase, serverStatus, withApi, twoWans, peers as fxPeers };
