@@ -43,7 +43,58 @@ offer a scan). tailbond can explain those prompts but can't remove them.
 
 ## Findings per round
 
-ROUNDS_TABLE
+Severity counts, H / M / L per persona.
+
+**GL.iNet panel** (A traveller, B homelab, C family, D Speedify user):
+
+| Round | A | B | C | D | Total H / M |
+|---|---|---|---|---|---|
+| 7 | 0 / 2 / 13 | 0 / 3 / 15 | 0 / 2 / 14 | 0 / 2 / 14 | 0 / 9 |
+| 8 | 0 / 3 / 13 | 1 / 2 / 11 | 0 / 5 / 14 | 0 / 3 / 11 | 1 / 13 |
+| 9 | 0 / 3 / 21 | 0 / 1 / 13 | 0 / 4 / 13 | 0 / 0 / 10 | 0 / 8 |
+| 10 | 0 / 1 / 17 | 0 / 1 / 12 | 0 / 3 / 13 | 0 / 1 / 13 | 0 / 6 |
+| 11 | 0 / 3 / 9 | 0 / 2 / 9 | 0 / 2 / 12 | 0 / 1 / 11 | 0 / 8 |
+| 12 | 0 / 0 / 16 | 0 / 1 / 13 | 0 / 2 / 13 | 0 / 2 / 10 | 0 / 5 |
+
+**Android, whole journey** (A daily Tailscale user, B homelab, C family):
+
+| Round | A | B | C | Total H / M |
+|---|---|---|---|---|
+| 7 | 0 / 1 / 9 | 0 / 4 / 8 | 0 / 3 / 13 | 0 / 8 |
+| 8 | 0 / 1 / 9 | 0 / 2 / 11 | 0 / 3 / 12 | 0 / 6 |
+| 9 | 0 / 1 / 11 | 0 / 1 / 11 | 0 / 2 / 16 | 0 / 4 |
+| 10 | 0 / 1 / 10 | 0 / 1 / 11 | 0 / 1 / 11 | 0 / 3 |
+| 11 | 0 / 0 / 9 | 0 / 3 / 9 | 0 / 1 / 11 | 0 / 4 |
+| 12 | 0 / 0 / 9 | 0 / 1 / 9 | 0 / 1 / 12 | 0 / 2 |
+
+For comparison, before this loop the Android personas A and C each had one
+**high** (no way to get the APK onto the phone) in the re-run after the GL
+loop ([glinet-summary.md](glinet-summary.md#android-personas-re-run-once-on-the-new-pairing-flow)).
+From round 7 on, no Android persona raised a high.
+
+**Fedora web dashboard + guide** (F1 homelab admin, F2 home admin):
+
+| Round | F1 | F2 | Total H / M |
+|---|---|---|---|
+| 7 | 1 / 10 / 15 | 0 / 7 / 12 | 1 / 17 |
+| 8 | 1 / 4 / 14 | 1 / 6 / 14 | 2 / 10 |
+| 9 | 0 / 7 / 13 | 0 / 4 / 14 | 0 / 11 |
+| 10 | 0 / 6 / 15 | 0 / 5 / 14 | 0 / 11 |
+| 11 | 0 / 5 / 13 | 0 / 3 / 13 | 0 / 8 |
+| 12 | 0 / 6 / 14 | 0 / 4 / 13 | 0 / 10 |
+
+**All surfaces**: highs 1 → 3 → 0 → 0 → 0 → 0; mediums 34 → 29 → 23 → 20 → 20 → 17.
+
+**Outcome: the goal (zero high and zero medium on every surface, confirmed
+by a fresh round) was not met. The loop ended at the cap (round 12).**
+Highs reached zero on every surface from round 9 on and stayed there through
+the last fresh round. Mediums fell from 34 to 17, and the last round had two
+personas with none (GL A, Android A). The round-8 highs were one render-timing
+bug, fixed in that round. The 17 round-12 mediums are triaged below and left
+open: anything changed after round 12 would be unreviewed. Most are now about
+deeper settings (a billing-day reset for data limits, a firewall opt-out,
+per-device limits on what bonded devices reach) rather than about finding or
+understanding the flow.
 
 ## Round 7 triage
 
@@ -194,3 +245,41 @@ No highs. Mediums: GL 8, Android 4 (persona A: none), Fedora 8.
 | 12 | "Share just this machine" sounds limited, but an approved phone reaches what homebox reaches (F1, F2) | M | **fix**: the card recommends inviting and says an approved phone reaches what the server reaches whichever way they joined; the guide says the same |
 | 13 | "anyone logged in on homebox itself" is really any local program (F1) | M | **fix**: "any user or program on homebox itself … set a password if it runs things you don't trust" (card and guide). Loopback stays trusted, like most local admin pages |
 | 14 | Tagged-server warning shown as "to improve (tailbond works meanwhile)" with router boilerplate (F1) | M | **fix**: its own headline "1 security setting to review" and footer "fixed on this page"; speed items read "optional speed-ups" |
+
+## Round 12 (last round) triage: left open
+
+No code changed after round 12. Decisions for whoever continues:
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Home server down: devices stay offline until someone turns tailbond off; Speedify switches servers (GL D) | M | **reject (design, stated in the UI)**: the kill switch is what keeps traffic from bypassing home; there is one home server, so nothing to switch to. Screen 08 says so and offers *Turn tailbond off* |
+| 2 | Data limit resets on the 1st only; no billing day or MB (GL D; low since the GL loop) | M | **open**: needs a reset-day setting (contract: `data_cap_reset_day`) |
+| 3 | "Signed in to your account" note: the recipient can't tell if it applies; "tag it" unexplained; how to re-sign a GL router (GL C, F2) | M | **open**: name GL's steps (APPLICATIONS → Tailscale → log out, log in with theirs) instead of "tag it" |
+| 4 | Relay fix wording is beyond a family member (GL C) | M | **partial**: it's an admin task; the card says who does it and has the hand-off line |
+| 5 | Fedora health shows only problems, no passed checks; footer mentions a route item that isn't listed (GL B) | M | **open**: "Show N more checks" like the Flint; footer only for listed kinds |
+| 6 | Default (full-tunnel) mode doesn't say LANs behind other subnet routers aren't reachable (Android B; F1) | M | **open**: repeat the tailnet-only option's sentence for the default mode and in the guide (the limit itself is out of scope since the Android loop, round 1 #14) |
+| 7 | "This device" block reads like an unfinished setup and pushes Machines down (Android C) | M | **open**: shorten to the address plus "not a Tailscale address", details behind a tap |
+| 8 | firewalld changes re-applied every start, 41641 has no opt-out (F1) | M | **open**: a `manage_firewall` / `open_tailscale_port` setting |
+| 9 | Uninstall leaves the route advertised; manual cleanup can drop other routes (F1) | M | **open**: have `%preun` withdraw only tailbond's own route, as the OpenWrt package does on purge |
+| 10 | 15c says `"no_advertise_route": true` without the `"server"` key or the restart (F1) | M | **open** (text bug): say `"server": {"no_advertise_route": true}`, then restart |
+| 11 | Approved devices act as homebox, no per-device limit (F1, F2) | M | **partial (architecture, stated)**: bonded devices are masqueraded as the server; per-device identity needs a Tailscale node per device, out of scope since the Android loop (round 1 #6). The UI and the guide say it plainly and give the tag + grants way to narrow it |
+| 12 | Any local user/program can approve; a password replaces the identity check instead of adding to it (F1, F2) | M | **open**: allow password *and* approvers together; recommend one for a family server |
+| 13 | The optional route's orange "!" and green "approved" make approving look like the goal (F2) | M | **open**: a neutral icon for optional items and a recommendation for home setups |
+
+## Before / after (key screens)
+
+Before = the earlier loops' last renders in the main checkout
+(`out/ux/…`); after =
+`out/ux/final/round-12/…` in this worktree. Neither is committed.
+
+| Screen | Before | After |
+|---|---|---|
+| Phone page on the phone (`homebox/`) | none: the app came only from `http://homebox:8077` (`out/ux/web/web-01-add-this-phone.png`), which nothing pointed to | `web/web-00-phone-page.png` (whole page; `-dark`), `web/web-00a-phone-page-first-screen.png` |
+| Sideload guidance at Android's warnings | one sentence (`out/ux/after-glinet/web-01-add-this-phone.png`) | drawings ①–⑤ and the one-line summary in `web/web-00-phone-page.png`; `web/web-00b-phone-page-no-app-yet.png` (step 2 tapped before installing) |
+| App opened from the phone page | none | `android/02a-pairing-asking-from-phone-page.png`, `android/02b-pairing-ask-waiting.png` |
+| QR "Install on your phone" | none | computer view `web/web-00c-phone-page-on-computer.png`; dashboard `web/web-04-dashboard-devices-phone-card.png`; Flint `glinet/12-server-approved-desktop.png` |
+| Fedora approval and family phone | `out/ux/glinet/round-6/14-fedora-dashboard-request-desktop.png` | `glinet/14-…`, `14b-fedora-after-approve`, `14c-fedora-phone-request`, `14d-fedora-phone-approved` (desktop) |
+| Round-6 #1 CGNAT | `out/ux/glinet/round-6/18b-server-health-cgnat-desktop.png` | `glinet/18b-server-health-cgnat-desktop.png` |
+| Round-6 #2 Fedora page password | `out/ux/glinet/round-6/15-fedora-devices-tab-desktop.png` | `glinet/15-fedora-devices-tab-desktop.png`, `glinet/15c-fedora-fresh-install-desktop.png` |
+| Round-6 #3 GL Login Mode | `out/ux/glinet/round-6/16b-captive-gl-login-mode-desktop.png` | `glinet/16b-captive-gl-login-mode-desktop.png` |
+| Turned off with a phone plugged in | `out/ux/glinet/final/09-turned-off-desktop.png` | `glinet/09-turned-off-desktop.png` |
