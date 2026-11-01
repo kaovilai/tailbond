@@ -62,6 +62,17 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST /api/join", a.hJoin)
 	mux.HandleFunc("DELETE /api/join", a.hJoinCancel)
 	mux.HandleFunc("GET /api/health", a.hHealth)
+	// Multiple servers and bypass rules (client role)
+	mux.HandleFunc("GET /api/servers", a.hServersGet)
+	mux.HandleFunc("POST /api/servers", a.hServersAdd)
+	mux.HandleFunc("DELETE /api/servers/{name}", a.hServersDelete)
+	mux.HandleFunc("POST /api/servers/active", a.hServersActive)
+	mux.HandleFunc("POST /api/servers/order", a.hServersOrder)
+	mux.HandleFunc("POST /api/servers/policy", a.hServersPolicy)
+	mux.HandleFunc("GET /api/bypass", a.hBypassGet)
+	mux.HandleFunc("POST /api/bypass", a.hBypassPost)
+	mux.HandleFunc("DELETE /api/bypass/{id}", a.hBypassDelete)
+	mux.HandleFunc("GET /api/lan-clients", a.hLANClients)
 	// Captive portals (client role)
 	mux.HandleFunc("POST /api/captive/signin", a.hCaptiveSignin)
 	mux.HandleFunc("DELETE /api/captive/signin", a.hCaptiveSigninEnd)
@@ -401,12 +412,20 @@ func (a *Agent) hPair(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		URI string `json:"uri"`
+		Add bool   `json:"add"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	if body.Add {
+		a.replyAddServer(w, r, body.URI, "")
+		return
+	}
 	p, err := a.importPairing(body.URI)
+	if writeAddServerError(w, err) {
+		return
+	}
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return

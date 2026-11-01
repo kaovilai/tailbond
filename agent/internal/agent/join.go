@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/tailbond/tailbond/agent/internal/pairing"
 	"github.com/tailbond/tailbond/agent/internal/tailscale"
 )
 
@@ -167,6 +168,9 @@ type joinState struct {
 	Error      string    `json:"error,omitempty"`
 	Since      time.Time `json:"since,omitzero"`
 
+	Add   bool   `json:"add,omitempty"` // add as another server
+	Added string `json:"added,omitempty"`
+
 	token  string
 	cancel context.CancelFunc
 }
@@ -219,6 +223,7 @@ func (a *Agent) hJoin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Server string `json:"server"`
 		Name   string `json:"name"`
+		Add    bool   `json:"add"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -239,9 +244,10 @@ func (a *Agent) hJoin(w http.ResponseWriter, r *http.Request) {
 	if a.join.cancel != nil {
 		a.join.cancel()
 	}
-	a.join = &joinState{State: joinAsking, Server: addr, ServerName: label, Name: clientName(name), Since: time.Now(), cancel: cancel}
+	add := body.Add && a.client.payload != nil
+	a.join = &joinState{State: joinAsking, Server: addr, ServerName: label, Name: clientName(name), Since: time.Now(), Add: add, cancel: cancel}
 	a.mu.Unlock()
-	go a.runJoin(ctx, addr, clientName(name))
+	go a.runJoin(ctx, addr, clientName(name), add)
 	writeJSON(w, http.StatusAccepted, a.joinView())
 }
 
@@ -293,8 +299,19 @@ func (a *Agent) joinFinal(ctx context.Context, state, msg string) {
 	a.join.State, a.join.Error, a.join.cancel = state, msg, nil
 }
 
-func (a *Agent) runJoin(ctx context.Context, addr, name string) {
-	body, _ := json.Marshal(map[string]string{"name": name, "kind": "router"})
+func (a *Agent) runJoin(ctx context.Context, addr, name string, add bool) {
+	req := map[string]any{"name": name, "kind": "router"}
+	// the subnets this client's servers use, so a fresh server picks another
+	var avoid []string
+	for _, e := range a.store.Get().Client.Servers {
+		if p, err := pairing.Decode(e.PairingURI); err == nil {
+			avoid = append(avoid, p.TunnelSubnet().String())
+		}
+	}
+	if len(avoid) > 0 {
+		req["avoid_subnets"] = avoid
+	}
+	body, _ := json.Marshal(req)
 	var created struct {
 		ID     string `json:"id"`
 		Token  string `json:"token"`
@@ -366,11 +383,25 @@ func (a *Agent) runJoin(ctx context.Context, addr, name string) {
 			a.joinFinal(ctx, joinExpired, "")
 			return
 		case st.Status == reqApproved && st.URI != "":
-			if _, err := a.importPairing(st.URI); err != nil {
+			var err error
+			added := ""
+			if add {
+				added, err = a.addServer(st.URI, "")
+			} else {
+				_, err = a.importPairing(st.URI)
+			}
+			var ae *addServerError
+			if errors.As(err, &ae) {
+				a.Logf("pairing from %s: %v", addr, err)
+				a.joinFinal(ctx, joinError, ae.code)
+				return
+			}
+			if err != nil {
 				a.Logf("pairing from %s: %v", addr, err)
 				a.joinFinal(ctx, joinError, "bad_pairing")
 				return
 			}
+			a.setJoin(func(j *joinState) { j.Added = added })
 			a.joinFinal(ctx, joinApproved, "")
 			return
 		}

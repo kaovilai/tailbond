@@ -215,3 +215,8 @@ func lookup(ctx context.Context, dev, host string, servers []string, dial func(c
 func DialDevice(ctx context.Context, dev, addr string) (net.Conn, error) {
 	return dialNet(ctx, dev, "tcp", addr)
 }
+
+// DialDeviceUDP is DialDevice for UDP (the standby-server probe).
+func DialDeviceUDP(ctx context.Context, dev, addr string) (net.Conn, error) {
+	return dialNet(ctx, dev, "udp", addr)
+}

@@ -156,6 +156,17 @@ func (c *CLI) Get(ctx context.Context) *Info {
 	return &cp
 }
 
+// SetRoute changes the subnet whose approval is reported (a server that
+// moved to another tunnel subnet).
+func (c *CLI) SetRoute(route string) {
+	c.mu.Lock()
+	c.Route = route
+	if !c.fake {
+		c.cached = nil
+	}
+	c.mu.Unlock()
+}
+
 // Invalidate drops the cache (after route changes).
 func (c *CLI) Invalidate() {
 	c.mu.Lock()

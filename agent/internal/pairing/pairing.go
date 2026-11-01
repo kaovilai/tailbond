@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strings"
 )
@@ -28,6 +29,49 @@ type Payload struct {
 	DNS           []string `json:"dns,omitempty"`
 	Mode          string   `json:"mode,omitempty"`
 	TailnetRoutes []string `json:"tailnet_routes,omitempty"`
+	// Additive: the server's own name and IPv4 tunnel subnet, so a client
+	// can keep several servers apart (docs/architecture.md).
+	ServerName string `json:"server_name,omitempty"`
+	Subnet     string `json:"subnet,omitempty"`
+}
+
+// DefaultSubnet is what a server without the subnet key uses.
+const DefaultSubnet = "10.77.0.0/24"
+
+// Label is the server's name in a client's list: server_name, else the
+// first label of sni, else the host of server.
+func (p *Payload) Label() string {
+	if n := strings.TrimSpace(p.ServerName); n != "" {
+		return n
+	}
+	if p.SNI != "" {
+		if net.ParseIP(p.SNI) == nil {
+			first, _, _ := strings.Cut(p.SNI, ".")
+			if first != "" {
+				return first
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(p.Server)
+	if err != nil {
+		host = p.Server
+	}
+	return host
+}
+
+// TunnelSubnet is the server's IPv4 tunnel subnet: subnet, else the /24
+// around dns[0], else DefaultSubnet.
+func (p *Payload) TunnelSubnet() netip.Prefix {
+	if pfx, err := netip.ParsePrefix(p.Subnet); err == nil && pfx.Addr().Is4() {
+		return pfx.Masked()
+	}
+	for _, d := range p.DNS {
+		if a, err := netip.ParseAddr(d); err == nil && a.Is4() {
+			pfx, _ := a.Prefix(24)
+			return pfx
+		}
+	}
+	return netip.MustParsePrefix(DefaultSubnet)
 }
 
 func (p *Payload) Validate() error {

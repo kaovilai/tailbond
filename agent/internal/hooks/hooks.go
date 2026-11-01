@@ -22,6 +22,8 @@ const (
 	// that WAN directly until the portal lets the router through.
 	PortalOpen  = "portal-open"
 	PortalClose = "portal-close"
+	// Bypass rules (client): TB_BYPASS_FILE → nftables/ipset/dnsmasq/ip rules.
+	BypassApply = "bypass-apply"
 )
 
 type Logger func(src, line string)

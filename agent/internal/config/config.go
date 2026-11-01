@@ -102,6 +102,74 @@ type Client struct {
 	// captive.DefaultProbes).
 	CaptivePortalDetect *bool    `json:"captive_portal_detect,omitempty"`
 	CaptiveProbeURLs    []string `json:"captive_probe_urls,omitempty"`
+	// Additive: the ordered server list (first = primary) and how the
+	// client fails over between them (docs/architecture.md, "Multiple
+	// servers and failover"). PairingURI mirrors the primary's URI.
+	Servers  []ServerEntry `json:"servers,omitempty"`
+	Failover *Failover     `json:"failover,omitempty"`
+	// Additive: LAN traffic that skips the tunnel ("Bypass rules").
+	Bypass []BypassRule `json:"bypass,omitempty"`
+	// Additive: DHCP leases for GET /api/lan-clients (default /tmp/dhcp.leases).
+	LeasesFile string `json:"leases_file,omitempty"`
+}
+
+// ServerEntry is one paired server in the client's list.
+type ServerEntry struct {
+	Name       string `json:"name"`
+	PairingURI string `json:"pairing_uri"`
+	// nil = enabled
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+func (e ServerEntry) On() bool { return e.Enabled == nil || *e.Enabled }
+
+const (
+	PolicyPrefer = "prefer"
+	PolicyAlways = "always"
+
+	DefaultSwitchAfterSec   = 15
+	DefaultFailbackAfterSec = 120
+	DefaultProbeEverySec    = 10
+)
+
+// Failover is client.failover; zero values mean the defaults.
+type Failover struct {
+	Policy           string `json:"policy,omitempty"`
+	Server           string `json:"server,omitempty"` // policy "always"
+	SwitchAfterSec   int    `json:"switch_after_sec,omitempty"`
+	FailbackAfterSec int    `json:"failback_after_sec,omitempty"`
+	ProbeEverySec    int    `json:"probe_every_sec,omitempty"`
+}
+
+// FailoverOrDefault returns client.failover with defaults filled in.
+func (c *Client) FailoverOrDefault() Failover {
+	f := Failover{}
+	if c.Failover != nil {
+		f = *c.Failover
+	}
+	if f.Policy == "" {
+		f.Policy = PolicyPrefer
+	}
+	if f.SwitchAfterSec <= 0 {
+		f.SwitchAfterSec = DefaultSwitchAfterSec
+	}
+	if f.FailbackAfterSec <= 0 {
+		f.FailbackAfterSec = DefaultFailbackAfterSec
+	}
+	if f.ProbeEverySec <= 0 {
+		f.ProbeEverySec = DefaultProbeEverySec
+	}
+	return f
+}
+
+// DefaultLeasesFile is OpenWrt dnsmasq's lease file.
+const DefaultLeasesFile = "/tmp/dhcp.leases"
+
+func (c *Client) LeasesPath() string {
+	if c.LeasesFile != "" {
+		return c.LeasesFile
+	}
+	return DefaultLeasesFile
 }
 
 // CaptiveDetect reports whether captive-portal detection is on (default).
@@ -240,6 +308,7 @@ func (c *Config) ApplyDefaults() {
 			c.Client.Paths[i].Priority = PriorityPrimary
 		}
 	}
+	c.Client.MigrateServers()
 }
 
 func (c *Config) Validate() error {
@@ -273,6 +342,27 @@ func (c *Config) Validate() error {
 		if !ValidPriority(p.Priority) {
 			return fmt.Errorf("client.paths[%s]: bad priority %q", p.Iface, p.Priority)
 		}
+	}
+	seen := map[string]bool{}
+	for _, e := range c.Client.Servers {
+		if e.Name == "" || e.PairingURI == "" {
+			return fmt.Errorf("client.servers: every server needs a name and a pairing_uri")
+		}
+		if seen[e.Name] {
+			return fmt.Errorf("client.servers: %q listed twice", e.Name)
+		}
+		seen[e.Name] = true
+	}
+	if f := c.Client.Failover; f != nil {
+		if f.Policy != "" && f.Policy != PolicyPrefer && f.Policy != PolicyAlways {
+			return fmt.Errorf("client.failover.policy must be %q or %q", PolicyPrefer, PolicyAlways)
+		}
+		if f.SwitchAfterSec < 0 || f.FailbackAfterSec < 0 || f.ProbeEverySec < 0 {
+			return fmt.Errorf("client.failover: negative timer")
+		}
+	}
+	if err := ValidateBypass(c.Client.Bypass); err != nil {
+		return err
 	}
 	return nil
 }

@@ -81,6 +81,12 @@ type Agent struct {
 	glRead func(ctx context.Context) glrepeater.State
 	// captiveDialer replaces the per-device probe dial (tests).
 	captiveDialer func(ctx context.Context, dev, addr string) (net.Conn, error)
+	// serverProbe replaces the standby-server probe (tests).
+	serverProbe func(ctx context.Context, server, dev string) error
+	// subnetMoved tells the DNS forwarder the server's tunnel subnet changed.
+	subnetMoved chan struct{}
+	// bypassNow re-applies the bypass rules (WAN changes).
+	bypassNow chan struct{}
 }
 
 // runtime is reset every time mqvpn starts.
@@ -90,6 +96,7 @@ type runtime struct {
 	ready       bool // server: "server ready" / client: ESTABLISHED
 	readyAt     time.Time
 	upHookFired bool
+	upEnv       map[string]string // what the up hook got; the down hook gets the same
 	lastState   string
 	logPaths    map[string]logPath
 }
@@ -112,18 +119,20 @@ type tlsInfo struct {
 func New(store *config.Store, opts Options) *Agent {
 	cfg := store.Get()
 	a := &Agent{
-		opts:     opts,
-		store:    store,
-		logs:     supervisor.NewRing(2000),
-		ctl:      mqctl.New(cfg.ControlAddr),
-		rater:    status.NewRater(),
-		role:     cfg.Role,
-		hookq:    make(chan func(), 32),
-		sessions: map[string]time.Time{},
-		pairReqs: newPairRequests(),
-		join:     &joinState{State: joinIdle},
-		apiPort:  "8077",
-		rescan:   make(chan struct{}, 1),
+		opts:        opts,
+		store:       store,
+		logs:        supervisor.NewRing(2000),
+		ctl:         mqctl.New(cfg.ControlAddr),
+		rater:       status.NewRater(),
+		role:        cfg.Role,
+		hookq:       make(chan func(), 32),
+		sessions:    map[string]time.Time{},
+		pairReqs:    newPairRequests(),
+		join:        &joinState{State: joinIdle},
+		apiPort:     "8077",
+		rescan:      make(chan struct{}, 1),
+		subnetMoved: make(chan struct{}, 1),
+		bypassNow:   make(chan struct{}, 1),
 	}
 	if opts.Echo {
 		a.logs.Echo = os.Stderr
@@ -158,6 +167,7 @@ func (a *Agent) Rescan() {
 	}
 	if a.client != nil {
 		a.pokeCaptive("")
+		a.pokeBypass()
 	}
 }
 
@@ -203,6 +213,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.Logf("shutting down")
 			a.sup.Stop()
 			a.drainHooks()
+			if a.client != nil {
+				a.clearBypass()
+			}
 			return nil
 		case err := <-srvErr:
 			a.sup.Stop()
@@ -259,7 +272,7 @@ func (a *Agent) onStart() {}
 func (a *Agent) onExit(err error) {
 	a.mu.Lock()
 	fired := a.rt.upHookFired
-	env := a.hookEnvLocked()
+	env := a.downEnvLocked()
 	a.rt.ready, a.rt.upHookFired = false, false
 	a.mu.Unlock()
 	if fired {
@@ -304,7 +317,7 @@ func (a *Agent) onLine(line string) {
 				a.rt.ready = false
 				if a.rt.upHookFired {
 					a.rt.upHookFired = false
-					a.runHook(hooks.ClientDown, a.hookEnvLocked())
+					a.runHook(hooks.ClientDown, a.downEnvLocked())
 				}
 			}
 		}
@@ -324,11 +337,35 @@ func (a *Agent) markReadyLocked() {
 	}
 	a.rt.ready, a.rt.readyAt = true, time.Now()
 	a.rt.upHookFired = true
+	a.rt.upEnv = a.hookEnvLocked()
 	if a.role == config.RoleServer {
-		a.runHook(hooks.ServerUp, a.hookEnvLocked())
+		a.runHook(hooks.ServerUp, a.rt.upEnv)
 	} else {
-		a.runHook(hooks.ClientUp, a.hookEnvLocked())
+		a.runHook(hooks.ClientUp, a.rt.upEnv)
 	}
+}
+
+// downEnvLocked is the env for a down hook: what the matching up hook got
+// (a server switch or subnet move must tear down the old routes), with the
+// current release/switch flags. Caller holds a.mu.
+func (a *Agent) downEnvLocked() map[string]string {
+	env := a.hookEnvLocked()
+	if a.rt.upEnv != nil {
+		cur := env
+		env = make(map[string]string, len(a.rt.upEnv)+2)
+		for k, v := range a.rt.upEnv {
+			env[k] = v
+		}
+		delete(env, "TB_RELEASE")
+		if v, ok := cur["TB_RELEASE"]; ok {
+			env["TB_RELEASE"] = v
+		}
+	}
+	if a.client != nil && a.client.switchPending {
+		a.client.switchPending = false
+		env["TB_SWITCH"] = "1"
+	}
+	return env
 }
 
 // webPorts: the TCP ports the agent serves to the tailnet (dashboard and
@@ -376,9 +413,21 @@ func (a *Agent) hookEnvLocked() map[string]string {
 	env["TB_TUNNEL_IP"] = a.rt.tunnelIP
 	env["TB_SERVER_IP"] = ""
 	env["TB_TAILNET_ROUTES"] = ""
+	env["TB_SERVER_NAME"] = ""
+	env["TB_SUBNET"] = ""
+	env["TB_DNS_IP"] = ""
 	if a.client != nil && a.client.payload != nil {
+		p := a.client.payload
 		env["TB_SERVER_IP"] = a.client.serverIP
-		env["TB_TAILNET_ROUTES"] = strings.Join(a.client.payload.TailnetRoutes, ",")
+		env["TB_TAILNET_ROUTES"] = strings.Join(p.TailnetRoutes, ",")
+		env["TB_SERVER_NAME"] = a.client.activeServer
+		env["TB_SUBNET"] = p.TunnelSubnet().String()
+		if len(p.DNS) > 0 {
+			env["TB_DNS_IP"] = p.DNS[0]
+		}
+	}
+	if a.client != nil {
+		env["TB_BYPASS_FILE"] = a.bypassFile()
 	}
 	return env
 }

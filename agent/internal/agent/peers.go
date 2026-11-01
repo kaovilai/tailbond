@@ -136,7 +136,8 @@ func (a *Agent) hPeersViaServer(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusServiceUnavailable, errors.New("not connected"))
 		return
 	}
-	host := config.Default().ServerTunnelIP()
+	// the active server's tunnel address (its DNS IP when it has one)
+	host := p.TunnelSubnet().Addr().Next().String()
 	if len(p.DNS) > 0 {
 		host = p.DNS[0]
 	}

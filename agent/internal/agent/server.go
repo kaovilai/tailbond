@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,9 +26,19 @@ import (
 func (a *Agent) startServer(ctx context.Context) {
 	cfg := a.store.Get()
 	if !cfg.Server.DisableDNS {
-		ip := cfg.ServerTunnelIP()
+		go a.runDNS(ctx)
+	}
+	go a.certRenewer(ctx)
+	a.sup.Start()
+}
+
+// runDNS serves the tunnel DNS on the server's tunnel IP, and moves with
+// it when the subnet changes (renumberSubnet).
+func (a *Agent) runDNS(ctx context.Context) {
+	for {
+		fctx, cancel := context.WithCancel(ctx)
 		f := &dnsfwd.Forwarder{
-			Addr: net.JoinHostPort(ip, "53"),
+			Addr: net.JoinHostPort(a.store.Get().ServerTunnelIP(), "53"),
 			Suffixes: func() []string {
 				ti := a.ts.Get(context.Background())
 				if ti.MagicDNSSuffix != "" {
@@ -37,10 +49,102 @@ func (a *Agent) startServer(ctx context.Context) {
 			TailscaleUp: func() bool { return a.ts.Get(context.Background()).Running },
 			Log:         func(s string) { a.Logf("%s", s) },
 		}
-		go f.Run(ctx)
+		go f.Run(fctx)
+		select {
+		case <-ctx.Done():
+			cancel()
+			return
+		case <-a.subnetMoved:
+			cancel()
+		}
 	}
-	go a.certRenewer(ctx)
-	a.sup.Start()
+}
+
+// renumberSubnet moves a server that has no clients yet out of subnets an
+// asking client already uses (docs/architecture.md, "Distinct subnets"):
+// the first free /24 from 10.78.0.0/24 up that avoids them and every local
+// route. mqvpn restarts; its down/up hooks run with the old/new subnet.
+func (a *Agent) renumberSubnet(avoid []netip.Prefix) (string, error) {
+	cfg := a.store.Get()
+	cur, err := netip.ParsePrefix(cfg.Server.Subnet)
+	if err != nil {
+		return "", err
+	}
+	clash := false
+	for _, x := range avoid {
+		if config.Overlaps(cur, x) {
+			clash = true
+		}
+	}
+	if !clash {
+		return "", nil
+	}
+	used := append(slices.Clone(avoid), localPrefixes(cur)...)
+	next, ok := config.NextFreeSubnet(used)
+	if !ok {
+		return "", errors.New("no free /24 for the tunnel")
+	}
+	if _, err := a.store.Update(func(c *config.Config) error {
+		if len(c.Server.Users) > 0 {
+			return errHasClients
+		}
+		c.Server.Subnet = next.String()
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	a.Logf("tunnel subnet %s -> %s (the asking client already uses %s)", cur, next, cur)
+	a.ts.SetRoute(next.String())
+	select {
+	case a.subnetMoved <- struct{}{}:
+	default:
+	}
+	if a.sup.Active() {
+		a.sup.Restart()
+	}
+	return next.String(), nil
+}
+
+var errHasClients = errors.New("the server already has clients")
+
+// localPrefixes are this machine's interface subnets and routes, except
+// skip (the tunnel's own).
+func localPrefixes(skip netip.Prefix) []netip.Prefix {
+	var out []netip.Prefix
+	ifs, _ := net.InterfaceAddrs()
+	for _, ad := range ifs {
+		if p, err := netip.ParsePrefix(ad.String()); err == nil && p.Addr().Is4() && !p.Addr().IsLoopback() {
+			if p = p.Masked(); p != skip {
+				out = append(out, p)
+			}
+		}
+	}
+	if b, err := os.ReadFile("/proc/net/route"); err == nil {
+		for _, line := range strings.Split(string(b), "\n")[1:] {
+			fs := strings.Fields(line)
+			if len(fs) < 8 || fs[1] == "00000000" {
+				continue
+			}
+			dst, err1 := strconv.ParseUint(fs[1], 16, 32)
+			mask, err2 := strconv.ParseUint(fs[7], 16, 32)
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			// little-endian hex
+			d := [4]byte{byte(dst), byte(dst >> 8), byte(dst >> 16), byte(dst >> 24)}
+			m := uint32(mask)
+			bits := 0
+			for m != 0 {
+				bits += int(m & 1)
+				m >>= 1
+			}
+			p := netip.PrefixFrom(netip.AddrFrom4(d), bits).Masked()
+			if p != skip {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // certRenewer refreshes the tailscale cert daily; a changed cert restarts mqvpn.
@@ -264,6 +368,7 @@ func (a *Agent) pairingFor(u config.User) (*pairResult, error) {
 	p := &pairing.Payload{
 		V: pairing.Version, Name: u.Name, Server: server, User: u.Name, Key: u.Key,
 		Mode: cfg.Mode, TailnetRoutes: config.TailnetRoutes, SNI: tls.sni,
+		ServerName: a.serverName(), Subnet: cfg.Server.Subnet,
 	}
 	if tls.insecure {
 		p.Insecure, p.CertSHA256 = true, tls.sha256

@@ -106,6 +106,32 @@ type Status struct {
 	// pair (state of POST /api/join).
 	PairRequests any `json:"pair_requests,omitempty"`
 	Join         any `json:"join,omitempty"`
+	// Client role: the server list, the active one and the failover
+	// policy (docs/architecture.md, "Multiple servers and failover").
+	Servers      []ServerState `json:"servers,omitempty"`
+	ActiveServer string        `json:"active_server,omitempty"`
+	Failover     *Failover     `json:"failover,omitempty"`
+}
+
+// ServerState is one entry of the client's server list.
+type ServerState struct {
+	Name   string     `json:"name"`
+	Role   string     `json:"role"`  // primary | backup
+	State  string     `json:"state"` // active | connecting | standby | unreachable | unknown | off
+	Active bool       `json:"active"`
+	LastOK *time.Time `json:"last_ok,omitempty"`
+	Subnet string     `json:"subnet"`
+	Server string     `json:"server"`
+}
+
+type Failover struct {
+	Policy           string     `json:"policy"`
+	Server           string     `json:"server"`
+	SwitchAfterSec   int        `json:"switch_after_sec"`
+	FailbackAfterSec int        `json:"failback_after_sec"`
+	Reason           string     `json:"reason"`
+	Since            *time.Time `json:"since,omitempty"`
+	FailbackInSec    *int       `json:"failback_in_sec,omitempty"`
 }
 
 // MapPathState turns mqvpn path labels (control API state_label or the client
