@@ -142,7 +142,9 @@ function render(st) {
   $('#tx-val').textContent = txv; $('#tx-unit').textContent = txu + (srv ? ' to devices' : ' up');
   $('#uptime').textContent = st.state === 'connected' ? fmtDur(st.uptime_sec) : '—';
   $('#tunnel-ip').textContent = st.tunnel_ip || '—';
-  $('#total-bytes').textContent = `${fmtBytes(st.totals.rx_bytes)} ↓ · ${fmtBytes(st.totals.tx_bytes)} ↑`;
+  $('#total-bytes').textContent = st.role === 'server'
+    ? `${fmtBytes(st.totals.tx_bytes)} to · ${fmtBytes(st.totals.rx_bytes)} from devices`
+    : `${fmtBytes(st.totals.rx_bytes)} ↓ · ${fmtBytes(st.totals.tx_bytes)} ↑`;
   const chip = $('#state-chip');
   chip.textContent = st.state;
   chip.className = 'state-chip s-' + st.state;
@@ -213,6 +215,10 @@ function pathCard(key) {
       <div class="stat"><dt>Loss</dt><dd class="loss"></dd></div>
     </dl>
     <div class="path-foot hidden"></div>`;
+  if (state.role === 'server') { // the server sees each device's upload as rx
+    const dts = el.querySelectorAll('.stat dt');
+    dts[0].textContent = 'From device'; dts[1].textContent = 'To device';
+  }
   state.cards.set(key, el);
   return el;
 }
