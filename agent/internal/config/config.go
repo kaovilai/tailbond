@@ -231,6 +231,80 @@ type Config struct {
 	// the tailnet without a password, besides the server's owner.
 	Approvers         []string `json:"approvers,omitempty"`
 	LandingPublicPort int      `json:"landing_public_port,omitempty"`
+	// Additive: auto-updates and the server's update mirror, scheduled
+	// encrypted backups (docs/architecture.md, "Updates", "Backup and restore").
+	Update *UpdateSettings `json:"update,omitempty"`
+	Backup *BackupSettings `json:"backup,omitempty"`
+}
+
+type UpdateSettings struct {
+	Policy          string   `json:"policy,omitempty"` // auto | notify | off
+	Channel         string   `json:"channel,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	Window          string   `json:"window,omitempty"`
+	CheckEveryHours int      `json:"check_every_hours,omitempty"`
+	Pin             string   `json:"pin,omitempty"`
+	DeferKbps       int      `json:"defer_kbps,omitempty"`
+	Mirror          *bool    `json:"mirror,omitempty"`
+	MirrorMaxMB     int      `json:"mirror_max_mb,omitempty"`
+	TrustedKeys     []string `json:"trusted_keys,omitempty"`
+}
+
+type BackupSettings struct {
+	Passphrase string `json:"passphrase,omitempty"`
+	EveryHours int    `json:"every_hours,omitempty"`
+	Keep       int    `json:"keep,omitempty"`
+	Push       *bool  `json:"push,omitempty"`
+}
+
+// UpdateOrDefault returns the update settings with defaults filled in.
+func (c *Config) UpdateOrDefault() UpdateSettings {
+	u := UpdateSettings{}
+	if c.Update != nil {
+		u = *c.Update
+	}
+	if u.Policy == "" {
+		u.Policy = "auto"
+	}
+	if u.Channel == "" {
+		u.Channel = "stable"
+	}
+	if u.Window == "" {
+		u.Window = "03:00-05:00"
+	}
+	if u.CheckEveryHours <= 0 {
+		u.CheckEveryHours = 6
+	}
+	if u.DeferKbps == 0 {
+		u.DeferKbps = 300
+	}
+	if u.MirrorMaxMB <= 0 {
+		u.MirrorMaxMB = 600
+	}
+	if u.Mirror == nil {
+		on := true
+		u.Mirror = &on
+	}
+	return u
+}
+
+// BackupOrDefault returns the backup settings with defaults filled in.
+func (c *Config) BackupOrDefault() BackupSettings {
+	b := BackupSettings{}
+	if c.Backup != nil {
+		b = *c.Backup
+	}
+	if b.EveryHours <= 0 {
+		b.EveryHours = 24
+	}
+	if b.Keep <= 0 {
+		b.Keep = 7
+	}
+	if b.Push == nil {
+		on := true
+		b.Push = &on
+	}
+	return b
 }
 
 // DefaultLandingPort serves the landing page at http://<server>/.
@@ -389,6 +463,18 @@ func (c *Config) Validate() error {
 	}
 	if _, err := c.Client.MarkMask(); err != nil {
 		return err
+	}
+	if u := c.Update; u != nil {
+		switch u.Policy {
+		case "", "auto", "notify", "off":
+		default:
+			return fmt.Errorf("update.policy must be auto, notify or off, not %q", u.Policy)
+		}
+		switch u.Channel {
+		case "", "stable", "beta":
+		default:
+			return fmt.Errorf("update.channel must be stable or beta, not %q", u.Channel)
+		}
 	}
 	return nil
 }
