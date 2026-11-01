@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 // Panel states for the GL admin screenshots (glinet-screens.mjs). Each state
 // is what tailbondd's API returns through the "tailbond" RPC object on a
 // Slate 7 (client) or Flint 3 (server). Shapes follow docs/architecture.md.
@@ -11,7 +12,8 @@ const peers = {
   peers: [
     { hostname: 'nas', dns_name: 'nas.tail1234.ts.net', tailscale_ips: ['100.101.2.2', 'fd7a:115c:a1e0::2'], os: 'linux', online: true, conn: 'direct' },
     { hostname: 'apple-tv', dns_name: 'apple-tv.tail1234.ts.net', tailscale_ips: ['100.101.4.4'], os: 'tvOS', online: true, conn: 'direct' },
-    { hostname: 'pixel-8', dns_name: 'pixel-8.tail1234.ts.net', tailscale_ips: ['100.101.8.8'], os: 'android', online: true, conn: 'direct' },
+    // bonded through tailbond, so its own Tailscale is off
+    { hostname: 'pixel-8', dns_name: 'pixel-8.tail1234.ts.net', tailscale_ips: ['100.101.8.8'], os: 'android', online: false, last_seen: ago(3 * 3600) },
     { hostname: 'work-laptop', dns_name: 'work-laptop.tail1234.ts.net', tailscale_ips: ['100.101.3.3'], os: 'macOS', online: false, last_seen: ago(26 * 3600) },
   ],
 };
@@ -75,14 +77,17 @@ const serverStatus = (over = {}) => ({
   ],
   ...over,
 });
+// the phone page ("Get tailbond") on the server's Tailscale name
+export const landing = { owner: 'alex@example.com', android_apk: true, landing_url: 'http://homebox.tail1234.ts.net/', landing_typed: 'homebox/',
+  landing_qr_svg: readFileSync(new URL('./landing-qr.svg', import.meta.url), 'utf8') };
 const serverBase = (statusOver = {}, tsOver = {}, setOver = {}) => ({
   model: 'GL-BE9300', role: 'server',
   info: { installed: true, version: '0.1.0-r42', role: 'server', enabled: true, running: true, model: 'GL.iNet GL-BE9300' },
   api: {
     'GET /api/status': serverStatus(statusOver),
-    'GET /api/settings': { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', glinet_ipk: true, ...setOver },
+    'GET /api/settings': { role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.1.0-r42', glinet_ipk: true, ...landing, ...setOver },
     'GET /api/tailscale': { installed: true, running: true, self: 'homebox', dns_name: 'homebox.tail1234.ts.net', tailnet: 'alex@example.com', route: '10.77.0.0/24', route_advertised: true, routes_approved: true, admin_url: 'https://login.tailscale.com/admin/machines', ...tsOver },
-    'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((m) => (m.hostname === 'pixel-8' ? { ...m, conn: 'direct', relay: undefined } : m)) },
+    'GET /api/peers': { ...peers, client: '' },
     'GET /api/health': healthGood,
   },
 });
@@ -100,11 +105,14 @@ const healthGood = { all_good: true, direct: 3, relayed: 0, checks: [
   hc('cgnat', 'ok', 'Public internet address 203.0.113.7'),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 2 h ago.' }),
 ] };
-const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: ['pixel-8'], checks: [
-  hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 1 through a relay (slower)', { detail: 'Through a relay: pixel-8. To check one: tailscale ping pixel-8',
-    fix: 'Usually fixed by forwarding UDP port 41641 to this machine, or by turning on UPnP on the router in front of it.', fix_url: 'https://tailscale.com/docs/reference/connection-types' }),
-  hc('netcheck', 'warn', 'This network makes direct Tailscale connections hard', { detail: 'Hard NAT (the outside port changes per destination); no port mapping on the router.',
-    fix: 'Forward UDP port 41641 to this machine, or turn on UPnP on the router in front of it.', fix_url: 'https://tailscale.com/docs/integrations/firewalls' }),
+// texts as the agent's health.go writes them
+const directFix = "On the router in front of this machine, forward UDP port 41641 to it, and allow 41641/udp in this machine's firewall. (Turning on UPnP on that router also works, but lets any device on your network open ports.)";
+const directDetail = (m) => `Through a relay: ${m}. Only traffic between this machine and that machine is slower (including bonded devices reaching it); bonding itself doesn't go through Tailscale. To check: tailscale ping ${m} ("via DERP" means relayed).`;
+const healthRelayed = { all_good: false, direct: 2, relayed: 1, relayed_peers: ['apple-tv'], checks: [
+  hc('tailscale_direct', 'warn', 'Tailscale: 2 machines direct, 1 through a relay (slower)', { detail: directDetail('apple-tv'),
+    fix: directFix, fix_url: 'https://tailscale.com/docs/reference/connection-types' }),
+  hc('netcheck', 'warn', 'This network makes direct Tailscale connections hard', { detail: 'The router in front of this machine picks a new outside port for every destination ("hard NAT"), so other machines can\'t connect straight back; no port mapping on the router.',
+    fix: directFix, fix_url: 'https://tailscale.com/docs/integrations/firewalls' }),
   hc('route', 'ok', 'Route 10.77.0.0/24 approved'),
   hc('cgnat', 'ok', 'Behind your home router (public address 203.0.113.7)', { detail: 'Forward UDP 443 on that router to 192.168.1.2.' }),
   hc('port', 'ok', 'UDP 443 reached from the internet', { detail: 'pixel-8 connected from 198.51.100.20, 3 h ago.' }),
@@ -165,7 +173,7 @@ export const states = {
       { name: 'ipad', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, paths: [] },
     ],
   }),
-  '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed, 'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((m) => (m.hostname === 'pixel-8' ? { ...m, conn: 'relay', relay: 'fra' } : m)) } }),
+  '18-server-health-relayed': withApi(serverBase(), { 'GET /api/health': healthRelayed, 'GET /api/peers': { ...peers, client: '', peers: peers.peers.map((m) => (m.hostname === 'apple-tv' ? { ...m, conn: 'relay', relay: 'fra' } : m)) } }),
   '18c-server-health-good': serverBase(),
   '18b-server-health-cgnat': withApi(serverBase({ clients: [
     { name: 'pixel-8', registered: true, connected: true, endpoint: '192.168.8.120:51234', connected_sec: 3 * 3600, tx_bps: 12e6, rx_bps: 1.1e6, paths: [{ state: 'active' }] },
@@ -178,10 +186,11 @@ export const states = {
     livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'failed', 0, 0, 0),
   ], { totals: { tx_bps: 2.9e6, rx_bps: 21e6 } }),
   '16b-captive-gl-login-mode': connected([
-    livePath('usb0', 'tethering', 'Tethering', 'usb', 'active', 21e6, 2.9e6, 48, { priority: 'secondary', data_cap_mb: 5000, used_bytes: 1.2e9 }),
+    // devices go out the hotel Wi-Fi directly meanwhile: the tunnel only carries the router's own trickle
+    livePath('usb0', 'tethering', 'Tethering', 'usb', 'active', 0.012e6, 0.008e6, 48, { priority: 'secondary', data_cap_mb: 5000, used_bytes: 1.2e9 }),
     livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'standby', 0, 0, 0, { captive: 'portal', portal_url: 'http://10.20.0.1/login', captive_source: 'glinet', signin_until: new Date(now + 540e3).toISOString() }),
     livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'failed', 0, 0, 0),
-  ], { totals: { tx_bps: 2.9e6, rx_bps: 21e6 } }),
+  ], { totals: { tx_bps: 0.008e6, rx_bps: 0.012e6 } }),
   // a hotel cable (Ethernet) with a sign-in page: tailbond's own sign-in
   '17-captive-own': connected([
     livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 36e6, 3.9e6, 25),
@@ -214,3 +223,17 @@ export const fedoraStatus = {
   ],
 };
 export const fedoraHealth = healthRelayed;
+export const fedoraHealthGood = healthGood;
+export const fedoraHealthRoute = healthRoute;
+// after tapping Approve: the request is gone, slate7 is a registered device
+export const fedoraStatusApproved = {
+  ...fedoraStatus, pair_requests: [],
+  clients: [...fedoraStatus.clients, { name: 'slate7', registered: true, connected: false, connected_sec: 0, tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0, paths: [] }],
+};
+// a family member's phone asking (from the phone page)
+export const fedoraStatusPhone = {
+  ...fedoraStatusApproved,
+  pair_requests: [{ ...pendingReq, id: '9c1d22e07a4f61b3', name: 'pixel-7a', kind: 'phone', device: 'pixel-7a', dns_name: 'pixel-7a.tail1234.ts.net', hostname: 'Pixel 7a', os: 'android', user: 'sam@example.com', ip: '100.101.7.7' }],
+};
+// right after dnf install + systemctl enable --now: nothing paired yet
+export const fedoraStatusFresh = { ...serverStatus({ clients: [] }), uptime_sec: 40, server: '192.168.1.2:443', clients: [], pair_requests: [], totals: { tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0 } };

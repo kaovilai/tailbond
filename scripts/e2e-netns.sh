@@ -251,9 +251,11 @@ cat >"$WORK/srv/tailbond.json" <<EOF
   "hooks_dir": "$WORK/hooks",
   "listen": ":8077",
   "mode": "speed",
+  "android_apk": "$WORK/srv/tailbond.apk",
   "server": {"port": 443, "public_addr": "$SERVER_IP", "subnet": "10.77.0.0/24", "subnet6": "fd77:77::/112", "use_tailscale_cert": false}
 }
 EOF
+printf 'PK\003\004 e2e apk' >"$WORK/srv/tailbond.apk"
 ip netns exec "$NS_S" env PATH="$WORK/ts-srv:$PATH" "$TAILBONDD" -config "$WORK/srv/tailbond.json" >"$WORK/server.log" 2>&1 &
 SRV_PID=$!
 if wait_for 20 "server agent connected" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\" and .control_api'"; then
@@ -263,6 +265,8 @@ else
 fi
 [ -s "$WORK/hook-server-up.env" ] && grep -q '^TB_SUBNET=10.77.0.0/24' "$WORK/hook-server-up.env" && grep -q '^TB_DNS_IP=10.77.0.1' "$WORK/hook-server-up.env" \
   && ok "server-up hook ran with TB_* env" || bad "server-up hook missing or wrong env"
+grep -q '^TB_WEB_PORTS=8077 80$' "$WORK/hook-server-up.env" && ok "server-up hook told which tcp ports to open to the tailnet (8077 80)" \
+  || bad "TB_WEB_PORTS: $(grep TB_WEB_PORTS "$WORK/hook-server-up.env")"
 
 say "pairing link (POST /api/clients)"
 PAIR="$(sapi -X POST -d '{"name":"e2e-legacy"}' "http://$API/api/clients")"
@@ -297,6 +301,20 @@ capi "http://$API/api/paths" | jq -e '[.[] | select(.name == "eth0" and .kind ==
 HELLO="$(ip netns exec "$NS_C" curl -fsS -m 3 http://100.101.1.1:8077/api/hello || true)"
 jq -e '.tailbond == true and .role == "server" and .name == "homebox"' <<<"$HELLO" >/dev/null \
   && ok "GET /api/hello on the server's Tailscale IP: $HELLO" || bad "hello: $HELLO"
+say "phone page on the server's Tailscale IP, port 80 (http://homebox/)"
+if wait_for 10 "phone page" ip netns exec "$NS_C" curl -fsS -m 3 -A "Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile" -o "$WORK/landing.html" http://100.101.1.1/; then
+  grep -q 'Get tailbond on' "$WORK/landing.html" && grep -q 'href="/tailbond.apk"' "$WORK/landing.html" \
+    && grep -q 'intent://ask?server=homebox.tail1234.ts.net' "$WORK/landing.html" \
+    && ok "http://100.101.1.1/ serves the phone page (app download + ask link)" || bad "phone page content: $(head -c 300 "$WORK/landing.html")"
+else
+  bad "nothing on 100.101.1.1:80"
+fi
+[ "$(ip netns exec "$NS_C" curl -s -m 3 http://100.101.1.1/tailbond.apk)" = "$(cat "$WORK/srv/tailbond.apk")" ] \
+  && ok "the APK downloads from the phone page" || bad "APK not served on port 80"
+LCODE="$(ip netns exec "$NS_C" curl -s -m 3 -o /dev/null -w '%{http_code} %{redirect_url}' http://100.101.1.1/api/status)"
+[ "$LCODE" = "302 http://100.101.1.1/" ] && ok "port 80 serves no API (/api/status → redirect to the page)" || bad "port 80 /api/status: $LCODE"
+ip netns exec "$NS_S" curl -fsS -m 3 http://127.0.0.1:8077/api/settings | jq -e '.landing_url == "http://homebox.tail1234.ts.net/" and .landing_typed == "homebox/" and (.landing_qr_svg | startswith("<svg"))' >/dev/null \
+  && ok "settings point phones at http://homebox.tail1234.ts.net/" || bad "settings landing: $(ip netns exec "$NS_S" curl -fsS -m 3 http://127.0.0.1:8077/api/settings | jq -c '{landing_url,landing_typed}')"
 DISC="$(capi "http://$API/api/discover?refresh=1" || true)"
 jq -e '.tailscale_running and ([.servers[] | select(.name == "homebox" and .ip == "100.101.1.1")] | length == 1) and .checked == 2' <<<"$DISC" >/dev/null \
   && ok "GET /api/discover: found homebox among 2 online peers" || bad "discover: $DISC"
