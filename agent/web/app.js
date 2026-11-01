@@ -364,7 +364,8 @@ async function renderHealth() {
   const headline = blocking
     ? `Setup health: ${blocking} thing${blocking === 1 ? '' : 's'} to fix before devices can connect from away${improve ? `, ${improve} more to improve` : ''}${plus}`
     : improve ? `Setup health: ${improve} thing${improve === 1 ? '' : 's'} to improve (tailbond works meanwhile)${plus}`
-    : optional ? 'Setup health: all set (1 optional item below)' : 'Setup health: everything is set up for best speed';
+    : optional ? 'Setup health: nothing to fix here (1 optional item below)' : 'Setup health: everything is set up for best speed';
+  const addrTodo = state.settings && state.settings.public_addr_guessed;
   const seen = new Set();
   const rows = (bad.length ? bad : v.checks).map((c) => {
     let fix = c.fix && c.status !== 'ok' ? c.fix : '';
@@ -379,7 +380,7 @@ async function renderHealth() {
       test ? h('div', { class: 'small', text: test }) : null);
   });
   box.replaceChildren(...[
-    h('h3', { text: headline }),
+    h('h3', { text: addrTodo && !blocking ? headline + ' · finish the setup step above first' : headline }),
     h('ul', { class: 'health-list' }, rows),
     bad.length ? h('p', { class: 'small', text: 'Fixes are on your home router or in the Tailscale admin console ("How to fix" explains each); this machine\'s own firewall is already set up by tailbond. Not sure how? Show this card to whoever set up your internet.' }) : null,
     h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
@@ -405,7 +406,7 @@ function whoApproves() {
   if (s.password_set) return 'Who can approve: anyone with this page\'s password (you too), from any device on your Tailscale network.';
   const names = [s.owner ? `${s.owner} (the Tailscale account ${serverShort()} belongs to)` : '', ...(s.approvers || [])].filter(Boolean);
   if (names.length) return `Who can approve: ${names.join(', ')}, from any device signed in to that Tailscale account, and anyone logged in on ${serverShort()} itself (http://127.0.0.1:8077). Others on your Tailscale network, and people you share ${serverShort()} with, can ask to connect but can't approve.`;
-  return `Who can approve: anyone on your Tailscale network who can reach ${serverShort()} (it's a tagged machine, so it has no owner account). Name approvers or set a password in the "Who can approve and add devices" card on the Devices tab.`;
+  return `Who can approve: anyone on your Tailscale network who can reach ${serverShort()} (it's a tagged machine, so it has no owner account). Name approvers below, or set a password.`;
 }
 
 // Devices on the tailnet that asked to connect (POST /api/pair-requests).
@@ -422,7 +423,8 @@ function renderPairRequests(st) {
   }
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  const who = h('p', { class: 'muted small', text: whoApproves() + ` Approving lets the device use ${serverShort()}'s internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as ${serverShort()}, under ${serverShort()}'s access rules.` });
+  const who = h('p', { class: 'muted small', text: whoApproves() + ` Approving lets the device use ${serverShort()}'s internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as ${serverShort()}: they allow it whatever they allow ${serverShort()}, which may be more than its owner's own account gets.` });
+  const approvers = new Set([state.settings && state.settings.owner, ...((state.settings && state.settings.approvers) || [])].filter(Boolean).map((x) => x.toLowerCase()));
   box.replaceChildren(h('h2', { text: 'Waiting for your approval' }), who, ...reqs.map((r) => {
     const what = r.kind === 'router' ? 'Travel router' : r.kind === 'phone' ? 'Phone' : 'Device';
     const decide = async (action, btn) => {
@@ -438,7 +440,8 @@ function renderPairRequests(st) {
       h('div', { class: 'pair-req-text' },
         h('b', { text: r.repair ? `${r.name} is asking to connect again` : `${r.name} wants to connect` }),
         h('div', { class: 'muted small', text: `${what} on your tailnet · signed in as ${r.user || 'unknown'} · ${r.hostname ? r.hostname + ' · ' : ''}${r.ip}` }),
-        r.repair ? h('div', { class: 'small', text: 'It was connected before (reset or reinstalled). Approving gives it its old access back.' }) : null),
+        r.repair ? h('div', { class: 'small', text: 'It was connected before (reset or reinstalled). Approving gives it its old access back.' }) : null,
+        r.user && approvers.has(r.user.toLowerCase()) ? h('div', { class: 'small warn-text', text: `It's signed in to ${r.user}, an account that may approve here: whoever holds this ${r.kind === 'router' ? 'router' : 'device'} can also open this dashboard and approve devices. If it's for someone else, sign it in to their own Tailscale account first, then let it ask again.` }) : null),
       h('div', { class: 'pair-req-actions' },
         h('button', { class: 'btn', type: 'button', text: 'Decline', onclick: (e) => decide('decline', e.currentTarget) }),
         h('button', { class: 'btn primary', type: 'button', text: 'Approve', onclick: (e) => decide('approve', e.currentTarget) })));
@@ -473,11 +476,11 @@ function renderClients(st) {
       state.clientEls.set(c.name, el);
     }
     $('.client-name b', el).textContent = c.name;
-    $('.client-name small', el).textContent = c.connected ? `${c.endpoint} · ${c.scheduler || ''}` : 'offline';
+    $('.client-name small', el).textContent = c.connected ? `${c.endpoint} · ${c.scheduler || ''}` : 'not connected right now (approved devices connect by themselves when they\'re on and online)';
     $('.client-rates .rx', el).textContent = c.connected ? '↓ ' + rateStr(c.tx_bps) : '';
     $('.client-rates .tx', el).textContent = c.connected ? '↑ ' + rateStr(c.rx_bps) : '';
     const chip = $('.chip', el);
-    chip.textContent = c.connected ? `${c.paths.filter((p) => p.state === 'active').length} paths` : 'offline';
+    chip.textContent = c.connected ? `${c.paths.filter((p) => p.state === 'active').length} paths` : 'not connected';
     chip.className = 'chip s-' + (c.connected ? 'active' : 'off');
     $('.client-paths', el).replaceChildren(...(c.connected ? c.paths : []).map((p) =>
       h('span', { class: 'mini-path' }, h('b', { text: `#${p.id} ` }), `${p.state} · ${p.srtt_ms} ms · ${(p.loss_pct || 0).toFixed(1)}%`)));
@@ -528,6 +531,7 @@ async function loadSettings() {
       ? 'Only people with this page\'s password, from any device on your Tailscale network. Change it, or save an empty one to remove it. Family adding a phone don\'t need it: their phone asks, you approve.'
       : whoApproves() + ' A device you lend to someone while it\'s signed in to an approver\'s account can approve too. To let someone else approve, add their Tailscale login (shown in the Tailscale admin console under Users) below. A password instead replaces all this: then everyone who approves, you included, needs it; phones and routers can still ask to connect without it.';
     $('#approvers').value = (s.approvers || []).join(', ');
+    $('#approvers-label').textContent = s.owner ? 'Also allowed to approve (Tailscale logins, comma separated)' : 'Allowed to approve (Tailscale logins, comma separated; on this tagged server, only they can)';
     $('#ipk-no').classList.toggle('hidden', !!s.glinet_ipk);
     // where phones get the app (the landing page on port 80, else /get)
     if (s.landing_url) {

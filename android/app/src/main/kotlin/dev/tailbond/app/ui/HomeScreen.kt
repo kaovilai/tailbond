@@ -392,7 +392,7 @@ private fun ThisDevice(state: UiState) {
                     },
                 )
                 Text(
-                    if (ip != null) "Not a Tailscale address: to your Tailscale machines this phone's traffic comes from ${state.serverName}, under its access rules. " +
+                    if (ip != null) "Not a Tailscale address: your Tailscale machines see this phone as ${state.serverName} and allow it whatever they allow ${state.serverName}. " +
                         "They can reach the phone at this address through ${state.serverName}."
                     else "This phone reaches your tailnet through ${state.serverName}",
                     style = MaterialTheme.typography.bodySmall,

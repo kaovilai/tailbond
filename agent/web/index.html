@@ -134,7 +134,7 @@
     <form class="card" id="pw-form">
       <h3>Who can approve and add devices</h3>
       <p class="muted small" id="pw-state">Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with).</p>
-      <label class="field" for="approvers"><span>Also allowed to approve (Tailscale logins, comma separated)</span>
+      <label class="field" for="approvers"><span id="approvers-label">Also allowed to approve (Tailscale logins, comma separated)</span>
         <div class="row">
           <input id="approvers" placeholder="e.g. sam@example.com" autocomplete="off" autocapitalize="none" spellcheck="false">
           <button class="btn" type="button" id="approvers-save">Save</button>
@@ -151,7 +151,7 @@
         <div class="qr qr-small" id="landing-qr"></div>
         <div class="grow">
           <p>On the phone, with Tailscale on: point the camera at this code, or type <b id="landing-typed">this server's name</b> into its browser (with the slash at the end, so it opens the page instead of searching). That page has the app and three short steps. The phone then asks to connect and shows up at the top of this page: tap <b>Approve</b>.</p>
-          <p class="muted small">For family: their phone needs Tailscale signed in to your Tailscale network (invite them in the Tailscale admin console, or share this machine with their account). Then send them this link, or tell them what to type. The page only offers the app; nothing on it can change this server, and this dashboard only answers the approvers (see Who can approve).</p>
+          <p class="muted small">For family: their phone needs Tailscale signed in to your Tailscale network: invite them as users (Tailscale admin console → Users → Invite; your access rules decide what they reach), or share just this machine with their own account (Machines → this machine → Share; they then see only this machine; they type its full name, shown in the link below). Then send them this link, or tell them what to type. The page only offers the app; nothing on it can change this server, and this dashboard only answers the approvers (see Who can approve).</p>
           <div class="uri-row"><input id="invite-link" readonly aria-label="Link to the phone page"><button class="btn icon" type="button" id="invite-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
           <p class="muted small hidden" id="landing-no-apk">The page can't offer the app yet: put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code> (the tailbond-server package normally does).</p>
         </div>

@@ -77,7 +77,7 @@ a{color:var(--accent)}
     {{.QR}}
     <div class="grow">
       <p>With Tailscale on, point the phone's camera at this code. Or type <b>{{.TypeName}}</b> into the phone's browser (with the slash at the end, so it opens this page instead of searching).</p>
-      <p class="small muted">The page that opens on the phone has the app and the steps below. Anyone on your Tailscale account can open it; nothing here changes {{.Server}}'s settings.</p>
+      <p class="small muted">The page that opens on the phone has the app and the steps below. Anyone on your Tailscale network (or with {{.Server}} shared to them) can open it; nothing here changes {{.Server}}'s settings.</p>
     </div>
   </div>
 </section>
@@ -88,8 +88,7 @@ a{color:var(--accent)}
     <h2>Install the app</h2>
     <p class="notyet warnbox">tailbond isn't on this phone yet, so step 2 brought you back here. Install it first, then tap step 2 again.</p>
     {{if .APK}}
-    <p class="note"><b>Read the pictures below first</b> (or take a screenshot): once you open the file, Android's own screens cover this page.</p>
-    <a class="btn primary" href="/tailbond.apk" download>Download tailbond ({{.APKSize}})</a>
+    <p class="note"><b>Look at these five pictures first</b> (or take a screenshot): once you open the file, Android's own screens cover this page. The download button is below them.</p>
     <p>Then open the downloaded file. tailbond isn't in the Play Store: it comes from {{.Server}}, your own home server, so Android asks you to confirm a few times. That's Android's normal check for every app from outside the Play Store, and you only go through it once. Here's what you'll see (the words differ a little between phones; the pictures below are drawings, not buttons):</p>
     <div class="shots">
       <div class="shot">
@@ -118,6 +117,7 @@ a{color:var(--accent)}
           <div class="acts"><span>Don't scan</span><span class="tap">Scan app</span></div></div>
       </div>
     </div>
+    <a class="btn primary" href="/tailbond.apk" download>Download tailbond ({{.APKSize}})</a>
     <p class="small">When it says <b>App installed</b>, tap <b>Done</b> and come back to this page (Chrome, this tab) for step 2. You can turn <b>Allow from this source</b> off again afterwards; tailbond stays installed.</p>
     <p class="small">Chrome's <b>Open</b> message gone before you tapped it? The file is in your downloads: Chrome's menu <b>⋮ → Downloads</b>, or the <b>Files</b> app → <b>Downloads</b>. Tap <b>tailbond.apk</b>.</p>
     <p class="small muted">Stuck, or not comfortable with this? Ask whoever runs {{.Server}} to install it for you.</p>
@@ -142,7 +142,7 @@ a{color:var(--accent)}
   <div class="step"><span class="num">3</span><div class="grow">
     <h2>Turn tailbond on</h2>
     <p>Once approved, tailbond shows what it will do: tap <b>Add phone</b>. Then tap the big switch at the top of tailbond. tailbond explains that it takes over from Tailscale, and Android asks once to allow its connection: tap <b>OK</b>.</p>
-    <p>Android runs one VPN at a time, so while tailbond is on, Tailscale's VPN is off on this phone. Your Tailscale machines stay reachable through {{.Server}}.</p>
+    <p>Android runs one VPN at a time, so while tailbond is on, Tailscale's VPN is off on this phone. Your Tailscale machines stay reachable through {{.Server}}. They see this phone as {{.Server}} (it has no 100.x address of its own meanwhile), so they allow it whatever they allow {{.Server}}.</p>
     <p class="small muted">tailbond connects straight to {{.Server}} over the internet (not through Tailscale), and by default this phone's internet traffic goes out from {{.Server}}, like using it as an exit node. tailbond's Settings change that. To go back, tap <b>Switch back to Tailscale</b> in tailbond.</p>
   </div></div>
 </section>

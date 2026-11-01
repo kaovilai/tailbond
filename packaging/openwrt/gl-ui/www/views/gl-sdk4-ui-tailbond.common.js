@@ -440,6 +440,7 @@
       // What a WAN card says: [chip class, chip text, explanation]
       wanStatus: function (w) {
         var on = this.st && this.st.state === "connected";
+        var off = !this.isOn();
         var mode = this.st && this.st.mode;
         var mobile = w.kind === "usb" || w.kind === "cellular";
         if (!w.enabled) return ["", "Not used", "tailbond leaves this connection alone."];
@@ -449,6 +450,9 @@
           if (w.signinUntil) return ["blue", "Signing in…", "Devices here reach this network directly until you've signed in."];
           return ["warn", "Needs sign-in", "This network shows a sign-in page first. Until you sign in, tailbond keeps it out and your other connections carry traffic."];
         }
+        var signing = this.wans.some(function (x) { return x.captive === "portal" && x.signinUntil; });
+        if (signing && w.state === "active" && !(w.captive === "portal")) return ["blue", "Router's link only", "While devices sign in, only this router's own small link to your home server uses this (almost no data)."];
+        if (!on && !off) return ["", "Ready", "Used as set below once tailbond reaches " + (this.serverShort || "your home server") + " again."];
         if (!on) return ["", "Ready", mobile ? "This choice applies when tailbond is on. While it's off, GL's own settings decide; to be sure your phone's data isn't used, unplug the phone or turn tethering off on it." : "This choice applies when tailbond is on. While it's off, GL's own settings (INTERNET page) decide which connection devices use."];
         if (w.state === "active") {
           if (w.priority === "backup" || (mode === "failover" && w.priority !== "primary")) return ["warn", "In use · taking over", "Your main connection stopped working, so this one stepped in."];
@@ -728,7 +732,7 @@
           var ks = !(this.info && this.info.kill_switch === false);
           return this.alert(h, "err", title, [h("div", body),
             h("div", { style: { marginTop: "8px", fontWeight: 600 } }, ks
-              ? "Meanwhile, devices on this router have no internet, so nothing goes around your home server. To use this internet directly for now, turn tailbond off."
+              ? "Meanwhile, devices on this router have no internet, so nothing goes around your home server. To use this internet directly for now, turn tailbond off (GL then picks the connection itself, and may use your phone's data: “Backup only” and limits don't apply while off)."
               : "Meanwhile, devices on this router use this internet directly."),
             h("div", { class: "tb-small", style: { marginTop: "6px", opacity: 0.85 } }, "Still not working? Whoever set up " + server + " should check that it's on and that UDP port 443 reaches " + addr + " from the internet.")],
             [this.btn(h, this.busy.svc ? "Trying…" : "Try again", function () { self.run("svc", rpc("service", { action: "restart" }), "Trying again…"); }, "primary", this.busy.svc),
@@ -807,8 +811,8 @@
               return self.alert(h, "info", w.signinUntil ? "Signing in to " + w.label + " through GL's Login Mode" : w.label + " needs you to sign in", [
                 w.signinUntil ? null : h("div", "GL's Repeater page handles this sign-in. Open it and click “Login Mode for Public Hotspots” (or “Go to Login”). Then open any website on your laptop or phone: the hotel's sign-in page appears there. Accept the terms (or enter your room number)."),
                 h("div", { style: { marginTop: "6px" } }, w.signinUntil
-                  ? "Now open any website on your laptop or phone: the hotel's sign-in page appears there. Until you've signed in, everything devices here do goes out the hotel Wi-Fi directly (not only the sign-in page, and not through your home server), so your phone's data isn't used for them. Only this router's own link to your home server stays up over your other connections (the top card; it carries almost nothing meanwhile). Login Mode ends by itself once you've signed in (or click “Quit Login Mode” on GL's Repeater page); tailbond then adds " + w.label + " back to bonding."
-                  : "While you sign in, devices here use the hotel Wi-Fi directly, not through your home server. Afterwards tailbond adds " + w.label + " back to bonding by itself. Your other connections keep working meanwhile.")
+                  ? "Now open any website on your laptop or phone: the hotel's sign-in page appears there. Until you've signed in, everything devices here do goes out the hotel Wi-Fi directly (not only the sign-in page, and not through your home server), so your phone's data isn't used for them. Only this router's own link to your home server stays up over your other connections, and it carries almost nothing meanwhile. Login Mode ends by itself once you've signed in (or click “Quit Login Mode” on GL's Repeater page); tailbond then adds " + w.label + " back to bonding."
+                  : "While you sign in (until it's done, or 10 minutes), everything devices here do goes out the hotel Wi-Fi directly, not through your home server, and they can't reach your Tailscale machines. This router keeps only its own small link home over your other connections. Afterwards tailbond adds " + w.label + " back to bonding by itself.")
               ], [h("a", { class: "tb-btn small" + (w.signinUntil ? "" : " primary"), attrs: { href: "#/internet" } }, w.signinUntil ? "Back to GL's Repeater page" : "Open GL's Repeater page")]);
             }
             if (w.signinUntil) {
@@ -940,7 +944,7 @@
                 h("div", { class: "tb-muted", style: { marginTop: "4px", lineHeight: 1.6 } }, [
                   "On " + srv + ", tap ", h("b", "Approve"), " next to ", h("b", j.name || "this router"), ". This router connects by itself once approved; you can close this page.",
                   h("div", { style: { marginTop: "6px" } }, ["From anywhere: open ", h("a", { class: "tb-link", attrs: { href: "http://" + hostOf(j.server) + ":8077/", target: "_blank", rel: "noopener" } }, "http://" + srv + ":8077"),
-                    " on any device signed in to your Tailscale account (a phone works too). At home with a Flint 3, its admin panel → VPN → tailbond works as well."])
+                    " on any device signed in to your Tailscale account (a phone works too). At home with a Flint 3, its admin panel → VPN → tailbond works as well. Not you? Ask whoever runs your home server to approve it."])
                 ])
               ]),
               h("div", { class: "tb-actions" }, [this.btn(h, "Cancel", function () { self.cancelAsk(); })])
@@ -1119,7 +1123,7 @@
         whoApproves: function (h) {
           var s = this.settings || {}, ts = this.ts || {};
           var page = "http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077";
-          var grants = " Approving lets a device use this router's internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as this router, under its access rules.";
+          var grants = " Approving lets a device use this router's internet connection (by default all its traffic goes out from here) and your home network, and reach your Tailscale machines as this router: they allow it whatever they allow this router, which may be more than its owner's own account gets.";
           return h("div", { class: "tb-muted tb-small", style: { lineHeight: 1.55 } }, (s.password_set
             ? "Who can approve: anyone logged in to this admin panel, or with the tailbond password at " + page + "."
             : s.owner
@@ -1131,8 +1135,8 @@
         setupSteps: function () {
           var ts = this.ts, s = this.settings, out = [];
           if (!ts || !s) return out;
+          // (the tunnel route is optional: see rRoute)
           if (!ts.installed || !ts.running) out.push("tailscale");
-          else if (!ts.routes_approved) out.push("route");
           if (s.public_addr_guessed) out.push("address");
           // a problem that stops travel routers connecting at all (e.g.
           // carrier-grade NAT) is a setup step too
@@ -1147,11 +1151,6 @@
             items.push(this.alert(h, "", "Step " + (++n) + ": turn on Tailscale", "Turn on Tailscale on this router and sign in. Travel routers find this server through it, and connected devices reach your Tailscale machines through it.",
               [h("a", { class: "tb-btn small primary", attrs: { href: "#/tailscaleview" } }, "Open Tailscale settings")]));
           }
-          if (steps.indexOf("route") >= 0) {
-            items.push(this.alert(h, "", "Step " + (++n) + ": allow tailbond devices on your Tailscale network",
-              [h("div", ["In the Tailscale admin console, open ", h("b", ts.self || "this router"), ", choose ", h("b", "Edit route settings"), ", tick the one route listed (", ts.route || "10.77.0.0/24", ") and save. Done once, by whoever manages your Tailscale account. Until then, devices connected through tailbond can still reach your Tailscale machines; only the other direction (your machines reaching those devices) waits for this."])],
-              [h("a", { class: "tb-btn small primary", attrs: { href: ts.admin_url || "https://login.tailscale.com/admin/machines", target: "_blank", rel: "noopener" } }, "Open admin console")]));
-          }
           if (steps.indexOf("address") >= 0) {
             items.push(this.alert(h, "", "Step " + (++n) + ": tell travel routers where home is",
               [h("div", ["Travel routers reach this router over the internet, so they need a name for your home. Easiest: turn on ", h("a", { class: "tb-link", attrs: { href: "#/ddns" } }, "APPLICATIONS → Dynamic DNS"), " and paste the name it shows here (it looks like ", h("span", { class: "tb-mono" }, "abc1234.glddns.com"), "). Right now they'd use " + (addr || "a home-network address") + ", which only works at home."]),
@@ -1163,8 +1162,13 @@
               c.id === "cgnat" ? h("div", { class: "tb-small", style: { marginTop: "4px" } }, "Devices on your home Wi-Fi can still connect; from away they can't until this is fixed.") : null,
               h("div", { class: "tb-small", style: { marginTop: "4px" } }, "Not sure? Show this to whoever set up your internet.")]));
           });
+          if (ts.running && !ts.routes_approved) {
+            items.push(this.alert(h, "", "Optional: let your Tailscale machines reach tailbond devices",
+              [h("div", ["Skip this unless you want your Tailscale machines (for example a laptop at home) to open something on a device behind a travel router. Devices behind travel routers reach your Tailscale machines either way. If you want it: in the Tailscale admin console, open ", h("b", ts.self || "this router"), ", choose ", h("b", "Edit route settings"), ", tick ", ts.route || "10.77.0.0/24", " and save (whoever manages your Tailscale account can do it)."])],
+              [h("a", { class: "tb-btn small", attrs: { href: ts.admin_url || "https://login.tailscale.com/admin/machines", target: "_blank", rel: "noopener" } }, "Open admin console")]));
+          }
           if (!steps.length) {
-            items.push(this.alert(h, "ok", "Setup done", "Travel routers and phones can connect from anywhere, and your Tailscale machines reach them. The first connection from away from home confirms the port works."));
+            items.push(this.alert(h, "ok", "Setup done", "Travel routers and phones can connect from anywhere" + (ts.routes_approved ? ", and your Tailscale machines reach them" : "") + ". The first connection from away from home confirms the port works."));
           }
           items.push(h("div", { class: "tb-kv", style: { marginTop: "4px" } }, [
             h("div", "Internet address"),
@@ -1203,7 +1207,7 @@
           if (steps.some(function (x) { return x.indexOf("health:") !== 0; })) return null;
           var checks = A(v.checks);
           // on the Flint, "this machine" is the router itself: say where in GL
-          var glFix = "On this router: NETWORK → Firewall → Open Ports on Router, add UDP 41641. If another router sits in front of this one (for example your internet provider's box), also forward UDP port 41641 to this router there.";
+          var glFix = "For whoever manages this router: NETWORK → Firewall → Open Ports on Router, add UDP 41641. If another router sits in front of this one (for example your internet provider's box), also forward UDP port 41641 to this router there.";
           checks = checks.map(function (c) { return (c.id === "tailscale_direct" || c.id === "netcheck") && c.fix ? Object.assign({}, c, { fix: glFix }) : c; });
           var shown = {};
           checks = checks.map(function (c) { if (c.fix && shown[c.fix]) return Object.assign({}, c, { fix: "Same fix as above (one change fixes both).", fix_url: "" }); if (c.fix) shown[c.fix] = true; return c; });

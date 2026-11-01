@@ -79,7 +79,7 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
         Point(
             Icons.Filled.Devices,
             "Still on your tailnet",
-            "Your home server is on Tailscale, so your NAS and other Tailscale machines stay reachable, by name or 100.x address, through it.",
+            "Your home server is on Tailscale, so your NAS and other Tailscale machines stay reachable, by name or 100.x address, through it. They see this phone as the home server.",
         )
         Point(
             Icons.Filled.SwapHoriz,
@@ -331,7 +331,7 @@ fun ConfirmPairingDialog(p: PairingPayload, replacing: Boolean, onConfirm: () ->
         title = { Text(if (replacing) "Switch this phone to $server?" else "Add this phone to $server?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it; they see this phone as $server, so $server's Tailscale access rules apply (not your own account's).")
+                Text("tailbond will connect to your home server $server over Wi-Fi and mobile data. Your Tailscale machines stay reachable through it. They see this phone as $server (not as your own phone), so they allow it whatever they allow $server.")
                 Text(
                     "It connects over the internet to ${p.server}, and your internet traffic goes out from home (you can change that in Settings).",
                     style = MaterialTheme.typography.bodySmall,

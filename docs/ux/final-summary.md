@@ -120,3 +120,33 @@ Plug-ins).
 Lows fixed: Fedora 14 rendered whole-page; "1 day ago"; Play Protect drawing;
 03-deeplink-confirm in the manifest; health footer no longer names a file;
 "port mapping: UPnP" no longer in the all-good fixture.
+
+## Round 9 triage
+
+No highs on any surface. GL persona D: no medium.
+
+| # | Finding (personas) | Sev | Decision |
+|---|---|---|---|
+| 1 | Turned off: the warning is buried, Tethering still shows "Backup only" (GL A) | M | **fix**: its own alert under the top card, "While tailbond is off, GL may use Tethering (your phone's data)", with what to do and GL's INTERNET page |
+| 2 | CGNAT: the IPv6 route isn't actionable for a traveller/family member; a pasted IPv6 address fails on IPv4-only hotels (GL A, B, C) | M | **partial (platform limit, stated in the UI)**: the item leads with asking the provider ("often free or a small monthly fee"), IPv6 is marked *Advanced* with its limit ("only from networks that have IPv6 too"). Nothing on the home side can make a shared provider address reachable |
+| 3 | Relay fix "forward UDP 41641" has no "where", a CLI check, no hand-off line (GL A, C; Fedora) | M | **fix**: "On your home router's admin page (Port forwarding, also called Virtual server or NAT), forward UDP port 41641 to this machine (192.168.1.2)"; the `tailscale ping` check moved to the guide; the Fedora card has "Show this card to whoever set up your internet" again. On the Flint the GL menu path stays |
+| 4 | Fedora on a phone: "Add this phone" under Approve (GL C, F2; A low) | M | **fix**: on a phone with requests waiting, the page shows the requests and not "Add this phone" |
+| 5 | Green "no port mapping on the router" after forwarding (F2; A, B, D low) | M | **fix**: an OK network check has no detail line |
+| 6 | Can family still ask to connect with a password set? (F2) | M | **fix**: the card says phones and routers can still ask without it |
+| 7 | The setup step's CGNAT hint compares the WAN address with itself (F2) | M | **fix**: "Setup health below checks for that and says what to do" |
+| 8 | Firewall changes: temporary or saved; does uninstall close them (F1) | M | **fix**: the guide says both runtime and saved, nothing to do yourself, and `dnf remove` closes 443/41641 and the tailnet rules (spec already did) |
+| 9 | The route is filed under "best speed" but is an exposure choice (F1; F2 low) | M | **fix**: "(optional)", what approving exposes, "If you want that: …"; not counted as a problem in the headline |
+| 10 | Can't test the 443 forward before it's needed (F1) | M | **fix**: the item and the guide say how: a phone with tailbond, Wi-Fi off |
+| 11 | Approved devices reach the home LAN, no way shown to limit; do own policy edits survive (F1) | M | **fix**: the guide gives the `tailbond-out` rich rule to block the LAN and says the hook leaves own rules alone |
+| 12 | "Anyone using homebox itself" ambiguous; local users; tunnel access to :8077 (F1) | M | **fix**: "anyone logged in on homebox itself (http://127.0.0.1:8077)"; the guide says to set a password for untrusted local users, and that the tunnel address answers only the machine list |
+| 13 | "From any of their devices" includes lent devices (F1) | M | **fix**: card and guide say so and what to do (borrower's account, or tag it) |
+| 14 | Tagging the server makes everyone an approver; only grey text (F1) | M | **fix**: a setup-health warning "Anyone on your Tailscale network can approve devices" while a tagged server has no approvers or password |
+| 15 | "Open home server page" greyed out while the box shows the name (Android A) | M | **fix** (real bug): the button uses the name of the failed ask, like the field does |
+| 16 | ACL identity only stated after switching (Android B) | M | **fix**: the confirm dialog says the server's access rules apply, not the person's own |
+| 17 | Android's screens cover the picture guide (Android C) | M | **fix**: "Read the pictures below first (or take a screenshot)" above the download button |
+| 18 | Always-on: a family member can't know (Android C) | M | **partial (platform limit, stated)**: the dialog says the symptom ("switches itself off right after this"), where to turn it off or who to ask, and that Android doesn't let tailbond check that setting |
+
+Lows fixed: the download button no longer wraps; 02-pairing-paste-error is
+rendered tall enough to show the error; the 14d toast no longer covers the
+cards; 03-deeplink-confirm (a duplicate of 02e) dropped from the packet;
+"tailscale ping" gone from the dashboards.

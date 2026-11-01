@@ -55,14 +55,14 @@ Bonding needs each of the device's links to reach the server **directly over UDP
 
 1. On your home router's admin page, find **Port forwarding** (sometimes called *Virtual server* or *NAT*) and add: protocol **UDP**, port **443**, to this server's LAN address (`ip -4 addr` shows it, e.g. `192.168.1.2`). Give the server a fixed address on the same router (**DHCP reservation**, sometimes *static lease*), so the forward keeps pointing at it.
 2. Find your home's public address: the router's status page shows it (*WAN* or *Internet* IP). If your router has a **Dynamic DNS** page, a DDNS name (such as `home.example.net`) is better, since it keeps working when the address changes.
-3. Test the forward from outside right away: on a phone with tailbond, turn Wi-Fi off; once it connects over mobile data, the dashboard's *UDP 443* health item turns green.
-4. Tell tailbond: type that address into the setup step at the top of the dashboard's **Devices** tab and click **Save** (the port is added for you). Or edit the config and restart:
+3. Tell tailbond: type that address into the setup step at the top of the dashboard's **Devices** tab and click **Save** (the port is added for you). Or edit the config and restart:
 
    ```json
    "server": { "public_addr": "home.example.net", ... }
    ```
 
    `sudo systemctl restart tailbond`.
+4. Once a phone is paired (section 4), test the forward from outside: on that phone, turn Wi-Fi off; once tailbond connects over mobile data, the dashboard's *UDP 443* health item turns green.
 
 **Carrier-grade NAT**: if the router's own WAN address is in `100.64.0.0`–`100.127.255.255`, or is private (`10.x`, `192.168.x`, `172.16–31.x`) while your public address is different, your provider shares one address between customers and a port forward can't work. Ask the provider for a public IPv4 address, or use a public IPv6 address for `public_addr` (for example `[2001:db8::10]:443`) and allow UDP 443 in the router's IPv6 firewall. The dashboard's setup health detects this.
 
@@ -72,7 +72,7 @@ tailbond works without Tailscale. With Tailscale running on the server (`sudo ta
 
 - **Tailnet access for bonded devices.** Traffic from the tunnel (`10.77.0.0/24`) to `100.64.0.0/10` and `fd7a:115c:a1e0::/48` leaves through `tailscale0` with masquerade. To the tailnet it looks like it comes from the server, so bonded devices don't show up as extra machines.
 - **MagicDNS for bonded devices.** The agent answers DNS on `10.77.0.1`: `*.ts.net` and your tailnet's MagicDNS names go to `100.100.100.100`, everything else to the server's normal resolver.
-- **Reaching bonded devices from the tailnet.** The `server-up` hook runs `tailscale set --advertise-routes=10.77.0.0/24` and keeps any routes you already advertise. **Approve the route once:** open the [admin console](https://login.tailscale.com/admin/machines), find this machine, choose **Edit route settings**, and enable `10.77.0.0/24`. The dashboard's **Tailscale** tab shows whether the route is advertised and approved.
+- **Reaching bonded devices from the tailnet (optional).** The `server-up` hook runs `tailscale set --advertise-routes=10.77.0.0/24` and keeps any routes you already advertise. Bonded devices reach your tailnet without it; approve it only if your Tailscale machines should reach the bonded devices (it exposes them to your tailnet, under your ACLs). **To approve it:** open the [admin console](https://login.tailscale.com/admin/machines), find this machine, choose **Edit route settings**, and enable `10.77.0.0/24`. The dashboard's **Tailscale** tab shows whether the route is advertised and approved.
 - **A real TLS certificate.** If HTTPS certificates are enabled for your tailnet (admin console → DNS → HTTPS Certificates), the agent runs `tailscale cert` for `<server>.<tailnet>.ts.net`. mqvpn then uses that certificate, and devices check it by name even though they connect to your public address. Without it, the agent creates a self-signed certificate, and its SHA-256 fingerprint goes into every pairing link.
 
 If you switch between the self-signed and the Tailscale certificate (by turning tailnet HTTPS on or off), pair your devices again: the old links pin the old certificate.
@@ -160,8 +160,10 @@ allow installs from their browser once; the page shows those prompts.
 
   Keep tcp 80 and 8077 to the server open for the people whose devices should
   ask to connect (the phone page and pair requests use them). A tagged server
-  has no owner, so name its approvers (or set a password) in the same step;
-  setup health warns until you do.
+  has no owner: add the approvers (or a password) **before** tagging it,
+  so there's no moment when anyone can approve; setup health warns while a
+  tagged server has neither. The `grants` above only narrow anything once
+  your policy's default allow-all rule is removed.
 
 **With a QR code** (phone and computer, or a travel router):
 
