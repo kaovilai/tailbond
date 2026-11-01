@@ -137,11 +137,23 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
 
         AskCard(state.ask, server, { server = it }, actions)
 
+        // while asking, the other ways would only distract (and "go back to
+        // the page" reads like a mistake to someone who just came from it)
+        val asking = state.ask is AskState.Asking || state.ask is AskState.Waiting
+        if (asking) {
+            Text(
+                "Other ways to add this phone show up here again if you tap Cancel.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Or use the home server's page", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Came here from your home server's page? Go back to it in your browser and tap Add this phone.",
+                    "Came here from your home server's page? Go back to it in your browser and tap step 2, Open tailbond and ask.",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
@@ -215,9 +227,9 @@ fun askMessage(s: AskState): Pair<String, String>? = when (s) {
     AskState.Idle -> null
     is AskState.Asking -> "Asking ${s.server}…" to "Looking for ${s.server} on your Tailscale network."
     is AskState.Waiting -> "Waiting for approval on ${s.server}…" to
-        "Ask whoever runs ${s.server} to open its tailbond page (http://${s.server}:8077 on a computer, or a Flint 3's " +
-        "admin panel → VPN → tailbond) and tap Approve next to \"${s.name}\"; the request is at the top of that page, on a phone too. Keep this screen open; " +
-        "tailbond continues by itself once approved."
+        "Ask whoever runs ${s.server} to approve \"${s.name}\" on ${s.server}'s tailbond page (it's at the top of http://${s.server}:8077). " +
+        (if (s.seenAs.isNotBlank()) "There it shows as ${s.seenAs}, so they can tell it's this phone. " else "") +
+        "You can switch to another app to message them; tailbond keeps waiting for 10 minutes and carries on by itself once approved."
     is AskState.Declined -> "${s.server} said no" to "Whoever runs ${s.server} declined this phone. Ask them, then ask again."
     is AskState.Expired -> "Nobody approved it in time" to "The request ran out after 10 minutes. Ask again when someone can approve it on ${s.server}."
     is AskState.Failed -> when (s.failure) {

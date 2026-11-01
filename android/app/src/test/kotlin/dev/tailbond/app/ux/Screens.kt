@@ -56,7 +56,8 @@ class Screens : UxRender() {
         tall = 1100, search = "tailbond://pair?d=eyJ2IjoxLCJuYW1lIjoicGl4ZWwt",
     )
     // "Ask to connect" over Tailscale
-    @Test fun askWaiting() = app("02b-pairing-ask-waiting", UiState(settings = AppSettings(onboarded = true), ask = AskState.Waiting("homebox", "pixel-8")), tall = 1100)
+    @Test fun askFromPhonePage() = app("02a-pairing-asking-from-phone-page", UiState(settings = AppSettings(onboarded = true), ask = AskState.Asking("homebox")), tall = 1100)
+    @Test fun askWaiting() = app("02b-pairing-ask-waiting", UiState(settings = AppSettings(onboarded = true), ask = AskState.Waiting("homebox", "pixel-8", "pixel-8 · sam@example.com · 100.101.8.8")), tall = 1100)
     @Test fun askNotFound() = app("02c-pairing-ask-not-found", UiState(settings = AppSettings(onboarded = true), ask = AskState.Failed("homebox", PairRequestClient.Failure.NOT_FOUND)), tall = 1100)
     @Test fun askDeclined() = app("02d-pairing-ask-declined", UiState(settings = AppSettings(onboarded = true), ask = AskState.Declined("homebox")), tall = 1100)
     @Test fun askApproved() = app("02e-pairing-ask-approved-confirm", UiState(settings = AppSettings(onboarded = true), pending = UxFixtures.profile), route = Routes.PAIR)

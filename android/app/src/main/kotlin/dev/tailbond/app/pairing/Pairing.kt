@@ -79,6 +79,24 @@ sealed interface PairingResult {
 object Pairing {
     const val SCHEME = "tailbond"
     const val HOST = "pair"
+    const val ASK_HOST = "ask"
+
+    private val HOSTNAME = Regex("^[A-Za-z0-9]([A-Za-z0-9.:\\[\\]-]{0,252})$")
+
+    /**
+     * The server name in `tailbond://ask?server=<name>`, the link on the home
+     * server's phone page ("Open tailbond and ask homebox"); null for any
+     * other URI or a name that isn't a plain host name or address.
+     */
+    fun askServer(text: String): String? = try {
+        val uri = URI(text.trim())
+        if (!uri.scheme.equals(SCHEME, ignoreCase = true) || !uri.host.equals(ASK_HOST, ignoreCase = true)) null
+        else uri.rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("server=") }
+            ?.let { java.net.URLDecoder.decode(it.removePrefix("server="), "UTF-8").trim() }
+            ?.takeIf { HOSTNAME.matches(it) }
+    } catch (_: Exception) {
+        null
+    }
 
     private val HEX64 = Regex("^[0-9a-fA-F]{64}$")
 

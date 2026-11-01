@@ -66,7 +66,8 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         val data = intent?.data
         if (intent?.action == Intent.ACTION_VIEW && data?.scheme == Pairing.SCHEME) {
-            vm.offerPairing(data.toString())
+            val ask = Pairing.askServer(data.toString())
+            if (ask != null) vm.askFromLink(ask) else vm.offerPairing(data.toString())
         } else if (intent?.action == ACTION_CONNECT && vm.profile.value != null) {
             requestConnect()
         }
@@ -127,7 +128,8 @@ class MainActivity : ComponentActivity() {
         if (host.isEmpty()) return
         val withPort = if (':' in host) host else "$host:$AGENT_PORT"
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, "http://$withPort/#add-phone".toUri()))
+            // the server's phone page ("Get tailbond"), also served on the dashboard port
+            startActivity(Intent(Intent.ACTION_VIEW, "http://$withPort/get".toUri()))
         } catch (_: ActivityNotFoundException) {
         }
     }
