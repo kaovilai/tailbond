@@ -11,7 +11,9 @@
 # UI saved there (UI password, imported pairing) survives a re-render; so do
 # the agent-managed server.users and client.disconnected. Path sections in
 # UCI replace client.paths; with none (the default), the paths the panel
-# saved are kept. Path names are OpenWrt network names (wan, wwan,
+# saved are kept; the same goes for 'config bypass' sections and the bypass
+# rules, while the server list and failover policy (agent-managed) are
+# always kept. Path names are OpenWrt network names (wan, wwan,
 # tethering, modem_0001) or devices; the agent resolves them at runtime.
 # Env (tests): TB_CONF (default /etc/tailbond/tailbond.json), TB_JSHN.
 
@@ -71,6 +73,67 @@ keep_paths() {
 		json_close_object
 		i=$((i + 1))
 	done
+}
+
+# Re-add the agent-managed server list and failover policy.
+keep_servers() {
+	local i=0 name en
+	json_add_array servers
+	while name="$(old "@.client.servers[$i].name")" && [ -n "$name" ]; do
+		json_add_object ""
+		json_add_string name "$name"
+		json_add_string pairing_uri "$(old "@.client.servers[$i].pairing_uri")"
+		en="$(old "@.client.servers[$i].enabled")"
+		[ -n "$en" ] && json_add_boolean enabled "$(bool "$en")"
+		json_close_object
+		i=$((i + 1))
+	done
+	json_close_array
+}
+
+keep_failover() {
+	local k v
+	[ -n "$(old @.client.failover)" ] || return 0
+	json_add_object failover
+	for k in policy server; do
+		v="$(old "@.client.failover.$k")"
+		[ -n "$v" ] && json_add_string "$k" "$v"
+	done
+	for k in switch_after_sec failback_after_sec probe_every_sec; do
+		v="$(old "@.client.failover.$k")"
+		[ -n "$v" ] && json_add_int "$k" "$v"
+	done
+	json_close_object
+}
+
+# One bypass rule: from the current JSON (keep_bypass) or a UCI 'bypass'
+# section (add_bypass_uci). get KEY prints the value.
+bypass_obj() {
+	local k v
+	json_add_object ""
+	for k in id kind match ip target wan note; do
+		v="$("$1" "$k")"
+		[ -n "$v" ] && json_add_string "$k" "$v"
+	done
+	v="$("$1" enabled)"
+	[ -n "$v" ] && json_add_boolean enabled "$(bool "$v")"
+	json_close_object
+}
+bypass_json_get() { old "@.client.bypass[$bi].$1"; }
+keep_bypass() {
+	bi=0
+	while [ -n "$(old "@.client.bypass[$bi].id")" ]; do
+		bypass_obj bypass_json_get
+		bi=$((bi + 1))
+	done
+}
+bypass_uci_get() {
+	if [ "$1" = id ]; then
+		# UCI section names may be anonymous (cfgXXXXXX): ids are [a-z0-9]
+		echo "u$bi"
+	else
+		uci -q get "tailbond.@bypass[$bi].$1"
+	fi
 }
 
 add_path() {
@@ -153,6 +216,22 @@ render() {
 	done
 	[ "$i" -gt 0 ] || keep_paths
 	json_close_array
+	keep_servers
+	keep_failover
+	# 'config bypass' sections replace the panel's rules (like paths)
+	json_add_array bypass
+	bi=0
+	while uci -q get "tailbond.@bypass[$bi]" >/dev/null; do
+		bypass_obj bypass_uci_get
+		bi=$((bi + 1))
+	done
+	[ "$bi" -gt 0 ] || keep_bypass
+	json_close_array
+	local v
+	v="$(cfg client.bypass_mark_mask)"
+	[ -n "$v" ] && json_add_string bypass_mark_mask "$v"
+	v="$(cfg client.bypass_local_dns)"
+	[ -n "$v" ] && json_add_boolean bypass_local_dns "$(bool "$v")"
 	json_close_object
 
 	mkdir -p "$(dirname "$CONF")"

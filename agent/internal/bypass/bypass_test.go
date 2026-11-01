@@ -55,6 +55,12 @@ func TestMarks(t *testing.T) {
 	}
 }
 
+func TestMarksLine(t *testing.T) {
+	if got := MarksLine(0); got != "0x07000000 0x01000000 0x02000000\n" {
+		t.Fatal(got)
+	}
+}
+
 func TestRenderNft(t *testing.T) {
 	f := Render(rules(t), opts())
 	n := f.Nft

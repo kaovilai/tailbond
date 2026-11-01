@@ -3,6 +3,9 @@
 #
 # client-down: tunnel down (CLIENT role). Same env as client-up.
 #
+# A server switch (TB_SWITCH=1, multiple servers) runs this with the old
+# server's env, then client-up with the new one's.
+#
 # Kill switch on (tailbond.client.kill_switch=1): LAN traffic keeps its
 # policy rules but table $table becomes a blackhole, so nothing leaks to
 # the WANs until client-up restores the tunnel route. Off: the LAN rules go
@@ -82,7 +85,9 @@ if [ -n "$TB_PURGE" ]; then
 	log "client-down: removed tailbond network/firewall config"
 fi
 
-if [ "$killswitch" = 1 ]; then
+if [ -n "$TB_SWITCH" ]; then
+	log "client-down: leaving server ${TB_SERVER_NAME:-$server_ip}; another one takes over"
+elif [ "$killswitch" = 1 ]; then
 	log "client-down: kill switch armed, LAN ($lans) blocked until the tunnel is back"
 else
 	log "client-down: LAN ($lans) back on the WANs"

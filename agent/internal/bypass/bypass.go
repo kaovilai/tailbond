@@ -332,6 +332,15 @@ func localServers(r config.BypassRule, opt Options) []string {
 	return out
 }
 
+// MarksLine is the hook's marks file: "<mask> <direct> <tunnel>".
+func MarksLine(mask uint32) string {
+	if mask == 0 {
+		mask = DefaultMask
+	}
+	d, t, _ := Marks(mask)
+	return fmt.Sprintf("%s %s %s\n", hex(mask), hex(d), hex(t))
+}
+
 // WANList is the hook's WAN file: "<network> <mark> <table>" per line.
 func (f Files) WANList() string {
 	var b strings.Builder

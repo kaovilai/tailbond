@@ -136,6 +136,7 @@ func (a *Agent) applyBypass(force bool) {
 		"bypass-ipset.conf":  f.DnsmasqIPSet,
 		"bypass-wans":        f.WANList(),
 		"bypass-domains":     strings.Join(f.Domains, "\n"),
+		"bypass-marks":       bypass.MarksLine(mask),
 	}
 	var all strings.Builder
 	for _, k := range slices.Sorted(maps.Keys(files)) {

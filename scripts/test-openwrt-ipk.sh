@@ -2,8 +2,11 @@
 # Install test of the .ipk in emulated OpenWrt 23.05 arm64 (podman + qemu):
 # install, GL admin panel files present, the agent runs from the rendered
 # config, the GL /rpc backend module ("tailbond" object, run with the
-# router's own lua + cjson) answers status/api calls against it, uninstall
-# leaves nothing behind.
+# router's own lua + cjson) answers status/api calls against it, bypass
+# rules (the image's plain dnsmasq has no nftset: website rules wait, the
+# rest loads; nft/ip checks need netlink, i.e. a native arm64 host),
+# render-config keeps the panel's servers and rules, uninstall leaves
+# nothing behind.
 #
 #   scripts/test-openwrt-ipk.sh [path/to/tailbond_*_aarch64_cortex-a53.ipk]
 #
@@ -87,6 +90,60 @@ grep '^badjoin ' /tmp/rpc.out | grep -q '"code":400' && ok "rpc api POST passes 
 grep '^login ' /tmp/rpc.out | grep -q 'not_allowed' && ok "login path refused" || bad "login allowed"
 grep '^escape ' /tmp/rpc.out | grep -q 'not_allowed' && ok "path escape refused" || bad "escape allowed"
 grep '^info ' /tmp/rpc.out | grep -q '"role":"client"' && ok "rpc info" || bad "rpc info"
+
+echo "== bypass rules (this image's dnsmasq has no nftset: website rules wait, the rest applies)"
+cat >/tmp/bypass.lua <<'LUA'
+local cjson = require "cjson"
+local m = dofile("/usr/lib/oui-httpd/rpc/tailbond")
+local function show(name, r) print(name .. " " .. cjson.encode(r)) end
+show("add1", m.api({ method = "POST", path = "/api/bypass", body = { kind = "domain", match = "bank.example", target = "direct", note = "Bank" } }))
+show("add2", m.api({ method = "POST", path = "/api/bypass", body = { kind = "device", match = "aa:bb:cc:dd:ee:ff", target = "tunnel", note = "Work laptop" } }))
+show("bad", m.api({ method = "POST", path = "/api/bypass", body = { kind = "port", match = "udp/99999", target = "direct" } }))
+show("lan", m.api({ method = "GET", path = "/api/lan-clients" }))
+LUA
+lua /tmp/bypass.lua >/tmp/bypass.out 2>&1
+grep '^add1 ' /tmp/bypass.out | grep -q '"ok":true' && grep '^add2 ' /tmp/bypass.out | grep -q '"ok":true' && ok "rpc POST /api/bypass (website + device)" || { bad "bypass add"; cat /tmp/bypass.out; }
+grep '^bad ' /tmp/bypass.out | grep -q '"code":400' && ok "invalid rule refused (400)" || bad "bad rule accepted"
+grep '^lan ' /tmp/bypass.out | grep -q '"ok":true' && ok "rpc GET /api/lan-clients" || bad "lan-clients"
+i=0; while [ $i -lt 20 ] && [ ! -s /etc/tailbond/state/bypass-status.json ]; do sleep 1; i=$((i+1)); done
+cat /etc/tailbond/state/bypass-status.json 2>/dev/null
+[ -x /usr/lib/tailbond/hooks/bypass-apply ] && ok "bypass-apply hook installed" || bad "no bypass-apply"
+grep -q 'nftset=/bank.example/4#inet#tailbond#' /etc/tailbond/state/bypass-nftset.conf && grep -q 'ether saddr aa:bb:cc:dd:ee:ff' /etc/tailbond/state/bypass.nft \
+	&& ok "agent rendered the nft table and the dnsmasq drop-in" || bad "rendered files"
+jsonfilter -i /etc/tailbond/state/bypass-status.json -e '@.domains' | grep -qx none && ok "plain dnsmasq detected: website rules wait (domains=none)" || bad "domains status"
+if nft list tables >/dev/null 2>&1; then
+	grep -q dnsmasq-full /etc/tailbond/state/bypass-status.json && ok "the reason names dnsmasq-full" || bad "reason"
+	nft list table inet tailbond | grep -q 'ether saddr aa:bb:cc:dd:ee:ff' && ok "nft table inet tailbond loaded (device rule)" || bad "nft table"
+	ip rule | grep -q 'fwmark 0x2000000/0x7000000 lookup 77' && ip rule | grep -q 'fwmark 0x1000000/0x7000000 lookup main' \
+		&& ok "ip rules for 'always tailbond' and 'direct'" || { bad "ip rules"; ip rule; }
+	[ ! -e /tmp/dnsmasq.d/tailbond-bypass.conf ] && ok "no dnsmasq drop-in without nftset support" || bad "drop-in written for plain dnsmasq"
+	TB_BYPASS_ACTION=clear /usr/lib/tailbond/hooks/bypass-apply >/dev/null 2>&1
+	! nft list table inet tailbond >/dev/null 2>&1 && ! ip rule | grep -q 0x7000000 && ok "clear removes the table and rules" || bad "clear"
+else
+	echo "  SKIP nft/ip checks: no netlink under qemu-user (CI runs them on a native arm64 runner)"
+fi
+
+echo "== render-config keeps panel-managed servers and rules; UCI bypass sections replace the rules"
+lua -e '
+local cjson = require "cjson"
+local f = io.open("/etc/tailbond/tailbond.json"); local c = cjson.decode(f:read("*a")); f:close()
+c.client.servers = { { name = "homebox", pairing_uri = "tailbond://pair?d=x" }, { name = "vps", pairing_uri = "tailbond://pair?d=y", enabled = false } }
+c.client.failover = { policy = "prefer", failback_after_sec = 300 }
+f = io.open("/etc/tailbond/tailbond.json", "w"); f:write(cjson.encode(c)); f:close()'
+/usr/lib/tailbond/render-config --force
+J=/etc/tailbond/tailbond.json
+[ "$(jsonfilter -i $J -e '@.client.servers[1].name')" = vps ] && [ "$(jsonfilter -i $J -e '@.client.servers[1].enabled')" = false ] \
+	&& [ "$(jsonfilter -i $J -e '@.client.failover.failback_after_sec')" = 300 ] && ok "servers + failover kept" || { bad "servers"; cat $J; }
+[ "$(jsonfilter -i $J -e '@.client.bypass[0].match')" = bank.example ] && [ "$(jsonfilter -i $J -e '@.client.bypass[1].target')" = tunnel ] \
+	&& ok "panel bypass rules kept" || bad "bypass kept"
+[ "$(jsonfilter -i $J -e '@.client.bypass_mark_mask')" = 0x07000000 ] && ok "bypass_mark_mask from UCI" || bad "mark mask"
+uci add tailbond bypass >/dev/null && uci set tailbond.@bypass[-1].kind=port && uci set tailbond.@bypass[-1].match=udp/4500 \
+	&& uci set tailbond.@bypass[-1].target=wan && uci set tailbond.@bypass[-1].wan=wwan && uci commit tailbond
+/usr/lib/tailbond/render-config
+[ "$(jsonfilter -i $J -e '@.client.bypass[0].match')" = udp/4500 ] && [ "$(jsonfilter -i $J -e '@.client.bypass[0].id')" = u0 ] \
+	&& [ -z "$(jsonfilter -i $J -e '@.client.bypass[1]')" ] && ok "UCI 'config bypass' sections replace the rules" || { bad "uci bypass"; cat $J; }
+/usr/bin/tailbondd -config $J -version >/dev/null && kill -0 "$pid" 2>/dev/null && ok "agent still running" || true
+
 kill "$pid" 2>/dev/null; sleep 1
 lua -e 'local m=dofile("/usr/lib/oui-httpd/rpc/tailbond"); print(require("cjson").encode(m.status()))' | grep -q agent_down && ok "agent down reported as agent_down" || bad "agent_down"
 
@@ -101,4 +158,4 @@ done
 exit $fail
 IN
 chmod +x "$TMP/test.sh"
-podman run --rm --platform linux/arm64 -v "$TMP:/t:z" "$IMAGE" /t/test.sh 2>&1 | grep -v 'image platform'
+podman run --rm --cap-add NET_ADMIN --platform linux/arm64 -v "$TMP:/t:z" "$IMAGE" /t/test.sh 2>&1 | grep -v 'image platform'

@@ -6,6 +6,7 @@
 # config the hooks added.
 if [ "$1" != "upgrade" ]; then
 	/usr/lib/tailbond/hooks/portal-close >/dev/null 2>&1
+	TB_BYPASS_ACTION=clear /usr/lib/tailbond/hooks/bypass-apply >/dev/null 2>&1
 	TB_PURGE=1 TB_TUN=tb0 /usr/lib/tailbond/hooks/client-down >/dev/null 2>&1
 	TB_PURGE=1 TB_TUN=tb0 /usr/lib/tailbond/hooks/server-down >/dev/null 2>&1
 fi
