@@ -269,7 +269,7 @@ No code changed after round 12. Decisions for whoever continues:
 ## Before / after (key screens)
 
 Before = the earlier loops' last renders in the main checkout
-(`out/ux/…`); after =
+(`out/ux/…` in the main checkout); after =
 `out/ux/final/round-12/…` in this worktree. Neither is committed.
 
 | Screen | Before | After |

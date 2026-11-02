@@ -1,0 +1,24 @@
+tailbond
+Copyright 2026 Tiger Kaovilai and tailbond contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes or builds against third-party software:
+
+- mqvpn (https://github.com/mp0rta/mqvpn), Apache-2.0, Copyright (c) 2026 mp0rta
+  and mqvpn contributors. Included as the git submodule third_party/mqvpn, with
+  patches in patches/mqvpn/ and a modified copy of its Android SDK modules in
+  android/mqvpn-sdk/ (see android/NOTICE). mqvpn bundles xquic (Apache-2.0),
+  BoringSSL (ISC/OpenSSL-style), lwIP (BSD-3-Clause) and libevent
+  (BSD-3-Clause, linked); see their notices in the submodule.
+- github.com/miekg/dns (BSD-3-Clause)
+- github.com/quic-go/quic-go (MIT)
+- rsc.io/qr (BSD-3-Clause)
+- golang.org/x/crypto, golang.org/x/net, golang.org/x/sys (BSD-3-Clause)
+- ZXing core (Apache-2.0), AndroidX / Jetpack Compose (Apache-2.0),
+  Kotlin (Apache-2.0) and other Android build dependencies listed in
+  android/gradle/libs.versions.toml (Apache-2.0 unless noted there)
+
+Trademarks: Tailscale, GL.iNet, Speedify, Peplink and SpeedFusion are
+trademarks of their respective owners. tailbond is not affiliated with or
+endorsed by them; names are used only to describe compatibility.

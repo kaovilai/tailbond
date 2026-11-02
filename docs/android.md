@@ -4,7 +4,7 @@
 it bonds Wi-Fi + cellular (+ Ethernet) to your home server's mqvpn with
 Multipath QUIC, and through that server reaches the internet and your
 tailnet. The phone runs only this VPN app, not Tailscale (Android allows one
-VPN at a time; see [findings.md](findings.md)).
+VPN at a time).
 
 It is built on mqvpn v0.19.0's Android SDK (`third_party/mqvpn/android`):
 
