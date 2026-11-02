@@ -563,12 +563,13 @@ func (a *Agent) installIPK(ctx context.Context, m *update.Manifest) error {
 	if dir == "" {
 		dir = defaultPkgDir
 	}
+	// the installed package, as /usr/lib/tailbond/pkg-cache records it
+	// (update-ipk saves the running one itself when there's none)
 	prev := ""
-	if ents, err := os.ReadDir(dir); err == nil {
-		var newest time.Time
-		for _, e := range ents {
-			if info, err := e.Info(); err == nil && strings.HasSuffix(e.Name(), ".ipk") && e.Name() != art.Name && info.ModTime().After(newest) {
-				newest, prev = info.ModTime(), filepath.Join(dir, e.Name())
+	if b, err := os.ReadFile(filepath.Join(dir, "current")); err == nil {
+		if cur := strings.TrimSpace(string(b)); cur != "" && cur != art.Name && !strings.ContainsAny(cur, "/\\") {
+			if _, err := os.Stat(filepath.Join(dir, cur)); err == nil {
+				prev = filepath.Join(dir, cur)
 			}
 		}
 	}
