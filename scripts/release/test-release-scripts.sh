@@ -71,6 +71,11 @@ for f in tailbond-1.2.3-beta.4.apk tailbond-server-1.2.3-0.beta.4.fc44.x86_64.rp
 done
 mb="$("$HERE/make-manifest.sh" --version 1.2.3-beta.4 --channel beta --dir "$B" --out "$W/channels" --base-url https://x --security 2>/dev/null)"
 check "beta: version_code below the release (1020204)" test "$(jq -r '.artifacts[] | select(.kind == "apk") | .version_code' "$mb")" = 1020204
+RC="$W/rc"
+mkdir -p "$RC"
+echo apk >"$RC/tailbond-1.2.3-rc.apk"
+mrc="$("$HERE/make-manifest.sh" --version 1.2.3-rc --channel rc --dir "$RC" --out "$W/channels" --base-url https://x 2>/dev/null || true)"
+check "pre-release without a number counts as 1 (1020201, as the app)" test "$(jq -r '.artifacts[]? | select(.kind == "apk") | .version_code' "$mrc" 2>/dev/null)" = 1020201
 check "beta: security flag, three artifacts" test "$(jq -r '[.security, (.artifacts | length)] | map(tostring) | join(" ")' "$mb")" = "true 3"
 
 echo "== sign-manifest.sh"

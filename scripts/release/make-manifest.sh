@@ -20,8 +20,9 @@
 #
 # version_code (Android) defaults to MAJOR*1000000 + MINOR*10000 + PATCH*100
 # for a release (0.2.0 -> 20000) and that minus 100 plus N for a pre-release
-# ending in a number N <= 99 (1.2.3-beta.4 -> 1020204), so a beta sorts below
-# its release; android/scripts/build-release-apk.sh uses the same rule.
+# ending in a number N, 1..99; none or 0 counts as 1 (1.2.3-beta.4 -> 1020204,
+# 1.2.3-rc -> 1020201), so a beta sorts below its release; the app's
+# build.gradle.kts (android/scripts/build-release-apk.sh) uses the same rule.
 #
 # Output: DIR/<channel>.json (default DIR: .); prints its path.
 # Needs: jq, sha256sum. Non-interactive.
@@ -69,8 +70,9 @@ RELEASED="${RELEASED:-$(date -u ${SOURCE_DATE_EPOCH:+-d "@$SOURCE_DATE_EPOCH"} +
 if [ -z "$VCODE" ]; then
     VCODE=$(( MAJ * 1000000 + MIN * 10000 + PAT * 100 ))
     if [ -n "$PRE" ]; then
-        n=0
+        n=1 # no trailing number, or 0: 1 (as the app's build.gradle.kts)
         [[ "$PRE" =~ ([0-9]+)$ ]] && n=$(( 10#${BASH_REMATCH[1]} ))
+        [ "$n" -ge 1 ] || n=1
         [ "$n" -le 99 ] || die "pre-release number $n > 99: pass --version-code"
         VCODE=$(( VCODE - 100 + n ))
     fi
