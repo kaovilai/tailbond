@@ -18,10 +18,20 @@
 #                             TAILBONDD_BIN=/path/to/linux-arm64/tailbondd
 #   out/android/tailbond-debug.apk  optional (or TAILBOND_APK): the Android
 #                             app a home server offers on its phone page
-# Env: TB_VERSION (default: git describe), TB_ARCHS (space separated).
+# Env: TB_VERSION (default: <tag>-r1 on a v* tag, else 0.1.0-r<commit count>;
+#      a leading v is dropped), TB_ARCHS (space separated),
+#      TB_UPDATE_PUBKEY / TB_UPDATE_SOURCE (update key + source compiled into
+#      tailbondd, scripts/release/ldflags.sh).
+#
+# Versions: TB_VERSION is <semver>-r<N>. The file name keeps it as is
+# (tailbond_1.2.3-beta.1-r1_<arch>.ipk); the control Version turns the
+# pre-release dash into "~" (1.2.3~beta.1-r1) so opkg orders a beta below
+# its release, as dpkg does.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=../../scripts/release/ldflags.sh
+. "$ROOT/scripts/release/ldflags.sh"
 PKG="$ROOT/packaging/openwrt"
 OUT="$ROOT/out/ipk"
 MQVPN_BIN="${MQVPN_BIN:-$ROOT/out/aarch64/mqvpn}"
@@ -33,11 +43,31 @@ for c in tar gzip file; do
     command -v "$c" >/dev/null || die "'$c' not found"
 done
 
-# Version: 0.1.0 plus git distance, valid for opkg's version compare.
+# Version: on a release tag <tag>-r1; else 0.1.0 plus git distance, valid
+# for opkg's version compare. tailbondd's own version (main.version) is
+# TB_VERSION, except for those untagged builds: git describe, which the
+# agent never treats as a release (no self-updates from a dev build).
+AGENT_VERSION=""
 if [ -z "${TB_VERSION:-}" ]; then
-    n="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
-    TB_VERSION="0.1.0-r$n"
+    tag="$(git -C "$ROOT" describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null || true)"
+    if [ -n "$tag" ]; then
+        TB_VERSION="${tag#v}-r1"
+    else
+        n="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
+        TB_VERSION="0.1.0-r$n"
+        AGENT_VERSION="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)"
+    fi
 fi
+TB_VERSION="$(tb_norm_version "$TB_VERSION")"
+case "$TB_VERSION" in
+    *-r[0-9]*) ;;
+    *) die "TB_VERSION=$TB_VERSION: needs an -rN revision (e.g. ${TB_VERSION}-r1)" ;;
+esac
+# control Version: the first dash before the -rN revision is a semver
+# pre-release separator -> "~"
+CTL_VERSION="$TB_VERSION"
+base="${TB_VERSION%-r*}"
+case "$base" in *-*) CTL_VERSION="${base%%-*}~${base#*-}-${TB_VERSION##*-}" ;; esac
 
 is_static_arm64() {
     case "$(file -b "$1")" in
@@ -60,8 +90,9 @@ elif [ -d "$ROOT/agent/cmd/tailbondd" ]; then
     command -v go >/dev/null || die "go not found (needed to build agent/)"
     echo "=== Building tailbondd (linux/arm64, static)"
     tailbondd="$stage/tailbondd"
+    ldflags="$(tb_ldflags "${AGENT_VERSION:-$TB_VERSION}")"
     (cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-        go build -trimpath -ldflags "-s -w" -o "$tailbondd" ./cmd/tailbondd)
+        go build -trimpath -ldflags "$ldflags" -o "$tailbondd" ./cmd/tailbondd)
 else
     die "no agent/ in this tree: set TAILBONDD_BIN to a linux/arm64 tailbondd binary"
 fi
@@ -83,6 +114,13 @@ install -m 0600 "$PKG/files/etc/config/tailbond" "$data/etc/config/tailbond"
 install -m 0755 "$PKG/files/etc/uci-defaults/90-tailbond" "$data/etc/uci-defaults/90-tailbond"
 install -m 0755 "$PKG/files/usr/lib/tailbond/render-config" "$data/usr/lib/tailbond/render-config"
 install -m 0755 "$PKG/files/etc/hotplug.d/iface/90-tailbond" "$data/etc/hotplug.d/iface/90-tailbond"
+# Updates (docs/updates.md): the agent's installer with rollback, the
+# package cache helper, the reinstall-after-firmware-upgrade script (copied
+# to /etc/tailbond/pkg/ by postinst) and the sysupgrade hook.
+for f in update-ipk pkg-cache reinstall; do
+    install -m 0755 "$PKG/files/usr/lib/tailbond/$f" "$data/usr/lib/tailbond/$f"
+done
+install -m 0644 "$PKG/files/lib/upgrade/tailbond.sh" "$data/lib/upgrade/tailbond.sh"
 install -m 0644 "$PKG/hooks/lib.sh" "$data/usr/lib/tailbond/hook-lib.sh"
 for h in client-up client-down server-up server-down portal-open portal-close bypass-apply; do
     install -m 0755 "$PKG/hooks/$h" "$data/usr/lib/tailbond/hooks/$h"
@@ -132,7 +170,7 @@ mkdir -p "$OUT"
 for arch in $ARCHS; do
     ctl="$stage/control-$arch"
     install -d -m 0755 "$ctl"
-    sed -e "s/@VERSION@/$TB_VERSION/" -e "s/@ARCH@/$arch/" -e "s/@SIZE@/$((size * 1024))/" \
+    sed -e "s/@VERSION@/$CTL_VERSION/" -e "s/@ARCH@/$arch/" -e "s/@SIZE@/$((size * 1024))/" \
         "$PKG/control/control.in" >"$ctl/control"
     install -m 0644 "$PKG/control/conffiles" "$ctl/conffiles"
     install -m 0755 "$PKG/control/postinst" "$ctl/postinst"

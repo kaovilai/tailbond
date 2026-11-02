@@ -1,0 +1,146 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# tailbond package cache helpers (/etc/tailbond/pkg), used by the package
+# scripts, update-ipk and the sysupgrade hook (/lib/upgrade/tailbond.sh).
+#
+#   pkg-cache rc-local-add       add the boot line to /etc/rc.local (idempotent)
+#   pkg-cache rc-local-remove    remove it
+#   pkg-cache install-reinstall  copy the reinstall script to /etc/tailbond/pkg/
+#   pkg-cache seed               no cached ipk of the running version: ask the
+#                                running agent for its own package
+#                                (GET /tailbond-glinet.ipk rebuilds it)
+#   pkg-cache keep NEW [PREV]    keep exactly these two ipks; NEW is current
+#   pkg-cache keep-list LIST     sysupgrade: in LIST (the files to keep), only
+#                                the current ipk, plus the reinstall script
+#   pkg-cache installed-version  the installed package version ("-" for "~")
+#   pkg-cache ipk-version FILE   an ipk's version ("-" for "~")
+#
+# /etc/tailbond/pkg (kept across firmware upgrades with "Keep settings", as
+# all of /etc/tailbond/ is, by /lib/upgrade/keep.d/tailbond):
+#   tailbond_<version>_<arch>.ipk  the installed package and the previous one
+#   current, previous              their file names
+#   reinstall                      run at boot from /etc/rc.local: reinstalls
+#                                  the package after a firmware upgrade
+# Env (tests): TB_PKG_DIR, TB_RC_LOCAL, TB_AGENT (http://127.0.0.1:8077).
+
+PKGDIR="${TB_PKG_DIR:-/etc/tailbond/pkg}"
+RC_LOCAL="${TB_RC_LOCAL:-/etc/rc.local}"
+AGENT="${TB_AGENT:-http://127.0.0.1:8077}"
+INFO=/usr/lib/opkg/info/tailbond.control
+MARK="# tailbond-reinstall"
+LINE="[ -x $PKGDIR/reinstall ] && $PKGDIR/reinstall boot </dev/null >/dev/null 2>&1 & $MARK"
+
+log() { logger -t tailbond "$*" 2>/dev/null; echo "$*" >&2; }
+
+rc_local_add() {
+	if [ -f "$RC_LOCAL" ] && grep -qF "$MARK" "$RC_LOCAL"; then
+		# One line, current form.
+		[ "$(grep -cF "$MARK" "$RC_LOCAL")" = 1 ] && grep -qxF "$LINE" "$RC_LOCAL" && return 0
+		rc_local_remove
+	fi
+	if [ ! -f "$RC_LOCAL" ]; then
+		printf '%s\n%s\nexit 0\n' "# Put your custom commands here that should be executed once" "$LINE" >"$RC_LOCAL"
+		return 0
+	fi
+	# Before the first top-level "exit 0" (GL's rc.local ends with one),
+	# else at the end.
+	awk -v line="$LINE" '
+		!done && /^[[:space:]]*exit[[:space:]]+0[[:space:]]*$/ { print line; done = 1 }
+		{ print }
+		END { if (!done) print line }' "$RC_LOCAL" >"$RC_LOCAL.tb.$$" &&
+		cat "$RC_LOCAL.tb.$$" >"$RC_LOCAL" # keep the file's inode and mode
+	rm -f "$RC_LOCAL.tb.$$"
+}
+
+rc_local_remove() {
+	[ -f "$RC_LOCAL" ] || return 0
+	grep -vF "$MARK" "$RC_LOCAL" >"$RC_LOCAL.tb.$$"
+	cat "$RC_LOCAL.tb.$$" >"$RC_LOCAL"
+	rm -f "$RC_LOCAL.tb.$$"
+}
+
+install_reinstall() {
+	mkdir -p "$PKGDIR" && chmod 700 "$PKGDIR"
+	cp /usr/lib/tailbond/reinstall "$PKGDIR/reinstall.new" && chmod 755 "$PKGDIR/reinstall.new" &&
+		mv -f "$PKGDIR/reinstall.new" "$PKGDIR/reinstall"
+}
+
+# ver_of CONTROL_FILE_CONTENT on stdin -> Version, "~" back to "-"
+ver_of() { sed -n 's/^Version: *//p' | head -1 | tr '~' '-'; }
+installed_version() { [ -f "$INFO" ] && ver_of <"$INFO"; }
+ipk_version() { tar -xzOf "$1" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null | ver_of; }
+installed_arch() { [ -f "$INFO" ] && sed -n 's/^Architecture: *//p' "$INFO" | head -1; }
+
+seed() {
+	local cur ver arch name
+	cur="$(cat "$PKGDIR/current" 2>/dev/null)"
+	ver="$(installed_version)"
+	[ -n "$ver" ] || return 1
+	if [ -n "$cur" ] && [ -f "$PKGDIR/$cur" ] && [ "$(ipk_version "$PKGDIR/$cur")" = "$ver" ]; then
+		return 0
+	fi
+	arch="$(installed_arch)"
+	name="tailbond_${ver}_${arch:-all}.ipk"
+	mkdir -p "$PKGDIR" && chmod 700 "$PKGDIR"
+	if uclient-fetch -q -T 30 -O "$PKGDIR/$name.part" "$AGENT/tailbond-glinet.ipk" 2>/dev/null &&
+		[ "$(ipk_version "$PKGDIR/$name.part")" = "$ver" ]; then
+		mv -f "$PKGDIR/$name.part" "$PKGDIR/$name"
+		keep "$PKGDIR/$name" "$(cat "$PKGDIR/previous" 2>/dev/null)"
+		log "cached the installed package as $PKGDIR/$name"
+		return 0
+	fi
+	rm -f "$PKGDIR/$name.part"
+	log "could not cache the installed package (agent not running?)"
+	return 1
+}
+
+# keep NEW [PREV]: NEW/PREV are paths or names; copied in when outside.
+keep() {
+	local new prev f b
+	mkdir -p "$PKGDIR" && chmod 700 "$PKGDIR"
+	new="$(basename "$1")"
+	[ -f "$PKGDIR/$new" ] || cp "$1" "$PKGDIR/$new" || return 1
+	prev=""
+	if [ -n "${2:-}" ]; then
+		prev="$(basename "$2")"
+		if [ ! -f "$PKGDIR/$prev" ]; then
+			if [ -f "$2" ]; then cp "$2" "$PKGDIR/$prev" || prev=""; else prev=""; fi
+		fi
+	fi
+	[ "$prev" = "$new" ] && prev=""
+	for f in "$PKGDIR"/*.ipk; do
+		[ -e "$f" ] || continue
+		b="$(basename "$f")"
+		[ "$b" = "$new" ] || [ "$b" = "$prev" ] || rm -f "$f"
+	done
+	echo "$new" >"$PKGDIR/current"
+	if [ -n "$prev" ]; then echo "$prev" >"$PKGDIR/previous"; else rm -f "$PKGDIR/previous"; fi
+}
+
+# keep_list LIST: the conffile list sysupgrade is about to archive.
+keep_list() {
+	local list="$1" cur f
+	[ -n "$list" ] && [ -f "$list" ] || return 0
+	cur="$(cat "$PKGDIR/current" 2>/dev/null)"
+	# Only the current ipk travels (the backup is held in RAM and the
+	# previous one isn't needed to reinstall).
+	grep -v "^$PKGDIR/.*\.ipk\$" "$list" >"$list.tb" && cat "$list.tb" >"$list"
+	rm -f "$list.tb"
+	for f in ${cur:+"$PKGDIR/$cur"} "$PKGDIR/current" "$PKGDIR/reinstall" "$RC_LOCAL"; do
+		[ -f "$f" ] && ! grep -qxF "$f" "$list" && echo "$f" >>"$list"
+	done
+	return 0
+}
+
+case "${1:-}" in
+rc-local-add) rc_local_add ;;
+rc-local-remove) rc_local_remove ;;
+install-reinstall) install_reinstall ;;
+seed) seed ;;
+keep) shift; keep "$@" ;;
+keep-list) keep_list "${2:-}" ;;
+installed-version) installed_version ;;
+ipk-version) ipk_version "${2:?ipk}" ;;
+*) echo "usage: pkg-cache rc-local-add|rc-local-remove|install-reinstall|seed|keep NEW [PREV]|keep-list LIST|installed-version|ipk-version FILE" >&2; exit 2 ;;
+esac

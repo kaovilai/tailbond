@@ -1,0 +1,169 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reinstall tailbond after a firmware upgrade.
+#
+# A GL.iNet / OpenWrt firmware upgrade with "Keep settings" keeps
+# /etc/tailbond/ (/lib/upgrade/keep.d/tailbond), /etc/config/ and
+# /etc/rc.local, but not the package. The package keeps a copy of this
+# script in /etc/tailbond/pkg/reinstall and one line in /etc/rc.local that
+# runs it in the background at every boot:
+#
+#   reinstall boot    package installed: nothing to do. Missing: install
+#                     the cached ipk (/etc/tailbond/pkg/current), else the
+#                     one the home server's mirror offers; retry for up to
+#                     20 minutes (the network or GL's Tailscale may come up
+#                     later). At most once per boot.
+#   reinstall now     the same, ignoring the once-per-boot marker
+#
+# Logs to the system log (logread -e tailbond-reinstall). Writes
+# /etc/tailbond/state/update-result.json with detail
+# "reinstalled_after_firmware_upgrade" on success.
+# Env (tests): TB_PKG_DIR, TB_MIRROR (base URL(s) of a mirror, instead of the
+# servers in tailbond.json), TB_TRIES (40), TB_PAUSE (30 s).
+
+PKGDIR="${TB_PKG_DIR:-/etc/tailbond/pkg}"
+STATE=/etc/tailbond/state
+CONF=/etc/tailbond/tailbond.json
+INFO=/usr/lib/opkg/info/tailbond.control
+MARKER=/tmp/tailbond-reinstall.ran
+TRIES="${TB_TRIES:-40}"
+PAUSE="${TB_PAUSE:-30}"
+
+log() { logger -t tailbond-reinstall "$*" 2>/dev/null; echo "$*" >&2; }
+installed() { [ -f "$INFO" ] && [ -x /usr/bin/tailbondd ]; }
+
+installed && exit 0
+case "${1:-boot}" in
+boot) mkdir "$MARKER" 2>/dev/null || exit 0 ;;
+now) ;;
+*) echo "usage: reinstall boot|now" >&2; exit 2 ;;
+esac
+
+ipk_version() {
+	tar -xzOf "$1" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null |
+		sed -n 's/^Version: *//p' | head -1 | tr '~' '-'
+}
+
+cached() {
+	local cur f
+	cur="$(cat "$PKGDIR/current" 2>/dev/null)"
+	if [ -n "$cur" ] && [ -f "$PKGDIR/$cur" ]; then
+		echo "$PKGDIR/$cur"
+		return 0
+	fi
+	# no pointer: the newest ipk there
+	# shellcheck disable=SC2012 # our own file names, no odd characters
+	f="$(ls -t "$PKGDIR"/tailbond_*.ipk 2>/dev/null | head -1)"
+	[ -n "$f" ] && echo "$f"
+}
+
+# b64url_json PAIRING_URI -> the payload JSON (awk: stock OpenWrt's
+# busybox has no base64)
+b64url_json() {
+	local d
+	d="${1#*d=}"
+	printf '%s\n' "${d%%&*}" | awk 'BEGIN {
+		a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+		for (i = 0; i < 62; i++) v[substr(a, i + 1, 1)] = i
+		v["-"] = 62; v["_"] = 63; v["+"] = 62; v["/"] = 63
+	}
+	{
+		for (i = 1; i <= length($0); i++) {
+			c = substr($0, i, 1)
+			if (!(c in v)) continue
+			b = b * 64 + v[c]; n += 6
+			if (n >= 8) { n -= 8; p = 2 ^ n; printf "%c", int(b / p) % 256; b = b % p }
+		}
+	}'
+}
+
+# Mirror candidates: each paired server's Tailscale address (the mirror
+# answers tailnet sources without a token; the tunnel isn't up without the
+# package).
+mirrors() {
+	local uri j name sni ip
+	if [ -n "${TB_MIRROR:-}" ]; then
+		echo "$TB_MIRROR"
+		return
+	fi
+	[ -f "$CONF" ] || return
+	for uri in $(jsonfilter -i "$CONF" -e '@.client.servers[*].pairing_uri' -e '@.client.pairing_uri' 2>/dev/null); do
+		j="$(b64url_json "$uri")"
+		[ -n "$j" ] || continue
+		name="$(echo "$j" | jsonfilter -e '@.server_name' 2>/dev/null)"
+		sni="$(echo "$j" | jsonfilter -e '@.sni' 2>/dev/null)"
+		[ -n "$name" ] || name="${sni%%.*}"
+		for h in $name $sni; do
+			ip="$(tailscale ip -4 "$h" 2>/dev/null | head -1)"
+			[ -n "$ip" ] && echo "http://$ip:8077"
+		done
+		case "$sni" in *.ts.net) echo "http://$sni:8077" ;; esac
+	done | awk '!seen[$0]++'
+}
+
+# from_mirror -> path of a verified ipk in $PKGDIR
+from_mirror() {
+	local channel tmp base a name sha size best
+	channel="$(jsonfilter -i "$CONF" -e '@.update.channel' 2>/dev/null)"
+	channel="${channel:-stable}"
+	tmp="$PKGDIR/.mirror.$$"
+	mkdir -p "$PKGDIR"
+	for base in $(mirrors); do
+		uclient-fetch -q -T 20 -O "$tmp.json" "$base/updates/$channel.json" 2>/dev/null || continue
+		# opkg print-architecture lists by ascending priority: the last match wins
+		best=""
+		for a in $(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }'); do
+			name="$(jsonfilter -i "$tmp.json" -e "@.artifacts[@.kind='ipk' && @.arch='$a'].name" 2>/dev/null | head -1)"
+			[ -n "$name" ] && best="$name"
+		done
+		[ -n "$best" ] || { log "$base: no ipk for this router's architecture"; continue; }
+		case "$best" in */* | .* | "") continue ;; esac
+		sha="$(jsonfilter -i "$tmp.json" -e "@.artifacts[@.name='$best'].sha256" 2>/dev/null | head -1)"
+		size="$(jsonfilter -i "$tmp.json" -e "@.artifacts[@.name='$best'].size" 2>/dev/null | head -1)"
+		uclient-fetch -q -T 120 -O "$tmp.ipk" "$base/updates/files/$best" 2>/dev/null || { log "$base: download of $best failed"; continue; }
+		if [ "$(sha256sum "$tmp.ipk" | cut -d' ' -f1)" = "$sha" ] && [ "$(wc -c <"$tmp.ipk" | tr -d ' ')" = "$size" ]; then
+			mv -f "$tmp.ipk" "$PKGDIR/$best"
+			echo "$best" >"$PKGDIR/current"
+			rm -f "$tmp.json"
+			log "downloaded $best from $base"
+			echo "$PKGDIR/$best"
+			return 0
+		fi
+		log "$base: $best doesn't match the manifest's sha256/size"
+	done
+	rm -f "$tmp.json" "$tmp.ipk"
+	return 1
+}
+
+result() { # VERSION
+	mkdir -p "$STATE"
+	printf '{"result":"ok","version":"%s","from":"","at":"%s","detail":"reinstalled_after_firmware_upgrade"}\n' \
+		"$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$STATE/update-result.json.tmp" &&
+		mv -f "$STATE/update-result.json.tmp" "$STATE/update-result.json"
+}
+
+log "tailbond is not installed (firmware upgrade?): reinstalling"
+i=0
+updated=0
+while [ "$i" -lt "$TRIES" ]; do
+	i=$((i + 1))
+	installed && exit 0 # installed meanwhile (by hand, GL's plug-in restore)
+	ipk="$(cached)"
+	[ -n "$ipk" ] || ipk="$(from_mirror)"
+	if [ -n "$ipk" ]; then
+		if opkg install "$ipk" >/tmp/tailbond-reinstall.log 2>&1 && installed; then
+			result "$(ipk_version "$ipk")"
+			log "reinstalled $(basename "$ipk"); settings kept"
+			exit 0
+		fi
+		log "opkg install $(basename "$ipk") failed: $(grep -m1 -i -E 'error|cannot|satisfy' /tmp/tailbond-reinstall.log)"
+		# missing dependencies come from the feeds, once online
+		[ "$updated" = 1 ] || { opkg update >/dev/null 2>&1 && updated=1; }
+	else
+		log "no cached package and no mirror reachable yet (try $i of $TRIES)"
+	fi
+	[ "$i" -lt "$TRIES" ] && sleep "$PAUSE"
+done
+log "giving up: install the tailbond package again (docs/glinet.md); your settings are kept in /etc/tailbond"
+exit 1

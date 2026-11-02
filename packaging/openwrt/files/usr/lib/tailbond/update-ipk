@@ -1,0 +1,149 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# Install a tailbond package update with a health check and rollback.
+#
+#   update-ipk NEW_IPK [PREV_IPK]
+#
+# Run by the agent detached from itself (its own session, e.g. Go's
+# Setsid or `start-stop-daemon -b`; GL firmware has no setsid command),
+# since installing restarts the agent. Steps:
+#   1. opkg install NEW (config kept: /etc/config/tailbond is a conffile,
+#      /etc/tailbond/ isn't in the package), restart the service;
+#   2. wait up to TB_WAIT (90) s for GET /api/status to answer with the same
+#      role (TB_ROLE, else UCI) and, if the tunnel was connected before
+#      (TB_WAS_CONNECTED=1), "state": "connected" again;
+#   3. else install PREV again (--force-downgrade), restart. Not
+#      --force-reinstall: opkg would remove the package first, running its
+#      removal scripts (which drop the network config and this cache).
+# Without PREV, the running package is first saved as the rollback copy
+# (the agent rebuilds its own package, GET /tailbond-glinet.ipk).
+#
+# Result: /etc/tailbond/state/update-result.json
+#   {"result":"ok"|"rolled_back"|"failed","version","from","at","detail"}
+# /etc/tailbond/pkg/ keeps exactly NEW and PREV (pkg-cache keep).
+# Log: syslog (logread -e tailbond-update) and /tmp/tailbond-update.log.
+# Env (tests): TB_STATE_DIR, TB_API, TB_WAIT, TB_RESTART (command).
+
+NEW="${1:-}"
+PREV="${2:-}"
+STATE="${TB_STATE_DIR:-/etc/tailbond/state}"
+RESULT="$STATE/update-result.json"
+API="${TB_API:-http://127.0.0.1:8077/api/status}"
+WAIT="${TB_WAIT:-90}"
+RESTART="${TB_RESTART:-/etc/init.d/tailbond restart}"
+CACHE=/usr/lib/tailbond/pkg-cache
+LOG=/tmp/tailbond-update.log
+LOCK=/tmp/tailbond-update.lock
+
+log() {
+	logger -t tailbond-update "$*" 2>/dev/null
+	echo "$(date '+%F %T') $*" >>"$LOG"
+}
+# json_str S: S as a JSON string (quotes, backslashes, control chars dropped)
+json_str() { printf '"%s"' "$(printf '%s' "$1" | tr -d '"\\\000-\037')"; }
+result() { # RESULT VERSION FROM DETAIL
+	mkdir -p "$STATE"
+	printf '{"result":%s,"version":%s,"from":%s,"at":%s,"detail":%s}\n' \
+		"$(json_str "$1")" "$(json_str "$2")" "$(json_str "$3")" \
+		"$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" "$(json_str "$4")" >"$RESULT.tmp" &&
+		mv -f "$RESULT.tmp" "$RESULT"
+	log "result: $1 version=$2 from=$3 $4"
+}
+
+[ -n "$NEW" ] && [ -f "$NEW" ] || { echo "usage: update-ipk NEW_IPK [PREV_IPK]" >&2; exit 2; }
+[ -z "$PREV" ] || [ -f "$PREV" ] || PREV=""
+
+mkdir "$LOCK" 2>/dev/null || {
+	# a stale lock from a crash: older than 10 minutes
+	if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+		rmdir "$LOCK" && mkdir "$LOCK"
+	else
+		false
+	fi
+} || { log "another update is running"; exit 1; }
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+# Outlive the service: stopping it (procd) must not take this script along.
+trap '' HUP INT TERM
+if [ -w /sys/fs/cgroup/cgroup.procs ]; then { echo $$ >/sys/fs/cgroup/cgroup.procs; } 2>/dev/null; fi
+
+FROM="$("$CACHE" installed-version)"
+VERSION="$("$CACHE" ipk-version "$NEW")"
+pkgname="$(tar -xzOf "$NEW" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null | sed -n 's/^Package: *//p')"
+if [ "$pkgname" != tailbond ] || [ -z "$VERSION" ]; then
+	result failed "$VERSION" "$FROM" "not a tailbond package: $(basename "$NEW")"
+	exit 1
+fi
+ROLE="${TB_ROLE:-$(uci -q get tailbond.main.role || echo client)}"
+log "updating $FROM -> $VERSION (role $ROLE, was connected: ${TB_WAS_CONNECTED:-0})"
+
+if [ -z "$PREV" ] && [ -n "$FROM" ]; then
+	# No rollback copy yet (installed by hand): save the running package.
+	"$CACHE" seed >>"$LOG" 2>&1 && PREV="/etc/tailbond/pkg/$(cat /etc/tailbond/pkg/current 2>/dev/null)"
+	[ -f "$PREV" ] || PREV=""
+fi
+
+healthy() { # NEED_CONNECTED -> 0 when the agent answers as expected
+	local deadline body role state
+	deadline=$(($(date +%s) + WAIT))
+	why="the agent didn't answer within ${WAIT}s"
+	while [ "$(date +%s)" -lt "$deadline" ]; do
+		sleep 3
+		body="$(uclient-fetch -q -T 5 -O - "$API" 2>/dev/null)" || continue
+		role="$(echo "$body" | jsonfilter -e '@.role' 2>/dev/null)"
+		state="$(echo "$body" | jsonfilter -e '@.state' 2>/dev/null)"
+		if [ "$role" != "$ROLE" ]; then
+			why="the agent answers as '${role:-?}', not $ROLE"
+			continue
+		fi
+		if [ "$1" = 1 ] && [ "$state" != connected ]; then
+			why="the tunnel didn't reconnect within ${WAIT}s (state ${state:-?})"
+			continue
+		fi
+		return 0
+	done
+	return 1
+}
+
+install_ipk() { # IPK [opkg options]
+	local ipk="$1"
+	shift
+	log "opkg install $* $(basename "$ipk")"
+	opkg install --force-downgrade "$@" "$ipk" >>"$LOG" 2>&1 || return 1
+	[ "$("$CACHE" installed-version)" = "$("$CACHE" ipk-version "$ipk")" ]
+}
+
+why=""
+if install_ipk "$NEW"; then
+	sh -c "$RESTART" >>"$LOG" 2>&1
+	if healthy "${TB_WAS_CONNECTED:-0}"; then
+		"$CACHE" keep "$NEW" "$PREV"
+		result ok "$VERSION" "$FROM" "updated"
+		exit 0
+	fi
+else
+	why="opkg install failed: $(grep -i -m1 -E 'error|cannot|collide' "$LOG" | tail -c 160)"
+fi
+log "$VERSION failed: $why"
+
+if [ -z "$PREV" ]; then
+	sh -c "$RESTART" >>"$LOG" 2>&1
+	result failed "$VERSION" "$FROM" "$why; no previous package to go back to"
+	exit 1
+fi
+# NEW never got installed (opkg failed early): PREV is still what's there.
+if [ "$("$CACHE" installed-version)" = "$("$CACHE" ipk-version "$PREV")" ] || install_ipk "$PREV"; then
+	sh -c "$RESTART" >>"$LOG" 2>&1
+	# Rolled back is rolled back; report whether it came up.
+	if healthy 0; then
+		"$CACHE" keep "$PREV" "$NEW"
+		result rolled_back "$VERSION" "$FROM" "$why; went back to $FROM"
+	else
+		"$CACHE" keep "$PREV" "$NEW"
+		result rolled_back "$VERSION" "$FROM" "$why; went back to $FROM, which isn't answering yet either"
+	fi
+	exit 1
+fi
+sh -c "$RESTART" >>"$LOG" 2>&1
+result failed "$VERSION" "$FROM" "$why; reinstalling $FROM failed too (opkg install $PREV)"
+exit 1
