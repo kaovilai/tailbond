@@ -47,6 +47,11 @@ Options:
   --no-tailscale        don't use Tailscale even if it runs here
   --tailscale           use Tailscale on a re-run that had it off (re-pair after)
   --landing-port N      phone page port on the Tailscale IPs (-1 = off)
+  --update-policy P     auto (default: installs updates itself in the
+                        maintenance window), notify (shows them, installs on
+                        request) or off; see docs/updates.md
+  --update-source URL   where to look for updates (default: built in;
+                        "" goes back to it)
   --memory-high SIZE    systemd MemoryHigh= (default 96M)
   --memory-max SIZE     systemd MemoryMax= (default 160M)
   --prefix DIR          /usr/local (default) or /usr
@@ -65,6 +70,7 @@ EOF
 
 # ---- options ----------------------------------------------------------------
 OPT_PORT="" OPT_SUBNET="" OPT_SUBNET6="" OPT_PUBLIC="" OPT_TS="" OPT_LANDING=""
+OPT_UPOLICY="" OPT_USOURCE="" OPT_USOURCE_SET=0
 MEM_HIGH=96M MEM_MAX=160M GOMEMLIMIT=40MiB OOM_ADJ=-100
 PREFIX=/usr/local CONF=/etc/tailbond/tailbond.json
 BUNDLE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,6 +90,8 @@ while [ $# -gt 0 ]; do
         --no-tailscale) OPT_TS=off ;;
         --tailscale) OPT_TS=on ;;
         --landing-port) need "$@"; OPT_LANDING="$2"; shift ;;
+        --update-policy) need "$@"; OPT_UPOLICY="$2"; shift ;;
+        --update-source) need "$@"; OPT_USOURCE="$2"; OPT_USOURCE_SET=1; shift ;;
         --memory-high) need "$@"; MEM_HIGH="$2"; shift ;;
         --memory-max) need "$@"; MEM_MAX="$2"; shift ;;
         --prefix) need "$@"; PREFIX="${2%/}"; shift ;;
@@ -101,6 +109,13 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+case "$OPT_UPOLICY" in ""|auto|notify|off) ;; *) echo "install.sh: --update-policy $OPT_UPOLICY: auto, notify or off" >&2; exit 2 ;; esac
+case "$OPT_USOURCE" in
+    ""|http://*|https://*) ;;
+    *) echo "install.sh: --update-source $OPT_USOURCE: an http(s):// URL" >&2; exit 2 ;;
+esac
+case "$OPT_USOURCE" in *[[:space:]\"\\]*) echo "install.sh: --update-source: no spaces or quotes" >&2; exit 2 ;; esac
 
 BINDIR="$PREFIX/bin"
 LIBDIR="$PREFIX/lib/tailbond"
@@ -524,6 +539,16 @@ TS_CERT=$([ "$USE_TS" = 1 ] && echo true || echo false)
 NO_TS=$([ "$USE_TS" = 1 ] && echo false || echo true)
 jstr() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 
+# update: only what was passed (--update-policy/--update-source); a re-run
+# without them keeps the existing block. Nothing else in it is touched
+# (window, channel, pin; the dashboard sets those too).
+render_update() {
+    local u=""
+    [ -n "$OPT_UPOLICY" ] && u="\"policy\": $(jstr "$OPT_UPOLICY")"
+    [ "$OPT_USOURCE_SET" = 1 ] && u="${u:+$u, }\"source\": $(jstr "$OPT_USOURCE")"
+    [ -n "$u" ] && printf '\n  "update": {%s},' "$u"
+    return 0
+}
 # The keys this installer owns. Everything else in an existing config
 # (users, approvers, ui_password, mode, ...) is left alone.
 render_patch() {
@@ -535,7 +560,7 @@ render_patch() {
   "hooks_dir": $(jstr "$HOOKS"),
   "disable_tailscale": $NO_TS,
   "landing_port": $LANDING,
-  "landing_public_port": $LANDING_PUBLIC,$([ -n "$APK_SRC" ] && printf '\n  "android_apk": %s,' "$(jstr "$SHARE/tailbond.apk")")
+  "landing_public_port": $LANDING_PUBLIC,$([ -n "$APK_SRC" ] && printf '\n  "android_apk": %s,' "$(jstr "$SHARE/tailbond.apk")")$(render_update)
   "server": {
     "port": $PORT,
     "public_addr": $(jstr "$PUBLIC"),
@@ -559,7 +584,7 @@ render_full() {
   "mode": "speed",
   "disable_tailscale": $NO_TS,
   "landing_port": $LANDING,
-  "landing_public_port": $LANDING_PUBLIC,$([ -n "$APK_SRC" ] && printf '\n  "android_apk": %s,' "$(jstr "$SHARE/tailbond.apk")")
+  "landing_public_port": $LANDING_PUBLIC,$([ -n "$APK_SRC" ] && printf '\n  "android_apk": %s,' "$(jstr "$SHARE/tailbond.apk")")$(render_update)
   "server": {
     "port": $PORT,
     "public_addr": $(jstr "$PUBLIC"),
@@ -628,6 +653,13 @@ if [ "$LANDING" = -1 ]; then note "phone page: off  [$LANDING_WHY]"
 else note "phone page: http://$SHORT$([ "$LANDING_PUBLIC" = 80 ] || echo ":$LANDING_PUBLIC")/ on the Tailscale address  [$LANDING_WHY]"; fi
 note "DNS for clients: $([ "$DISABLE_DNS" = true ] && echo off || echo "$TUN_IP:53")  [$DNS_WHY]"
 note "firewall: $FW"
+E_UPOLICY="$(json_get "$CONF" update.policy)"
+if [ -n "$OPT_UPOLICY" ]; then UP_WHY="--update-policy"
+elif [ -n "$E_UPOLICY" ]; then UP_WHY="kept from $CONF"
+else UP_WHY="default"; fi
+UP_SRC=""
+[ "$OPT_USOURCE_SET" = 1 ] && UP_SRC=", from ${OPT_USOURCE:-the built-in source}"
+note "updates: ${OPT_UPOLICY:-${E_UPOLICY:-auto}}  [$UP_WHY]$UP_SRC; installed updates live in $STATE/update"
 note "binaries: $BINDIR/{mqvpn,tailbondd}; hooks: $HOOKS; config: $CONF; state: $STATE"
 note "systemd: $UNIT (MemoryHigh=$MEM_HIGH MemoryMax=$MEM_MAX OOMScoreAdjust=$OOM_ADJ GOMEMLIMIT=$GOMEMLIMIT)"
 note "SELinux: $(selinux_on && echo "$(getenforce 2>/dev/null || echo on), contexts restored with restorecon" || echo "not enabled")"

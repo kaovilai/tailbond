@@ -12,6 +12,10 @@ Type=simple
 ExecStart=@BINDIR@/tailbondd -config @CONF@
 Restart=on-failure
 RestartSec=3
+# Exit 75: the agent installed or rolled back an update (kept in
+# /var/lib/tailbond/update, package files untouched) and wants the base
+# binary to start again; restart even if a drop-in changes Restart=.
+RestartForceExitStatus=75
 # tailbondd stops mqvpn itself and then runs the server-down hook.
 KillMode=mixed
 TimeoutStopSec=20
