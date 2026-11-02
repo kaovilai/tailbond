@@ -53,6 +53,7 @@ The installer prints every decision. Override any of them:
 | `--no-tailscale` | Tailscale is used when `tailscale status` works |
 | `--landing-port N` | 80, or 8078 when something listens on `*:80`; `-1` = off |
 | `--memory-high`, `--memory-max` | `96M`, `160M` |
+| `--update-policy P`, `--update-source URL` | the agent's defaults (`auto`, the release channel): [Updates](#updates) |
 | `--no-firewall`, `--no-start`, `--mqvpn`, `--tailbondd`, `--bundle-dir`, `--config` | |
 
 ## 2. Ports on a box that already runs a web server
@@ -244,6 +245,37 @@ installer's dry run); `tailbond_landing_port` defaults to 8078 for boxes
 with a web server on `*:80`. See `defaults/main.yml` for every variable.
 Collections: `ansible.posix` (firewalld, sysctl), `community.general` (only
 for `tailbond_firewall: ufw`).
+
+## Updates
+
+The VPS updates itself in its maintenance window and rolls back if the new
+version doesn't come up; installed updates live in
+`/var/lib/tailbond/update/`, so a re-run of an older bundle doesn't
+downgrade it. `install.sh --update-policy auto|notify|off` and
+`--update-source URL` write the `update` block (re-runs without them keep
+it). See [updates.md](updates.md).
+
+With Ansible, `tailbond_update_policy` decides who owns the version:
+
+- `auto` (default), `notify`, `off`: the agent's own policy. With `auto` it
+  updates itself, and the role must not undo that: it reads the running
+  version (`/var/lib/tailbond/update/state.json`, else `tailbondd -version`)
+  and copies the bundle's binaries only when the bundle isn't older.
+- `pinned`: the role is the source of truth. Set `tailbond_version` (the
+  bundle's `VERSION` must match): the role always installs that bundle, pins
+  the agent to it (`update.pin`), and drops a newer self-update, so the
+  host runs exactly what the playbook says.
+
+`tailbond_update_window` (e.g. `"03:00-05:00"`) and `tailbond_update_channel`
+(`stable`, `beta`) are written when set.
+
+```yaml
+    - role: tailbond
+      vars:
+        tailbond_bundle: files/tailbond-linux-x86_64.tar.gz
+        tailbond_update_policy: pinned
+        tailbond_version: "0.2.0"
+```
 
 ## Troubleshooting
 

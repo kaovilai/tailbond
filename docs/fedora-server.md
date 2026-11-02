@@ -200,6 +200,14 @@ Pick a mode in the dashboard. Changing it rewrites mqvpn's config and restarts i
 
 The server's mode sets its default for downloads. Each device's own mode decides its connection.
 
+## Updates
+
+The server updates itself in its maintenance window (default policy `auto`;
+**Settings → Updates**) and serves each release to your routers and phones
+(the mirror). Updates go to `/var/lib/tailbond/update/`, never over the
+RPM's files, so `rpm -V tailbond-server` stays clean; a `dnf upgrade` to a
+newer package simply takes over. How it all works: [updates.md](updates.md).
+
 ## Troubleshooting
 
 - **Device stays "connecting":** check the port forward from outside your network (for example from the phone on 5G) and check `public_addr`. Look at `journalctl -u tailbond` for `client authenticated` lines.

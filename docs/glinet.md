@@ -56,10 +56,14 @@ needs it) and the tunnel connects once paired. The LAN keeps its internet
 until then (the kill switch arms only when paired and on). One command, if
 you do have SSH: `opkg install /tmp/tailbond_*_neon-vfpv4.ipk`.
 
-A firmware upgrade that doesn't keep packages removes tailbond (Speedify
-documents the same for its GL package); `/etc/tailbond/` (keys, pairing,
-users) is kept (`/lib/upgrade/keep.d/tailbond`), so reinstalling picks up
-where it left off.
+Updates install themselves (from your home server, else GitHub), with a
+health check and rollback: [updates.md](updates.md).
+
+A firmware upgrade removes every package you installed, tailbond too
+(Speedify documents the same for its GL package). With **Keep Settings**
+ticked, tailbond reinstalls itself on the first boot and keeps your pairing
+and settings ([Firmware upgrades](#firmware-upgrades)). Without it, install
+the package again and pair again.
 
 A Flint 3 serves the package without having the file: `GET
 /tailbond-glinet.ipk` rebuilds it from opkg's records
@@ -313,10 +317,35 @@ UDP 443 to it on the upstream router. Who can approve: anyone logged in to
 GL's admin, and anyone on the tailnet who opens `http://homebox:8077` unless
 the panel sets a password for that page.
 
+## Firmware upgrades
+
+What GL.iNet 4.x keeps on a firmware upgrade with **Keep Settings**, read
+from the GL-BE3600 (Slate 7) 4.10.1 image: `/etc/config/`, every path in
+`/lib/upgrade/keep.d/*` (tailbond's keeps `/etc/tailbond/`), changed
+conffiles of every package, and `/etc/rc.local`, which runs at every boot.
+Not kept: the packages themselves. GL's "Keep Installed Packages" (sent
+together with Keep Settings) only reinstalls packages from GL's own feeds,
+which don't have tailbond.
+
+So the package leaves itself a way back:
+
+| File (kept) | What it does |
+|---|---|
+| `/etc/tailbond/pkg/tailbond_<version>_<arch>.ipk`, `current` | the installed package (and the previous one, for rollbacks) |
+| `/etc/tailbond/pkg/reinstall` | installs that package if tailbond is missing; else the home server mirror's (over Tailscale); retries for 20 minutes; at most once per boot |
+| one line in `/etc/rc.local` (`# tailbond-reinstall`) | runs it in the background at boot |
+| `/lib/upgrade/tailbond.sh` (not kept, runs before the flash) | saves the running package if the cache is empty and adds these files to the keep list |
+
+After the upgrade, `logread -e tailbond-reinstall` shows what happened, and
+the panel says "reinstalled after a firmware upgrade". Removing the package
+(`opkg remove tailbond`) removes the rc.local line and the cached packages;
+`/etc/tailbond/` stays. Details and what is verified: [updates.md](updates.md#firmware-upgrades-on-glinet-routers).
+
 ## Logs and troubleshooting
 
 ```sh
-logread -e tailbond          # agent + hook output
+logread -e tailbond          # agent + hook output (tailbond-update: updates)
+cat /etc/tailbond/state/update-result.json   # the last update or reinstall
 /etc/init.d/tailbond status
 curl -s http://127.0.0.1:8077/api/status
 lua -e 'print(require("cjson").encode(dofile("/usr/lib/oui-httpd/rpc/tailbond").status()))'

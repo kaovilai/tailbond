@@ -10,5 +10,6 @@ reachable through it ([architecture](docs/architecture.md)).
 - Travel router: [GL.iNet Slate 7 and other OpenWrt routers](docs/glinet.md)
 - Phone: [Android app](docs/android.md)
 - [Setup tips for best speed](docs/setup-tips.md)
+- [Updates](docs/updates.md): signed, automatic, through your home server
 
 Created in [T3 Code](https://t3.codes).
