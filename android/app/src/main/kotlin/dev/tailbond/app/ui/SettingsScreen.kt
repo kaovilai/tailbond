@@ -55,6 +55,8 @@ fun SettingsScreen(
     onRepair: (String) -> Unit,
     onAddServer: () -> Unit,
     modifier: Modifier = Modifier,
+    onUpdates: () -> Unit = {},
+    onBackup: () -> Unit = {},
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
@@ -129,6 +131,8 @@ fun SettingsScreen(
                 Text("  Open Android VPN settings")
             }
         }
+
+        UpdatesBackupRows(state, onUpdates, onBackup)
 
     }
 

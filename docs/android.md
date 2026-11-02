@@ -29,13 +29,15 @@ android/scripts/build-apk.sh           # unit tests + lint + assembleDebug → o
 the JDK and SDK above. Gradle is tuned for a small shared host
 (`android/gradle.properties`: 2 GB heap, 2 workers, in-process Kotlin).
 The debug APK is signed with the standard Android debug key
-(`~/.android/debug.keystore`, created on first build; not committed).
+(`~/.android/debug.keystore`, created on first build; not committed). It
+can't update a release install, and a release APK can't update it: see
+[Updates](#updates) for `build-release-apk.sh` and the release key.
 Only `arm64-v8a` is built.
 
 Individual steps:
 
 ```sh
-android/scripts/gradle.sh :app:testDebugUnitTest   # pairing parser, mode table, path gate, server list, failover, website bypass
+android/scripts/gradle.sh :app:testDebugUnitTest   # pairing parser, mode table, path gate, server list, failover, website bypass, updates, backup
 android/scripts/gradle.sh :app:lintDebug
 android/scripts/gradle.sh :app:assembleDebug
 ```
@@ -176,14 +178,128 @@ Without `-Ptailbond.uxOut` the render tests are skipped. The simulated user
 tests that used them are in [ux/summary.md](ux/summary.md) and
 [ux/final-summary.md](ux/final-summary.md).
 
-## Updates (future option)
+## Updates
 
-Today a new version is installed the same way (the phone page offers the
-APK the server has; Android installs it over the old one, same signing
-key). An Obtainium- or F-Droid-style update channel (a release feed the
-phone polls) would make updates automatic; nothing is published for it yet.
-Release builds would also need a stable signing key instead of the debug
-key.
+Settings → **Updates**. The app updates itself from a **signed manifest**
+([architecture.md](architecture.md#updates); for every platform and the
+release side, see [updates.md](updates.md)):
+
+- **Where from**: while connected, it uses the active server's mirror first
+  (`http://<server tunnel IP>:8077/updates/<channel>.json` + `.sig`, with
+  the client token and `X-Tailbond-Version` / `X-Tailbond-Kind: android`;
+  the same two headers go with every `/api/peers` poll). Then it falls back to
+  the public source, `BuildConfig.UPDATE_SOURCE` (Gradle property or env
+  `TB_UPDATE_SOURCE`; empty means mirror only). The APK comes from the
+  mirror's `/updates/files/<name>`, then from the artifact's `url`.
+- **Trust**: `<channel>.json.sig` is checked with Ed25519 against
+  `BuildConfig.UPDATE_KEYS`, which comes from `TB_UPDATE_PUBKEY`
+  (comma-separated base64 raw keys, made with
+  `scripts/release/gen-update-key.sh`). A build without a key doesn't update
+  itself, and the Updates page says so. A manifest for another channel is
+  refused. The APK must match the manifest's `sha256` and `size`, and its
+  package name, signing certificate and higher `versionCode` are checked
+  before Android sees it. Ed25519 is a verify-only Kotlin port of RFC 8032's
+  reference code (`update/Ed25519.kt`): Android has no platform Ed25519 below
+  API 33, and this avoids a crypto library. It is tested against the RFC
+  vectors and the JDK's own Ed25519.
+- **When**: when the app starts (at most every 30 min), then every 6 h while
+  connected; "Check now" any time. Policy **Automatic** (default),
+  **Tell me first**, or **Off**; channel **Stable** or **Beta**. An automatic
+  install waits while the tunnel averages more than 300 kbit/s (tx+rx, over
+  the last minute: a call or a stream) unless the release is `security`. A
+  release whose `requires_server_protocol` is above the active server's
+  `protocol` (`GET /api/hello` through the tunnel; missing = 1) waits for the
+  server to update first. A build whose own version isn't semver (`-dirty`,
+  `git describe`) never installs by itself.
+- **Install**: a `PackageInstaller` session (`REQUEST_INSTALL_PACKAGES`).
+  On Android 12+ the session asks for `USER_ACTION_NOT_REQUIRED`
+  (`UPDATE_PACKAGES_WITHOUT_USER_ACTION`). Android honours that once tailbond
+  is the installer of record. **The first update after installing from a
+  browser (or adb) needs one tap** ("Update"); the Updates page explains this
+  beforehand, and a notification asks for the tap when the app isn't open.
+  After that, updates are silent. Android 11 and older ask for a tap every
+  time. If "Install unknown apps" isn't allowed yet, the page shows **Allow**,
+  which opens Android's page. Installing ends the app's process, so the tunnel
+  drops for a few seconds. If it was up, `MY_PACKAGE_REPLACED` reconnects it.
+  Failures show as "Couldn't install X: …". The old version keeps running,
+  because Android has no partial install to roll back.
+
+**Release signing.** Debug and release builds are signed with different keys
+and **can't update each other**. Android refuses the update, and the app says
+"install the release APK once by hand". Release APKs need one stable key,
+forever:
+
+```sh
+android/scripts/gen-release-keystore.sh          # once: ~/.config/tailbond/android-release/, prints the CI secret commands
+TB_RELEASE_KEYSTORE=~/.config/tailbond/android-release/tailbond-release.p12 \
+TB_RELEASE_KEYSTORE_PASSWORD="$(cat ~/.config/tailbond/android-release/tailbond-release.password)" \
+TB_RELEASE_KEY_ALIAS=tailbond TB_VERSION=0.2.0 TB_UPDATE_PUBKEY=<base64 key> \
+    android/scripts/build-release-apk.sh         # → out/android/tailbond-0.2.0.apk
+```
+
+CI uses the secrets `TB_RELEASE_KEYSTORE_B64` (the base64 keystore, decoded to
+a temporary file), `TB_RELEASE_KEYSTORE_PASSWORD`, `TB_RELEASE_KEY_ALIAS` and
+`TB_RELEASE_KEY_PASSWORD` (defaults to the store password; PKCS12 uses one).
+Without them, `build-release-apk.sh` stops with a clear message. Nothing
+secret is in the repo, and `*.jks` / `*.keystore` are ignored.
+
+**Versions.** `versionName` comes from `TB_VERSION` (a leading `v` is
+dropped). Without it, the build uses `tailbond.version` in
+`android/gradle.properties`. `versionCode` follows from it (agreed with
+`scripts/release/make-manifest.sh`, which writes the same `version_code`):
+
+| versionName | versionCode |
+|---|---|
+| `MAJOR.MINOR.PATCH` | `MAJOR*1000000 + MINOR*10000 + PATCH*100` (0.2.0 → 20000) |
+| a pre-release ending in a number N (`1.2.3-beta.4`, `0.2.0-rc1`) | that base − 100 + N, N clamped to 1..99, no number = 1 (1.2.3-beta.4 → 1020204) |
+
+So every pre-release sorts below its release and above the previous patch.
+MINOR and PATCH must stay ≤ 99. Pre-releases of one version order by N only,
+so number them in one sequence (beta.1, beta.2, rc.3).
+
+**Obtainium instead.** If you'd rather use [Obtainium](https://obtainium.imranr.dev/):
+tap **Add App**, paste the GitHub repository URL
+(`https://github.com/OWNER/REPO`), keep the source "GitHub", and set the
+APK filter to `tailbond-.*\.apk`. It must be the **release-signed APK**
+from the releases page, the same key as the one installed (a debug build
+from `build-apk.sh` can't be updated by it). Then set tailbond's own
+**Install updates** to **Off**, so only one of the two updates the app.
+
+## Backup and restore
+
+Settings → **Back up and restore** (servers and routers: [backup-restore.md](backup-restore.md)):
+
+- **Save a backup file**: choose a passphrase (at least 10 characters,
+  typed twice), then a place through Android's file picker (Downloads, Drive,
+  …). The file is a `.tbbackup` ([architecture.md](architecture.md#backup-and-restore)):
+  scrypt (N=32768, r=8, p=1, 16-byte salt) and AES-256-GCM (12-byte nonce,
+  the header line as AAD), with `"role":"client"` and `"platform":"android"`.
+  The plaintext is `{"format":1,"config":{"servers":[…],"settings":{…}}}`:
+  every server with its pairing (keys included), and every setting, including
+  apps and websites that skip tailbond. There is no unencrypted export.
+- **Restore from a file**: pick the file and type its passphrase. A preview
+  lists what changes ("Servers: homebox → homebox and vps", "Mobile data
+  limit: no limit → 5 GB a month", …) and warns about excluded apps that
+  aren't installed. Nothing changes until you tap **Restore**. A backup from a
+  server or a router is refused. A wrong passphrase and a damaged file give the
+  same message ("Wrong passphrase or damaged file"). Before restoring, the
+  current setup is kept on the phone, sealed with the app's Android Keystore
+  key like the pairing itself, so **Undo restore** works once. A running
+  tunnel picks up the restored servers and settings by itself.
+- **Send a backup to homebox** (while connected): the same encrypted file
+  (≤ 1 MiB) goes to `POST /api/backups/push` on the server in use, with the
+  client token. The server keeps the last 3 per client.
+
+scrypt is implemented in Kotlin from RFC 7914 (`backup/Scrypt.kt`, tested
+with the RFC's PBKDF2, Salsa20/8 and scrypt vectors), because Android has no
+scrypt in the platform. A backup takes about a second to encrypt or open
+and needs 32 MiB.
+
+Interop vectors for other implementations (the Go agent) are in
+`android/app/src/test/resources/interop/`: `stable.json` + `stable.json.sig`
+(signed with a fixed test seed), `android.tbbackup` with its plaintext, and
+`vectors.json` (seed, public key, key id, passphrase, salt, nonce, derived
+key, hashes). `InteropVectorsTest` rebuilds them byte for byte.
 
 ## Modes
 

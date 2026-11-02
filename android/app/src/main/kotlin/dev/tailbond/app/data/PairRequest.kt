@@ -150,6 +150,8 @@ object PairRequestClient {
     internal fun socketExchange(
         addr: InetAddress, port: Int, method: String, path: String, body: String?, token: String?,
         connectMs: Int = 5_000, readMs: Int = 8_000,
+        /** Extra request headers (X-Tailbond-Version / X-Tailbond-Kind with the client token). */
+        headers: Map<String, String> = emptyMap(),
     ): Pair<Int, String> {
         Socket().use { s ->
             s.connect(InetSocketAddress(addr, port), connectMs)
@@ -158,6 +160,7 @@ object PairRequestClient {
             val head = buildString {
                 append("$method $path HTTP/1.0\r\nHost: ${addr.hostAddress}\r\nAccept: application/json\r\nConnection: close\r\n")
                 if (token != null) append("Authorization: Bearer $token\r\n")
+                headers.forEach { (k, v) -> append("$k: $v\r\n") }
                 if (payload != null) append("Content-Type: application/json\r\nContent-Length: ${payload.size}\r\n")
                 append("\r\n")
             }

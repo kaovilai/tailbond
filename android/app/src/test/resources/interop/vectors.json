@@ -1,0 +1,14 @@
+{
+  "about": "Fixed inputs for stable.json(.sig) and android.tbbackup; made by android/app/src/test/kotlin/dev/tailbond/app/InteropVectorsTest.kt",
+  "ed25519_seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "public_key_b64": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+  "key_id": "65b60673d6ed884b",
+  "manifest_sha256": "7ca1e19edf4dc7e18018d89e4eb1df3ed5290b3d6b7523b687d961b3edf46f3d",
+  "backup_passphrase": "tailbond interop passphrase",
+  "backup_salt_b64": "oKGio6SlpqeoqaqrrK2urw==",
+  "backup_nonce_b64": "sLGys7S1tre4ubq7",
+  "backup_scrypt": {"n": 32768, "r": 8, "p": 1, "key_len": 32},
+  "backup_key_hex": "45c6ce1212f6a0a73d5ad8a34c08d39ffabe29ef2c825faa74cf63d5c40ddf1e",
+  "backup_plaintext_sha256": "de2841c798f87456f0f85bfbf7a38674a2552d97f4395186a53e9e875ca05b7b",
+  "backup_plaintext_file": "android-backup-plaintext.json"
+}

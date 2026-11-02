@@ -1,6 +1,11 @@
 package dev.tailbond.app.ui
 
+import dev.tailbond.app.backup.BackupHeader
+import dev.tailbond.app.backup.RestorePreview
 import dev.tailbond.app.data.AskState
+import dev.tailbond.app.update.UpdateChannel
+import dev.tailbond.app.update.UpdatePolicy
+import dev.tailbond.app.update.UpdateStatus
 import dev.tailbond.app.data.PeerList
 import dev.tailbond.app.failover.FailoverPolicy
 import dev.tailbond.app.model.AddCheck
@@ -17,6 +22,34 @@ import dev.tailbond.app.model.tailnetDomain
 import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.Live
+
+/** The Updates page: the updater's status plus what Android says about installing. */
+data class UpdateUi(
+    val status: UpdateStatus = UpdateStatus(current = "0.1.0"),
+    /** "Install unknown apps" is allowed for tailbond. */
+    val canInstallPackages: Boolean = true,
+    /** Signed with the debug key: can't take release updates. */
+    val debugBuild: Boolean = false,
+    /** Fixed clock for renders; 0 = now. */
+    val nowMs: Long = 0,
+)
+
+/** Backup and restore: what is happening, and the restore steps (pick → passphrase → preview → done). */
+data class BackupUi(
+    /** Work in progress ("Encrypting…"); dialogs show it and disable their buttons. */
+    val busy: String? = null,
+    /** The last result ("Saved tailbond-pixel-8-2026-11-02.tbbackup"). */
+    val message: String? = null,
+    val error: String? = null,
+    /** A file picked for restore, waiting for its passphrase. */
+    val picked: BackupHeader? = null,
+    /** What restoring it would change, waiting for "Restore". */
+    val preview: RestorePreview? = null,
+    /** Just restored (the done dialog with "Undo restore"). */
+    val restoredAt: Long? = null,
+    /** While "Undo restore" is possible: when the restore happened. */
+    val undoAt: Long? = null,
+)
 
 /** Machine list state: the last list we got, plus whether a refresh failed. */
 data class PeersUi(val list: PeerList? = null, val loading: Boolean = false, val error: String? = null)
@@ -67,6 +100,8 @@ data class UiState(
     val switches: List<SwitchRecord> = emptyList(),
     /** Build.VERSION.SDK_INT (renders fake older phones). */
     val sdkInt: Int = 35,
+    val update: UpdateUi = UpdateUi(),
+    val backup: BackupUi = BackupUi(),
 ) {
     /** The server the tunnel uses (or will use): failover's active one, else the main one. */
     val activeServer: ServerProfile?
@@ -140,6 +175,27 @@ interface UiActions {
     fun addWebsite(domain: String, note: String) {}
     fun setWebsiteEnabled(domain: String, on: Boolean) {}
     fun removeWebsite(domain: String) {}
+    // updates
+    fun checkUpdates() {}
+    fun installUpdate() {}
+    /** Android's "Update this app?" prompt again (it went away, or the user came from the notification). */
+    fun finishUpdate() {}
+    /** Android's "Install unknown apps" page for tailbond. */
+    fun allowInstalls() {}
+    fun setUpdatePolicy(p: UpdatePolicy) {}
+    fun setUpdateChannel(c: UpdateChannel) {}
+    fun openUrl(url: String) {}
+    // backup
+    /** Asks where to save, then writes the encrypted file. */
+    fun exportBackup(passphrase: String) {}
+    /** Opens the file picker for a restore. */
+    fun pickRestoreFile() {}
+    fun openRestore(passphrase: String) {}
+    fun confirmRestore() {}
+    fun undoRestore() {}
+    fun pushBackup(passphrase: String) {}
+    /** Closes whatever backup dialog is open. */
+    fun dismissBackup() {}
 }
 
 object NoActions : UiActions

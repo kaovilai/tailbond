@@ -5,7 +5,14 @@ import android.content.Intent
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
+import dev.tailbond.app.backup.BackupException
+import dev.tailbond.app.backup.BackupFile
+import dev.tailbond.app.backup.BackupManager
 import dev.tailbond.app.data.AskState
+import dev.tailbond.app.update.UpdateChannel
+import dev.tailbond.app.update.UpdateManager
+import dev.tailbond.app.update.UpdatePolicy
 import dev.tailbond.app.data.PairRequestClient
 import dev.tailbond.app.data.PeersClient
 import dev.tailbond.app.data.Repository
@@ -91,6 +98,106 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val captive = CaptiveWatcher(app).also { it.start() }
     val wifiSignIn = CaptiveWatcher.wifiSignIn
 
+    // --- updates ---
+
+    val updates = UpdateManager.get(app).also { it.start() }
+    val updateStatus = updates.status
+
+    fun checkUpdates() { updates.checkNow() }
+    fun installUpdate() { updates.installNow() }
+    fun setUpdatePolicy(p: UpdatePolicy) = repo.updateSettings { it.copy(updatePolicy = p) }
+    fun setUpdateChannel(c: UpdateChannel) = repo.updateSettings { it.copy(updateChannel = c) }
+
+    // --- backup and restore ---
+
+    private val backups = BackupManager(app)
+    private val _backup = MutableStateFlow(BackupUi())
+    val backup: StateFlow<BackupUi> = combine(_backup, backups.undoAt) { b, u -> b.copy(undoAt = u) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, BackupUi(undoAt = backups.undoAt.value))
+    /** The file picked for a restore, until it's restored or dismissed. */
+    private var pickedFile: ByteArray? = null
+
+    private fun backupJob(busy: String, work: suspend () -> Unit) {
+        if (_backup.value.busy != null) return
+        _backup.value = _backup.value.copy(busy = busy, error = null, message = null)
+        viewModelScope.launch {
+            try {
+                work()
+            } catch (e: BackupException) {
+                _backup.value = _backup.value.copy(error = e.message)
+            } catch (e: Exception) {
+                _backup.value = _backup.value.copy(error = "Didn't work: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                _backup.value = _backup.value.copy(busy = null)
+            }
+        }
+    }
+
+    fun exportBackup(uri: Uri, passphrase: String, name: String) = backupJob("Encrypting the backup…") {
+        withContext(Dispatchers.IO) { backups.export(uri, passphrase) }
+        _backup.value = _backup.value.copy(message = "Saved $name. Keep the passphrase somewhere else than the file.")
+    }
+
+    /** Suggested file name for a new backup. */
+    fun backupFileName(): String =
+        "tailbond-${dev.tailbond.app.data.phoneRequestName(Build.MODEL ?: "phone")}-${java.time.LocalDate.now()}.tbbackup"
+
+    fun restoreFilePicked(uri: Uri) = backupJob("Reading the file…") {
+        val bytes = withContext(Dispatchers.IO) { backups.read(uri) }
+        val (h, _) = BackupFile.peek(bytes)
+        dev.tailbond.app.backup.Restore.checkKind(h)
+        pickedFile = bytes
+        _backup.value = _backup.value.copy(picked = h, preview = null, restoredAt = null)
+    }
+
+    fun openRestore(passphrase: String) {
+        val file = pickedFile ?: return
+        if (_backup.value.busy != null) return
+        _backup.value = _backup.value.copy(busy = "Opening the backup… (this takes a second)", error = null)
+        viewModelScope.launch {
+            try {
+                val p = withContext(Dispatchers.Default) { backups.preview(file, passphrase) }
+                _backup.value = _backup.value.copy(picked = null, preview = p)
+            } catch (e: BackupException) {
+                _backup.value = _backup.value.copy(error = e.message)
+            } catch (e: Exception) {
+                _backup.value = _backup.value.copy(error = BackupFile.WRONG)
+            } finally {
+                _backup.value = _backup.value.copy(busy = null)
+            }
+        }
+    }
+
+    fun confirmRestore() {
+        val p = _backup.value.preview ?: return
+        backupJob("Restoring…") {
+            withContext(Dispatchers.IO) { backups.restore(p) }
+            pickedFile = null
+            _backup.value = _backup.value.copy(preview = null, restoredAt = System.currentTimeMillis(), message = null)
+        }
+    }
+
+    fun undoRestore() = backupJob("Putting everything back…") {
+        val ok = withContext(Dispatchers.IO) { backups.undo() }
+        _backup.value = _backup.value.copy(
+            restoredAt = null, preview = null,
+            message = if (ok) "Undone: your servers and settings are back as they were before the restore." else null,
+            error = if (ok) null else "There's nothing to undo any more.",
+        )
+    }
+
+    fun pushBackup(passphrase: String) = backupJob("Sending the backup…") {
+        val name = withContext(Dispatchers.IO) { backups.push(passphrase) }
+        _backup.value = _backup.value.copy(message = "Sent to $name. It keeps the last 3 backups from this phone, still encrypted.")
+    }
+
+    fun dismissBackup() {
+        pickedFile = null
+        _backup.value = _backup.value.copy(picked = null, preview = null, restoredAt = null, error = null)
+    }
+
+    fun backupError(msg: String) { _backup.value = _backup.value.copy(error = msg) }
+
     override fun onCleared() {
         captive.stop()
         super.onCleared()
@@ -120,7 +227,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         peerStatus.value = peerStatus.value.copy(loading = true)
         val err = withContext(Dispatchers.IO) {
             try {
-                repo.savePeers(PeersClient.fetch(key, host)); null
+                repo.savePeers(PeersClient.fetch(key, host, dev.tailbond.app.BuildConfig.VERSION_NAME)); null
             } catch (e: Exception) {
                 e.message ?: e.javaClass.simpleName
             }

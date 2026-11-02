@@ -118,6 +118,15 @@ class Repository private constructor(ctx: Context) {
         _settings.value = next
     }
 
+    /** Restore (or undo one): the server list and every setting at once. The VPN service picks the change up. */
+    @Synchronized
+    fun replaceAll(list: List<ServerProfile>, settings: AppSettings) {
+        prefs.edit { putString(KEY_SETTINGS, settings.toJson()) }
+        _settings.value = settings
+        saveServers(list)
+        if (list.isEmpty()) updateSettings { it.copy(onboarded = true) }
+    }
+
     private fun monthKey() = YearMonth.now().toString()
 
     private fun loadCellularBytes(): Long =

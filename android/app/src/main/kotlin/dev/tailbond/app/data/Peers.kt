@@ -58,10 +58,14 @@ object PeersClient {
      * [host] is the server's tunnel address (an IP literal); plain HTTP over
      * a raw socket, since it only ever goes through the tunnel and each
      * server has its own subnet (the network security config can't list them).
+     * [version]: this app's version, reported to the server (X-Tailbond-Version / -Kind).
      */
-    fun fetch(pairingKey: String, host: String = DEFAULT_HOST): PeerList {
+    fun fetch(pairingKey: String, host: String = DEFAULT_HOST, version: String = ""): PeerList {
         val addr = InetAddress.getByName(host)
-        val (code, body) = PairRequestClient.socketExchange(addr, PairRequestClient.PORT, "GET", "/api/peers", null, token(pairingKey))
+        val (code, body) = PairRequestClient.socketExchange(
+            addr, PairRequestClient.PORT, "GET", "/api/peers", null, token(pairingKey),
+            headers = if (version.isEmpty()) emptyMap() else TunnelHttp.clientHeaders(version),
+        )
         if (code != 200) throw java.io.IOException("server answered $code")
         return PeerList.json.decodeFromString(PeerList.serializer(), body)
             .copy(fetchedAtMs = System.currentTimeMillis())
