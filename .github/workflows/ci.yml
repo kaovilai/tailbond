@@ -136,6 +136,7 @@ jobs:
         uses: actions/cache@v6
         with:
           # build-native.sh skips the NDK build when these prebuilt libs exist
+          # (arm64-v8a for phones, x86_64 for the emulator)
           path: third_party/mqvpn/android/sdk-native/prebuilt
           key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-${{ github.sha }}
           restore-keys: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-
@@ -145,6 +146,14 @@ jobs:
         with:
           name: android-apk
           path: out/android/tailbond-debug.apk
+          if-no-files-found: error
+      # x86_64-only debug APK for the emulator (job android-e2e); phones get arm64 only
+      - name: x86_64 debug APK (emulator e2e)
+        run: android/scripts/build-e2e-apk.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk-x86_64
+          path: out/android/tailbond-debug-x86_64.apk
           if-no-files-found: error
       - name: Release APK (signed with the release key)
         id: release-apk
@@ -191,6 +200,60 @@ jobs:
         with:
           name: android-reports
           path: android/app/build/reports/
+
+  # The phone path end to end: the x86_64 debug APK on an Android emulator
+  # (KVM), paired through the tailbond://pair deep link with a tailbond
+  # server on the runner (10.0.2.2 from the emulator), checked over adb
+  # (scripts/e2e-android.sh).
+  android-e2e:
+    name: Android emulator end-to-end
+    runs-on: ubuntu-24.04
+    needs: [agent, android, mqvpn-x86_64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: tailbondd
+          path: out/agent/
+      - uses: actions/download-artifact@v8
+        with:
+          name: mqvpn-x86_64
+          path: out/x86_64/
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-apk-x86_64
+          path: out/android/
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: tailbond server on the runner (static mqvpn, Tailscale off)
+        run: |
+          chmod +x out/x86_64/mqvpn out/agent/linux-amd64/tailbondd
+          MQVPN="$PWD/out/x86_64/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/e2e-android-server.sh
+      - name: Emulator (API 34, x86_64) and the checks
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          # one line: the action runs each script line as its own shell
+          script: scripts/e2e-android.sh
+      - name: Server log
+        if: always()
+        run: |
+          sudo cat /tmp/tailbond-e2e-android/server.log | tail -n 80 || true
+          scripts/e2e-android-server.sh stop || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-e2e
+          path: out/e2e-android/
+          if-no-files-found: warn
 
   openwrt:
     name: GL.iNet / OpenWrt ipk

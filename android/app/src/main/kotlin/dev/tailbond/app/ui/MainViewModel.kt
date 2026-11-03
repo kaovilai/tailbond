@@ -3,6 +3,7 @@ package dev.tailbond.app.ui
 import android.app.Application
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
@@ -51,6 +52,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class AppEntry(val pkg: String, val label: String)
+
+private const val TAG = "tailbond"
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Repository.get(app)
@@ -226,9 +229,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         peerStatus.value = peerStatus.value.copy(loading = true)
         val err = withContext(Dispatchers.IO) {
             try {
-                repo.savePeers(PeersClient.fetch(key, host, dev.tailbond.app.BuildConfig.VERSION_NAME)); null
+                val list = PeersClient.fetch(key, host, dev.tailbond.app.BuildConfig.VERSION_NAME)
+                repo.savePeers(list)
+                Log.i(TAG, "machine list from $host: ${list.peers.size} machines")
+                null
             } catch (e: Exception) {
-                e.message ?: e.javaClass.simpleName
+                (e.message ?: e.javaClass.simpleName).also { Log.w(TAG, "machine list from $host failed: $it") }
             }
         }
         peerStatus.value = PeersUi(loading = false, error = err)
