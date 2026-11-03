@@ -1,104 +1,79 @@
 package dev.tailbond.app.update
 
-import kotlinx.serialization.SerialName
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
-/** `update.policy`: [label] and [explain] are what Settings shows. */
-@Serializable
+/**
+ * `update.policy` on the phone: [label] and [explain] are what Settings shows.
+ * Stored as `notify` / `off`; anything else (an older `auto`) reads as
+ * [NOTIFY], so old settings and backups still load.
+ */
+@Serializable(with = UpdatePolicySerializer::class)
 enum class UpdatePolicy(val wire: String, val label: String, val explain: String) {
-    @SerialName("auto") AUTOMATIC("auto", "Automatic", "Installs updates by itself, but not during a call or a video"),
-    @SerialName("notify") NOTIFY("notify", "Tell me first", "Checks and tells you; you tap Install"),
-    @SerialName("off") OFF("off", "Off", "Never checks. Check now still works"),
+    NOTIFY("notify", "Tell me", "Checks GitHub about once a day and tells you when there's a new version"),
+    OFF("off", "Off", "Never checks by itself. Check now still works"),
 }
 
-/** `update.channel`. */
-@Serializable
-enum class UpdateChannel(val wire: String, val label: String, val explain: String) {
-    @SerialName("stable") STABLE("stable", "Stable", "Tested releases"),
-    @SerialName("beta") BETA("beta", "Beta", "New versions a bit earlier, sometimes with rough edges"),
+object UpdatePolicySerializer : KSerializer<UpdatePolicy> {
+    override val descriptor = PrimitiveSerialDescriptor("dev.tailbond.app.update.UpdatePolicy", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: UpdatePolicy) = encoder.encodeString(value.wire)
+    override fun deserialize(decoder: Decoder): UpdatePolicy =
+        if (decoder.decodeString().equals(UpdatePolicy.OFF.wire, ignoreCase = true)) UpdatePolicy.OFF else UpdatePolicy.NOTIFY
 }
 
-/** What to do with a manifest. */
-sealed interface Decision {
-    /** This build is that version or newer. */
-    data object UpToDate : Decision
-    /** The release has no Android APK. */
-    data object NoApk : Decision
-    /**
-     * A newer version needs a newer server ([needs] > [has]; [has] null =
-     * the server couldn't be asked): the phone waits until its server updates.
-     */
-    data class NeedsServer(val version: String, val needs: Int, val has: Int?) : Decision
-    /**
-     * [version] is available. [install]: install now without asking.
-     * [deferred]: why an automatic install waits (null = it doesn't).
-     */
-    data class Available(val version: String, val install: Boolean, val deferred: Deferral? = null) : Decision
-}
-
-enum class Deferral {
-    /** The tunnel is busy (a call, a stream). */
-    BUSY,
-    /** Policy "Tell me first": waits for a tap. */
-    ASK,
-    /** A development build never installs anything by itself. */
+/** What the last good check means for this build. */
+enum class Availability {
+    /** Never checked successfully. */
+    UNKNOWN,
+    UP_TO_DATE,
+    /** A newer release with an APK: "Update available". */
+    AVAILABLE,
+    /** A newer release without an Android APK (yet). */
+    NO_APK,
+    /** This build's version isn't semver (a dev build): shown, never nagged about. */
     DEV_BUILD,
 }
 
 /** Pure update rules (docs/architecture.md, "Updates"); unit tested. */
 object UpdateRules {
-    const val CHECK_EVERY_MS = 6 * 60 * 60 * 1000L
-    /** `defer_kbps` default: tx+rx through the tunnel, averaged over the last minute. */
-    const val DEFER_KBPS = 300L
+    /** Checks run about once a day: when the app comes to the front and the last good check is older than this. */
+    const val CHECK_EVERY_MS = 24 * 60 * 60 * 1000L
+    /** After a failed check, the next automatic try waits at least this long (GitHub allows 60 requests an hour). */
+    const val RETRY_MS = 60 * 60 * 1000L
 
     /**
-     * [current]: this build's version name; [currentCode]: its versionCode.
-     * [serverProtocol]: the active server's `protocol` from GET /api/hello
-     * (missing field = 1; null = couldn't ask). [busyKbps]: tunnel traffic
-     * over the last minute.
+     * Whether an automatic check is due. Never with policy Off. [lastCheckMs]:
+     * the last good check, [lastAttemptMs]: the last try (0 = never). A clock
+     * that went backwards counts as due.
      */
-    fun decide(
-        current: String,
-        currentCode: Long,
-        m: Manifest,
-        serverProtocol: Int?,
-        policy: UpdatePolicy,
-        busyKbps: Long,
-        deferKbps: Long = DEFER_KBPS,
-    ): Decision {
-        val apk = m.apk ?: return Decision.NoApk
-        val latest = SemVer.parse(m.version) ?: return Decision.UpToDate
-        val own = SemVer.own(current)
-        val newerCode = apk.versionCode?.let { it > currentCode }
-        when {
-            own != null && latest <= own -> return Decision.UpToDate
-            // Android refuses a versionCode that isn't higher, whatever the name says
-            newerCode == false -> return Decision.UpToDate
-        }
-        val needs = m.requiresServerProtocol
-        // every server speaks protocol 1, so only a higher requirement needs an answer from it
-        if (needs > 1 && (serverProtocol ?: 0) < needs) return Decision.NeedsServer(m.version, needs, serverProtocol)
+    fun checkDue(policy: UpdatePolicy, lastCheckMs: Long, lastAttemptMs: Long, nowMs: Long): Boolean {
+        if (policy == UpdatePolicy.OFF) return false
+        fun older(t: Long, gap: Long) = t <= 0 || nowMs < t || nowMs - t >= gap
+        return older(lastCheckMs, CHECK_EVERY_MS) && older(lastAttemptMs, RETRY_MS)
+    }
+
+    /** [current]: this build's versionName; [latest]: the latest release's version (null = never checked). */
+    fun availability(current: String, latest: String?, apkUrl: String?): Availability {
+        val l = latest?.let { SemVer.parse(it) } ?: return Availability.UNKNOWN
+        val own = SemVer.own(current) ?: return Availability.DEV_BUILD
         return when {
-            own == null -> Decision.Available(m.version, install = false, deferred = Deferral.DEV_BUILD)
-            policy != UpdatePolicy.AUTOMATIC -> Decision.Available(m.version, install = false, deferred = Deferral.ASK)
-            !m.security && busyKbps > deferKbps -> Decision.Available(m.version, install = false, deferred = Deferral.BUSY)
-            else -> Decision.Available(m.version, install = true)
+            l <= own -> Availability.UP_TO_DATE
+            apkUrl == null -> Availability.NO_APK
+            else -> Availability.AVAILABLE
         }
     }
 
-    /** Whether a scheduled check is due ([lastCheckMs] 0 = never checked). */
-    fun checkDue(lastCheckMs: Long, nowMs: Long, everyMs: Long = CHECK_EVERY_MS): Boolean =
-        lastCheckMs <= 0 || nowMs - lastCheckMs >= everyMs || nowMs < lastCheckMs
-
-    /**
-     * Average tunnel traffic (tx+rx, kbit/s) over the last minute from the
-     * per-second rate history (LiveState keeps 60 samples, bits/s).
-     */
-    fun busyKbps(rxHistory: List<Long>, txHistory: List<Long>, samples: Int = 60): Long {
-        val rx = rxHistory.takeLast(samples)
-        val tx = txHistory.takeLast(samples)
-        val n = maxOf(rx.size, tx.size)
-        if (n == 0) return 0
-        return (rx.sum() + tx.sum()) / n / 1000
+    /** `owner/name`, also from `https://github.com/owner/name`; null when it's neither. */
+    fun repo(s: String?): String? {
+        val t = s?.trim()?.removeSuffix("/")?.removeSuffix(".git")?.removePrefix("https://github.com/") ?: return null
+        return t.takeIf { REPO.matches(it) }
     }
+
+    fun latestUrl(repo: String) = "https://api.github.com/repos/$repo/releases/latest"
+
+    private val REPO = Regex("""^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$""")
 }

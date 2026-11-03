@@ -15,8 +15,8 @@ fun setting(name: String): String? =
 val tbVersion: String = (setting("TB_VERSION") ?: findProperty("tailbond.version") as String).trim().removePrefix("v")
 
 /**
- * versionCode, agreed with scripts/release/make-manifest.sh (same as
- * update/Version.kt's VersionCode, kept in step by VersionCodeTest):
+ * versionCode (same as update/Version.kt's VersionCode, kept in step by
+ * VersionTest.gradleUsesTheSameFormula); it must grow with every release:
  * release MAJOR*1000000 + MINOR*10000 + PATCH*100; a pre-release ending in
  * a number N is that base - 100 + N (N 1..99, none = 1).
  */
@@ -32,14 +32,15 @@ fun versionCodeOf(name: String): Int {
 }
 
 /**
- * TB_UPDATE_SOURCE: public base URL of the channel files
- * (https://github.com/OWNER/REPO/releases/download/channels); empty = the
- * home server's mirror only. https only: the manifest's SHA-256 is trusted
- * over TLS, and the APK must carry the app's own signing key.
+ * TB_UPDATE_REPO: the GitHub repository whose latest release the app checks
+ * ("owner/name" or https://github.com/owner/name; default kaovilai/tailbond).
  */
-val updateSource: String = (setting("TB_UPDATE_SOURCE") ?: "").trim().also {
-    if (it.isNotEmpty() && !Regex("^https://[^\"\\\\ ]+$").matches(it)) throw GradleException("TB_UPDATE_SOURCE must be an https:// URL")
-}
+val updateRepo: String = (setting("TB_UPDATE_REPO") ?: "kaovilai/tailbond").trim()
+    .removePrefix("https://github.com/").removeSuffix("/").removeSuffix(".git").also {
+        if (!Regex("^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$").matches(it)) {
+            throw GradleException("TB_UPDATE_REPO \"$it\" isn't a GitHub repository (owner/name)")
+        }
+    }
 
 /** Release signing from the environment only (android/scripts/build-release-apk.sh); never from files in the repo. */
 val releaseKeystore: String? = setting("TB_RELEASE_KEYSTORE")
@@ -59,7 +60,7 @@ android {
         targetSdk = 36
         versionCode = versionCodeOf(tbVersion)
         versionName = tbVersion
-        buildConfigField("String", "UPDATE_SOURCE", "\"$updateSource\"")
+        buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
         // must match sdk-native's abiFilters (only arm64 prebuilts exist)
         ndk {
             abiFilters += listOf("arm64-v8a")

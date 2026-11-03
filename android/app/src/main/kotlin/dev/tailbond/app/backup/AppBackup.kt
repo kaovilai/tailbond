@@ -99,7 +99,6 @@ object Restore {
         add("Go back to the main server after", "${current.failbackAfterSec} s", "${inc.failbackAfterSec} s")
         add("Wi-Fi sign-in prompts", onOff(current.captivePrompts), onOff(inc.captivePrompts))
         add("Updates", current.updatePolicy.label, inc.updatePolicy.label)
-        add("Update channel", current.updateChannel.label, inc.updateChannel.label)
         val linksChanged = current.paths != inc.paths
         if (linksChanged) changes += Change("Wi-Fi / mobile data / Ethernet roles", "this phone's", "the backup's")
 

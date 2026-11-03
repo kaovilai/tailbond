@@ -37,7 +37,7 @@ data class SemVer(val major: Int, val minor: Int, val patch: Int, val pre: List<
         /**
          * This build's own version, or null for a development build (`dev`,
          * a git hash, `-dirty`, `git describe`'s `-3-gabc1234`): such a
-         * build never installs anything by itself.
+         * build shows what's available but never says "Update available".
          */
         fun own(s: String?): SemVer? {
             val v = parse(s) ?: return null
@@ -59,9 +59,8 @@ data class SemVer(val major: Int, val minor: Int, val patch: Int, val pre: List<
 }
 
 /**
- * Android `versionCode` from the version name (agreed with the release
- * scripts: scripts/release/make-manifest.sh writes the same number into the
- * apk artifact's `version_code`). Must grow with every release:
+ * Android `versionCode` from the version name. Must grow with every release,
+ * or Android refuses to install the new APK over the old one:
  *
  *     release       MAJOR*1_000_000 + MINOR*10_000 + PATCH*100   (0.2.0 → 20000)
  *     pre-release   that base - 100 + N, N = the number the pre-release ends in

@@ -1,7 +1,5 @@
 package dev.tailbond.app.data
 
-import dev.tailbond.app.update.HttpGet
-import dev.tailbond.app.update.copyLimited
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -14,18 +12,15 @@ import java.net.URI
 
 /**
  * Plain HTTP/1.0 to a server's agent through the tunnel (its tunnel address,
- * port 8077): the update mirror, GET /api/hello, POST /api/backups/push.
+ * port 8077): POST /api/backups/push.
  * A raw socket like [PairRequestClient], because every server has its own
  * tunnel subnet and the network security config can't list them; the
  * traffic never leaves the encrypted tunnel. Only IP literals in the
  * private ranges (10/8, 172.16/12, 192.168/16) are accepted.
  */
-object TunnelHttp : HttpGet {
-    /** Headers every request a paired client makes with its token carries (contract "Updates"). */
+object TunnelHttp {
+    /** Headers every API request a paired client makes with its token carries (contract "Updates": the server lists client versions). */
     fun clientHeaders(version: String): Map<String, String> = mapOf("X-Tailbond-Version" to version, "X-Tailbond-Kind" to "android")
-
-    override fun get(url: String, headers: Map<String, String>, sink: OutputStream, maxBytes: Long, progress: (Long) -> Unit): Int =
-        exchange("GET", url, headers, null, null, sink, maxBytes, progress)
 
     /** POST [body] ([contentType]) and return status + reply text (at most 64 KiB). */
     fun post(url: String, headers: Map<String, String>, body: ByteArray, contentType: String): Pair<Int, String> {
@@ -98,4 +93,19 @@ object TunnelHttp : HttpGet {
             return n
         }
     }
+}
+
+/** Copies to [sink] while counting, and throws once more than [maxBytes] arrive. */
+internal fun copyLimited(input: InputStream, sink: OutputStream, maxBytes: Long, progress: (Long) -> Unit): Long {
+    val buf = ByteArray(64 * 1024)
+    var total = 0L
+    while (true) {
+        val n = input.read(buf)
+        if (n < 0) break
+        total += n
+        if (total > maxBytes) throw IOException("more than $maxBytes bytes")
+        sink.write(buf, 0, n)
+        progress(total)
+    }
+    return total
 }

@@ -23,15 +23,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import dev.tailbond.app.BuildConfig
 import dev.tailbond.app.failover.FailoverPolicy
-import dev.tailbond.app.update.UpdateChannel
 import dev.tailbond.app.update.UpdateManager
 import dev.tailbond.app.update.UpdatePolicy
-import kotlinx.coroutines.launch
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.PathSetting
@@ -49,9 +44,6 @@ class MainActivity : ComponentActivity() {
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     private var tailscaleInstalled by mutableStateOf(false)
-    private var canInstallPackages by mutableStateOf(true)
-    /** A page a notification asked for (Updates). */
-    private var requestRoute by mutableStateOf<String?>(null)
 
     /** The passphrase typed in "Save a backup", until the file picker answers. Memory only. */
     private var exportPassphrase: String? = null
@@ -77,18 +69,13 @@ class MainActivity : ComponentActivity() {
             notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent { TailbondTheme { App() } }
-        // Android's "Update this app?" prompt, at once when the user started the install here
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                vm.updates.confirmNow.collect { runCatching { startActivity(it) } }
-            }
-        }
     }
 
     override fun onResume() {
         super.onResume()
         tailscaleInstalled = tailscaleLaunchIntent() != null
-        canInstallPackages = packageManager.canRequestPackageInstalls()
+        // about once a day: GitHub's latest release (docs/android.md, "Updates")
+        vm.updatesDue()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -103,11 +90,6 @@ class MainActivity : ComponentActivity() {
             if (ask != null) vm.askFromLink(ask) else vm.offerPairing(data.toString())
         } else if (intent?.action == ACTION_CONNECT && vm.profile.value != null) {
             requestConnect()
-        } else if (intent?.action == UpdateManager.ACTION_OPEN) {
-            requestRoute = Routes.UPDATES
-        } else if (intent?.action == UpdateManager.ACTION_FINISH) {
-            requestRoute = Routes.UPDATES
-            vm.updates.finishInstall(this)
         }
     }
 
@@ -214,18 +196,9 @@ class MainActivity : ComponentActivity() {
         override fun addWebsite(domain: String, note: String) = vm.addWebsite(domain, note)
         override fun setWebsiteEnabled(domain: String, on: Boolean) = vm.setWebsiteEnabled(domain, on)
         override fun removeWebsite(domain: String) = vm.removeWebsite(domain)
+        override fun updatesShown() = vm.updatesDue()
         override fun checkUpdates() = vm.checkUpdates()
-        override fun installUpdate() = vm.installUpdate()
-        override fun finishUpdate() = vm.updates.finishInstall(this@MainActivity)
-        override fun allowInstalls() {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:$packageName".toUri()))
-            } catch (_: ActivityNotFoundException) {
-                startActivity(Intent(Settings.ACTION_SETTINGS))
-            }
-        }
         override fun setUpdatePolicy(p: UpdatePolicy) = vm.setUpdatePolicy(p)
-        override fun setUpdateChannel(c: UpdateChannel) = vm.setUpdateChannel(c)
         override fun openUrl(url: String) {
             if (!url.startsWith("https://")) return
             try { startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) } catch (_: ActivityNotFoundException) {}
@@ -278,12 +251,12 @@ class MainActivity : ComponentActivity() {
             sdkInt = Build.VERSION.SDK_INT,
             update = UpdateUi(
                 status = vm.updateStatus.collectAsStateWithLifecycle().value,
-                canInstallPackages = canInstallPackages,
+                repo = UpdateManager.UPDATE_REPO,
                 debugBuild = BuildConfig.DEBUG,
             ),
             backup = vm.backup.collectAsStateWithLifecycle().value,
         )
-        TailbondApp(state, actions, requestRoute = requestRoute, onRouteShown = { requestRoute = null })
+        TailbondApp(state, actions)
     }
 
     companion object {

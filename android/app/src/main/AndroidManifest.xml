@@ -9,10 +9,6 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- self-updates (docs/android.md "Updates"): a PackageInstaller session for our own package;
-         Android 12+ installs it without a tap once tailbond is the installer of record -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
@@ -84,18 +80,5 @@
                 android:name="android.service.quicksettings.ACTIVE_TILE"
                 android:value="false" />
         </service>
-        <!-- PackageInstaller's answer for an update session -->
-        <receiver
-            android:name=".update.InstallStatusReceiver"
-            android:exported="false" />
-
-        <!-- after an update: reconnect the tunnel the install interrupted -->
-        <receiver
-            android:name=".update.PackageReplacedReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>

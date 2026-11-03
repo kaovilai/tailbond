@@ -2,13 +2,11 @@ package dev.tailbond.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.ProvideTextStyle
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -17,11 +15,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -34,16 +33,19 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,20 +54,25 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.tailbond.app.backup.BackupFile
 import dev.tailbond.app.service.ConnState
-import dev.tailbond.app.update.Phase
-import dev.tailbond.app.update.UpdateChannel
+import dev.tailbond.app.update.Availability
 import dev.tailbond.app.update.UpdatePolicy
-import dev.tailbond.app.update.UpdateRules
 import dev.tailbond.app.update.UpdateWords
 
 /** Settings: the "Updates" and "Backup" sections (one row each, opening their pages). */
 @Composable
 fun UpdatesBackupRows(state: UiState, onUpdates: () -> Unit, onBackup: () -> Unit) {
     val s = state.update.status
+    val available = s.availability == Availability.AVAILABLE
     SectionHeader("Updates")
     ListItem(
         headlineContent = { Text("tailbond ${s.current}") },
-        supportingContent = { Text(UpdateWords.headline(s) + " · " + s.policyLine(state)) },
+        supportingContent = {
+            Text(
+                UpdateWords.row(s, state.settings.updatePolicy, state.now()),
+                color = if (available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (available) FontWeight.SemiBold else null,
+            )
+        },
         leadingContent = { Icon(Icons.Filled.SystemUpdate, null) },
         trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
         modifier = Modifier.clickable(onClick = onUpdates),
@@ -87,113 +94,82 @@ fun UpdatesBackupRows(state: UiState, onUpdates: () -> Unit, onBackup: () -> Uni
 
 private fun UiState.now() = update.nowMs.takeIf { it > 0 } ?: System.currentTimeMillis()
 
-private fun dev.tailbond.app.update.UpdateStatus.policyLine(state: UiState) = when {
-    noSource -> "no update source"
-    else -> state.settings.updatePolicy.label.lowercase().let { if (state.settings.updateChannel == UpdateChannel.BETA) "$it, beta" else it }
-}
-
-/** Settings → Updates. */
+/** Settings → Updates: GitHub's latest release, the check policy, and Obtainium for automatic updates. */
 @Composable
 fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifier) {
     val u = state.update
     val s = u.status
+    val policy = state.settings.updatePolicy
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val server = state.activeServer?.name
+    val a = s.availability
+    LaunchedEffect(Unit) { actions.updatesShown() }
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-        val bad = s.phase == Phase.FAILED
+        val bad = s.error != null && a != Availability.AVAILABLE && !s.checking
         Card(
             colors = CardDefaults.cardColors(
-                containerColor = if (bad) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                containerColor = when {
+                    a == Availability.AVAILABLE -> MaterialTheme.colorScheme.primaryContainer
+                    bad -> MaterialTheme.colorScheme.errorContainer
+                    else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                },
             ),
             modifier = Modifier.fillMaxWidth().padding(16.dp),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("tailbond ${s.current}", style = MaterialTheme.typography.labelLarge, color = muted)
-                Text(UpdateWords.headline(s), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                UpdateWords.detail(s, server)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                when (s.phase) {
-                    Phase.DOWNLOADING -> LinearProgressIndicator(progress = { s.progress ?: 0f }, modifier = Modifier.fillMaxWidth())
-                    Phase.INSTALLING, Phase.CHECKING -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                    else -> {}
-                }
+                Text(UpdateWords.headline(s, policy), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                UpdateWords.detail(s, policy)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                if (s.checking) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(UpdateWords.lastChecked(s, state.now()), style = MaterialTheme.typography.bodySmall, color = muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val working = s.phase in setOf(Phase.CHECKING, Phase.DOWNLOADING, Phase.INSTALLING)
-                    when {
-                        s.phase == Phase.NEEDS_TAP -> Button(onClick = actions::finishUpdate) { Text("Finish installing") }
-                        s.phase == Phase.NEEDS_PERMISSION || (!u.canInstallPackages && s.available != null) ->
-                            Button(onClick = actions::allowInstalls) { Text("Allow") }
-                        s.available != null && s.needsServer == null && !working ->
-                            Button(onClick = actions::installUpdate) { Text(if (bad) "Try again" else "Install now") }
+                val apk = s.apkUrl
+                if (a == Availability.AVAILABLE && apk != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = { actions.openUrl(apk) }) {
+                            Icon(Icons.Filled.Download, null)
+                            Text("  Download update")
+                        }
+                        s.notesUrl?.let { url -> OutlinedButton(onClick = { actions.openUrl(url) }) { Text("What's new") } }
                     }
-                    if (!s.noSource) OutlinedButton(onClick = actions::checkUpdates, enabled = !working) { Text("Check now") }
+                    if (!u.debugBuild) Text(UpdateWords.howToInstall(s.latest), style = MaterialTheme.typography.bodySmall, color = muted)
+                } else if (a == Availability.DEV_BUILD || a == Availability.NO_APK) {
+                    s.notesUrl?.let { url -> TextButton(onClick = { actions.openUrl(url) }) { Text("What's new in v${s.latest}") } }
                 }
-                s.notesUrl?.takeIf { s.available != null || s.lastResult.startsWith("Updated") }?.let { url ->
-                    TextButton(onClick = { actions.openUrl(url) }, modifier = Modifier.padding(start = 0.dp)) {
-                        Text("What's new in ${s.available ?: s.current}")
-                    }
-                }
+                OutlinedButton(onClick = actions::checkUpdates, enabled = !s.checking) { Text("Check now") }
             }
         }
 
-        if (u.debugBuild) {
-            Hint(UpdateWords.DEBUG_BUILD)
-        } else {
-            UpdateWords.firstTap(s.silent, state.sdkInt)?.takeIf { !s.noSource && s.phase != Phase.NEEDS_TAP }?.let { Hint(it) }
-        }
+        if (u.debugBuild) Hint(UpdateWords.DEBUG_BUILD)
 
-        SectionHeader("Install updates")
+        SectionHeader("Check for updates")
         UpdatePolicy.entries.forEach { p ->
-            Choice(state.settings.updatePolicy == p, p.label, p.explain, enabled = !s.noSource) { actions.setUpdatePolicy(p) }
+            Choice(policy == p, p.label, p.explain) { actions.setUpdatePolicy(p) }
         }
-        SectionHeader("Which versions")
-        UpdateChannel.entries.forEach { c ->
-            Choice(state.settings.updateChannel == c, c.label, c.explain, enabled = !s.noSource) { actions.setUpdateChannel(c) }
-        }
+        Text(
+            "The check only asks GitHub which release of github.com/${u.repo} is the latest. It sends nothing about you or your servers.",
+            style = MaterialTheme.typography.bodySmall, color = muted,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
 
-        SectionHeader("How updates work")
-        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            val home = server ?: "your home server"
-            Text(
-                "While connected, tailbond gets updates from $home, which keeps a copy it has checked itself. Otherwise it gets them from GitHub. " +
-                    "Each download must match the size and SHA-256 in the release list, and must be signed with the same key as the tailbond " +
-                    "you have: tailbond checks that before installing, and Android checks it again.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "During a call or a video (more than ${UpdateRules.DEFER_KBPS} kbit/s through tailbond), an automatic update waits. Security fixes don't wait.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "Installing restarts tailbond: the connection drops for a few seconds and comes back by itself.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                if (u.debugBuild) {
-                    "Debug and release builds are signed with different keys, so neither can update the other."
-                } else {
-                    "Debug and release builds are signed with different keys, so neither can update the other. " +
-                        "If tailbond's release key ever changes, Android can't update the app: uninstall it, install the new release once, and restore a backup."
-                },
-                style = MaterialTheme.typography.bodySmall, color = muted,
-            )
-            Text(
-                "Prefer Obtainium? Add tailbond's GitHub releases there, use the release APK, and set Install updates to Off here so only one of them updates the app.",
-                style = MaterialTheme.typography.bodySmall, color = muted,
-            )
+        SectionHeader("Automatic updates")
+        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(UpdateWords.OBTAINIUM_TITLE, style = MaterialTheme.typography.titleMedium)
+            Text(UpdateWords.obtainium(u.repo), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = { actions.openUrl("https://github.com/${u.repo}/blob/main/docs/android.md#updates") }) {
+                Text("How to set up Obtainium")
+            }
         }
     }
 }
 
 @Composable
-private fun Choice(selected: Boolean, label: String, explain: String, enabled: Boolean = true, onClick: () -> Unit) {
+private fun Choice(selected: Boolean, label: String, explain: String, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth()
-            .selectable(selected = selected, enabled = enabled, onClick = onClick, role = Role.RadioButton)
+            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = selected, onClick = null, enabled = enabled, modifier = Modifier.padding(8.dp))
+        RadioButton(selected = selected, onClick = null, modifier = Modifier.padding(8.dp))
         Column {
             Text(label)
             Text(explain, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

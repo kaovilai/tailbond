@@ -95,7 +95,7 @@ object BackupFixtures {
     )
     val settings = AppSettings(
         onboarded = true, mode = Mode.STREAMING, cellularCapMb = 5000, excludedApps = setOf("com.netflix.mediaclient"),
-        websites = listOf(WebsiteRule("mybank.com", true, "Bank")), updatePolicy = UpdatePolicy.NOTIFY,
+        websites = listOf(WebsiteRule("mybank.com", true, "Bank")), updatePolicy = UpdatePolicy.OFF,
     )
     val backup = AndroidBackup(config = AndroidConfig(listOf(home, vps), settings))
 }
@@ -222,7 +222,7 @@ class RestorePreviewTest {
         assertEquals("none" to "1 app", by.getValue("Apps that skip tailbond").let { it.from to it.to })
         assertEquals("none" to "mybank.com", by.getValue("Websites that skip tailbond").let { it.from to it.to })
         assertEquals("no limit" to "5 GB a month", by.getValue("Mobile data limit").let { it.from to it.to })
-        assertEquals("Automatic" to "Tell me first", by.getValue("Updates").let { it.from to it.to })
+        assertEquals("Tell me" to "Off", by.getValue("Updates").let { it.from to it.to })
         assertFalse(by.containsKey("Server choice"))
         assertEquals(1, p.warnings.size)
         assertTrue(p.warnings[0].startsWith("1 app from the backup isn't installed"))

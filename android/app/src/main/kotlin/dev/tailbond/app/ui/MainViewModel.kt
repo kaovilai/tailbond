@@ -10,7 +10,6 @@ import dev.tailbond.app.backup.BackupException
 import dev.tailbond.app.backup.BackupFile
 import dev.tailbond.app.backup.BackupManager
 import dev.tailbond.app.data.AskState
-import dev.tailbond.app.update.UpdateChannel
 import dev.tailbond.app.update.UpdateManager
 import dev.tailbond.app.update.UpdatePolicy
 import dev.tailbond.app.data.PairRequestClient
@@ -100,13 +99,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- updates ---
 
-    val updates = UpdateManager.get(app).also { it.start() }
+    private val updates = UpdateManager.get(app)
     val updateStatus = updates.status
 
-    fun checkUpdates() { updates.checkNow() }
-    fun installUpdate() { updates.installNow() }
+    /** The app came to the front, or the Updates page opened: check if the last check is a day old. */
+    fun updatesDue() = updates.onForeground()
+    fun checkUpdates() = updates.checkNow()
     fun setUpdatePolicy(p: UpdatePolicy) = repo.updateSettings { it.copy(updatePolicy = p) }
-    fun setUpdateChannel(c: UpdateChannel) = repo.updateSettings { it.copy(updateChannel = c) }
 
     // --- backup and restore ---
 

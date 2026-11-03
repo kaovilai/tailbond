@@ -3,7 +3,6 @@ package dev.tailbond.app.ui
 import dev.tailbond.app.backup.BackupHeader
 import dev.tailbond.app.backup.RestorePreview
 import dev.tailbond.app.data.AskState
-import dev.tailbond.app.update.UpdateChannel
 import dev.tailbond.app.update.UpdatePolicy
 import dev.tailbond.app.update.UpdateStatus
 import dev.tailbond.app.data.PeerList
@@ -23,12 +22,12 @@ import dev.tailbond.app.pairing.PairingPayload
 import dev.tailbond.app.service.ConnState
 import dev.tailbond.app.service.Live
 
-/** The Updates page: the updater's status plus what Android says about installing. */
+/** The Updates page: the last check of GitHub's latest release. */
 data class UpdateUi(
     val status: UpdateStatus = UpdateStatus(current = "0.1.0"),
-    /** "Install unknown apps" is allowed for tailbond. */
-    val canInstallPackages: Boolean = true,
-    /** Signed with the debug key: can't take release updates. */
+    /** `owner/name` whose GitHub releases are checked (BuildConfig.UPDATE_REPO). */
+    val repo: String = "kaovilai/tailbond",
+    /** Signed with the debug key: release APKs don't install over it. */
     val debugBuild: Boolean = false,
     /** Fixed clock for renders; 0 = now. */
     val nowMs: Long = 0,
@@ -176,14 +175,11 @@ interface UiActions {
     fun setWebsiteEnabled(domain: String, on: Boolean) {}
     fun removeWebsite(domain: String) {}
     // updates
+    /** Settings → Updates opened: checks when the last check is a day old. */
+    fun updatesShown() {}
     fun checkUpdates() {}
-    fun installUpdate() {}
-    /** Android's "Update this app?" prompt again (it went away, or the user came from the notification). */
-    fun finishUpdate() {}
-    /** Android's "Install unknown apps" page for tailbond. */
-    fun allowInstalls() {}
     fun setUpdatePolicy(p: UpdatePolicy) {}
-    fun setUpdateChannel(c: UpdateChannel) {}
+    /** Opens an https link in the browser (release notes, the APK download, the docs). */
     fun openUrl(url: String) {}
     // backup
     /** Asks where to save, then writes the encrypted file. */

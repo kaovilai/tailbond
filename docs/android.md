@@ -180,122 +180,62 @@ tests that used them are in [ux/summary.md](ux/summary.md) and
 
 ## Updates
 
-Settings → **Updates**. The app updates itself from the release's
-**manifest**, `<channel>.json` ([architecture.md](architecture.md#updates);
-for every platform and the release side, see [updates.md](updates.md)):
+Like a typical open-source app: each release is a GitHub release with a
+release-signed `tailbond-<version>.apk` (and `SHA256SUMS`;
+[architecture.md](architecture.md#updates), [updates.md](updates.md)).
+Two ways to stay current:
 
-- **Where from**: while connected, it uses the active server's mirror first
-  (`http://<server tunnel IP>:8077/updates/<channel>.json`, with the client
-  token and `X-Tailbond-Version` / `X-Tailbond-Kind: android`; the same two
-  headers go with every `/api/peers` poll). Then it falls back to the public
-  source, `BuildConfig.UPDATE_SOURCE` (Gradle property or env
-  `TB_UPDATE_SOURCE`, `https://` only; empty means mirror only). The APK
-  comes from the mirror's `/updates/files/<name>`, then from the artifact's
-  `url`. Updates are off only when no server is paired and the build has no
-  public source; the Updates page then says "Nowhere to get updates from".
-- **Trust**: there is no update-signing key of tailbond's own. The phone
-  trusts the manifest because of where it comes from, and the APK because
-  of the key it's signed with:
-  - **The home server's mirror** is reached through the tunnel, which pins
-    the server's TLS certificate, so the channel itself is authenticated. The
-    server only mirrors files it has verified itself (the release's GitHub
-    artifact attestation, or the admin's explicit choice of SHA-256 only).
-  - **The public source** (GitHub releases) is `https://` only: the
-    manifest's `sha256` and `size` over TLS give integrity. The release also
-    publishes `<channel>.json.sigstore.json` (a Sigstore bundle); the app
-    doesn't read it (too heavy for a phone; the server checks attestations).
-  - **Every APK**, from either path, must match the manifest's `sha256` and
-    `size`. Before installing, the app checks that it's `dev.tailbond.app`,
-    that its signing certificates are the installed app's own
-    (`getPackageArchiveInfo` with `GET_SIGNING_CERTIFICATES` on Android 9+,
-    `GET_SIGNATURES` below; a rotated key whose lineage includes the
-    installed one also counts), and that its `versionCode` is higher. An APK
-    signed with another key is refused with "it's signed with a different
-    key than this app" and isn't downloaded again by itself. Android enforces
-    the same signer at install; the check gives a clear message instead of a
-    failed install. So **authenticity is the APK signing key**.
-  - A manifest for another channel, or in another format than 1, is refused.
-- **Debug builds** are signed with the debug key, so they can only install
-  updates signed with that same key: they won't take the release APKs. The
-  Updates page says so, and a release APK they download is refused as
-  "signed with a different key".
-- **When**: when the app starts (at most every 30 min), then every 6 h while
-  connected; "Check now" any time. Policy **Automatic** (default),
-  **Tell me first**, or **Off**; channel **Stable** or **Beta**. An automatic
-  install waits while the tunnel averages more than 300 kbit/s (tx+rx, over
-  the last minute: a call or a stream) unless the release is `security`. A
-  release whose `requires_server_protocol` is above the active server's
-  `protocol` (`GET /api/hello` through the tunnel; missing = 1) waits for the
-  server to update first. A build whose own version isn't semver (`-dirty`,
-  `git describe`) never installs by itself.
-- **Install**: a `PackageInstaller` session (`REQUEST_INSTALL_PACKAGES`).
-  On Android 12+ the session asks for `USER_ACTION_NOT_REQUIRED`
-  (`UPDATE_PACKAGES_WITHOUT_USER_ACTION`). Android honours that once tailbond
-  is the installer of record. **The first update after installing from a
-  browser (or adb) needs one tap** ("Update"); the Updates page explains this
-  beforehand, and a notification asks for the tap when the app isn't open.
-  After that, updates are silent. Android 11 and older ask for a tap every
-  time. If "Install unknown apps" isn't allowed yet, the page shows **Allow**,
-  which opens Android's page. Installing ends the app's process, so the tunnel
-  drops for a few seconds. If it was up, `MY_PACKAGE_REPLACED` reconnects it.
-  Failures show as "Couldn't install X: …". The old version keeps running,
-  because Android has no partial install to roll back.
+- **Recommended: [Obtainium](https://obtainium.imranr.dev/).** It tracks
+  GitHub releases and installs updates for you. In Obtainium tap **Add App**,
+  paste `https://github.com/kaovilai/tailbond`, keep the source "GitHub", and
+  set the APK filter to `tailbond-[0-9].*\.apk`. It works only with the
+  release APK (same key as the one installed), not a debug build.
+- **In the app**: Settings → **Updates**. About once a day (when the app
+  comes to the front or the page opens, and the last check is older than
+  24 h; **Check now** any time) it asks
+  `GET https://api.github.com/repos/<repo>/releases/latest`. `<repo>` is
+  built in: `BuildConfig.UPDATE_REPO`, from the Gradle property or env
+  `TB_UPDATE_REPO` (default `kaovilai/tailbond`). A newer `tag_name` than
+  the app's `versionName` shows **Update available: vX.Y.Z** with **What's
+  new** (the release page) and **Download update**, which opens the APK in
+  the browser; open the download and tap Update, and Android installs it over
+  the app because it's signed with the same key. Policy **Tell me**
+  (default) or **Off** (no checks by itself). A build whose version isn't a
+  numbered release (`dev`, `-dirty`) shows the latest release but never
+  says "Update available". A debug build says it can't take release APKs.
 
-**Release signing.** The APK signing key is the one key Android can't do
-without, and it is what makes an update genuine. Debug and release builds
-are signed with different keys and **can't update each other**: Android
-refuses the update, and the app says the APK is "signed with a different
-key". Release APKs need one stable key, forever.
-`scripts/release/gen-android-keystore.sh` makes it once: it stores the
-keystore as the GitHub repository secrets `TB_RELEASE_KEYSTORE_B64` (the
-base64 keystore, decoded to a temporary file at build time),
-`TB_RELEASE_KEYSTORE_PASSWORD`, `TB_RELEASE_KEY_ALIAS` and
-`TB_RELEASE_KEY_PASSWORD` (defaults to the store password; PKCS12 uses one),
-and writes an encrypted backup to a place you choose, outside any git
-checkout. The keystore lives only there: in the repo secrets and in that
-encrypted backup. To build a release APK locally from a decrypted copy:
+The app's requests to its server (`GET /api/peers` and the others with the
+client token) carry `X-Tailbond-Version` and `X-Tailbond-Kind: android`, so
+the server's dashboard can show which phones are out of date.
+
+**The release key.** Android installs an update only if it's signed with
+the same key as the installed app, so every release APK is signed with one
+keystore, forever. Debug builds use the debug key, so a release APK can't
+update a debug install (or the other way round): save a backup, uninstall,
+install the release APK, restore. `scripts/release/gen-android-keystore.sh`
+makes the keystore once and stores it as the GitHub secrets
+`TB_RELEASE_KEYSTORE_B64`, `TB_RELEASE_KEYSTORE_PASSWORD`,
+`TB_RELEASE_KEY_ALIAS` and `TB_RELEASE_KEY_PASSWORD`, plus an encrypted
+backup outside the repo. CI builds the APK with
+`android/scripts/build-release-apk.sh`, which stops with a clear message
+when the secrets are missing. Locally, from a decrypted copy:
 
 ```sh
 TB_RELEASE_KEYSTORE=/path/to/tailbond-release.p12 \
 TB_RELEASE_KEYSTORE_PASSWORD=… TB_RELEASE_KEY_ALIAS=tailbond TB_VERSION=0.2.0 \
-TB_UPDATE_SOURCE=https://github.com/OWNER/REPO/releases/download/channels \
     android/scripts/build-release-apk.sh         # → out/android/tailbond-0.2.0.apk, prints the signer
 ```
 
-Without the signing settings, `build-release-apk.sh` stops with a clear
-message. Nothing secret is in the repo, and `*.jks` / `*.keystore` are
-ignored.
+> **Losing the release keystore** means every user uninstalls and
+> reinstalls tailbond once (Android refuses an update signed with another
+> key, in the app and in Obtainium alike), then restores a `.tbbackup` (see
+> below). Keep the encrypted backup and its passphrase safe.
 
-> **Losing the release keystore** means every user has to uninstall and
-> reinstall tailbond once: Android refuses an update signed with a different
-> key, so neither the app's own updater nor Obtainium can install the next
-> release. Uninstalling removes the pairing and settings, so save a backup
-> (`.tbbackup`, see below) first and restore it afterwards. Keep the encrypted
-> backup made by `gen-android-keystore.sh`, and its passphrase, safe.
-
-**Versions.** `versionName` comes from `TB_VERSION` (a leading `v` is
-dropped). Without it, the build uses `tailbond.version` in
-`android/gradle.properties`. `versionCode` follows from it (agreed with
-`scripts/release/make-manifest.sh`, which writes the same `version_code`):
-
-| versionName | versionCode |
-|---|---|
-| `MAJOR.MINOR.PATCH` | `MAJOR*1000000 + MINOR*10000 + PATCH*100` (0.2.0 → 20000) |
-| a pre-release ending in a number N (`1.2.3-beta.4`, `0.2.0-rc1`) | that base − 100 + N, N clamped to 1..99, no number = 1 (1.2.3-beta.4 → 1020204) |
-
-So every pre-release sorts below its release and above the previous patch.
-MINOR and PATCH must stay ≤ 99. Pre-releases of one version order by N only,
-so number them in one sequence (beta.1, beta.2, rc.3).
-
-**Obtainium instead.** If you'd rather use [Obtainium](https://obtainium.imranr.dev/):
-tap **Add App**, paste the GitHub repository URL
-(`https://github.com/OWNER/REPO`), keep the source "GitHub", and set the
-APK filter to `tailbond-.*\.apk`. It must be the **release-signed APK**
-from the releases page, the same key as the one installed (a debug build
-from `build-apk.sh` can't be updated by it). Obtainium relies on the same
-signing key: Android only installs its update if it's signed like the
-installed app. Then set tailbond's own **Install updates** to **Off**, so
-only one of the two updates the app.
+**Versions.** `versionName` is `TB_VERSION` (leading `v` dropped), else
+`tailbond.version` in `android/gradle.properties`. `versionCode` must grow
+with every release: `MAJOR*1000000 + MINOR*10000 + PATCH*100` (0.2.0 →
+20000); a pre-release ending in a number N is that − 100 + N (1.2.3-beta.4 →
+1020204). MINOR and PATCH stay ≤ 99.
 
 ## Backup and restore
 
@@ -533,6 +473,10 @@ Android's sign-in can't load: turn it off while you sign in, then on again
   browser round trip through *Add this phone* and the machine list over the
   tunnel are untested on a device. `GET /api/peers` itself is covered by the
   agent unit tests and `scripts/e2e-netns.sh`.
+- **The update check is untested against the live GitHub API on a phone**:
+  parsing, version comparison, the 24 h rule and the words are unit tested
+  with recorded answers; the browser download and Android installing it
+  over the app are not.
 - The phone is not a tailnet machine: tailnet peers see its traffic as coming
   from the home server, and reach it at its tunnel IP only if the server's
   `10.77.0.0/24` route is approved.

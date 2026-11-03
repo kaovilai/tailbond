@@ -125,8 +125,6 @@ class TailbondVpnService : MqvpnVpnService() {
             repo.settings.drop(1).collect { onSettingsChanged(it) }
         }
         main.launch { repo.servers.drop(1).collect { onServersChanged(it) } }
-        // update checks every 6 h while connected, even with the app closed
-        dev.tailbond.app.update.UpdateManager.get(this).start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

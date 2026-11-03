@@ -3,7 +3,6 @@ package dev.tailbond.app.model
 import com.mqvpn.sdk.network.PathType
 import dev.tailbond.app.failover.FailoverPolicy
 import dev.tailbond.app.failover.FailoverTiming
-import dev.tailbond.app.update.UpdateChannel
 import dev.tailbond.app.update.UpdatePolicy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -80,9 +79,8 @@ data class AppSettings(
     val failbackAfterSec: Int = 120,
     /** Websites that skip the tunnel (Android 13+, excludeRoute). */
     val websites: List<WebsiteRule> = emptyList(),
-    /** `update.policy` and `update.channel` (docs/architecture.md, "Updates"). */
-    val updatePolicy: UpdatePolicy = UpdatePolicy.AUTOMATIC,
-    val updateChannel: UpdateChannel = UpdateChannel.STABLE,
+    /** `update.policy` (docs/architecture.md, "Updates"): tell me (check once a day) or off. */
+    val updatePolicy: UpdatePolicy = UpdatePolicy.NOTIFY,
 ) {
     val failoverTiming: FailoverTiming
         get() = FailoverTiming(
