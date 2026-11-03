@@ -363,7 +363,7 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	}
 	ini, err := mqconf.Client(mqconf.ClientParams{
 		Server: p.Server, ServerName: p.SNI, Insecure: p.Insecure, Key: p.Key, DNS: dns,
-		Paths: paths, TunName: config.DefaultTunName, Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
+		Paths: paths, TunName: config.DefaultTunName, MTU: clientMTU(cfg), Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
 		ManageRoutes: cfg.Client.RoutesManaged(), LogLevel: cfg.LogLevel,
 	})
 	if err != nil {
@@ -824,4 +824,13 @@ func (a *Agent) hUnpair(w http.ResponseWriter, r *http.Request) {
 	a.sup.Stop()
 	a.Logf("pairing removed")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// clientMTU is the tunnel MTU for the client role (config.DefaultClientMTU
+// unless client.mtu is set).
+func clientMTU(cfg *config.Config) int {
+	if cfg.Client.MTU > 0 {
+		return cfg.Client.MTU
+	}
+	return config.DefaultClientMTU
 }

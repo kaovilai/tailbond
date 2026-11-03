@@ -27,16 +27,18 @@ const (
 	PrioritySecondary = "secondary"
 	PriorityBackup    = "backup"
 
-	DefaultPath     = "/etc/tailbond/tailbond.json"
-	DefaultTunName  = "tb0"
-	DefaultCtlAddr  = "127.0.0.1:9077"
-	DefaultListen   = ":8077"
-	DefaultPort     = 443
-	DefaultSubnet   = "10.77.0.0/24"
-	DefaultSubnet6  = "fd77:77::/112"
-	DefaultStateDir = "/var/lib/tailbond"
-	DefaultHooksDir = "/usr/lib/tailbond/hooks"
-	DefaultMqvpnBin = "/usr/bin/mqvpn"
+	DefaultPath    = "/etc/tailbond/tailbond.json"
+	DefaultTunName = "tb0"
+	// DefaultClientMTU is safe on any IPv4/IPv6 uplink (the Android app uses it too).
+	DefaultClientMTU = 1280
+	DefaultCtlAddr   = "127.0.0.1:9077"
+	DefaultListen    = ":8077"
+	DefaultPort      = 443
+	DefaultSubnet    = "10.77.0.0/24"
+	DefaultSubnet6   = "fd77:77::/112"
+	DefaultStateDir  = "/var/lib/tailbond"
+	DefaultHooksDir  = "/usr/lib/tailbond/hooks"
+	DefaultMqvpnBin  = "/usr/bin/mqvpn"
 )
 
 // TailnetRoutes are the tailnet prefixes bonded clients reach through the server.
@@ -98,6 +100,10 @@ type Client struct {
 	ManageRoutes *bool `json:"manage_routes,omitempty"`
 	// Additive: keep mqvpn from changing the system resolver (OpenWrt, tests).
 	NoDNS bool `json:"no_dns,omitempty"`
+	// MTU of the tunnel device. 0 = DefaultClientMTU. mqvpn's own "auto"
+	// assumes a 1500-byte uplink; cellular, hotel and WSL links are often
+	// smaller, and then every packet above ~1250 bytes is lost.
+	MTU int `json:"mtu,omitempty"`
 	// Additive: user pressed "disconnect"; persisted so a reboot keeps it off.
 	Disconnected bool `json:"disconnected,omitempty"`
 	// Additive: probe each WAN for a captive portal and keep portal WANs

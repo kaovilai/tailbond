@@ -64,6 +64,7 @@ type ClientParams struct {
 	DNS          []string
 	Paths        []string
 	TunName      string
+	MTU          int
 	Mode         string
 	ControlAddr  string
 	ManageRoutes bool
@@ -201,6 +202,9 @@ func Client(p ClientParams) (string, error) {
 
 	w.section("Interface")
 	w.kv("TunName", orDefault(p.TunName, "tb0"))
+	if p.MTU > 0 {
+		w.kv("MTU", p.MTU)
+	}
 	if len(p.DNS) > 0 {
 		w.kv("DNS", strings.Join(p.DNS, ", "))
 	}

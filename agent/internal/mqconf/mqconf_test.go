@@ -196,3 +196,21 @@ func TestValidUserName(t *testing.T) {
 		}
 	}
 }
+
+func TestClientMTU(t *testing.T) {
+	p := clientParams("speed")
+	ini, err := Client(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ini, "MTU") {
+		t.Fatalf("MTU 0 must leave mqvpn's default, got:\n%s", ini)
+	}
+	p.MTU = 1280
+	if ini, err = Client(p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ini, "MTU = 1280") {
+		t.Fatalf("want MTU = 1280 under [Interface], got:\n%s", ini)
+	}
+}

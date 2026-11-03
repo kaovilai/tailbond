@@ -304,7 +304,7 @@ Additive keys (all optional):
 - `server.disable_dns`: no DNS forwarder (the pairing payload then has no `dns`);
 - `server.no_advertise_route`: don't advertise the tunnel subnet to the tailnet (Fedora hook; OpenWrt uses UCI `server.advertise_routes`);
 - `approvers`: Tailscale logins who may use the dashboard from the tailnet without a password, besides the server's owner (on a tagged server, the only ones);
-- `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic);
+- `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic), `client.mtu` (tunnel MTU, default 1280: mqvpn's auto value assumes a 1500-byte uplink and loses large packets on smaller ones);
 - `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`;
 - `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing);
 - `glinet_ipk`: router package offered as `GET /tailbond-glinet.ipk`;

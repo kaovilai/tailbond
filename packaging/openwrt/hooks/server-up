@@ -22,7 +22,9 @@ wan="$(zone_of_network wan)" || wan=wan
 lan="$(zone_of_network lan)" || lan=lan
 
 ensure_network
-commit_reload network network && log "network: added interface tailbond ($TB_TUN)"
+commit_reload network network && log "network: removed legacy interface tailbond"
+# Tearing that interface down also set the device down.
+ip link set dev "$TB_TUN" up 2>/dev/null || true
 
 # Clients may query the agent's DNS forwarder and ping the server; nothing else.
 ensure_zone REJECT
@@ -37,6 +39,15 @@ uset firewall.tailbond_icmp.name tailbond-icmp
 uset firewall.tailbond_icmp.src tailbond
 uset firewall.tailbond_icmp.proto icmp
 uset firewall.tailbond_icmp.target ACCEPT
+# Bonded routers/phones fetch the tailnet machines list (GET /api/peers,
+# client token) from the agent on the tunnel IP; the agent answers nothing
+# else on tunnel addresses.
+uset firewall.tailbond_peers rule
+uset firewall.tailbond_peers.name tailbond-peers
+uset firewall.tailbond_peers.src tailbond
+uset firewall.tailbond_peers.proto tcp
+uset firewall.tailbond_peers.dest_port "$(tbcfg_or main.api_port 8077)"
+uset firewall.tailbond_peers.target ACCEPT
 
 uset firewall.tailbond_wan_in rule
 uset firewall.tailbond_wan_in.name tailbond-mqvpn
@@ -103,8 +114,9 @@ uset firewall.tailbond_ts_nat.proto all
 commit_reload firewall firewall && log "firewall: udp/$port open on $wan, zone tailbond -> $wan${lan:+/$lan}/$ts"
 
 # The agent's DNS forwarder owns $TB_DNS_IP:53.
-ulist 'dhcp.@dnsmasq[0].notinterface' tailbond
-commit_reload dhcp dnsmasq && log "dnsmasq: no longer listening on tailbond"
+udel_list 'dhcp.@dnsmasq[0].notinterface' tailbond
+ulist 'dhcp.@dnsmasq[0].notinterface' "$TB_TUN"
+commit_reload dhcp dnsmasq && log "dnsmasq: no longer listening on $TB_TUN"
 
 # Advertise the tunnel subnet, keeping routes advertised by others (GL UI).
 if command -v tailscale >/dev/null && is_true "$(tbcfg_or server.advertise_routes 1)"; then
