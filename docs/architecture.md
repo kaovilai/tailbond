@@ -550,15 +550,16 @@ See [android.md](android.md#skipping-the-tunnel).
 
 ## Updates
 
-Every tailbond install can update itself from a **signed manifest**. A home
-server also acts as an **update mirror**, so routers and phones don't need
+Every tailbond install can update itself from a channel **manifest** whose
+authenticity comes from a **GitHub artifact attestation** (Sigstore keyless:
+no signing key anywhere). A home server also acts as an **update mirror**, so routers and phones don't need
 to reach GitHub (hotel Wi-Fi, captive portals, no GitHub remote at all).
 Details for users: [updates.md](updates.md).
 
-### Manifest and signature
+### Manifest and attestation
 
-A channel (`stable`, `beta`) is one file `<channel>.json` plus
-`<channel>.json.sig` under the update source (`update.source`, a base URL;
+A channel (`stable`, `beta`) is one file `<channel>.json` plus its
+attestation `<channel>.json.sigstore.json` under the update source (`update.source`, a base URL;
 default set at build time, e.g.
 `https://github.com/OWNER/REPO/releases/download/channels`; CI re-uploads
 both files to that rolling release on every tag). Format 1:
@@ -597,14 +598,32 @@ both files to that rolling release on every tag). Format 1:
   (the maintenance window still applies to servers).
 - `linux` tarballs contain `tailbondd`, `mqvpn` and `hooks/`, all static.
 
-`<channel>.json.sig` is JSON: `{"key_id": "<hex of the first 8 bytes of
-SHA-256(public key)>", "sig": "<base64 ed25519 signature of the exact bytes
-of <channel>.json>"}`. Plain ed25519 (RFC 8032), no prehash. Trusted public
-keys (raw 32 bytes, base64) are compiled in at build time
-(`-X …/update.BuildKeys=<key>[,<key>]`, CI variable `TB_UPDATE_PUBKEY`;
-Android `BuildConfig.UPDATE_KEYS`) plus `update.trusted_keys` in the config
-(self-hosted builds, tests). With no trusted key, updates are off
-("this build has no update key"). Keys: `scripts/release/gen-update-key.sh`.
+`<channel>.json.sigstore.json` is a Sigstore bundle (v0.3, JSON) from
+`actions/attest` in the release job: one SLSA build provenance attestation
+(`https://slsa.dev/provenance/v1`) whose subjects are every release file and
+the manifests. It is accepted (`update.verify: attestation`, the default) when,
+with sigstore-go against Sigstore's public-good trusted root (TUF, cached in
+`<state_dir>/update/sigstore`; or `update.trusted_root`):
+
+- the certificate chains to Fulcio, has SCTs, and the signature is in Rekor
+  (inclusion proof, integrated time inside the certificate's validity);
+- the certificate's issuer is `https://token.actions.githubusercontent.com`,
+  its SAN matches `^https://github.com/<repo>/<workflow>@refs/tags/v` and
+  its Source Repository URI extension is `https://github.com/<repo>`, where
+  `<repo>` is `update.repo` or the build's `update.BuildRepo`
+  (`TB_UPDATE_REPO`) and `<workflow>` is `update.workflow` or
+  `update.BuildWorkflow` (default `.github/workflows/ci.yml`);
+- the statement's subjects include the manifest's SHA-256.
+
+Several bundles (JSON lines) may be given; one must pass. Without the file
+the agent asks `GET https://api.github.com/repos/<repo>/attestations/sha256:<hex>?predicate_type=https://slsa.dev/provenance/v1`
+(bundles inline or behind a snappy-compressed `bundle_url`; `TB_GITHUB_TOKEN`
+optional). `update.verify: sha256-only` skips the attestation (setups
+without GitHub). A client takes its server mirror's manifest as is: it was
+checked by the server, and the channel is authenticated (tunnel with the
+pinned certificate, or the tailnet). Builds with `-tags noattest` (the
+OpenWrt package) have no verifier: as clients they update from the mirror
+only (or with `sha256-only`); as a server their default is `sha256-only`.
 Every artifact is checked against `sha256` and `size` before use.
 
 ### Config (`update`, additive, all optional)
@@ -612,7 +631,8 @@ Every artifact is checked against `sha256` and `size` before use.
 ```json
 "update": {"policy": "auto", "channel": "stable", "source": "", "window": "03:00-05:00",
            "check_every_hours": 6, "pin": "", "defer_kbps": 300,
-           "mirror": true, "mirror_max_mb": 600, "trusted_keys": []}
+           "mirror": true, "mirror_max_mb": 600,
+           "verify": "attestation", "repo": "", "workflow": "", "trusted_root": ""}
 ```
 
 - `policy`: `auto` (default; servers install inside `window`, local time;
@@ -625,6 +645,10 @@ Every artifact is checked against `sha256` and `size` before use.
   release is `security`.
 - `mirror`, `mirror_max_mb` (server role): mirror the channel, keep the
   current and the previous version (keep-last-2) within the cap.
+- `verify`: `attestation` | `sha256-only` (empty: attestation; a `noattest`
+  server: sha256-only). `repo` (`owner/name`), `workflow`
+  (`.github/workflows/<file>.yml`), `trusted_root` (a trusted_root.json
+  path): see above. Older configs' `trusted_keys` is ignored.
 
 Status (`/api/status`, additive): `protocol`, and
 
@@ -641,6 +665,9 @@ Status (`/api/status`, additive): `protocol`, and
 - `source`: `mirror` (the home server) | `public` (update.source) | `upload` (an offline upload, server) | `cache` (server: the last good manifest, the public source being unreachable; `error` says why).
 - `outdated` (server role): registered clients whose last reported version
   is older than this server's.
+- additive: `verify` (the effective policy), `verified` (how the offered
+  manifest was trusted: `attestation` | `mirror` | `sha256`), `repo` (with
+  `verify: attestation`).
 - additive: `deferred_code` (`busy` | `window` | `server` | `notify`) next
   to the plain `deferred` text; `last_result_version`, `last_result_at`
   (RFC 3339) for `last_result` (`ok` | `rolled_back` | `failed`); `detail`
@@ -660,15 +687,15 @@ client makes with its API token (`GET /api/peers`, `/updates/…`,
 | GET | `/api/update` | the `update` status object plus `manifest` (summary of the verified manifest) |
 | POST | `/api/update/check` | check now |
 | POST | `/api/update/install` | install `available` now (ignores the window and deferral, not compatibility); `{"version"}` optional (a cached version, e.g. to go back) |
-| POST | `/api/update/policy` | `{"policy","channel","window","source","pin"}` (any subset) |
-| POST | `/api/update/upload?name=<file>` | server, admin: `Content-Type: application/octet-stream`, one file (a manifest, its `.sig`, or an artifact) into the mirror cache, for offline setups; the manifest is verified once both it and its `.sig` are there, artifacts against it |
-| GET | `/updates/<channel>.json`, `/updates/<channel>.json.sig` | server mirror: the cached, verified manifest and signature (byte-identical) |
+| POST | `/api/update/policy` | `{"policy","channel","window","source","pin","verify","repo"}` (any subset) |
+| POST | `/api/update/upload?name=<file>` | server, admin: `Content-Type: application/octet-stream`, one file (`<channel>.json`, `<channel>.json.sigstore.json`, or an artifact) into the mirror cache, for offline setups. The manifest is verified as soon as it can be: at once with `sha256-only`, else when its `.sigstore.json` is there (or GitHub's API has it): `{"manifest": "<version>", "verified": "attestation"\|"sha256"}`, or `{"waiting_for": "<channel>.json.sigstore.json"}`; a manifest that fails is deleted (400). An artifact is checked against the stored manifest: `{"checksum_ok": true}` |
+| GET | `/updates/<channel>.json`, `/updates/<channel>.json.sigstore.json` | server mirror: the cached, verified manifest and its attestation (byte-identical; the attestation only if it had one) |
 | GET | `/updates/files/<name>` | server mirror: a cached artifact |
 | GET | `/api/pairing` | server, client token: this client's current pairing URI (same credential), so a client learns a new public address after the server moved |
 
 `/updates/…` and `GET /api/pairing` are served on the admin listener and the
 tunnel address; they need a client API token, an admin session, or a
-tailnet / loopback source (the mirror holds only public, signed files).
+tailnet / loopback source (the mirror holds only public, verified files).
 Clients try the mirror first (`http://<active server tunnel IP>:8077`, then
 its Tailscale name) and fall back to `update.source`.
 
@@ -706,12 +733,14 @@ else reinstall the previous ipk. After a firmware upgrade a kept
 reinstalls the package from that cache (or the home mirror) on first boot
 ([glinet.md](glinet.md), [updates.md](updates.md)).
 
-**Android**: the app reads the manifest (mirror first), downloads and
-verifies the APK, installs it with a `PackageInstaller` session
+**Android**: the app reads the manifest (mirror first; the public source
+over HTTPS only), downloads the APK and checks its SHA-256 and size and that
+its signing certificate is the installed app's, then installs it with a `PackageInstaller` session
 (`REQUEST_INSTALL_PACKAGES`; Android 12+ `setRequireUserAction(
 USER_ACTION_NOT_REQUIRED)`, silent once the app installed itself the first
-time). Release APKs are signed with the release key; debug and release
-builds can't update each other.
+time). Release APKs are signed with the release key
+(`scripts/release/gen-android-keystore.sh`, kept in repository secrets);
+debug and release builds can't update each other.
 
 ## Backup and restore
 

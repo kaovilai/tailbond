@@ -1,9 +1,11 @@
 # Updates
 
-Every tailbond install can update itself. Releases are **signed**, and your
-home server keeps a copy of the latest one (the **mirror**), so routers and
-phones update even where GitHub is blocked or slow (hotel Wi-Fi, a captive
-portal, a phone on a train). How it fits together for developers:
+Every tailbond install can update itself. Every release carries **GitHub's
+proof of where it was built** (an artifact attestation: no signing key to
+keep anywhere, see [How an update is checked](#how-an-update-is-checked-no-signing-key)),
+and your home server keeps a checked copy of the latest one (the
+**mirror**), so routers and phones update even where GitHub is blocked or
+slow (hotel Wi-Fi, a captive portal, a phone on a train). How it fits together for developers:
 [architecture.md, Updates](architecture.md#updates).
 
 ## What gets updated, and how
@@ -60,22 +62,27 @@ Set them in the dashboard (Settings → Updates) or in `tailbond.json`
 A server keeps the current and the previous release of its channel (up to
 `mirror_max_mb`, 600 MB by default). Its routers and phones ask it first
 (`http://<server tunnel address>:8077/updates/…`, then its Tailscale name)
-and fall back to GitHub. Nothing to set up.
+and fall back to GitHub. Nothing to set up. The server only offers what it
+checked itself, and routers and phones take its copy as is: they reach it
+through the tunnel, whose certificate they pinned when they paired, or over
+your tailnet.
 
 **No internet on the server, or GitHub blocked?** Upload a release by hand:
-download `stable.json`, `stable.json.sig` and the files you need from the
-release page (see "The channels release" below), then in the dashboard
-**Settings → Updates → Upload**, or:
+download `stable.json`, `stable.json.sigstore.json` (the attestation) and
+the files you need from the release page (see "The channels release"
+below), then in the dashboard **Settings → Updates → Upload**, or:
 
 ```sh
-for f in stable.json stable.json.sig tailbond_0.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk; do
+for f in stable.json.sigstore.json stable.json tailbond_0.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk; do
   curl -s -b cookies.txt -H 'Content-Type: application/octet-stream' \
     --data-binary @"$f" "http://homebox:8077/api/update/upload?name=$f"
 done
 ```
 
-The manifest is checked against its signature once both are there, and
-every file against the manifest.
+The manifest is checked against its attestation once both are there (no
+internet needed: the server keeps Sigstore's public keys from its last
+check), and every file against the manifest. With `"verify": "sha256-only"`
+the attestation is optional (below).
 
 ## Order and compatibility
 
@@ -180,52 +187,148 @@ The role (`packaging/ansible/roles/tailbond`, [vps.md](vps.md#ansible)) has
 `tailbond_update_window` and `tailbond_update_channel` set the window and
 the channel.
 
-## Signing keys
+## How an update is checked (no signing key)
 
-Builds trust the public key compiled into them (`TB_UPDATE_PUBKEY`); the
-release job signs the manifests with the private key (`TB_UPDATE_KEY`). A
-build without a key never updates itself ("this build has no update key").
-Self-built servers can add keys in `"update": {"trusted_keys": ["<base64>"]}`.
+There is no update-signing key to keep, rotate or lose. Instead:
 
-Make a key (OpenSSL 3), outside the repository:
+- **Integrity**: the manifest (`stable.json`) lists the SHA-256 and size of
+  every file; nothing is installed unless it matches. The manifest comes over
+  HTTPS from GitHub's release, or from your home server.
+- **Authenticity**: the release job attests the manifest and every file with
+  [GitHub artifact attestations](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds)
+  (`actions/attest`, Sigstore "keyless" signing): GitHub's OIDC token for
+  that workflow run gets a short-lived certificate that names the repository,
+  the workflow file and the tag, the signature is recorded in Sigstore's
+  public transparency log, and the private key is thrown away. The release
+  puts the attestation next to the manifest (`stable.json.sigstore.json`).
+  A server checks it with [sigstore-go](https://github.com/sigstore/sigstore-go)
+  against Sigstore's public-good trusted root (fetched and kept up to date
+  with TUF, cached in `/var/lib/tailbond/update/sigstore`) and accepts the
+  manifest only if the certificate says **this repository**
+  (`github.com/<owner>/<repo>`), **this workflow**
+  (`.github/workflows/ci.yml`), a **version tag** (`refs/tags/v…`), and the
+  attestation is SLSA build provenance. If the attestation file is missing it
+  asks GitHub's API (`/repos/<owner>/<repo>/attestations/sha256:<digest>`).
+  You can check any release file yourself the same way:
+  `gh attestation verify tailbond-linux-x86_64.tar.gz -R <owner>/<repo>`.
+- **Routers and phones** don't check attestations. They take updates from
+  their home server, which checked them, over a channel that's already
+  authenticated (the tunnel's pinned certificate, or your tailnet), and then
+  check every file's SHA-256. A server you paired with can already see and
+  steer your traffic, so trusting its update copy adds no new party.
+  A phone that downloads from GitHub directly also has Android's own check:
+  an update must be signed with the same key as the installed app (below).
+
+Settings (`"update": {…}`):
+
+- `"verify": "attestation"` (default) or `"sha256-only"`. **sha256-only**
+  is for setups without GitHub (uploads by hand, your own release server):
+  every file is still checked against the manifest, but the manifest itself
+  is trusted because of where it came from (HTTPS, or you uploaded it). That
+  protects against damaged downloads, not against someone who can change the
+  manifest at its source. Check uploads yourself first with
+  `gh attestation verify` on a computer that has GitHub.
+- `"repo": "owner/name"` and `"workflow": ".github/workflows/ci.yml"`: whose
+  releases count; the default is the repository the build was made by
+  (`TB_UPDATE_REPO` / `TB_UPDATE_WORKFLOW` at build time). Set it for a
+  fork that publishes its own releases. A build made without a repository
+  (a local build) only updates from its server's mirror, or with one of
+  these set.
+- `"trusted_root": "/path/trusted_root.json"`: for a private repository
+  (GitHub's own Sigstore instance: `gh attestation trusted-root >file`).
+- `TB_GITHUB_TOKEN` in the agent's environment raises GitHub's API limit
+  (60 requests an hour without it; a check uses at most one, and none when
+  the attestation file is there).
+
+The dashboard shows how the offered update was checked: "verified: built
+by <owner>/<repo>'s release workflow on GitHub", "verified by <server>"
+(routers, phones) or "checksums only".
+
+**The router doesn't carry the attestation check.** The verifier
+(sigstore-go and its Sigstore, TUF and transparency-log code) costs, measured
+on tailbondd for arm64 (stripped, Go 1.26): **+8.4 MB** binary (12.3 →
+20.7 MB), **+2.7 MB** per compressed package, which the router keeps twice
+for rollback (`/etc/tailbond/pkg/`), and **+5.5 MB** memory at start
+(package initialisation: 4.6 → 10 MB before the agent does anything), plus
+about 350 more dependencies in `go.sum`. That's too much for 128–256 MB
+flash travel routers that only ever need their server's copy, so the router
+package is built with `-tags noattest`. Servers (RPM, the Linux bundle,
+VPS) carry it. A **GL router used as the home server** therefore can't
+check attestations: its default is `sha256-only` (HTTPS from GitHub plus
+checksums), the panel says so, and setting `"verify": "attestation"` there
+makes it refuse every update with a clear message. If you want the full
+check for a GL home server, upload releases you checked with
+`gh attestation verify`, or run the home server on Linux.
+
+**What it doesn't protect against**: GitHub itself, or someone who can push
+a tag and run this repository's release workflow (they would produce a valid
+attestation; that's what branch and tag protection are for). An old,
+validly attested manifest replayed by a network attacker is harmless (a
+device never installs a version older than it runs, except a version you
+pinned), but it can hold devices back on the old version until the real one
+gets through.
+
+## Android signing key
+
+Android needs every APK signed, and an update must carry **the same key** as
+the app on the phone; this one key can't be avoided. It lives only in the
+repository's secrets and one encrypted backup:
 
 ```sh
-scripts/release/gen-update-key.sh            # -> ~/.config/tailbond/update-keys/
-gh secret set TB_UPDATE_KEY < ~/.config/tailbond/update-keys/tailbond-update-<id>.pem
-gh variable set TB_UPDATE_PUBKEY --body "$(cat ~/.config/tailbond/update-keys/tailbond-update-<id>.pub.b64)"
+scripts/release/gen-android-keystore.sh --backup /path/outside/any/repo
 ```
 
-Keep the `.pem` offline as well (a password manager): whoever has it can
-publish updates every install accepts.
+makes the key once (RSA 4096, 30 years) and stores it as the secrets
+`TB_RELEASE_KEYSTORE_B64`, `TB_RELEASE_KEYSTORE_PASSWORD`,
+`TB_RELEASE_KEY_ALIAS` and `TB_RELEASE_KEY_PASSWORD` (`gh secret set`), the
+certificate's SHA-256 as the variable `TB_RELEASE_CERT_SHA256`, and an
+encrypted copy (`tailbond-android-release-key-<date>.tar.gpg`, gpg AES-256
+with a passphrase you choose) in the folder you name, which must not be
+inside a git checkout (a password manager's attachments, a USB stick). The
+temporary copy is wiped; nothing goes into the repository. It refuses to
+replace an existing key unless you pass `--force`.
 
-**Rotating**: make a new key, set `TB_UPDATE_PUBKEY` to `old,new` (both
-trusted) and release once while still signing with the old key. When your
-devices run that release, switch `TB_UPDATE_KEY` to the new key, and later
-drop the old one from `TB_UPDATE_PUBKEY`. If the old key leaked, devices that
-trust only it must be updated by hand.
+CI signs release APKs with those secrets and checks that the APK's
+certificate is `TB_RELEASE_CERT_SHA256`, so the key can't change by
+accident. Without the secrets CI still builds the debug APK, but a release
+tag **fails** with a message instead of publishing an APK that phones can't
+update to.
+
+Secrets deleted, or a new repository? Put the same key back:
+`scripts/release/gen-android-keystore.sh --restore <backup>.tar.gpg`.
+
+**If the key is lost** (no secrets, no backup): every phone has to uninstall
+the app and install the new one once (Android refuses an update signed with
+another key), then pair again or restore its settings from a backup
+(`.tbbackup`, [backup-restore.md](backup-restore.md)). Keep the backup and
+its passphrase.
 
 ## The `channels` release (CI)
 
 On every `v*` tag, CI (`.github/workflows/ci.yml`, job `release`):
 
-1. builds everything with the key and
+1. builds everything with `TB_UPDATE_REPO` (this repository),
+   `TB_UPDATE_WORKFLOW` and
    `TB_UPDATE_SOURCE=https://github.com/<owner>/<repo>/releases/download/channels`
    compiled in;
-2. makes the manifests (`scripts/release/make-manifest.sh`) and signs them
-   (`sign-manifest.sh`);
-3. creates the version's release with every file and the manifests, then
-   replaces `stable.json` / `beta.json` (and `.sig`) in the release named
-   `channels` (created on first use; that's the URL above).
+2. makes the manifests (`scripts/release/publish-channels.sh prepare`,
+   `make-manifest.sh`);
+3. attests every file and the manifests in one attestation
+   (`actions/attest`; permissions `id-token`, `attestations`,
+   `artifact-metadata`);
+4. creates the version's release with every file, the manifests and the
+   attestation (`<channel>.json.sigstore.json`), then replaces
+   `stable.json` / `beta.json` and their `.sigstore.json` in the release
+   named `channels` (created on first use; that's the URL above)
+   (`publish-channels.sh publish`).
 
 A plain tag (`v1.2.3`) updates `stable.json` and `beta.json`; a pre-release
 tag (`v1.2.3-beta.1`) is a GitHub pre-release and updates only `beta.json`.
 A channel never moves back to an older version. Put `[security]` in the
 tag message (`git tag -a v1.2.4 -m "[security] …"`) to mark the release as
-a security release. Without the `TB_UPDATE_KEY` secret the release still
-happens but `channels` isn't touched (a warning says so). Release APKs need
-the secrets `TB_RELEASE_KEYSTORE_B64` (base64 of the `.jks`),
-`TB_RELEASE_KEYSTORE_PASSWORD`, `TB_RELEASE_KEY_ALIAS` and
-`TB_RELEASE_KEY_PASSWORD`.
+a security release. No secret is needed for the attestations. Release APKs
+need the Android signing secrets ([above](#android-signing-key)); without
+them the release job fails.
 
 Release files: `tailbond-linux-<arch>.tar.gz`,
 `tailbond_<version>-r1_aarch64_cortex-a53.ipk`,

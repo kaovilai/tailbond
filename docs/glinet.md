@@ -56,8 +56,12 @@ needs it) and the tunnel connects once paired. The LAN keeps its internet
 until then (the kill switch arms only when paired and on). One command, if
 you do have SSH: `opkg install /tmp/tailbond_*_neon-vfpv4.ipk`.
 
-Updates install themselves (from your home server, else GitHub), with a
-health check and rollback: [updates.md](updates.md).
+Updates install themselves from your home server, which checked GitHub's
+proof of where each release was built, with a health check and rollback. The
+router package leaves that check out to save space and trusts the server it
+paired with, so it doesn't update straight from GitHub; a GL router used as
+the home server checks checksums only
+([updates.md](updates.md#how-an-update-is-checked-no-signing-key)).
 
 A firmware upgrade removes every package you installed, tailbond too
 (Speedify documents the same for its GL package). With **Keep Settings**
