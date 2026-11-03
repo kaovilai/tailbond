@@ -13,6 +13,7 @@ public final class ShareRelay {
         public var error: String?
         public var hubs: [SharerCore.HubUse] = []
         public var used: UInt64 = 0
+        public init() {}
     }
 
     private let queue = DispatchQueue(label: "tailbond.share")
