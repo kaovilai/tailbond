@@ -8,6 +8,12 @@ object TunnelPlan {
     /** Default tunnel subnet (contract "Network layout"); each server may have its own ([ServerList.subnetOf]). */
     val TUNNEL_SUBNET = ServerList.DEFAULT_SUBNET
     const val DEFAULT_DNS = "10.77.0.1"
+    /**
+     * TUN MTU cap, the same as tailbondd's client default (client.mtu 1280):
+     * mqvpn's auto value (1382) assumes a 1500-byte uplink, and cellular and
+     * hotel Wi-Fi often carry less, so larger packets were lost.
+     */
+    const val TUN_MTU = 1280
 
     /** The pairing's DNS, else the server's own tunnel address (x.y.z.1 of its subnet). */
     fun dns(p: PairingPayload): List<String> = p.dns.ifEmpty { listOf(ServerList.serverTunnelIp(p)) }
@@ -29,6 +35,7 @@ object TunnelPlan {
             cellularPathEnabled = s.path(PathKind.CELLULAR).enabled,
             ethernetPathEnabled = s.path(PathKind.ETHERNET).enabled,
             reconnect = true,
+            tunMtu = TUN_MTU,
         )
         return effectiveMode(p, s).applyTo(base, s.experimentalBackupFec)
     }

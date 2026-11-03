@@ -98,6 +98,7 @@ class ModeMappingTest {
         assertTrue(c.redundantEnabled)
         assertFalse(c.insecure)
         assertNull(c.certSha256)
+        assertEquals(1280, c.tunMtu) // like tailbondd's client.mtu default
         // the user's choice beats the pairing's suggestion
         assertEquals(Scheduler.MIN_RTT, TunnelPlan.config(pairing, AppSettings(mode = Mode.FAILOVER)).scheduler)
     }
