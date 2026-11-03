@@ -155,6 +155,10 @@ act() {
     if [ "$DRY" = 1 ]; then printf '  + %s\n' "$*"; else "$@"; fi
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+in_container() {
+    [ -n "${container:-}" ] || [ -e /run/.containerenv ] || [ -e /.dockerenv ] ||
+        { have systemd-detect-virt && systemd-detect-virt -qc; }
+}
 
 # ---- the machine --------------------------------------------------------------
 OS_ID=unknown OS_LIKE="" OS_NAME="Linux"
@@ -666,9 +670,9 @@ TS_CERT=$([ "$USE_TS" = 1 ] && echo true || echo false)
 NO_TS=$([ "$USE_TS" = 1 ] && echo false || echo true)
 jstr() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 
-# update: only what was passed (--update-policy/--update-source); a re-run
-# without them keeps the existing block. Nothing else in it is touched
-# (window, channel, pin; the dashboard sets those too).
+# update: only what was passed (--update-policy); a re-run without it
+# keeps the existing block. Nothing else in it is touched (repo,
+# check_every_hours; the dashboard sets those too).
 render_update() {
     local u=""
     [ -n "$OPT_UPOLICY" ] && u="\"policy\": $(jstr "$OPT_UPOLICY")"
@@ -860,7 +864,19 @@ else
 fi
 
 render_sysctl | write "$SYSCTL" 0644
-act sysctl -q -p "$SYSCTL" || warn "sysctl -p $SYSCTL failed (in a container this is expected)"
+# A container usually mounts /proc/sys read-only (the host's forwarding
+# applies): a warning. Elsewhere, IPv4 forwarding that stays off is fatal.
+if [ "$DRY" = 1 ]; then
+    act sysctl -q -p "$SYSCTL"
+elif ! sysctl_err="$(sysctl -q -p "$SYSCTL" 2>&1)"; then
+    if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = 1 ]; then
+        warn "sysctl -p $SYSCTL: ${sysctl_err:-failed} (IPv4 forwarding is on)"
+    elif in_container; then
+        warn "can't enable IP forwarding in this container (read-only /proc/sys): enable it on the host"
+    else
+        die "sysctl -p $SYSCTL failed, IP forwarding is off (bonded clients would reach only this machine): $sysctl_err"
+    fi
+fi
 
 # firewall (persistent part; the hooks add the runtime part on every start)
 if have firewall-cmd && [ "$NOFW" = 0 ]; then

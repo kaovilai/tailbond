@@ -21,8 +21,26 @@ TAILNET6=fd7a:115c:a1e0::/48
 
 log() { echo "$*"; }
 
-sysctl -qw net.ipv4.ip_forward=1
-[ -n "${TB_SUBNET6:-}" ] && sysctl -qw net.ipv6.conf.all.forwarding=1
+# IP forwarding. A container (podman, docker, LXC) usually mounts /proc/sys
+# read-only: the host's setting applies there, so that's a warning. On a
+# real host it's an error (the hook exits 1 after setting up the rest).
+in_container() {
+  [ -n "${container:-}" ] || [ -e /run/.containerenv ] || [ -e /.dockerenv ] ||
+    { command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt -qc; }
+}
+fwd_fail=0
+forward_on() { # sysctl key
+  [ "$(cat "/proc/sys/${1//.//}" 2>/dev/null)" = 1 ] && return 0
+  sysctl -qw "$1=1" 2>/dev/null && return 0
+  if in_container; then
+    log "WARNING: can't set $1=1 in this container (read-only /proc/sys); set it on the host"
+  else
+    log "ERROR: can't set $1=1: bonded clients reach only this machine"
+    fwd_fail=1
+  fi
+}
+forward_on net.ipv4.ip_forward
+[ -n "${TB_SUBNET6:-}" ] && forward_on net.ipv6.conf.all.forwarding
 
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
   fw() { firewall-cmd -q "$@" 2>/dev/null; firewall-cmd -q --permanent "$@" 2>/dev/null; true; }
@@ -98,4 +116,4 @@ elif command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; t
       ;;
   esac
 fi
-exit 0
+exit "$fwd_fail"
