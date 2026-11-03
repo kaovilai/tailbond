@@ -32,10 +32,10 @@ object ShareWords {
     fun detail(l: ShareLive, minBattery: Int): String = when (l.status) {
         ShareStatus.OFF -> "Your travel router or laptop can add this phone's mobile data to its connection."
         ShareStatus.STARTING -> "Getting mobile data ready next to Wi-Fi."
-        ShareStatus.WAITING -> "Your travel router or laptop on this Wi-Fi will start using it by itself."
+        ShareStatus.WAITING -> "Your travel router starts using it by itself. The phone must be on the travel router's own Wi-Fi, not the hotel's."
         ShareStatus.SHARING -> "${formatBytes(l.usedBytes)} shared this month."
         ShareStatus.NO_CELLULAR -> "Turn on mobile data, or wait for signal. Sharing goes on by itself."
-        ShareStatus.NO_WIFI -> "Join the same Wi-Fi as your travel router or laptop."
+        ShareStatus.NO_WIFI -> "Connect this phone to your travel router's own Wi-Fi (the one it makes, not the hotel's). With a laptop, join the same Wi-Fi as the laptop."
         ShareStatus.BATTERY -> "Below $minBattery% and not charging. Plug in, and sharing goes on by itself."
         ShareStatus.CAP -> "Raise the limit below, or wait for next month."
         ShareStatus.NO_KEY -> "Turn tailbond on once so this phone can learn your home server's sharing key."

@@ -79,11 +79,11 @@ func ReasonText(r byte) string {
 	case ReasonNotAllowed:
 		return "this device isn't allowed to use it"
 	case ReasonCap:
-		return "its data limit is reached"
+		return "its monthly data limit is reached"
 	case ReasonBattery:
 		return "its battery is low"
 	case ReasonPaused:
-		return "sharing was turned off"
+		return "sharing was turned off or paused on the phone"
 	case ReasonNoCellular:
 		return "it has no mobile data right now"
 	case ReasonReplaced:

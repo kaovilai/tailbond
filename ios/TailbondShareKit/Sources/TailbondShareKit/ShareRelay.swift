@@ -77,6 +77,16 @@ public final class ShareRelay {
         timer = t
     }
 
+    /// Changes the cap and allowed hubs while sharing (they apply at once).
+    public func updateLimits(capBytes: UInt64, allowedHubs: Set<String>) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.core.config.capBytes = capBytes
+            self.core.config.allowedHubs = allowedHubs
+            self.run(self.core.tick())
+        }
+    }
+
     /// Ends every session (telling the hubs why) and closes everything.
     public func stop(_ reason: ShareProtocol.Reason = .paused) {
         queue.sync {

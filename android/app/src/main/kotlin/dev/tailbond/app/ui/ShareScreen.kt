@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material3.Card
@@ -66,9 +66,9 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
             }
         }
         Text(
-            "Your travel router or a laptop paired with $server adds this phone's mobile data to its connection, " +
-                "like a second SIM. Keep the phone on the same Wi-Fi. It works whether tailbond is on or off on this phone; " +
-                "what's shared goes straight to $server, never through this phone's own tunnel.",
+            "Your travel router (or a laptop) paired with $server adds this phone's mobile data to its connection, " +
+                "like a second SIM. Connect this phone to the travel router's own Wi-Fi, not the hotel's. " +
+                "You don't need to turn tailbond on for this, and this phone's own apps aren't affected.",
             style = MaterialTheme.typography.bodyMedium, color = muted,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
@@ -98,7 +98,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
                 FilterChip(
                     selected = s.shareMinBattery == pct, onClick = { actions.setShareMinBattery(pct) },
                     label = { Text(if (pct == 0) "Never" else "Below $pct%") },
-                    leadingIcon = if (pct > 0 && s.shareMinBattery == pct) ({ Icon(Icons.Filled.BatteryAlert, null) }) else null,
+                    leadingIcon = if (s.shareMinBattery == pct) ({ Icon(Icons.Filled.Check, null) }) else null,
                 )
             }
         }
@@ -113,6 +113,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
                 FilterChip(
                     selected = s.shareCapMb == mb, onClick = { actions.setShareCapMb(mb) },
                     label = { Text(if (mb == 0L) "No limit" else if (mb < 1_000) "$mb MB" else "${mb / 1_000} GB") },
+                    leadingIcon = if (s.shareCapMb == mb) ({ Icon(Icons.Filled.Check, null) }) else null,
                 )
             }
         }

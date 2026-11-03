@@ -14,14 +14,23 @@ final class ShareModel: ObservableObject {
     @Published private(set) var stopReason: String?
 
     private static let defaults = UserDefaults.standard
+    // limits apply at once, also while sharing
     @Published var minBattery: Int = UserDefaults.standard.object(forKey: "minBattery") as? Int ?? 20 {
-        didSet { Self.defaults.set(minBattery, forKey: "minBattery") }
+        didSet { Self.defaults.set(minBattery, forKey: "minBattery"); box.setMin(minBattery) }
     }
     @Published var capMB: Int = UserDefaults.standard.integer(forKey: "capMB") {
-        didSet { Self.defaults.set(capMB, forKey: "capMB") }
+        didSet { Self.defaults.set(capMB, forKey: "capMB"); pushLimits() }
     }
     @Published var allowedHubsText: String = UserDefaults.standard.string(forKey: "allowedHubs") ?? "" {
-        didSet { Self.defaults.set(allowedHubsText, forKey: "allowedHubs") }
+        didSet { Self.defaults.set(allowedHubsText, forKey: "allowedHubs"); pushLimits() }
+    }
+    /// The keep-it-on-screen notice was shown (once, on the first share).
+    @Published var screenNoticeSeen: Bool = UserDefaults.standard.bool(forKey: "screenNoticeSeen") {
+        didSet { Self.defaults.set(screenNoticeSeen, forKey: "screenNoticeSeen") }
+    }
+
+    private func pushLimits() {
+        relay?.updateLimits(capBytes: UInt64(max(capMB, 0)) * 1_000_000, allowedHubs: Set(allowedHubs))
     }
     private var usedMonth: String {
         get { Self.defaults.string(forKey: "usedMonth") ?? "" }
@@ -49,7 +58,12 @@ final class ShareModel: ObservableObject {
         }
     }
 
-    var label: String { "\(UIDevice.current.name)'s mobile data" }
+    /// "Mobile data from dana-iphone": this iPhone's name on the home server
+    /// (iOS doesn't tell apps the phone's own name), the same on every screen.
+    var label: String {
+        let n = pairing.map { $0.name.isEmpty ? $0.user : $0.name } ?? ""
+        return "Mobile data from " + (n.isEmpty ? "an iPhone" : n)
+    }
 
     var allowedHubs: [String] {
         allowedHubsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -114,12 +128,12 @@ final class ShareModel: ObservableObject {
             usedBytesStored = 0
         }
         refreshBattery()
-        let min = minBattery
+        box.setMin(minBattery)
         let box = self.box
         let core = SharerCore(
             config: .init(id: shareID, label: label, key: Array(key.utf8), capBytes: UInt64(max(capMB, 0)) * 1_000_000,
                           usedBytes: UInt64(usedBytesStored), allowedHubs: Set(allowedHubs)),
-            check: { box.check(min: min) }
+            check: { box.check() }
         )
         let r = ShareRelay(core: core, serverHost: p.host, serverPort: p.port)
         r.onChange = { [weak self] st in
@@ -190,6 +204,13 @@ final class BatteryBox: @unchecked Sendable {
     private let lock = NSLock()
     private var pct: Int?
     private var chg = false
+    private var min = 20
+
+    func setMin(_ m: Int) {
+        lock.lock()
+        min = m
+        lock.unlock()
+    }
 
     func set(_ p: Int?, _ c: Bool) {
         lock.lock()
@@ -198,7 +219,7 @@ final class BatteryBox: @unchecked Sendable {
         lock.unlock()
     }
 
-    func check(min: Int) -> SharerCore.Check {
+    func check() -> SharerCore.Check {
         lock.lock()
         defer { lock.unlock() }
         if min > 0, let p = pct, p < min, !chg { return .init(reason: .battery, battery: p, charging: chg) }

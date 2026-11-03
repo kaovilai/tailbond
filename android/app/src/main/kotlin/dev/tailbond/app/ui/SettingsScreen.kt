@@ -134,7 +134,7 @@ fun SettingsScreen(
             }
         }
 
-        SectionHeader("Pair & Share")
+        SectionHeader("Lend your mobile data")
         ListItem(
             headlineContent = { Text("Share my mobile data") },
             supportingContent = { Text(dev.tailbond.app.share.ShareWords.headline(state.share)) },

@@ -357,26 +357,26 @@ const sharesState = (paths, shares, over = {}, extraPaths = []) => {
 export const shareStates = {
   'share-01-two-phones': sharesState([
     livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 22e6, 3.1e6, 24),
-    livePath('sh3fa2c1', '', "Pixel 8's mobile data (shared)", 'shared-cellular', 'active', 31e6, 4.4e6, 41, { priority: 'secondary' }),
-    livePath('sh91be07', '', "Sam's iPhone's mobile data (shared)", 'shared-cellular', 'active', 18e6, 2.2e6, 52, { priority: 'secondary' }),
+    livePath('sh3fa2c1', '', "Mobile data from sam-pixel", 'shared-cellular', 'active', 31e6, 4.4e6, 41, { priority: 'secondary' }),
+    livePath('sh91be07', '', "Mobile data from dana-iphone", 'shared-cellular', 'active', 18e6, 2.2e6, 52, { priority: 'secondary' }),
     livePath('eth0', 'wan', 'Ethernet', 'ethernet', 'failed', 0, 0, 0),
   ], [
-    share('3fa2c1', "Pixel 8's mobile data (shared)", 'ready', { battery: 64, up_bytes: 0.3e9, down_bytes: 1.9e9 }),
-    share('91be07', "Sam's iPhone's mobile data (shared)", 'ready', { battery: 88, charging: true, up_bytes: 0.1e9, down_bytes: 0.6e9 }),
+    share('3fa2c1', "Mobile data from sam-pixel", 'ready', { battery: 64, up_bytes: 0.3e9, down_bytes: 1.9e9 }),
+    share('91be07', "Mobile data from dana-iphone", 'ready', { battery: 88, charging: true, up_bytes: 0.1e9, down_bytes: 0.6e9 }),
   ], { totals: { tx_bps: 9.7e6, rx_bps: 71e6 } }, [
-    sharePath('sh3fa2c1', "Pixel 8's mobile data (shared)", { used_bytes: 2.2e9 }),
-    sharePath('sh91be07', "Sam's iPhone's mobile data (shared)", { used_bytes: 0.7e9 }),
+    sharePath('sh3fa2c1', "Mobile data from sam-pixel", { used_bytes: 2.2e9 }),
+    sharePath('sh91be07', "Mobile data from dana-iphone", { used_bytes: 0.7e9 }),
   ]),
   'share-02-low-battery': sharesState([
     livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 22e6, 3.1e6, 24),
-    livePath('sh91be07', '', "Sam's iPhone's mobile data (shared)", 'shared-cellular', 'active', 18e6, 2.2e6, 52, { priority: 'secondary' }),
+    livePath('sh91be07', '', "Mobile data from dana-iphone", 'shared-cellular', 'active', 18e6, 2.2e6, 52, { priority: 'secondary' }),
   ], [
-    share('3fa2c1', "Pixel 8's mobile data (shared)", 'refused', { battery: 18, reason: 'its battery is low' }),
-    share('91be07', "Sam's iPhone's mobile data (shared)", 'ready', { battery: 88, charging: true, up_bytes: 0.1e9, down_bytes: 0.6e9 }),
-  ], {}, [sharePath('sh91be07', "Sam's iPhone's mobile data (shared)", { used_bytes: 0.7e9 })]),
+    share('3fa2c1', "Mobile data from sam-pixel", 'refused', { battery: 18, reason: 'its battery is low' }),
+    share('91be07', "Mobile data from dana-iphone", 'ready', { battery: 88, charging: true, up_bytes: 0.1e9, down_bytes: 0.6e9 }),
+  ], {}, [sharePath('sh91be07', "Mobile data from dana-iphone", { used_bytes: 0.7e9 })]),
   'share-03-isolated': sharesState([
     livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 22e6, 3.1e6, 24),
-  ], [share('3fa2c1', "Pixel 8's mobile data (shared)", 'unreachable', { via: 'server' })],
+  ], [share('3fa2c1', "Mobile data from sam-pixel", 'unreachable', { via: 'server' })],
   { share_note: "This Wi-Fi blocks devices from talking to each other; sharing isn't available here." }),
   'share-04-none': sharesState([livePath('phy0-sta0', 'wwan', 'Repeater', 'wifi', 'active', 22e6, 3.1e6, 24)], []),
 };

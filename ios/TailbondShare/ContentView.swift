@@ -21,7 +21,7 @@ struct PairView: View {
         Form {
             Section {
                 Text("tailbond Share lends this iPhone's mobile data to your travel router or laptop running tailbond, so it can use it next to its other connections.")
-                Text("On your home server's page, choose **Devices → Add a device**, then scan the code here or open the link on this iPhone.")
+                Text("On your home server's page, choose **Devices → Add a device**, then scan the code here or open the link on this iPhone. Not sure where that page is? Ask whoever set up your home server to send you the link.")
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -53,13 +53,20 @@ struct PairView: View {
 struct ShareView: View {
     @EnvironmentObject var model: ShareModel
     @State private var newHub = ""
+    @State private var notice = false
 
     var body: some View {
         List {
             Section {
+                Label {
+                    Text("**Keep tailbond Share on the screen while sharing.** iOS pauses sharing as soon as you switch apps or lock the phone, and it starts again when you come back. The screen stays on while sharing; plug the phone in for long trips.")
+                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                    .font(.callout)
+            }
+            Section {
                 VStack(spacing: 16) {
                     Button {
-                        model.sharing ? model.stop() : model.start()
+                        if model.sharing { model.stop() } else if !model.screenNoticeSeen { notice = true } else { model.start() }
                     } label: {
                         Text(model.sharing ? "Stop sharing" : "Share mobile data")
                             .font(.title2.bold())
@@ -73,14 +80,12 @@ struct ShareView: View {
                 .padding(.vertical, 8)
             }
             Section {
-                Label {
-                    Text("**Keep tailbond Share on the screen while sharing.** iOS pauses sharing as soon as you switch apps or lock the phone, and it starts again when you come back. The screen stays on while sharing; plug the phone in for long trips.")
-                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
-                    .font(.callout)
+                Text("Connect this iPhone to your travel router's own Wi-Fi (the one it makes), not the hotel's.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Who's using it") {
                 if model.status.hubs.isEmpty {
-                    Text(model.sharing ? "Nobody yet. Your travel router or laptop on this Wi-Fi starts using it by itself." : "Nobody.")
+                    Text(model.sharing ? "Nobody yet. Your travel router starts using it by itself once this iPhone is on the router's own Wi-Fi." : "Nobody.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(model.status.hubs, id: \.endpoint) { h in
@@ -123,8 +128,17 @@ struct ShareView: View {
             }
             Section {
                 Button("Forget \(model.pairing?.label ?? "home server")", role: .destructive) { model.forget() }
-            } footer: { Text("Changes to the limits apply the next time you start sharing.") }
+            }
         }
         .navigationTitle("Share mobile data")
+        .alert("Keep this app on the screen", isPresented: $notice) {
+            Button("Share mobile data") {
+                model.screenNoticeSeen = true
+                model.start()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("iOS pauses sharing as soon as you switch apps or lock the iPhone, and it starts again when you come back. Leave tailbond Share open, and plug the iPhone in: the screen stays on while sharing.")
+        }
     }
 }

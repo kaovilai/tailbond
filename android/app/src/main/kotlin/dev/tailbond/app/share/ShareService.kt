@@ -173,9 +173,11 @@ class ShareService : Service() {
         return START_STICKY
     }
 
+    /** "Mobile data from sam-pixel": this phone's name on the home server, the same everywhere. */
     private fun label(): String {
-        val model = Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android"
-        return "$model's mobile data"
+        val p = repo.servers.value.firstOrNull()?.payload
+        val name = p?.name?.takeIf { it.isNotBlank() } ?: p?.user?.takeIf { it.isNotBlank() } ?: Build.MODEL ?: "Android phone"
+        return "Mobile data from $name"
     }
 
     /** (Re)builds the relay for the current networks. */

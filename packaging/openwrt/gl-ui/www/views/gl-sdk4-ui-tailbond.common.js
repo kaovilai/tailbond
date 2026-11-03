@@ -25,7 +25,7 @@
   // GL's own names for its WAN types (Internet page).
   var KIND_LABEL = { ethernet: "Ethernet", wifi: "Repeater", usb: "Tethering", cellular: "Cellular", "shared-cellular": "Shared by a phone", unknown: "Connection" };
   // Short nouns for the one-line status.
-  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "Tethering (phone)", cellular: "Cellular", "shared-cellular": "a phone's shared data", unknown: "a connection" };
+  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "USB tethering (phone)", cellular: "Cellular", "shared-cellular": "a phone's shared data", unknown: "a connection" };
   // a phone's share is named by its own label ("Pixel 8's mobile data")
   function nounOf(w) { return w.kind === "shared-cellular" ? String(w.label || "").replace(/ \(shared\)$/, "") : (KIND_NOUN[w.kind] || w.label); }
   var KIND_ORDER = { ethernet: 0, wifi: 1, usb: 2, cellular: 3, "shared-cellular": 4, unknown: 5 };
@@ -1586,13 +1586,13 @@
         // Pair & Share: phones on this router's Wi-Fi lending their mobile data
         rShares: function (h) {
           var self = this, st = this.st || {}, shares = A(st.shares), useOn = st.use_shares !== false;
-          var STATE = { ready: ["ok", "Sharing"], connecting: ["", "Connecting…"], refused: ["warn", "Stopped"], unreachable: ["err", "Can't reach it"], lost: ["err", "Stopped answering"] };
+          var STATE = { ready: ["ok", "Sharing"], connecting: ["", "Connecting…"], refused: ["warn", "Paused"], unreachable: ["err", "Can't reach it"], lost: ["err", "Not answering"] };
           var rows = shares.map(function (s) {
             var chip = STATE[s.state] || ["", s.state];
             var bits = [];
             if (s.battery >= 0) bits.push("Battery " + s.battery + "%" + (s.charging ? " · charging" : ""));
             if (s.state === "ready") bits.push("↓ " + fmtBytes(s.down_bytes) + " ↑ " + fmtBytes(s.up_bytes));
-            if (s.reason && s.state !== "ready") bits.push(s.reason);
+            if (s.reason && s.state !== "ready") bits.push(s.reason + (/battery/.test(s.reason) ? "; comes back once it's charging" : /limit/.test(s.reason) ? "; comes back next month or when the limit is raised" : ""));
             bits.push(s.via === "server" ? "listed by your home server" : "found on this Wi-Fi");
             return h("div", { class: "tb-row", style: { padding: "8px 0", borderTop: "1px solid #ebeef5" } }, [
               h("div", { class: "tb-wan-icon" }, [icon(h, "shared-cellular")]),
@@ -1602,7 +1602,7 @@
           });
           var body = [
             h("div", { class: "tb-muted", style: { marginBottom: "10px", lineHeight: 1.5 } },
-              "A phone on this router's Wi-Fi can lend its mobile data, and tailbond adds it to the bond like another SIM. On Android: tailbond → Settings → Share my mobile data. On iPhone: the tailbond Share app → Share mobile data (keep it open). Each phone shows up above as a connection with the same Use it / Backup only / Off choice and data limit.")
+              "A phone connected to this router's own Wi-Fi (not the hotel's) can lend its mobile data, and tailbond adds it to the bond like another SIM. On Android: tailbond → Settings → Share my mobile data. On iPhone: the tailbond Share app → Share mobile data, and keep the app open on screen. Each phone shows up above as a connection with the same Use it / Backup only / Off choice and data limit.")
           ];
           if (st.share_note) body.push(this.alert(h, "warn", st.share_note, "Devices here can't reach each other, so phones can't share. Use USB tethering instead: plug the phone into the router."));
           body = body.concat(rows.length ? rows : [h("div", { class: "tb-muted tb-small" }, useOn ? "No phone is sharing right now." : "Off: phones' shared data isn't used.")]);

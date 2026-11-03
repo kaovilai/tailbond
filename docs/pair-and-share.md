@@ -18,13 +18,15 @@ Only devices paired with the **same home server** can share with each other.
 
 1. Plug in the travel router and connect it to the hotel Wi-Fi as usual
    (GL admin → INTERNET → Repeater). tailbond bonds it.
-2. Join your phones to the **travel router's** Wi-Fi.
+2. Join your phones to the **travel router's own Wi-Fi** (the one it makes),
+   not the hotel's.
 3. Android: tailbond → Settings → **Share my mobile data** → switch on.
    iPhone: open **tailbond Share** → **Share mobile data**, and keep the app
-   open on the screen (iOS pauses it otherwise; plug the phone in).
+   open on the screen (iOS pauses it otherwise; plug the phone in). Limits you
+   change apply at once.
 4. Within a few seconds each phone shows up in the GL panel (VPN → tailbond)
    under **Shared by nearby phones**, and as a connection labelled e.g.
-   *Pixel 8's mobile data (shared)* under **Internet connections**, with the
+   *Mobile data from sam-pixel* under **Internet connections**, with the
    usual **Use it / Backup only / Off** and a monthly data limit.
 
 The phone shows *Sharing mobile data with slate7: 120 MB* in its

@@ -326,7 +326,7 @@ Phones on the Slate 7's Wi-Fi can lend their 5G/LTE to it
 **Share my mobile data**; on iPhone the **tailbond Share** app ([ios.md](ios.md)).
 The panel's **Shared by nearby phones** card lists each phone (sharing,
 battery, why it stopped) with **Use mobile data that nearby phones share**;
-each phone also appears under **Internet connections** as *… (shared)* with
+each phone also appears under **Internet connections** as *Mobile data from <phone>* with
 Use it / Backup only / Off and a data limit, defaulting to the mobile tier
 (kept in reserve by **Save mobile data**).
 

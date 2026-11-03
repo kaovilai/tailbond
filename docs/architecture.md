@@ -783,7 +783,7 @@ uplink). Server registry, client token required (also over the tunnel):
   `{"share": {"enabled","iface","port","label","cap_mb","allowed_hubs"}}`.
 
 **Hub paths.** Each sharer becomes path `sh` + hex(sha256(id))[:6], kind
-`shared-cellular`, label `"<label> (shared)"`; default priority secondary
+`shared-cellular`, label `"<label> (shared)"` (phones already send `"Mobile data from <name>"`, kept as is); default priority secondary
 (like cellular), settings and data caps keyed by that name, usage from the
 link's counters. It is in the path set only while its session is open. mqvpn
 runs it as a relay path, `Path = shNNNNNN@127.0.0.1:PORT`

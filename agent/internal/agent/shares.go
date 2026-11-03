@@ -505,6 +505,9 @@ func shareLabel(hl *hubLink, st share.LinkStatus) string {
 	if l == "" {
 		l = "Nearby phone"
 	}
+	if strings.HasPrefix(l, "Mobile data from ") {
+		return l // already says what it is
+	}
 	return l + " (shared)"
 }
 
