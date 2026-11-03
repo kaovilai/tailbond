@@ -20,6 +20,8 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.util.Base64
 
+fun hex(s: String): ByteArray = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
 class ScryptTest {
     private fun h(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
 

@@ -31,12 +31,12 @@ fun versionCodeOf(name: String): Int {
     return maxOf(1, base - 100 + n.coerceIn(1, 99))
 }
 
-/** TB_UPDATE_PUBKEY: comma-separated base64 raw ed25519 keys (scripts/release/gen-update-key.sh); empty = updates off. */
-val updateKeys: String = (setting("TB_UPDATE_PUBKEY") ?: "").trim().also {
-    if (!Regex("^[A-Za-z0-9+/=, ]*$").matches(it)) throw GradleException("TB_UPDATE_PUBKEY must be base64 keys separated by commas")
-}
-
-/** TB_UPDATE_SOURCE: public base URL of the channel files (https://github.com/OWNER/REPO/releases/download/channels); empty = mirror only. */
+/**
+ * TB_UPDATE_SOURCE: public base URL of the channel files
+ * (https://github.com/OWNER/REPO/releases/download/channels); empty = the
+ * home server's mirror only. https only: the manifest's SHA-256 is trusted
+ * over TLS, and the APK must carry the app's own signing key.
+ */
 val updateSource: String = (setting("TB_UPDATE_SOURCE") ?: "").trim().also {
     if (it.isNotEmpty() && !Regex("^https://[^\"\\\\ ]+$").matches(it)) throw GradleException("TB_UPDATE_SOURCE must be an https:// URL")
 }
@@ -59,7 +59,6 @@ android {
         targetSdk = 36
         versionCode = versionCodeOf(tbVersion)
         versionName = tbVersion
-        buildConfigField("String", "UPDATE_KEYS", "\"$updateKeys\"")
         buildConfigField("String", "UPDATE_SOURCE", "\"$updateSource\"")
         // must match sdk-native's abiFilters (only arm64 prebuilts exist)
         ndk {
@@ -81,7 +80,8 @@ android {
     buildTypes {
         debug {
             // debug key from ~/.android/debug.keystore (never committed).
-            // Debug and release builds have different keys: neither can update the other.
+            // Debug and release builds have different keys: neither can update the other
+            // (a debug build only takes updates signed with the same debug key).
         }
         release {
             isMinifyEnabled = false

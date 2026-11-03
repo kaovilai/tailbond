@@ -12,7 +12,7 @@ object UpdateWords {
     fun headline(s: UpdateStatus): String {
         val v = s.installing ?: s.available
         return when (s.phase) {
-            Phase.OFF -> if (s.noKeys) "This build doesn't update itself" else "Updates are off"
+            Phase.OFF -> if (s.noSource) "Nowhere to get updates from" else "Updates are off"
             Phase.CHECKING -> "Checking for updates…"
             Phase.DOWNLOADING -> "Downloading version $v…"
             Phase.INSTALLING -> "Installing version $v…"
@@ -26,8 +26,8 @@ object UpdateWords {
 
     /** The line under it (why, what next); null when the headline says it all. */
     fun detail(s: UpdateStatus, server: String?): String? = when (s.phase) {
-        Phase.OFF -> if (s.noKeys) {
-            "It was built without tailbond's update key. Install the release APK once to get updates, or update it the way you installed it"
+        Phase.OFF -> if (s.noSource) {
+            "tailbond gets updates from your home server, and this build has no other source. Pair a server to get updates, or update it the way you installed it"
         } else {
             "tailbond doesn't check by itself. Check now still works"
         }
@@ -76,6 +76,11 @@ object UpdateWords {
             else -> "on ${t.format(DateTimeFormatter.ofPattern("d MMM", Locale.US))} at $clock"
         }
     }
+
+    /** The honest limit of a debug build, shown on the Updates page. */
+    const val DEBUG_BUILD = "This is a debug build, signed with the debug key. Android only installs an update signed with the same key, " +
+        "so it can't take the release APKs from GitHub or your server. To get updates, uninstall it and install the release APK once " +
+        "(save a backup first, then restore it)."
 
     /** The first-install explanation, shown until tailbond can update itself without a tap. */
     fun firstTap(silent: Boolean, sdkInt: Int): String? = when {

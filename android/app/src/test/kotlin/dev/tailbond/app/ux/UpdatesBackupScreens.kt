@@ -21,6 +21,7 @@ import dev.tailbond.app.update.Phase
 import dev.tailbond.app.update.UpdatePolicy
 import dev.tailbond.app.update.UpdateSource
 import dev.tailbond.app.update.UpdateStatus
+import dev.tailbond.app.update.Updater
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -125,7 +126,7 @@ class UpdatesBackupScreens : UxRender() {
         state(
             available.copy(
                 phase = Phase.FAILED, lastResultOk = false,
-                lastResult = "Couldn't install 0.2.0: it's signed with a different key than this app. Debug and release builds can't update each other: install the release APK once by hand",
+                lastResult = "Couldn't install 0.2.0: ${Updater.OTHER_SIGNER}", otherSigner = "0.2.0",
             ),
         ),
         Routes.UPDATES,
@@ -135,10 +136,7 @@ class UpdatesBackupScreens : UxRender() {
         state(UpdateStatus(current = "0.2.0", lastCheckMs = at(3, 12), source = UpdateSource.MIRROR, sourceLabel = "homebox", lastResult = "Updated to 0.2.0", silent = true, notesUrl = notes)),
         Routes.UPDATES,
     )
-    @Test fun noKey() = app(
-        "19-updates-debug-build-no-key",
-        state(UpdateStatus(current = "0.1.0", phase = Phase.OFF, noKeys = true), debug = true), Routes.UPDATES, tall = 1250,
-    )
+    @Test fun debugBuild() = app("19-updates-debug-build", state(debug = true), Routes.UPDATES, tall = 1350)
     @Test fun oldAndroid() = app(
         "19b-updates-android-11-tap-every-time",
         state(available, sdk = 30), Routes.UPDATES,

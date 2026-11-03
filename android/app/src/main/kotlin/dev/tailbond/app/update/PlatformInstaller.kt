@@ -40,18 +40,24 @@ class PlatformInstaller(private val ctx: Context) : ApkInstaller {
         val theirs = pm.getPackageArchiveInfo(apk.path, flags) ?: return ApkCheck.WRONG_PACKAGE
         if (theirs.packageName != ctx.packageName) return ApkCheck.WRONG_PACKAGE
         val ours = try { pm.getPackageInfo(ctx.packageName, flags) } catch (_: Exception) { return ApkCheck.OK }
-        if (signers(theirs) != signers(ours)) return ApkCheck.OTHER_SIGNER
+        if (!signers(ours).accepts(signers(theirs))) return ApkCheck.OTHER_SIGNER
         if (versionCode(theirs) <= versionCode(ours)) return ApkCheck.NOT_NEWER
         return ApkCheck.OK
     }
 
-    private fun signers(p: PackageInfo): Set<String> {
-        val sigs = if (Build.VERSION.SDK_INT >= 28) {
-            p.signingInfo?.let { if (it.hasMultipleSigners()) it.apkContentsSigners else it.signingCertificateHistory }
-        } else {
-            @Suppress("DEPRECATION") p.signatures
+    private fun signers(p: PackageInfo): ApkSigners {
+        fun Array<android.content.pm.Signature>?.chars() = orEmpty().map { it.toCharsString() }
+        if (Build.VERSION.SDK_INT >= 28) {
+            val info = p.signingInfo ?: return ApkSigners(emptySet())
+            return if (info.hasMultipleSigners()) {
+                ApkSigners(info.apkContentsSigners.chars().toSet())
+            } else {
+                val history = info.signingCertificateHistory.chars()
+                ApkSigners(setOfNotNull(history.lastOrNull()), history)
+            }
         }
-        return sigs.orEmpty().map { it.toCharsString() }.toSet()
+        @Suppress("DEPRECATION")
+        return ApkSigners(p.signatures.chars().toSet())
     }
 
     private fun versionCode(p: PackageInfo): Long =

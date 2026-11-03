@@ -18,7 +18,7 @@ enum class UpdateChannel(val wire: String, val label: String, val explain: Strin
     @SerialName("beta") BETA("beta", "Beta", "New versions a bit earlier, sometimes with rough edges"),
 }
 
-/** What to do with a verified manifest. */
+/** What to do with a manifest. */
 sealed interface Decision {
     /** This build is that version or newer. */
     data object UpToDate : Decision

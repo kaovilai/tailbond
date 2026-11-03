@@ -19,7 +19,7 @@ enum class Phase {
     /** "Install unknown apps" isn't allowed for tailbond yet. */
     NEEDS_PERMISSION,
     FAILED,
-    /** Policy Off, or no update key in this build. */
+    /** Policy Off, or nowhere to get updates from (no paired server and no public source). */
     OFF,
 }
 
@@ -48,10 +48,13 @@ data class UpdateStatus(
     val progress: Float? = null,
     /** The version handed to Android; checked after the restart. */
     val installing: String? = null,
-    val noKeys: Boolean = false,
+    /** No paired server and no public source in this build: nowhere to check. */
+    val noSource: Boolean = false,
+    /** The version whose APK was refused for its signing key (not downloaded again by itself). */
+    val otherSigner: String? = null,
     /** Android 12+ and the app installed itself before: no tap needed. */
     val silent: Boolean = false,
-    /** The last verified manifest (kept so Install works without checking again). */
+    /** The last manifest read (kept so Install works without checking again). */
     val manifest: Manifest? = null,
 ) {
     fun toJson(): String = json.encodeToString(serializer(), this)
@@ -66,7 +69,10 @@ data class UpdateStatus(
 interface UpdateEnv {
     val currentVersion: String
     val currentCode: Long
-    val keys: List<ByteArray>
+    /** Signed with the debug key: it can only take updates signed with that same key. */
+    val debugBuild: Boolean get() = false
+    /** A server is paired, or this build has a public source. Without either, updates are off. */
+    fun hasSource(): Boolean
     fun policy(): UpdatePolicy
     fun channel(): UpdateChannel
     /** Manifest sources in order: the active server's mirror (while connected), then the public source. */
@@ -109,32 +115,33 @@ class Updater(private val env: UpdateEnv, private val installer: ApkInstaller) {
         val own = SemVer.own(env.currentVersion)
         val target = saved.installing?.let { SemVer.parse(it) }
         val s = when {
-            env.keys.isEmpty() -> saved.copy(phase = Phase.OFF, noKeys = true, available = null, installing = null)
             target != null && own != null && own >= target -> saved.copy(
                 phase = Phase.IDLE, available = null, installing = null, deferred = null, needsServer = null,
                 lastResult = "Updated to ${env.currentVersion}", lastResultOk = true,
             )
+            !env.hasSource() -> saved.copy(phase = Phase.OFF, noSource = true, available = null, installing = null, deferred = null, needsServer = null)
             saved.installing != null || saved.phase in setOf(Phase.CHECKING, Phase.DOWNLOADING, Phase.INSTALLING, Phase.NEEDS_TAP) -> saved.copy(
                 phase = Phase.IDLE, installing = null,
                 lastResult = saved.installing?.let { "The update to $it didn't finish. Tap Install to try again" } ?: saved.lastResult,
                 lastResultOk = saved.installing == null && saved.lastResultOk,
             )
-            env.policy() == UpdatePolicy.OFF -> saved.copy(phase = Phase.OFF)
-            saved.phase == Phase.OFF -> saved.copy(phase = Phase.IDLE)
-            else -> saved
+            env.policy() == UpdatePolicy.OFF -> saved.copy(phase = Phase.OFF, noSource = false)
+            saved.phase == Phase.OFF -> saved.copy(phase = Phase.IDLE, noSource = false)
+            else -> saved.copy(noSource = false)
         }.let { if (it.available != null && own != null && SemVer.parse(it.available)?.let { a -> a <= own } == true) it.copy(available = null, manifest = null) else it }
         env.save(s)
         return s
     }
 
-    /** Policy or channel changed. */
+    /** Policy or channel changed, or a server was paired or removed. */
     fun settingsChanged() {
         set {
             when {
-                env.keys.isEmpty() -> it
-                env.policy() == UpdatePolicy.OFF -> it.copy(phase = Phase.OFF, deferred = null)
-                it.phase == Phase.OFF -> it.copy(phase = Phase.IDLE)
-                else -> it
+                it.phase in BUSY -> it
+                !env.hasSource() -> it.copy(phase = Phase.OFF, noSource = true, available = null, deferred = null, needsServer = null, manifest = null)
+                env.policy() == UpdatePolicy.OFF -> it.copy(phase = Phase.OFF, noSource = false, deferred = null)
+                it.phase == Phase.OFF -> it.copy(phase = Phase.IDLE, noSource = false)
+                else -> it.copy(noSource = false)
             }
         }
         val m = _status.value.manifest
@@ -147,7 +154,7 @@ class Updater(private val env: UpdateEnv, private val installer: ApkInstaller) {
      */
     fun checkDue(everyMs: Long = UpdateRules.CHECK_EVERY_MS): Boolean {
         val s = _status.value
-        if (env.keys.isEmpty() || env.policy() == UpdatePolicy.OFF) return false
+        if (!env.hasSource() || env.policy() == UpdatePolicy.OFF) return false
         if (s.phase in BUSY) return false
         return UpdateRules.checkDue(s.lastCheckMs, env.now(), everyMs) &&
             UpdateRules.checkDue(s.lastAttemptMs, env.now(), minOf(everyMs, 60 * 60_000L))
@@ -155,25 +162,25 @@ class Updater(private val env: UpdateEnv, private val installer: ApkInstaller) {
 
     /** Reads the manifest and acts on it. [manual]: "Check now" (works even with policy Off). */
     fun check(manual: Boolean) {
-        if (env.keys.isEmpty()) {
-            set { it.copy(phase = Phase.OFF, noKeys = true, lastResult = NO_KEY, lastResultOk = false) }
+        if (_status.value.phase in BUSY) return
+        if (!env.hasSource()) {
+            set { it.copy(phase = Phase.OFF, noSource = true, lastResult = NO_SOURCE, lastResultOk = false) }
             return
         }
-        if (_status.value.phase in BUSY) return
         if (!manual && env.policy() == UpdatePolicy.OFF) { set { it.copy(phase = Phase.OFF) }; return }
         val before = set { it.copy(phase = Phase.CHECKING, lastAttemptMs = env.now()) }
-        when (val o = UpdateChecker(env.keys).check(env.channel(), env.sources())) {
+        when (val o = UpdateChecker.check(env.channel(), env.sources())) {
             is CheckOutcome.Failed -> set {
                 it.copy(
-                    phase = idlePhase(before), noKeys = o.noKeys,
-                    lastResult = (if (o.untrusted) "Refused an update that isn't signed by tailbond's key: " else "Couldn't check for updates: ") +
-                        o.problems.joinToString("; "),
+                    phase = idlePhase(before), noSource = false,
+                    lastResult = "Couldn't check for updates: " + o.problems.joinToString("; "),
                     lastResultOk = false,
                 )
             }
             is CheckOutcome.Found -> {
                 set {
                     it.copy(
+                        noSource = false,
                         manifest = o.manifest, lastCheckMs = env.now(), source = o.source.kind, sourceLabel = o.source.label,
                         notesUrl = o.manifest.notesUrl.ifBlank { null }, security = o.manifest.security,
                     )
@@ -204,13 +211,23 @@ class Updater(private val env: UpdateEnv, private val installer: ApkInstaller) {
                 )
             }
             is Decision.Available -> {
+                // a version refused for its signing key stays refused (and isn't downloaded again by itself)
+                val refused = _status.value.otherSigner == d.version
                 val s = set {
-                    it.copy(
-                        phase = if (d.deferred == Deferral.BUSY) Phase.WAITING else idlePhase(it),
-                        available = d.version, deferred = d.deferred, needsServer = null,
-                        lastResult = if (checked) "Version ${d.version} is available" else it.lastResult, lastResultOk = true,
-                    )
+                    if (refused) {
+                        it.copy(
+                            phase = Phase.FAILED, available = d.version, deferred = null, needsServer = null,
+                            lastResult = "Couldn't install ${d.version}: ${otherSignerWhy()}", lastResultOk = false,
+                        )
+                    } else {
+                        it.copy(
+                            phase = if (d.deferred == Deferral.BUSY) Phase.WAITING else idlePhase(it),
+                            available = d.version, deferred = d.deferred, needsServer = null,
+                            lastResult = if (checked) "Version ${d.version} is available" else it.lastResult, lastResultOk = true,
+                        )
+                    }
                 }
+                if (refused) return
                 if (d.install) install(manual = false)
                 else if (checked && d.deferred == Deferral.ASK) env.announce(s)
             }
@@ -248,7 +265,8 @@ class Updater(private val env: UpdateEnv, private val installer: ApkInstaller) {
             ApkCheck.WRONG_PACKAGE -> { file.delete(); fail(m.version, "the file isn't the tailbond app", manual); return }
             ApkCheck.OTHER_SIGNER -> {
                 file.delete()
-                fail(m.version, "it's signed with a different key than this app. Debug and release builds can't update each other: install the release APK once by hand", manual)
+                set { it.copy(otherSigner = m.version) }
+                fail(m.version, otherSignerWhy(), manual)
                 return
             }
             ApkCheck.NOT_NEWER -> { file.delete(); set { it.copy(phase = Phase.IDLE, available = null, progress = null, lastResult = "Up to date", lastResultOk = true) }; return }
@@ -286,14 +304,18 @@ class Updater(private val env: UpdateEnv, private val installer: ApkInstaller) {
         if (!manual) env.announce(s)
     }
 
+    private fun otherSignerWhy() = if (env.debugBuild) OTHER_SIGNER_DEBUG else OTHER_SIGNER
+
     private fun idlePhase(s: UpdateStatus): Phase = when {
-        env.keys.isEmpty() || env.policy() == UpdatePolicy.OFF -> Phase.OFF
+        !env.hasSource() || env.policy() == UpdatePolicy.OFF -> Phase.OFF
         s.phase == Phase.FAILED -> Phase.FAILED
         else -> Phase.IDLE
     }
 
     companion object {
-        const val NO_KEY = "This build has no update key, so it can't update itself. Release builds can"
+        const val NO_SOURCE = "Nowhere to get updates from: no server is paired, and this build has no public source"
+        const val OTHER_SIGNER = "it's signed with a different key than this app, and Android only installs an update signed with the same key"
+        const val OTHER_SIGNER_DEBUG = "it's signed with a different key than this app. This is a debug build: it only takes updates signed with its own debug key, not release APKs"
         private val BUSY = setOf(Phase.CHECKING, Phase.DOWNLOADING, Phase.INSTALLING)
     }
 }

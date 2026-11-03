@@ -48,45 +48,41 @@ data class UpdateSource(
     }
 }
 
-/** A verified manifest and where it came from, or why none could be read. */
+/** A manifest and where it came from, or why none could be read. */
 sealed interface CheckOutcome {
     data class Found(val manifest: Manifest, val source: UpdateSource, val manifestBytes: ByteArray) : CheckOutcome
-    /** Every source failed; [problems] says why, per source ("homebox: …"). [noKeys]: this build can't check at all. */
-    data class Failed(val problems: List<String>, val noKeys: Boolean = false, val untrusted: Boolean = false) : CheckOutcome
+    /** Every source failed; [problems] says why, per source ("homebox: …"). */
+    data class Failed(val problems: List<String>) : CheckOutcome
 }
 
-/** Reads and verifies `<channel>.json` + `.sig` from the first source that has a good pair. */
-class UpdateChecker(private val keys: List<ByteArray>) {
+/**
+ * Reads `<channel>.json` from the first source that has a good one. Trust
+ * comes from the channel, not from a signature on the list: the home
+ * server's mirror is reached through the tunnel (which pins the server's
+ * certificate) and only mirrors files it has verified itself; the public
+ * source is https only. The list gives each file's SHA-256 and size, and the
+ * APK itself must be signed with this app's own key ([ApkInstaller.check]).
+ * The release's `.sigstore.json` (a GitHub attestation) isn't read here.
+ */
+object UpdateChecker {
+    const val MAX_MANIFEST = 1L shl 20
+
     fun check(channel: UpdateChannel, sources: List<UpdateSource>): CheckOutcome {
-        if (keys.isEmpty()) return CheckOutcome.Failed(listOf("this build has no update key"), noKeys = true)
-        if (sources.isEmpty()) return CheckOutcome.Failed(listOf("no update source: not connected to a server, and this build has no public source"))
+        if (sources.isEmpty()) return CheckOutcome.Failed(listOf("not connected to a server, and this build has no public source"))
         val problems = mutableListOf<String>()
-        var untrusted = false
         for (src in sources) {
-            val base = src.base.trimEnd('/')
             val name = channel.wire + ".json"
             try {
-                val m = src.fetch("$base/$name", MAX_MANIFEST)
-                val s = src.fetch("$base/$name.sig", MAX_SIG)
-                when (val v = ManifestVerifier.verify(m, s, keys, channel.wire)) {
-                    is Verified.Ok -> return CheckOutcome.Found(v.manifest, src, m)
-                    Verified.NoKeys -> return CheckOutcome.Failed(listOf("this build has no update key"), noKeys = true)
-                    is Verified.UnknownKey -> { untrusted = true; problems += "${src.label}: signed with a key this app doesn't trust (${v.keyId})" }
-                    Verified.BadSignature -> { untrusted = true; problems += "${src.label}: the signature doesn't match" }
-                    is Verified.Malformed -> problems += "${src.label}: ${v.why}"
-                }
+                if (!src.isMirror && !src.base.startsWith("https://")) throw java.io.IOException("the public source must be https")
+                val m = src.fetch("${src.base.trimEnd('/')}/$name", MAX_MANIFEST)
+                return CheckOutcome.Found(ManifestParser.parse(m, channel.wire), src, m)
             } catch (e: HttpStatusException) {
                 problems += "${src.label}: " + if (e.code == 404) "no $name there" else "answered ${e.code}"
             } catch (e: Exception) {
                 problems += "${src.label}: ${e.message ?: e.javaClass.simpleName}"
             }
         }
-        return CheckOutcome.Failed(problems, untrusted = untrusted)
-    }
-
-    companion object {
-        const val MAX_MANIFEST = 1L shl 20
-        const val MAX_SIG = 4096L
+        return CheckOutcome.Failed(problems)
     }
 }
 
@@ -96,7 +92,7 @@ class ArtifactException(msg: String) : IOException(msg)
 /**
  * Downloads [artifact] from each source in turn (the mirror's copy first,
  * then its URL) into [dest], and keeps the first copy whose size and
- * SHA-256 match the signed manifest.
+ * SHA-256 match the manifest.
  */
 object ArtifactDownloader {
     /** Largest APK accepted at all (the manifest's `size` is the real limit). */

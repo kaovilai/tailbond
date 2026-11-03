@@ -73,7 +73,8 @@ class UpdateManager private constructor(private val ctx: Context) {
     private inner class Env : UpdateEnv {
         override val currentVersion: String = BuildConfig.VERSION_NAME
         override val currentCode: Long = BuildConfig.VERSION_CODE.toLong()
-        override val keys: List<ByteArray> = ManifestVerifier.parseKeys(BuildConfig.UPDATE_KEYS)
+        override val debugBuild: Boolean = BuildConfig.DEBUG
+        override fun hasSource(): Boolean = repo.servers.value.isNotEmpty() || publicSource() != null
         override fun policy() = repo.settings.value.updatePolicy
         override fun channel() = repo.settings.value.updateChannel
 
@@ -137,7 +138,8 @@ class UpdateManager private constructor(private val ctx: Context) {
 
     private fun publicSource(): UpdateSource? {
         val base = BuildConfig.UPDATE_SOURCE.trim()
-        if (base.isEmpty()) return null
+        // https only (Gradle refuses anything else too): integrity is the manifest's SHA-256 over TLS
+        if (!base.startsWith("https://")) return null
         val label = runCatching { URI(base).host }.getOrNull() ?: "the public source"
         return UpdateSource(UpdateSource.PUBLIC, base, UrlHttp, label = label)
     }
@@ -152,6 +154,10 @@ class UpdateManager private constructor(private val ctx: Context) {
                 updater.settingsChanged()
                 if (it.first != UpdatePolicy.OFF) updater.check(manual = false)
             }
+        }
+        scope.launch {
+            // pairing the first server (or removing the last) turns updates on or off
+            repo.servers.map { it.isNotEmpty() }.distinctUntilChanged().collect { updater.settingsChanged() }
         }
         scope.launch {
             var first = true

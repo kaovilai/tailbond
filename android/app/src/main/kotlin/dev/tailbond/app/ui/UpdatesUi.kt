@@ -88,7 +88,7 @@ fun UpdatesBackupRows(state: UiState, onUpdates: () -> Unit, onBackup: () -> Uni
 private fun UiState.now() = update.nowMs.takeIf { it > 0 } ?: System.currentTimeMillis()
 
 private fun dev.tailbond.app.update.UpdateStatus.policyLine(state: UiState) = when {
-    noKeys -> "no update key"
+    noSource -> "no update source"
     else -> state.settings.updatePolicy.label.lowercase().let { if (state.settings.updateChannel == UpdateChannel.BETA) "$it, beta" else it }
 }
 
@@ -126,7 +126,7 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                         s.available != null && s.needsServer == null && !working ->
                             Button(onClick = actions::installUpdate) { Text(if (bad) "Try again" else "Install now") }
                     }
-                    if (!s.noKeys) OutlinedButton(onClick = actions::checkUpdates, enabled = !working) { Text("Check now") }
+                    if (!s.noSource) OutlinedButton(onClick = actions::checkUpdates, enabled = !working) { Text("Check now") }
                 }
                 s.notesUrl?.takeIf { s.available != null || s.lastResult.startsWith("Updated") }?.let { url ->
                     TextButton(onClick = { actions.openUrl(url) }, modifier = Modifier.padding(start = 0.dp)) {
@@ -136,23 +136,28 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             }
         }
 
-        UpdateWords.firstTap(s.silent, state.sdkInt)?.takeIf { !s.noKeys && !u.debugBuild && s.phase != Phase.NEEDS_TAP }?.let { Hint(it) }
+        if (u.debugBuild) {
+            Hint(UpdateWords.DEBUG_BUILD)
+        } else {
+            UpdateWords.firstTap(s.silent, state.sdkInt)?.takeIf { !s.noSource && s.phase != Phase.NEEDS_TAP }?.let { Hint(it) }
+        }
 
         SectionHeader("Install updates")
         UpdatePolicy.entries.forEach { p ->
-            Choice(state.settings.updatePolicy == p, p.label, p.explain, enabled = !s.noKeys) { actions.setUpdatePolicy(p) }
+            Choice(state.settings.updatePolicy == p, p.label, p.explain, enabled = !s.noSource) { actions.setUpdatePolicy(p) }
         }
         SectionHeader("Which versions")
         UpdateChannel.entries.forEach { c ->
-            Choice(state.settings.updateChannel == c, c.label, c.explain, enabled = !s.noKeys) { actions.setUpdateChannel(c) }
+            Choice(state.settings.updateChannel == c, c.label, c.explain, enabled = !s.noSource) { actions.setUpdateChannel(c) }
         }
 
         SectionHeader("How updates work")
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val home = server ?: "your home server"
             Text(
-                "While connected, tailbond gets updates from $home, which keeps a copy. Otherwise it gets them from GitHub. " +
-                    "Each update is checked against tailbond's signature before it's installed.",
+                "While connected, tailbond gets updates from $home, which keeps a copy it has checked itself. Otherwise it gets them from GitHub. " +
+                    "Each download must match the size and SHA-256 in the release list, and must be signed with the same key as the tailbond " +
+                    "you have: tailbond checks that before installing, and Android checks it again.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
@@ -165,9 +170,10 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             )
             Text(
                 if (u.debugBuild) {
-                    "This is a debug build. Debug and release builds are signed with different keys and can't update each other: install the release APK by hand once to get updates."
+                    "Debug and release builds are signed with different keys, so neither can update the other."
                 } else {
-                    "Debug and release builds are signed with different keys and can't update each other."
+                    "Debug and release builds are signed with different keys, so neither can update the other. " +
+                        "If tailbond's release key ever changes, Android can't update the app: uninstall it, install the new release once, and restore a backup."
                 },
                 style = MaterialTheme.typography.bodySmall, color = muted,
             )

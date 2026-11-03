@@ -1,9 +1,5 @@
 {
-  "about": "Fixed inputs for stable.json(.sig) and android.tbbackup; made by android/app/src/test/kotlin/dev/tailbond/app/InteropVectorsTest.kt",
-  "ed25519_seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
-  "public_key_b64": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
-  "key_id": "65b60673d6ed884b",
-  "manifest_sha256": "7ca1e19edf4dc7e18018d89e4eb1df3ed5290b3d6b7523b687d961b3edf46f3d",
+  "about": "Fixed inputs for android.tbbackup; made by android/app/src/test/kotlin/dev/tailbond/app/InteropVectorsTest.kt",
   "backup_passphrase": "tailbond interop passphrase",
   "backup_salt_b64": "oKGio6SlpqeoqaqrrK2urw==",
   "backup_nonce_b64": "sLGys7S1tre4ubq7",
