@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -18,6 +19,13 @@ import (
 // certificate and key (clients pin it) and the private global mqvpn key.
 // Tailscale certificates are left out: Tailscale reissues them.
 var StateFiles = []string{"server.crt", "server.key", "global.key"}
+
+// A server's backup also carries the backups its clients pushed to it
+// (client-backups/<client>/<file>.tbbackup, each still locked with its own
+// passphrase), so they move with the server.
+var clientBackupRE = regexp.MustCompile(`^client-backups/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.tbbackup$`)
+
+const maxClientBackup = 256 << 10
 
 // Payload is a backup's plaintext.
 type Payload struct {
@@ -44,6 +52,19 @@ func Collect(cfgPath, stateDir, uci string, fallback *config.Config) (*Payload, 
 	for _, f := range StateFiles {
 		if data, err := os.ReadFile(filepath.Join(stateDir, f)); err == nil {
 			p.Files[f] = base64.StdEncoding.EncodeToString(data)
+		}
+	}
+	clients, _ := os.ReadDir(filepath.Join(stateDir, "client-backups"))
+	for _, c := range clients {
+		files, _ := os.ReadDir(filepath.Join(stateDir, "client-backups", c.Name()))
+		for _, f := range files {
+			name := "client-backups/" + c.Name() + "/" + f.Name()
+			if info, err := f.Info(); err != nil || !info.Mode().IsRegular() || info.Size() > maxClientBackup || !isStateFile(name) {
+				continue
+			}
+			if data, err := os.ReadFile(filepath.Join(stateDir, filepath.FromSlash(name))); err == nil {
+				p.Files[name] = base64.StdEncoding.EncodeToString(data)
+			}
 		}
 	}
 	return p, nil
@@ -77,7 +98,7 @@ func isStateFile(n string) bool {
 			return true
 		}
 	}
-	return false
+	return clientBackupRE.MatchString(n) && !strings.Contains(n, "..")
 }
 
 // Apply writes the payload's state files (the config is written by the
@@ -95,7 +116,10 @@ func Apply(p *Payload, stateDir string) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
-		dst := filepath.Join(stateDir, name)
+		dst := filepath.Join(stateDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
 		if err := os.WriteFile(dst+".tmp", data, 0o600); err != nil {
 			return err
 		}

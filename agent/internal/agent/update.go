@@ -77,6 +77,37 @@ type updater struct {
 	pkgDir     string
 	ipkCmd     string
 	runner     func(name string, args, env []string) error // detached installer
+	now        func() time.Time
+	dnfAuto    func() bool
+}
+
+// Automatic installs happen at night (local time), when nobody is on a
+// call: devices drop for a few seconds while tailbond restarts.
+const autoFromHour, autoToHour = 3, 5
+
+func (a *Agent) updNow() time.Time {
+	if a.upd.now != nil {
+		return a.upd.now()
+	}
+	return time.Now()
+}
+
+func (a *Agent) inAutoWindow() bool {
+	h := a.updNow().Hour()
+	return h >= autoFromHour && h < autoToHour
+}
+
+// dnfAutomatic: is a dnf-automatic timer enabled (Fedora RPM installs)?
+func (a *Agent) dnfAutomatic() bool {
+	if a.upd.dnfAuto != nil {
+		return a.upd.dnfAuto()
+	}
+	for _, t := range []string{"dnf5-automatic.timer", "dnf-automatic.timer", "dnf-automatic-install.timer"} {
+		if exec.Command("systemctl", "is-enabled", "--quiet", t).Run() == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func newUpdater() *updater {
@@ -162,6 +193,7 @@ func (a *Agent) updateView() *status.Update {
 	}
 	a.upd.mu.Unlock()
 	v.Current, v.Policy, v.Repo, v.Method = a.opts.Version, u.Policy, a.updateRepo(), a.method()
+	v.AutoWindow = fmt.Sprintf("%02d:00-%02d:00", autoFromHour, autoToHour)
 	if a.role == config.RoleServer {
 		for _, usr := range a.store.Get().Server.Users {
 			if c, ok := clients[usr.Name]; ok && update.Newer(a.opts.Version, c.Version) {
@@ -234,10 +266,13 @@ func (a *Agent) updateLoop(ctx context.Context) {
 			return
 		case <-first.C:
 		case <-t.C:
+			u := a.store.Get().UpdateOrDefault()
 			a.upd.mu.Lock()
-			due := time.Since(a.upd.lastCheck) >= time.Duration(a.store.Get().UpdateOrDefault().CheckEveryHours)*time.Hour
+			due := time.Since(a.upd.lastCheck) >= time.Duration(u.CheckEveryHours)*time.Hour
+			pending := a.upd.rel != nil && update.Newer(a.upd.rel.Version, a.opts.Version) && !update.Same(a.upd.rolledBack, a.upd.rel.Version)
 			a.upd.mu.Unlock()
-			if !due {
+			// a release found during the day installs in the night window
+			if !due && !(u.Policy == config.UpdateAuto && pending && a.inAutoWindow()) {
 				continue
 			}
 		case <-a.upd.checkNow:
@@ -272,7 +307,7 @@ func (a *Agent) updateTick(ctx context.Context, install bool) {
 		return
 	}
 	auto := u.Policy == config.UpdateAuto && isRelease(a.opts.Version)
-	if !install && !auto {
+	if !install && (!auto || !a.inAutoWindow()) {
 		return
 	}
 	a.upd.mu.Lock()
@@ -309,8 +344,15 @@ func (a *Agent) check(ctx context.Context) *update.Release {
 		a.upd.rel = rel
 	}
 	a.upd.mu.Unlock()
+	dnfAuto := false
+	if a.method() == methodDnf {
+		dnfAuto = a.dnfAutomatic()
+	}
 	a.setUpdate(func(v *status.Update) {
 		v.LastCheck = &now
+		if a.method() == methodDnf {
+			v.DnfAutomatic = &dnfAuto
+		}
 		if v.State == "checking" {
 			v.State = "idle"
 		}

@@ -613,7 +613,9 @@ over the app (same signing key). Automatic updates: Obtainium.
 ```
 
 - `policy`: `notify` (default: check and show; install on request), `auto`
-  (install when found, methods `static` and `opkg`), `off` (no checks).
+  (install when found, between 03:00 and 05:00 local time, methods `static`
+  and `opkg`; a version that rolled back isn't installed automatically
+  again), `off` (no checks).
 - Older keys (`channel`, `window`, `pin`, `source`, `mirror`, …) are ignored.
 
 ### Status (`/api/status`, additive)
@@ -629,6 +631,8 @@ over the app (same signing key). Automatic updates: Obtainium.
 
 - `state`: `idle` | `checking` | `downloading` | `installing` | `failed` |
   `rolled_back` | `off`.
+- `auto_window`: when `auto` installs (`"03:00-05:00"`); `dnf_automatic`
+  (method `dnf`): whether a dnf-automatic timer is enabled.
 - `outdated` (server): registered clients whose last reported version is
   older than this server's. Clients send `X-Tailbond-Version` and
   `X-Tailbond-Kind` (`router` | `android`) with their API requests
@@ -698,7 +702,9 @@ for inspection.
   and keeps the newest `keep`.
 - A client with `push` sends its newest backup to its server
   (`POST /api/backups/push`, client token, ≤ 1 MiB, opaque). The server
-  keeps the newest 3 per client in `<state_dir>/client-backups/<name>/`.
+  keeps the newest 3 per client in `<state_dir>/client-backups/<name>/`;
+  a server's own backup carries them (`files["client-backups/<name>/<file>"]`,
+  still encrypted with the client's passphrase).
 
 | Method | Path | Body / result |
 |---|---|---|

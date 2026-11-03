@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/backup"
 	"github.com/tailbond/tailbond/agent/internal/config"
@@ -118,6 +119,9 @@ func updAgent(t *testing.T, g *fakeGitHub, method string) (*Agent, *[]runCall) {
 		calls = append(calls, runCall{name, args, env})
 		return nil
 	}
+	night := time.Date(2026, 11, 3, 3, 30, 0, 0, time.Local)
+	a.upd.now = func() time.Time { return night }
+	a.upd.dnfAuto = func() bool { return true }
 	a.store.Update(func(c *config.Config) error {
 		c.Update = &config.UpdateSettings{APIURL: g.srv.URL}
 		return nil
@@ -182,9 +186,16 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 	if w := req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "auto"}); w.Code != 200 {
 		t.Fatalf("policy: %d %s", w.Code, w.Body)
 	}
+	// ... at night only (devices drop for a few seconds)
+	a.upd.now = func() time.Time { return time.Date(2026, 11, 3, 14, 0, 0, 0, time.Local) }
 	a.updateTick(ctx, false)
-	if len(*calls) != 1 {
-		t.Fatalf("auto didn't install: %+v", a.updateView())
+	if len(*calls) != 0 || a.updateView().Available != "0.2.0" {
+		t.Fatalf("auto installed in the afternoon: %v", *calls)
+	}
+	a.upd.now = func() time.Time { return time.Date(2026, 11, 3, 3, 30, 0, 0, time.Local) }
+	a.updateTick(ctx, false)
+	if len(*calls) != 1 || a.updateView().AutoWindow != "03:00-05:00" {
+		t.Fatalf("auto didn't install at night: %+v", a.updateView())
 	}
 	// a dev build shows releases but never installs by itself
 	a.opts.Version = "v0.1.0-12-gabcdef"
@@ -207,6 +218,12 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 		t.Fatalf("off checked anyway: %d -> %d, %+v", before, after, a.updateView())
 	}
 	// dnf / none: no one-click install, the reason says what to do
+	a.upd.method = methodDnf
+	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "notify"})
+	a.updateTick(ctx, false)
+	if v := a.updateView(); v.DnfAutomatic == nil || !*v.DnfAutomatic {
+		t.Fatalf("dnf_automatic: %+v", v)
+	}
 	for m, want := range map[string]string{methodDnf: "dnf upgrade", methodNone: "by hand"} {
 		a.upd.method = m
 		if w := req(t, a, "POST", "/api/update/install", "127.0.0.1:1", "", map[string]any{}); w.Code != 400 || !strings.Contains(w.Body.String(), want) {
@@ -323,6 +340,9 @@ func TestBackupRestoreAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(a.store.Get().StateDir, "server.key"), []byte("TLSKEY"), 0o600)
+	// a client's pushed backup moves with the server
+	os.MkdirAll(filepath.Join(a.store.Get().StateDir, "client-backups", "slate7"), 0o700)
+	os.WriteFile(filepath.Join(a.store.Get().StateDir, "client-backups", "slate7", "slate7-1.tbbackup"), []byte("CLIENTBACKUP"), 0o600)
 	const pw = "a long passphrase"
 	if w := req(t, a, "POST", "/api/backup", "127.0.0.1:1", "", map[string]string{"passphrase": "short"}); w.Code != 400 {
 		t.Fatalf("short passphrase: %d", w.Code)
@@ -371,6 +391,9 @@ func TestBackupRestoreAPI(t *testing.T) {
 	}
 	if k, _ := os.ReadFile(filepath.Join(stateB, "server.key")); string(k) != "TLSKEY" {
 		t.Fatal("TLS key not restored")
+	}
+	if k, _ := os.ReadFile(filepath.Join(stateB, "client-backups", "slate7", "slate7-1.tbbackup")); string(k) != "CLIENTBACKUP" {
+		t.Fatal("the client's pushed backup didn't move with the server")
 	}
 	ents, _ := os.ReadDir(filepath.Join(stateB, "backups"))
 	if len(ents) != 1 || !strings.HasPrefix(ents[0].Name(), "before-restore-") {

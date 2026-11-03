@@ -19,8 +19,10 @@ or the app. Each platform then updates the way it normally does:
 
 Policies (dashboard, GL panel, `"update": {"policy": …}` in `tailbond.json`):
 **Tell me** (`notify`, the default: shows new releases, installs when you
-press Update now), **Automatic** (`auto`: installs them as soon as they're
-found), **Off** (`off`: no checks). Pre-releases (`v1.2.3-beta.1`) are never
+press Update now), **Automatic** (`auto`: installs them by itself between
+03:00 and 05:00 local time, when nobody is on a call), **Off** (`off`: no
+checks). On Fedora, Automatic means `dnf-automatic`; the dashboard says
+whether it's on. Pre-releases (`v1.2.3-beta.1`) are never
 offered.
 
 ## What "Update now" does

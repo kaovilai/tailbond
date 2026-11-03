@@ -44,7 +44,8 @@ or `tailbondd backup --plain`.
     server (`backup.push`), which keeps the last 3 per device in
     `<state_dir>/client-backups/<device>/`.
   - The server lists both under Backup & restore, so if the router dies its
-    settings are at home.
+    settings are at home. A server's own backup carries these too (each still
+    locked with its device's passphrase), so they move with the server.
 
 Copy the files somewhere else too. They're encrypted, so a cloud folder or
 another machine is fine.

@@ -134,11 +134,15 @@ type Update struct {
 	LastResult string     `json:"last_result,omitempty"` // ok | rolled_back | failed
 	// the version the last result is about, when, and a detail (e.g.
 	// reinstalled_after_firmware_upgrade)
-	LastResultVersion string     `json:"last_result_version,omitempty"`
-	LastResultAt      string     `json:"last_result_at,omitempty"`
-	Detail            string     `json:"detail,omitempty"`
-	Error             string     `json:"error,omitempty"`
-	Outdated          []Outdated `json:"outdated,omitempty"`
+	LastResultVersion string `json:"last_result_version,omitempty"`
+	LastResultAt      string `json:"last_result_at,omitempty"`
+	Detail            string `json:"detail,omitempty"`
+	Error             string `json:"error,omitempty"`
+	// AutoWindow: when policy auto installs (local time, "03:00-05:00")
+	AutoWindow string `json:"auto_window,omitempty"`
+	// DnfAutomatic (method dnf): a dnf-automatic timer is enabled
+	DnfAutomatic *bool      `json:"dnf_automatic,omitempty"`
+	Outdated     []Outdated `json:"outdated,omitempty"`
 }
 
 // Outdated is a client running an older version than its server.

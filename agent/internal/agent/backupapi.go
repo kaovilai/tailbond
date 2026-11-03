@@ -165,10 +165,22 @@ func (a *Agent) restoreWarnings(h backup.Header, next *config.Config) []string {
 	host, _ := os.Hostname()
 	if a.role == config.RoleServer {
 		if h.Host != "" && h.Host != a.serverName() && h.Host != host {
-			out = append(out, fmt.Sprintf("The backup is from %s. Devices keep their pairing (same keys); if this machine's public address differs, set it after restoring: devices then pick up the new address from the server's Tailscale name by themselves, others need their link again.", h.Host))
+			out = append(out, fmt.Sprintf("The backup is from %s. Turn tailbond off on %s first (or wipe it): both machines would have the same devices and keys, and devices would keep switching between them.", h.Host, h.Host))
 		}
 		if next.Server.PublicAddr != "" && next.Server.PublicAddr != cur.Server.PublicAddr {
-			out = append(out, "Public address in the backup: "+next.Server.PublicAddr+". Change it under Settings if this machine is reached differently.")
+			name := ""
+			if next.Server.UseTailscaleCert {
+				name = h.Host
+			}
+			msg := "The backup sets the public address to " + next.Server.PublicAddr + " (where the old machine was reached). If devices reach this machine at another address, change it after restoring (Devices tab)."
+			if name != "" {
+				msg += " Devices with Tailscale then learn the new address by themselves within a few minutes, as long as this machine has the old one's Tailscale name (" + name + ")."
+			}
+			msg += " Devices without Tailscale (a phone or router paired with a link or QR code only) need their link again: Devices tab, the QR button next to each."
+			out = append(out, msg)
+		}
+		if next.Server.Port != 0 && next.Server.Port != cur.Server.Port {
+			out = append(out, fmt.Sprintf("The tunnel port becomes udp/%d (it was %d here): allow it in this machine's firewall and in your provider's or home router's (port forward).", next.Server.Port, cur.Server.Port))
 		}
 	}
 	if h.Platform != "" && h.Platform != a.backupHeader().Platform {

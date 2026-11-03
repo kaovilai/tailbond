@@ -128,6 +128,12 @@ func TestCollectDecodeApply(t *testing.T) {
 	if _, _, err := Decode([]byte(bad)); err == nil {
 		t.Fatal("unexpected file accepted")
 	}
+	for _, n := range []string{"client-backups/../../x.tbbackup", "client-backups/a/../b.tbbackup", "client-backups/a/b.json", "client-backups/a/b/c.tbbackup"} {
+		bad := strings.Replace(string(pt2), `"files":{`, `"files":{"`+n+`":"eA==",`, 1)
+		if _, _, err := Decode([]byte(bad)); err == nil {
+			t.Errorf("%s accepted", n)
+		}
+	}
 }
 
 func encodeJSON(p *Payload) ([]byte, error) { return json.Marshal(p) }
