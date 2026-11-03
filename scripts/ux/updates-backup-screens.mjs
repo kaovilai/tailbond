@@ -104,6 +104,8 @@ async function web(name, fx, vp, act) {
   await page.waitForTimeout(500);
   await steps(page, act && act.steps);
   const full = act ? !!act.full : true;
+  // a full-page capture would draw the sticky top bar over the middle of the page
+  if (full) await page.addStyleTag({ content: '.topbar { position: static !important; }' });
   await page.screenshot({ path: `${out}/web/${name}-${vp}.png`, fullPage: full });
   await ctx.close();
 }

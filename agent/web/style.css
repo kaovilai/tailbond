@@ -131,6 +131,9 @@ code { font-family: var(--mono); font-size: .92em; }
 /* speed tips are advice, not errors; blocking setup problems stay red */
 #health-banner { background: color-mix(in srgb, var(--warn) 14%, transparent); color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
 #health-banner.blocking { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+/* update news at the top; red only when an update failed */
+.upd-banner { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+.upd-banner.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
 .addr-step ol { margin: 6px 0; padding-left: 20px; }
 .addr-step li { margin: 4px 0; }
 
@@ -366,12 +369,17 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
 .ub-list { list-style: none; margin: 4px 0 6px; padding: 0; display: grid; gap: 6px; }
 .ub-list li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .ub-list .ico { color: var(--muted); }
+.ub-list .chip.ub-mini { margin-left: auto; padding: 2px 8px; font-size: 12px; text-transform: none; }
+.ub-list .ub-ok { margin-left: auto; color: var(--ok); }
 .ub-note { border-radius: 10px; padding: 10px 12px; font-size: 13.5px; background: var(--card-2); border: 1px solid var(--line); }
 .ub-note.ok { background: color-mix(in srgb, var(--ok) 10%, var(--card)); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
 .ub-note.bad { background: color-mix(in srgb, var(--bad) 8%, var(--card)); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
 .ub-note.warn { background: color-mix(in srgb, var(--warn) 9%, var(--card)); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
 .ub-note ul { margin: 6px 0 0; padding-left: 18px; }
 .ub-note li { margin: 3px 0; }
+.ub-note ol { margin: 6px 0 0; padding-left: 20px; }
+.ub-note.ub-warns { font-size: 14px; border-width: 2px; }
+.ub-note.ub-warns li { margin: 6px 0; }
 .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card-2); }
 .seg button { border: 0; border-left: 1px solid var(--line); background: none; color: var(--text); font: inherit; font-size: 14px; font-weight: 600; padding: 7px 14px; cursor: pointer; }
 .seg button:first-child { border-left: 0; }
@@ -381,6 +389,8 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
 @keyframes spin { to { transform: rotate(360deg); } }
 .ub-dialog { width: min(520px, calc(100vw - 24px)); }
 .ub-dialog .dialog-inner { max-height: calc(100vh - 40px); overflow: auto; }
+/* long dialogs scroll; their buttons stay in view */
+.ub-dialog .dialog-inner > .row.end:last-child { position: sticky; bottom: -20px; margin: 0 -20px -20px; padding: 12px 20px 20px; background: var(--card); border-top: 1px solid var(--line); }
 .ub-dialog p { margin: 0; }
 .ub-dialog h3 { margin: 0; }
 .ub-dialog h4 { margin: 4px 0 0; font-size: 14px; }

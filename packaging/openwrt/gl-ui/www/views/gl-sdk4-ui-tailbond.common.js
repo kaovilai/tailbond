@@ -412,7 +412,9 @@
   // GET /api/backup/summary keys, in reading order
   var SUMMARY_LABEL = { role: "Role", mode: "Mode", clients: "Devices", servers: "Servers", public_addr: "Public address", port: "Tunnel port", subnet: "Tunnel addresses",
     approvers: "Allowed to approve", bypass_rules: "Rules that skip tailbond", paths: "Connection settings", password_set: "Page password (tailbond's own)", update_policy: "Updates",
-    files: "Key and certificate files", uci: "Router settings (UCI)" };
+    files: "Key and certificate files", client_backups: "Your devices' backups", uci: "Router settings (UCI)" };
+  // <state_dir>/backups on GL routers (docs/backup-restore.md)
+  var BACKUP_DIR = "/etc/tailbond/state/backups/";
 
   var UB = {
     methods: {
@@ -432,9 +434,38 @@
         this.confirm = {
           title: "Update to " + u.available + " now?",
           body: "tailbond restarts; devices drop for a few seconds. If the new version doesn't start, it goes back by itself.",
+          note: "Downloaded from the GitHub release and checked against its SHA-256 list before anything is installed.",
           ok: "Update now",
           run: function () { self.restartUntil = Date.now() + 180000; return self.updPost("/api/update/install", {}, "Installing " + u.available + "…"); }
         };
+      },
+      // the one-line state of updates (chip, top card)
+      updState: function (u) {
+        var off = u.policy === "off" || u.state === "off";
+        var busy = ["checking", "downloading", "installing"].indexOf(u.state) >= 0;
+        return {
+          off: off, busy: busy,
+          retry: u.state === "rolled_back" && !!u.available && u.available === u.last_result_version,
+          noCheck: !!u.error && !u.available && !busy && !off && u.state !== "failed" && u.state !== "rolled_back",
+          reinstalled: u.detail === "reinstalled_after_firmware_upgrade"
+        };
+      },
+      toUpdates: function () { var c = document.querySelector(".tb-upd"); if (c) c.scrollIntoView({ behavior: "smooth", block: "start" }); },
+      // update news inside the top status card
+      updTop: function (h) {
+        var st = this.st || {};
+        if (!st.update && !this.updX) return null;
+        var u = this.upd(), s = this.updState(u), cur = u.current || st.version || "";
+        var msg = null, ico = "up", color = "#303133";
+        if (u.state === "installing") msg = "Installing tailbond " + u.available + "; this page comes back by itself in about a minute.";
+        else if (u.state === "failed") { msg = "An update to " + (u.last_result_version || u.available || "a new version") + " didn't install. Still on " + cur + ", nothing changed."; color = "#c45656"; ico = "warn"; }
+        else if (u.state === "rolled_back") { msg = "Everything works as before on " + cur + ": " + (u.last_result_version || "the new version") + " didn't start here, so tailbond went back by itself."; ico = "check"; }
+        else if (s.reinstalled) { msg = "tailbond is back after the firmware update, with your settings."; ico = "check"; color = "#137a46"; }
+        else if (u.available && !s.off) msg = "Update available: tailbond " + u.available + " (this router runs " + cur + ").";
+        if (!msg) return null;
+        return h("div", { class: "tb-row", style: { borderTop: "1px solid #ebeef5", padding: "12px 20px 14px 88px", gap: "10px", color: color, fontSize: "14px" } }, [
+          icon(h, ico, 18), h("div", { class: "tb-grow" }, msg), h("a", { class: "tb-link", on: { click: this.toUpdates } }, "Show")
+        ]);
       },
       bset: function () { return (this.settings && this.settings.backup) || (this.st && this.st.backup) || {}; },
       openUb: function (kind) {
@@ -496,77 +527,84 @@
         var self = this, st = this.st, u = this.upd(), srv = this.role === "server";
         if (!st.update && !this.updX) return null; // an agent without updates
         var cur = u.current || (this.info && this.info.version) || st.version || "";
-        var policy = u.policy || "notify", off = policy === "off" || u.state === "off";
+        var policy = u.policy || "notify", S = this.updState(u), off = S.off;
         var selfUp = u.method === "opkg" || u.method === "static";
-        var busyState = ["checking", "downloading", "installing"].indexOf(u.state) >= 0;
-        var chip = u.state === "rolled_back" ? ["err", "Went back to " + (cur || "the previous version")]
+        var busyState = S.busy;
+        var win = (u.auto_window || "03:00-05:00").split("-");
+        var chip = u.state === "rolled_back" ? ["warn", "Went back to " + (cur || "the previous version")]
           : u.state === "failed" ? ["err", "Update failed"]
           : u.state === "installing" ? ["blue", "Installing"]
           : u.state === "checking" ? ["blue", "Checking"]
           : u.state === "downloading" ? ["blue", "Downloading"]
           : off ? ["", "Updates off"]
-          : u.available ? ["warn", "Update available"] : ["ok", "Up to date"];
+          : u.available ? ["warn", "Update available"]
+          : S.noCheck ? ["warn", "Couldn't check"] : ["ok", "Up to date"];
         var notes = u.notes_url ? h("a", { class: "tb-link", attrs: { href: u.notes_url, target: "_blank", rel: "noopener" } }, "What's new") : null;
         var body = [h("div", { class: "tb-muted tb-small", style: { marginBottom: "10px" } }, "This router runs tailbond " + cur)];
         var tried = u.last_result_version || u.available || "The new version";
-        if (u.detail === "reinstalled_after_firmware_upgrade") {
-          body.push(this.alert(h, "ok", "The GL firmware update removed tailbond; it reinstalled itself with your settings",
-            "Now on " + cur + (u.last_result_at ? ", since " + fmtWhen(u.last_result_at) : "") + ". Nothing to do; it does this after every firmware update."));
+        if (S.reinstalled) {
+          body.push(this.alert(h, "ok", "tailbond is back after the firmware update, with your settings",
+            "The GL firmware update removed it; it reinstalled itself from the copy kept on this router (or, if that was gone, from the GitHub release)" + (u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "") + ". Nothing to do. If you upgrade the firmware without Keep Settings, install tailbond again and pair again."));
         }
         if (u.state === "rolled_back") {
-          body.push(this.alert(h, "err", tried + " didn't start here, so tailbond went back to " + cur + " by itself",
-            (u.detail && u.detail !== "reinstalled_after_firmware_upgrade" ? "Why: " + u.detail + ". " : "") + "Everything works as before."));
+          body.push(this.alert(h, "info", "Everything works as before on " + cur,
+            tried + " didn't start here, so tailbond went back by itself" + (u.detail && !S.reinstalled ? " (" + u.detail + ")" : "") + ". Automatic won't install " + tried + " again; the next version installs as usual.", null, "check"));
         } else if (u.state === "failed") {
           body.push(this.alert(h, "err", "Couldn't update to " + tried, (u.error ? u.error + ". " : "") + "Still on " + cur + ", nothing changed."));
         }
         var big = function (kids) { return h("div", { class: "tb-row", style: { fontSize: "17px", fontWeight: 600, gap: "10px", flexWrap: "wrap" } }, kids); };
         var line = function (kids, extra) { return h("div", { class: "tb-small", style: Object.assign({ marginTop: "4px", lineHeight: 1.55 }, extra || {}) }, kids); };
+        var cmdRow = function (cmd) { return h("div", { class: "tb-row", style: { marginTop: "6px" } }, [h("code", { style: { padding: "6px 8px" } }, cmd), self.btn(h, "Copy", function () { self.copy(cmd); }, "small")]); };
         if (u.state === "checking") body.push(big([h("div", { class: "tb-spin" }), "Checking for updates…"]));
         else if (u.state === "downloading") body.push(big([h("div", { class: "tb-spin" }), "Downloading " + u.available + "…"]));
         else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts; this page comes back by itself in about a minute."));
         else if (off) body.push(big(["Updates are off"]), line("tailbond doesn't check for new versions. Choose Tell me below to hear about them.", { color: "#909399" }));
-        else if (u.available) {
+        else if (u.available && !S.retry) {
           body.push(big(["Update available: " + u.available, notes]));
-          if (u.method === "dnf") {
-            var cmd = "sudo dnf upgrade tailbond-server";
-            body.push(line(["Updates for this server come from dnf: run ", h("code", cmd), ", or turn on dnf-automatic to get them by themselves."]),
-              h("div", { class: "tb-row", style: { marginTop: "6px" } }, [h("code", { style: { padding: "6px 8px" } }, cmd), this.btn(h, "Copy", function () { self.copy(cmd); }, "small")]));
-          } else if (!selfUp) {
+          if (u.method === "dnf") body.push(line("Updates for this server come from dnf. In a terminal on this server, run:"), cmdRow("sudo dnf upgrade tailbond-server"));
+          else if (!selfUp) {
             var repo = String(u.repo || "kaovilai/tailbond").replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
             body.push(line(["This build can't update itself; install the new release from ", h("a", { class: "tb-link", attrs: { href: "https://github.com/" + repo + "/releases", target: "_blank", rel: "noopener" } }, "the releases page"), "."]));
           }
-        } else body.push(big(["Up to date"]));
+        } else if (S.noCheck) {
+          body.push(big(["Couldn't check for updates"]), line("Couldn't reach GitHub (" + u.error + "). tailbond tries again tomorrow; Check now tries again now.", { color: "#b07a12" }));
+        } else if (!S.retry) body.push(big(["Up to date"]));
         var meta = [], lv = u.last_result_version, la = u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "";
         if (u.last_check && !off) meta.push("Checked " + fmtAgo(u.last_check));
-        if (u.detail !== "reinstalled_after_firmware_upgrade" && lv) {
+        if (!S.reinstalled && lv) {
           if (u.last_result === "ok") meta.push("last update: " + lv + la + ", worked");
           else if (u.last_result === "rolled_back" && u.state !== "rolled_back") meta.push("last update: " + lv + la + " didn't start, went back");
           else if (u.last_result === "failed" && u.state !== "failed") meta.push("last update to " + lv + la + " failed, nothing changed");
         }
-        var checkErr = u.error && u.state !== "failed" && !busyState && !off;
+        var checkErr = u.error && !S.noCheck && u.state !== "failed" && !busyState && !off;
         if (meta.length || checkErr) body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, [meta.join(" · ").replace(/^./, function (c) { return c.toUpperCase(); }),
-          checkErr ? h("span", { style: { color: "#b07a12" } }, (meta.length ? " · " : "") + "Couldn't reach GitHub: " + u.error) : null]));
+          checkErr ? h("span", { style: { color: "#b07a12" } }, (meta.length ? " · " : "") + "Couldn't reach GitHub (" + u.error + ")") : null]));
         var acts = [];
-        if (u.available && selfUp && !busyState && !off) acts.push(this.btn(h, "Update now", function () { self.confirmInstall(u); }, "primary", this.busy.upd));
+        if (u.available && selfUp && !busyState && !off) acts.push(S.retry ? this.btn(h, "Try " + u.available + " again", function () { self.confirmInstall(u); }, "", this.busy.upd)
+          : this.btn(h, "Update now", function () { self.confirmInstall(u); }, "primary", this.busy.upd));
         if (!off) acts.push(this.btn(h, "Check now", function () { self.updPost("/api/update/check", {}, "Checking for updates…"); }, "", busyState || this.busy.upd));
         if (acts.length) body.push(h("div", { class: "tb-actions" }, acts));
 
         if (srv) {
-          var out = A(u.outdated), total = A(st.clients).length;
-          var isPhone = function (c) { return c.kind === "android" || c.kind === "phone"; };
-          var sec = [h("div", { class: "tb-sec-t" }, out.length ? out.length + " device" + (out.length === 1 ? "" : "s") + " out of date" : "Your devices")];
-          if (out.length) {
-            sec.push(h("div", { class: "tb-list" }, out.map(function (c) {
+          var outN = {}, isPhone = function (c) { return c.kind === "android" || c.kind === "phone"; };
+          A(u.outdated).forEach(function (c) { outN[c.name] = true; });
+          var devs = A(st.clients).filter(function (c) { return c.registered !== false; });
+          var outs = devs.filter(function (c) { return outN[c.name]; });
+          var sec = [h("div", { class: "tb-sec-t" }, devs.length && outs.length ? "Your devices: " + outs.length + " of " + devs.length + " out of date" : "Your devices")];
+          if (devs.length) {
+            sec.push(h("div", { class: "tb-list" }, devs.map(function (c) {
               return h("div", { class: "tb-li", style: { padding: "8px 0" } }, [
                 h("div", { class: "tb-wan-icon", style: { width: "32px", height: "32px" } }, [icon(h, isPhone(c) ? "phone" : "router", 18)]),
-                h("div", { class: "tb-grow" }, [h("b", c.name), h("span", { class: "tb-muted" }, " · " + (KIND_NAME[c.kind] || c.kind || "device") + " · on " + (c.version || "an older version"))])
+                h("div", { class: "tb-grow" }, [h("b", c.name), h("span", { class: "tb-muted" }, " · " + (KIND_NAME[c.kind] || "device") + " · " + (c.version || "version not known yet"))]),
+                outN[c.name] ? h("span", { class: "tb-chip warn" }, "Out of date") : c.version ? h("span", { class: "tb-small", style: { color: "#13a35a" } }, "✓ up to date") : null
               ]);
             })));
             var how = [];
-            if (out.some(function (c) { return !isPhone(c); })) how.push("Routers: Update now in their tailbond panel, or Automatic.");
-            if (out.some(isPhone)) how.push("Phones: the app shows the update; Obtainium installs it automatically.");
-            sec.push(h("div", { class: "tb-muted tb-small" }, how.join(" ")));
-          } else sec.push(h("div", { class: "tb-muted tb-small" }, total ? "All " + total + " device" + (total === 1 ? " is" : "s are") + " on " + cur + " or newer." : "No devices yet."));
+            if (outs.some(function (c) { return !isPhone(c); })) how.push("Routers: Update now in its tailbond panel, or Automatic.");
+            if (outs.some(isPhone)) how.push("Phones: the app shows it; with Obtainium it installs by itself.");
+            if (devs.some(function (c) { return !c.version; })) how.push("A version shows once the device has connected with this version of tailbond.");
+            if (how.length) sec.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, how.join(" ")));
+          } else sec.push(h("div", { class: "tb-muted tb-small" }, "No devices yet."));
           body.push(h("div", { class: "tb-sec" }, sec));
         }
 
@@ -576,13 +614,17 @@
             return h("button", { class: o[0] === policy ? "on" : "", attrs: { type: "button", disabled: !!self.busy.upd }, on: { click: function () { if (o[0] !== policy) self.updPost("/api/update/policy", { policy: o[0] }, "Saved"); } } }, o[1]);
           })),
           h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check for new versions."
-            : policy === "auto" ? "Checks GitHub once a day and installs a new version by itself. tailbond restarts; devices drop for a few seconds; if the new version doesn't start, it goes back by itself."
-            : "Checks GitHub once a day and shows new versions here" + (selfUp ? "; nothing installs until you click Update now." : ".")),
-          u.method === "dnf" ? h("div", { class: "tb-help" }, "Automatic updates come from dnf-automatic.") : null];
+            : policy === "auto" ? "Installs new versions by itself between " + win[0] + " and " + (win[1] || "05:00") + " (this router's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
+            : "Checks GitHub once a day and shows new versions here" + (selfUp ? "; nothing installs until you click Update now." : "."))];
+        if (u.method === "dnf") {
+          if (u.dnf_automatic === true) set.push(line([h("b", "Automatic updates: on"), " (dnf-automatic)"]));
+          else if (u.dnf_automatic === false) set.push(line([h("b", "Automatic updates are off."), " To turn them on, run in a terminal on this server:"]), cmdRow("sudo systemctl enable --now dnf-automatic.timer"));
+          else set.push(h("div", { class: "tb-help" }, "Automatic updates come from dnf-automatic."));
+          set.push(h("div", { class: "tb-help" }, ["A new version reaches dnf shortly after the release. If an update misbehaves: ", h("code", "sudo dnf downgrade tailbond-server")]));
+        }
         body.push(h("div", { class: "tb-sec" }, set));
         return this.card(h, "Updates", body, h("span", { class: "tb-chip " + chip[0] }, chip[1]), "tb-upd");
       },
-
       rBackup: function (h) {
         var self = this, srv = this.role === "server", b = this.bset();
         if (!this.st.update && !this.updX) return null; // an agent from before updates and backups
@@ -606,13 +648,15 @@
             ? ["On: " + everyWords + ", keeps the last " + keep + (b.last ? " · last one " + fmtAgo(b.last) : "") + ".",
               !srv && b.push ? " A copy also goes to " + (this.serverShort || "your home server") + (b.last_push ? " (sent " + fmtAgo(b.last_push) + ")" : "") + ", so you can get it back if this router is lost or reset." : ""]
             : ["Off. Set a passphrase to have tailbond save a backup by itself" + (srv ? "." : ", and send a copy to " + (this.serverShort || "your home server") + ".")]));
+          if (on) sched.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, ["Saved in ", h("code", BACKUP_DIR), " on this router (kept through firmware upgrades with Keep Settings). Copy them somewhere else too."]));
           if (b.last_error) sched.push(h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "4px" } }, "The last automatic backup didn't work: " + b.last_error));
           sched.push(h("div", { class: "tb-actions" }, [
             this.btn(h, on ? "Change" : "Turn on", function () { self.ubSched = { pass: "", pass2: "", every: String(every), keep: String(keep), push: b.push !== false, err: "" }; }, "small"),
             on ? this.btn(h, "Turn off", function () { self.saveSched({ passphrase: "" }, "Automatic backups off"); }, "small") : null
           ]));
         } else {
-          sched.push(h("div", { class: "tb-muted tb-small" }, b.passphrase_set ? "A passphrase is set. Leave the fields empty to keep it, or type a new one." : "Choose a passphrase for the automatic backups (you need it to restore one)."));
+          sched.push(h("div", { class: "tb-muted tb-small" }, b.passphrase_set ? "A passphrase is set. Leave the fields empty to keep it, or type a new one." : "Choose a passphrase for the automatic backups (you need it to restore one)."),
+            h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, ["The passphrase is kept on this router, in its settings, so it can back up by itself. The files go to ", h("code", BACKUP_DIR), "."]));
           sched = sched.concat(this.rPass(h, s));
           var num = function (k) { return h("input", { class: "tb-input", style: { width: "72px" }, attrs: { type: "number", min: 1 }, domProps: { value: s[k] }, on: { input: function (e) { s[k] = e.target.value; } } }); };
           sched.push(h("div", { class: "tb-row", style: { marginTop: "10px", flexWrap: "wrap", gap: "8px" } }, ["Every", num("every"), "hours, keep the last", num("keep")]));
@@ -643,6 +687,14 @@
             : [h("div", { class: "tb-muted" }, "None yet. Automatic backups land here, and travel routers that send theirs.")])));
         }
         return this.card(h, "Backup & restore", body, null, "tb-bk");
+      },
+
+      ubWarns: function (pv) {
+        return A(pv.warnings).map(function (w) { return typeof w === "string" ? w : (w && (w.text || w.message || w.code)) || ""; }).filter(Boolean);
+      },
+      warnBox: function (h, title, list) {
+        return h("div", { class: "tb-alert", style: { marginTop: "4px", marginBottom: "4px", fontSize: "14px", border: "2px solid #f3d19e" } }, [h("div", [h("div", { class: "tb-alert-t" }, title),
+          h("ol", { style: { margin: "6px 0 0", paddingLeft: "20px" } }, list.map(function (w) { return h("li", { style: { margin: "6px 0" } }, w); }))])]);
       },
 
       rPass: function (h, s) {
@@ -680,25 +732,36 @@
             err);
           foot = [this.btn(h, "Cancel", close), this.btn(h, u.busy ? "Opening…" : "Check the backup", function () { self.doPreview(); }, "primary", u.busy)];
         } else if (k === "restore" && u.step === "preview") {
-          var pv = u.preview || {}, ch = A(pv.changes), warns = A(pv.warnings).map(function (w) { return typeof w === "string" ? w : (w && (w.text || w.message || w.code)) || ""; }).filter(Boolean);
+          var pv = u.preview || {}, ch = A(pv.changes), warns = this.ubWarns(pv);
           kids.push(h("div", { class: "tb-dialog-t" }, "Restore this backup?"),
             h("div", { class: "tb-found", style: { marginBottom: "12px", padding: "12px" } }, [
               h("div", { class: "tb-wan-icon" }, [icon(h, pv.role === "server" ? "server" : "router")]),
               h("div", { class: "tb-grow" }, [h("div", { style: { fontWeight: 600, wordBreak: "break-all" } }, u.file), h("div", { class: "tb-muted tb-small" }, (pv.host || "?") + " (" + (ROLE_WORDS[pv.role] || pv.role) + ") · made " + fmtWhen(pv.created) + " · tailbond " + (pv.agent_version || "?"))])
             ]),
-            h("div", { style: { fontWeight: 600, marginBottom: "6px" } }, ch.length ? "What it replaces" : "Nothing differs from the current settings"),
+            warns.length ? this.warnBox(h, "Before you restore: " + (warns.length === 1 ? "one thing" : warns.length + " things") + " to know", warns) : null,
+            h("div", { style: { fontWeight: 600, margin: "12px 0 6px" } }, ch.length ? "What it replaces" : "Nothing differs from the current settings"),
             ch.length ? h("div", { class: "tb-kv tb-small tb-chg" }, [].concat.apply([], ch.map(function (c) { return [h("div", c.what), h("div", [h("span", { class: "tb-muted" }, c.from || "—"), " → ", h("b", c.to || "—")])]; }))) : null,
-            warns.length ? h("div", { class: "tb-alert", style: { marginTop: "12px", marginBottom: 0 } }, [h("div", [h("div", { class: "tb-alert-t" }, "Before you restore"), h("ul", { style: { margin: "4px 0 0", paddingLeft: "18px" } }, warns.map(function (w) { return h("li", { style: { margin: "3px 0" } }, w); }))])]) : null,
             p("The current settings are saved first (same passphrase), so you can go back. tailbond restarts afterwards; devices here are offline for a few seconds.", { marginTop: "12px", fontSize: "12px" }),
             err);
           foot = [this.btn(h, "Back", function () { u.step = "pick"; u.err = ""; }), this.btn(h, u.busy ? "Restoring…" : "Restore", function () { self.doRestore(); }, "danger", u.busy)];
         } else if (k === "restore") {
+          var dw = this.ubWarns(u.preview || {}), dhost = (u.preview && u.preview.host) || "the backup";
           kids.push(h("div", { class: "tb-dialog-t", style: { color: "#13a35a", display: "flex", alignItems: "center", gap: "8px" } }, [icon(h, "check", 22), "Restored"]),
-            p("The settings from " + ((u.preview && u.preview.host) || "the backup") + " are in place. A copy of the previous settings was kept" + (u.rollback ? " (" + u.rollback + ")" : "") + ", locked with the same passphrase, in case you want them back.", { color: "#303133" }),
+            p("The settings from " + dhost + " are in place. A copy of the previous settings was kept" + (u.rollback ? " (" + u.rollback + ")" : "") + ", locked with the same passphrase, in case you want them back.", { color: "#303133" }),
+            dw.length ? this.warnBox(h, "Next steps (from the check before restoring)", dw)
+              : p(this.role === "server" ? "Devices reconnect by themselves within a few minutes." : "tailbond connects to its home server again by itself within a minute.", { color: "#303133" }),
+            p("Automatic backups now follow the backup: if they were on on " + dhost + ", they stay on here, with the same schedule and passphrase.", { fontSize: "12px" }),
             p("tailbond is restarting with them; this page comes back by itself in a few seconds.", { fontSize: "12px" }));
           foot = [this.btn(h, "Done", function () { close(); self.refreshAll(); }, "primary")];
         } else if (k === "summary") {
-          var sm = u.summary;
+          var sm = u.summary ? Object.assign({}, u.summary) : null;
+          if (sm && Array.isArray(sm.files)) {
+            // a server's backup carries its devices' pushed backups: one row, per device
+            var per = {};
+            sm.files.forEach(function (f) { var m = /^client-backups\/([^/]+)\//.exec(f); if (m) per[m[1]] = (per[m[1]] || 0) + 1; });
+            sm.files = sm.files.filter(function (f) { return f.indexOf("client-backups/") !== 0; });
+            if (Object.keys(per).length) sm.client_backups = Object.keys(per).map(function (d) { return d + " (" + per[d] + ")"; });
+          }
           var order = Object.keys(SUMMARY_LABEL);
           var rows = sm ? Object.keys(sm).filter(function (key) { return key !== "ok"; }).sort(function (a, b) { return (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)); }).map(function (key) {
             var v = sm[key], val;
@@ -714,6 +777,8 @@
           kids.push(h("div", { class: "tb-dialog-t" }, "What's in a backup"),
             p("What a backup made now would hold. Keys and passwords are in it too (locked), but never shown here.", { fontSize: "12px" }),
             sm ? h("div", { class: "tb-kv tb-small tb-chg" }, [].concat.apply([], rows)) : (u.err ? null : h("div", { class: "tb-row tb-muted" }, [h("div", { class: "tb-spin" }), "Loading…"])),
+            this.role === "server" ? p("Your devices' own backups are included (still locked with their passphrases), so they move with this router.", { color: "#303133", marginTop: "12px" }) : null,
+            p([h("b", "Not included: "), "the Tailscale login, the installed program, firewall settings. On a new router: install tailbond, sign in to Tailscale, then restore."], { color: "#303133", marginTop: this.role === "server" ? 0 : "12px" }),
             err);
           foot = [this.btn(h, "Close", close, "primary")];
         }
@@ -1341,9 +1406,9 @@
         sw: function (h, on, onClick, big, disabled, label) {
           return h("button", { class: "tb-switch" + (on ? " on" : "") + (big ? " tb-switch-big" : ""), attrs: { type: "button", role: "switch", "aria-checked": String(!!on), "aria-label": label || "", disabled: !!disabled }, on: { click: onClick } });
         },
-        alert: function (h, cls, title, body, actions) {
+        alert: function (h, cls, title, body, actions, ico) {
           return h("div", { class: "tb-alert " + (cls || "") }, [
-            h("div", { style: { flex: "none", marginTop: "1px" } }, [icon(h, cls === "ok" ? "check" : "warn", 20)]),
+            h("div", { style: { flex: "none", marginTop: "1px" } }, [icon(h, ico || (cls === "ok" ? "check" : "warn"), 20)]),
             h("div", { class: "tb-grow" }, [
               title ? h("div", { class: "tb-alert-t" }, title) : null,
               body ? h("div", body) : null,
@@ -1351,14 +1416,15 @@
             ])
           ]);
         },
-        hero: function (h, iconCls, title, line, sw, rates) {
+        hero: function (h, iconCls, title, line, sw, rates, extra) {
           return h("div", { class: "tb-card" }, [
             h("div", { class: "tb-hero" }, [
               h("div", { class: "tb-hero-icon " + iconCls }, [icon(h, "bond", 28)]),
               h("div", { class: "tb-grow" }, [h("div", { class: "tb-hero-t" }, title), h("div", { class: "tb-hero-s" }, line)]),
               sw
             ]),
-            rates || null
+            rates || null,
+            extra || null
           ]);
         },
 
@@ -1376,6 +1442,7 @@
             h("div", { class: "tb-dialog", attrs: { role: "dialog" } }, [
               h("div", { class: "tb-dialog-t" }, c.title),
               h("div", { style: { color: "#606266", lineHeight: 1.55 } }, c.body),
+              c.note ? h("div", { class: "tb-muted tb-small", style: { marginTop: "8px", lineHeight: 1.5 } }, c.note) : null,
               h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, [
                 this.btn(h, "Cancel", function () { self.confirm = null; }),
                 this.btn(h, c.ok, function () { var r = c.run; self.confirm = null; r(); }, c.danger ? "danger" : "primary")
@@ -1404,7 +1471,7 @@
           if (fo && fo.act) line = [line, " · ", h("a", { class: "tb-link", on: { click: fo.act[1] } }, fo.act[0])];
           if (fo && fo.note) line = [h("div", line), h("div", { class: "tb-small tb-muted", style: { marginTop: "4px" } }, fo.note)];
           out.push(this.hero(h, iconCls, title, line,
-            this.paired ? this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "tailbond on/off") : null, rates));
+            this.paired ? this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "tailbond on/off") : null, rates, this.updTop(h)));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
 
           if (!this.paired) return out.concat(this.rSignin(h), this.rPairing(h));
@@ -2145,7 +2212,7 @@
           var title = !on ? "Home server is off" : err ? "Home server has a problem" : todo ? "Home server is on · " + todo + " setup step" + (todo === 1 ? "" : "s") + " left" : "Home server is on";
           out.push(this.hero(h, !on ? "" : err ? "err" : todo ? "warn" : "on", title, line,
             this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "Home server on/off"),
-            on && conn.length ? h("div", { class: "tb-rates" }, [h("span", ["Sending to devices ", h("b", fmtRate(st.totals.tx_bps))]), h("span", ["Receiving ", h("b", fmtRate(st.totals.rx_bps))])]) : null));
+            on && conn.length ? h("div", { class: "tb-rates" }, [h("span", ["Sending to devices ", h("b", fmtRate(st.totals.tx_bps))]), h("span", ["Receiving ", h("b", fmtRate(st.totals.rx_bps))])]) : null, this.updTop(h)));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
 
           if (this.pending.length) {
