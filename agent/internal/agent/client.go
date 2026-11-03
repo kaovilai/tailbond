@@ -437,6 +437,10 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 			var connected bool
 			var up uint64
 			st.Paths, st.Totals, up, connected = status.ClientFromControl(a.rater, now, mst, meta)
+			// The control API's path states lag a tunnel mqvpn just closed
+			// (still "active" until its reconnect attempt): once its log
+			// named a state, only ESTABLISHED counts.
+			connected = connected && (rt.lastState == "" || rt.lastState == "ESTABLISHED")
 			ready = ready || connected
 			if connected {
 				st.UptimeSec = up
