@@ -18,11 +18,12 @@ env:
   TB_JOBS: 4
   JOBS: 4
   # Compiled into every tailbondd (scripts/release/ldflags.sh, docs/updates.md):
-  # the update signing public key (repository variable, base64 of the raw
-  # ed25519 key from scripts/release/gen-update-key.sh; unset = builds
-  # without an update key, which never update themselves) and the default
-  # update source, the rolling "channels" release the release job writes.
-  TB_UPDATE_PUBKEY: ${{ vars.TB_UPDATE_PUBKEY }}
+  # the repository and workflow whose GitHub artifact attestations (job
+  # "release", actions/attest: Sigstore keyless, no signing key) make an
+  # update manifest authentic, and the default update source, the rolling
+  # "channels" release the release job writes.
+  TB_UPDATE_REPO: ${{ github.repository }}
+  TB_UPDATE_WORKFLOW: .github/workflows/ci.yml
   TB_UPDATE_SOURCE: https://github.com/${{ github.repository }}/releases/download/channels
   # The release version on v* tags (the build scripts drop the v); empty
   # otherwise, so they use git describe (dev builds never self-update).
@@ -117,8 +118,9 @@ jobs:
     name: Android APK
     runs-on: ubuntu-24.04
     env:
-      # Release signing (docs/updates.md): secret TB_RELEASE_KEYSTORE_B64 is
-      # the base64 of a .jks; without it only the debug APK is built.
+      # Release signing (docs/updates.md, "Android signing key"): secrets
+      # from scripts/release/gen-android-keystore.sh. Without them only the
+      # debug APK is built, and a release tag fails in job "release".
       TB_HAS_RELEASE_KEY: ${{ secrets.TB_RELEASE_KEYSTORE_B64 != '' }}
     steps:
       - uses: actions/checkout@v7
@@ -160,6 +162,23 @@ jobs:
           trap 'rm -f "$TB_RELEASE_KEYSTORE"' EXIT
           (umask 077; printf '%s' "$TB_RELEASE_KEYSTORE_B64" | base64 -d >"$TB_RELEASE_KEYSTORE")
           android/scripts/build-release-apk.sh
+      # The key never changes by accident: a phone refuses an update signed
+      # with another key (variable from gen-android-keystore.sh).
+      - name: Release APK is signed with the known key
+        if: env.TB_HAS_RELEASE_KEY == 'true' && vars.TB_RELEASE_CERT_SHA256 != ''
+        env:
+          WANT: ${{ vars.TB_RELEASE_CERT_SHA256 }}
+        run: |
+          signer="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)"
+          for apk in out/android/tailbond-*.apk; do
+            [ "$apk" = out/android/tailbond-debug.apk ] && continue
+            got="$("$signer" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n1)"
+            echo "$apk: $got"
+            if [ "${got,,}" != "${WANT,,}" ]; then
+              echo "::error::$apk is signed with $got, not the release key $WANT (TB_RELEASE_CERT_SHA256). A new key makes every user reinstall: restore the old key with scripts/release/gen-android-keystore.sh --restore."
+              exit 1
+            fi
+          done
       - uses: actions/upload-artifact@v7
         if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
         with:
@@ -382,6 +401,11 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # GitHub artifact attestations (Sigstore keyless): the workflow's
+      # OIDC identity signs; no private key anywhere
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -393,23 +417,37 @@ jobs:
         run: |
           mkdir -p assets
           cp dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz assets/
-          if compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
-            cp dist/android-release-apk/tailbond-*.apk assets/
-          else
-            echo "::warning::no release APK (secret TB_RELEASE_KEYSTORE_B64 is not set): attaching the debug APK, which the update channels don't offer"
-            cp dist/android-apk/tailbond-debug.apk assets/
+          if ! compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
+            # never publish a release whose APK phones can't update to
+            echo "::error::no release APK: the Android signing secrets are missing (TB_RELEASE_KEYSTORE_B64 ...). Run scripts/release/gen-android-keystore.sh once (or --restore the existing key from its backup), then re-run this tag. docs/updates.md, Android signing key."
+            exit 1
           fi
+          cp dist/android-release-apk/tailbond-*.apk assets/
           for d in dist/tailbondd/linux-*; do
             tar -czf "assets/tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
           done
           (cd assets && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
-      # The version release with every asset and the signed manifests, then
-      # stable.json/beta.json (+ .sig) into the rolling "channels" release
-      # (docs/updates.md). A pre-release tag (v1.2.3-beta.1) is a GitHub
-      # pre-release and only updates beta.json.
+      - name: Update manifests
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/publish-channels.sh prepare "$TAG" assets manifests
+      # One attestation for every asset and the manifests: agents check the
+      # manifest's (docs/updates.md), then the artifacts' SHA-256s from it;
+      # anyone can check a file with `gh attestation verify FILE -R OWNER/REPO`.
+      - name: Attest (GitHub artifact attestation)
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            assets/*
+            manifests/*.json
+      # The version release with every asset, the manifests and their
+      # attestation (<channel>.json.sigstore.json), then the manifests into
+      # the rolling "channels" release. A pre-release tag (v1.2.3-beta.1) is
+      # a GitHub pre-release and only updates beta.json.
       - name: Publish the release and the update channels
         env:
           GH_TOKEN: ${{ github.token }}
-          TB_UPDATE_KEY: ${{ secrets.TB_UPDATE_KEY }}
           TAG: ${{ github.ref_name }}
-        run: scripts/release/publish-channels.sh "$TAG" assets
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: scripts/release/publish-channels.sh publish "$TAG" assets manifests "$BUNDLE"

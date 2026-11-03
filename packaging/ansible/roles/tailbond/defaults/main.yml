@@ -67,7 +67,7 @@ tailbond_firewalld_zone: public
 tailbond_firewalld_tailscale_zone: "{{ tailbond_firewalld_zone }}"
 
 # Updates (docs/updates.md):
-#   auto    the agent updates itself (signed releases, inside
+#   auto    the agent updates itself (GitHub-attested releases, inside
 #           tailbond_update_window); a later role run never downgrades it:
 #           the bundle's binaries are copied only when they are at least as
 #           new as what runs (the base binary or the agent's own update)

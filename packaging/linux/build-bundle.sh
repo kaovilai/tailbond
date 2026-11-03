@@ -19,7 +19,7 @@
 #   TB_ARCHS      default "x86_64 aarch64" (missing mqvpn: skipped, except x86_64)
 #   VERSION       default git describe (a leading v is dropped)
 #   TAILBOND_APK  default out/android/tailbond-debug.apk (optional)
-#   TB_UPDATE_PUBKEY / TB_UPDATE_SOURCE  compiled into tailbondd when it is
+#   TB_UPDATE_REPO / TB_UPDATE_SOURCE  compiled into tailbondd when it is
 #                 built here (scripts/release/ldflags.sh)
 # Release asset: tailbond-linux-<arch>.tar.gz (no version in the name; the
 # update manifest and VERSION inside say which). The agent's self-update

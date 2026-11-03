@@ -10,7 +10,7 @@
 #
 # Env: VERSION (semver, a leading v is dropped; default: the v* tag at HEAD,
 # else 0.1.0 with tailbondd reporting git describe, so a dev build never
-# updates itself), TB_UPDATE_PUBKEY / TB_UPDATE_SOURCE (compiled into
+# updates itself), TB_UPDATE_REPO / TB_UPDATE_SOURCE (compiled into
 # tailbondd, scripts/release/ldflags.sh), JOBS, TAILBOND_APK,
 # TAILBOND_GLINET_IPK.
 # A pre-release 1.2.3-beta.1 becomes Version 1.2.3, Release 0.beta.1 (RPM

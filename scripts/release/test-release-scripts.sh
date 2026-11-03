@@ -2,10 +2,10 @@
 # shellcheck disable=SC2329 # helpers are called through check()
 # SPDX-License-Identifier: Apache-2.0
 #
-# Self-test of the release scripts: a throwaway key (gen-update-key.sh), a
-# manifest from dummy artifacts (make-manifest.sh), its signature
-# (sign-manifest.sh), verified with openssl from the base64 public key
-# alone, the way tailbondd does it. Prints the throwaway public key.
+# Self-test of the release scripts: a manifest from dummy artifacts
+# (make-manifest.sh) and publish-channels.sh prepare/publish (dry run) with
+# an attestation bundle (a real Sigstore bundle from agent's testdata; the
+# signing itself is actions/attest in CI, keyless).
 #
 #   scripts/release/test-release-scripts.sh
 set -euo pipefail
@@ -17,20 +17,6 @@ fail=0
 ok() { echo "  PASS $*"; }
 bad() { echo "  FAIL $*"; fail=1; }
 check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi; }
-
-echo "== gen-update-key.sh"
-if (cd "$HERE" && "$HERE/gen-update-key.sh" --out "$HERE/../../out/.key-refusal-test-$$" >/dev/null 2>&1); then
-    bad "a key directory inside the repo is refused"
-else
-    ok "a key directory inside the repo is refused"
-fi
-rm -rf "$HERE/../../out/.key-refusal-test-$$"
-eval "$("$HERE/gen-update-key.sh" --out "$W/keys" --name test)"
-echo "  public key (base64): $TB_UPDATE_PUBKEY  key id: $TB_UPDATE_KEY_ID"
-check "private key is mode 0600" test "$(stat -c %a "$TB_UPDATE_KEY_FILE")" = 600
-check "public key is 32 bytes" test "$(printf '%s' "$TB_UPDATE_PUBKEY" | base64 -d | wc -c)" = 32
-check "key id is 16 hex digits" grep -Eqx '[0-9a-f]{16}' <<<"$TB_UPDATE_KEY_ID"
-check ".pub.b64 matches" test "$(cat "$W/keys/test-$TB_UPDATE_KEY_ID.pub.b64")" = "$TB_UPDATE_PUBKEY"
 
 echo "== make-manifest.sh"
 D="$W/dist"
@@ -78,29 +64,6 @@ mrc="$("$HERE/make-manifest.sh" --version 1.2.3-rc --channel rc --dir "$RC" --ou
 check "pre-release without a number counts as 1 (1020201, as the app)" test "$(jq -r '.artifacts[]? | select(.kind == "apk") | .version_code' "$mrc" 2>/dev/null)" = 1020201
 check "beta: security flag, three artifacts" test "$(jq -r '[.security, (.artifacts | length)] | map(tostring) | join(" ")' "$mb")" = "true 3"
 
-echo "== sign-manifest.sh"
-sig="$("$HERE/sign-manifest.sh" "$m" "$TB_UPDATE_KEY_FILE")"
-check "writes stable.json.sig" test "$sig" = "$m.sig"
-check "key_id matches the key" test "$(jq -r .key_id "$sig")" = "$TB_UPDATE_KEY_ID"
-# Verify the way a client does: from the raw base64 key only. An ed25519
-# SubjectPublicKeyInfo is this 12-byte prefix plus the 32 raw bytes.
-{ printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s' "$TB_UPDATE_PUBKEY" | base64 -d; } >"$W/pub.der"
-jq -r .sig "$sig" | base64 -d >"$W/sig.bin"
-check "signature is 64 bytes" test "$(wc -c <"$W/sig.bin")" = 64
-verify() { openssl pkeyutl -verify -pubin -keyform DER -inkey "$W/pub.der" -rawin -in "$1" -sigfile "$W/sig.bin" >/dev/null 2>&1; }
-check "openssl verifies the signature with the base64 public key" verify "$m"
-cp "$m" "$W/tampered.json"
-sed -i 's/"security": false/"security": true/' "$W/tampered.json"
-if verify "$W/tampered.json"; then
-    bad "a changed manifest fails verification"
-else
-    ok "a changed manifest fails verification"
-fi
-sig2="$(TB_UPDATE_KEY="$(cat "$TB_UPDATE_KEY_FILE")" "$HERE/sign-manifest.sh" "$mb")"
-check "key from TB_UPDATE_KEY (env) works too" test "$(jq -r .key_id "$sig2")" = "$TB_UPDATE_KEY_ID"
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$W/ec.pem" 2>/dev/null
-if "$HERE/sign-manifest.sh" "$m" "$W/ec.pem" >/dev/null 2>&1; then bad "a non-ed25519 key is refused"; else ok "a non-ed25519 key is refused"; fi
-
 echo "== publish-channels.sh (dry run)"
 P="$HERE/publish-channels.sh"
 gt() { "$P" --semver-gt "$1" "$2"; }
@@ -109,20 +72,33 @@ check "semver order: 1.2.3 > 1.2.3-rc.1 > 1.2.3-beta.10 > 1.2.3-beta.9 > 1.2.2" 
 if gt 1.2.3-beta.1 1.2.3 || gt 1.2.3 1.2.3; then bad "semver: beta and equal are not newer"; else ok "semver: beta and equal are not newer"; fi
 has() { grep -q -- "$1" <<<"$out"; }
 hasnt() { ! grep -q -- "$1" <<<"$out"; }
-out="$(GITHUB_REPOSITORY=o/r TB_UPDATE_KEY="$(cat "$TB_UPDATE_KEY_FILE")" "$P" v0.2.0 "$D" --dry-run 2>&1)"
-check "plain tag: release with assets + signed manifests" \
-    has '^+ gh release create v0.2.0 --repo o/r --generate-notes --verify-tag .*tailbond-0.2.0.apk.*stable.json.*stable.json.sig'
+BUNDLE="$HERE/../../agent/internal/update/testdata/gh-provenance.sigstore.json"
+pub() { # TAG DIR
+    GITHUB_REPOSITORY=o/r "$P" prepare "$1" "$2" "$W/man-$1" --dry-run >/dev/null 2>&1 &&
+        GITHUB_REPOSITORY=o/r "$P" publish "$1" "$2" "$W/man-$1" "$BUNDLE" --dry-run 2>&1
+}
+out="$(pub v0.2.0 "$D")"
+check "prepare: stable.json and beta.json" test -f "$W/man-v0.2.0/stable.json" -a -f "$W/man-v0.2.0/beta.json"
+check "plain tag: release with assets + manifests + attestations" \
+    has '^+ gh release create v0.2.0 --repo o/r --generate-notes --verify-tag .*tailbond-0.2.0.apk.*stable.json .*stable.json.sigstore.json'
 check "plain tag: not a pre-release" hasnt 'create v0.2.0.*--prerelease'
 check "plain tag: stable and beta to the channels release" \
-    has '^+ gh release upload channels --repo o/r --clobber .*/stable.json .*/stable.json.sig .*/beta.json .*/beta.json.sig$'
-out="$(GITHUB_REPOSITORY=o/r TB_UPDATE_KEY="$(cat "$TB_UPDATE_KEY_FILE")" "$P" v1.2.3-beta.4 "$B" --dry-run 2>&1)"
+    has '^+ gh release upload channels --repo o/r --clobber .*/stable.json .*/stable.json.sigstore.json .*/beta.json .*/beta.json.sigstore.json$'
+check "the attestation next to each manifest is the bundle" cmp -s "$BUNDLE" "$W/man-v0.2.0/beta.json.sigstore.json"
+check "no .sig files any more" test -z "$(find "$W/man-v0.2.0" -name '*.sig')"
+out="$(pub v0.2.0 "$D")"
+check "publish twice: no bundle of a bundle" test -z "$(find "$W/man-v0.2.0" -name '*.sigstore.json.sigstore.json')"
+out="$(pub v1.2.3-beta.4 "$B")"
 check "beta tag: GitHub pre-release" has '^+ gh release create v1.2.3-beta.4 .*--prerelease'
-check "beta tag: beta.json to the channels release" has '^+ gh release upload channels .*/beta.json .*/beta.json.sig$'
+check "beta tag: beta.json to the channels release" has '^+ gh release upload channels .*/beta.json .*/beta.json.sigstore.json$'
 check "beta tag: no stable.json" hasnt '/stable.json'
-out="$(env -u TB_UPDATE_KEY GITHUB_REPOSITORY=o/r "$P" v0.2.0 "$D" --dry-run 2>&1)"
-check "no key: a warning" has '^::warning::TB_UPDATE_KEY'
-check "no key: unsigned manifests on the version release" has 'create v0.2.0 .*stable.json'
-check "no key: no signatures, channels untouched" hasnt 'json.sig\|release upload channels'
+echo '{"not":"a bundle"}' >"$W/junk.json"
+if GITHUB_REPOSITORY=o/r "$P" publish v0.2.0 "$D" "$W/man-v0.2.0" "$W/junk.json" --dry-run >/dev/null 2>&1; then
+    bad "publish refuses a file that isn't a Sigstore bundle"
+else ok "publish refuses a file that isn't a Sigstore bundle"; fi
+if GITHUB_REPOSITORY=o/r "$P" publish v0.2.0 "$D" "$W/man-v0.2.0" "$W/missing.json" --dry-run >/dev/null 2>&1; then
+    bad "publish refuses a missing attestation"
+else ok "publish refuses a missing attestation"; fi
 
 echo
 [ "$fail" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"

@@ -3,7 +3,7 @@
 #   agent/build.sh              # amd64 + arm64
 #   agent/build.sh arm64        # one arch
 # Env: VERSION (default git describe; a leading v is dropped),
-#      TB_UPDATE_PUBKEY / TB_UPDATE_SOURCE (scripts/release/ldflags.sh).
+#      TB_UPDATE_REPO / TB_UPDATE_SOURCE (scripts/release/ldflags.sh).
 set -euo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=../scripts/release/ldflags.sh
