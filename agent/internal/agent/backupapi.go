@@ -164,29 +164,44 @@ func (a *Agent) restoreWarnings(h backup.Header, next *config.Config) []string {
 	cur := a.store.Get()
 	host, _ := os.Hostname()
 	if a.role == config.RoleServer {
-		if h.Host != "" && h.Host != a.serverName() && h.Host != host {
-			out = append(out, fmt.Sprintf("Before restoring, turn tailbond off on %s (sudo systemctl disable --now tailbond there): both machines would have the same devices and keys, and devices would switch back and forth.", h.Host))
+		var names []string
+		for _, u := range next.Server.Users {
+			names = append(names, u.Name)
+		}
+		devices := "the devices"
+		if len(names) > 0 {
+			devices = strings.Join(names, ", ")
 		}
 		oldAddr := fmt.Sprintf("%s:%d", next.Server.PublicAddr, next.Server.Port)
 		newAddr := fmt.Sprintf("%s:%d", cur.Server.PublicAddr, cur.Server.Port)
-		if next.Server.PublicAddr != "" && cur.Server.PublicAddr != "" && oldAddr != newAddr {
-			var names []string
-			for _, u := range next.Server.Users {
-				names = append(names, u.Name)
+		moved := next.Server.PublicAddr != "" && cur.Server.PublicAddr != "" && oldAddr != newAddr
+		other := h.Host != "" && h.Host != a.serverName() && h.Host != host
+		// one ordered list, so nobody is cut off: the old machine keeps
+		// serving until every device can reach this one
+		step := 0
+		add := func(s string) {
+			step++
+			out = append(out, fmt.Sprintf("%d. %s", step, s))
+		}
+		if other {
+			add(fmt.Sprintf("Restore here while %s still runs: %s keep using it meanwhile.", h.Host, devices))
+		}
+		if moved {
+			ks := "A travel router with the kill switch on has no internet until it has its new link."
+			if other {
+				ks = fmt.Sprintf("A travel router with the kill switch on needs this before step %d.", step+2)
 			}
-			msg := fmt.Sprintf("Devices reached the old machine at %s; this one is reached at %s (kept). ", oldAddr, newAddr)
-			if next.Server.UseTailscaleCert && h.Host != "" {
-				msg += fmt.Sprintf("A device with Tailscale on (a router signed in to Tailscale, a phone with the Tailscale app) learns the new address by itself within a few minutes, once this machine has the old one's Tailscale name %q: in the Tailscale admin console remove the old machine (or rename it), then rename this one to %s. ", h.Host, h.Host)
+			add(fmt.Sprintf("Devices reached the old machine at %s; this one is reached at %s (kept). Devices that have only a link (no Tailscale on them): give each its new link from this machine's Devices tab. A GL router: paste it in its tailbond panel (Add another server, Paste a link; it replaces the old one). A phone: scan the new QR code in the tailbond app. %s", oldAddr, newAddr, ks))
+		}
+		if other {
+			msg := fmt.Sprintf("Then turn tailbond off on %s (sudo systemctl disable --now tailbond there)", h.Host)
+			if next.Server.UseTailscaleCert {
+				msg += fmt.Sprintf(" and give this machine its Tailscale name %s: in the Tailscale admin console remove (or rename) the old machine, then rename this one. Devices with Tailscale on follow by themselves within a few minutes", h.Host)
 			}
-			msg += "A device without Tailscale needs its link again (Devices tab, the QR button next to it)"
-			if len(names) > 0 {
-				msg += ": check " + strings.Join(names, ", ")
-			}
-			msg += ". A travel router with the kill switch on has no internet until it reconnects, so send it its new link before you switch over."
-			out = append(out, msg)
+			add(msg + ".")
 		}
 		if next.Server.Subnet != "" && next.Server.Subnet != cur.Server.Subnet && next.Server.UseTailscaleCert {
-			out = append(out, fmt.Sprintf("The tunnel addresses become %s (the backup's): if you approved this machine's route in the Tailscale admin console, approve %s instead.", next.Server.Subnet, next.Server.Subnet))
+			add(fmt.Sprintf("If you approved this machine's route in the Tailscale admin console, approve %s instead (the backup's tunnel addresses).", next.Server.Subnet))
 		}
 	}
 	if a.role == config.RoleClient && h.Host != "" && h.Host != host {

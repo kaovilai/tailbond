@@ -70,6 +70,21 @@ func TestServersAddOrderRemove(t *testing.T) {
 	if w.Code != http.StatusConflict || e.Error != "exists" || e.Conflict != "vps" {
 		t.Fatalf("duplicate: %d %+v", w.Code, e)
 	}
+	// vps moved (a new machine restored from its backup): same credential,
+	// new address, same tunnel addresses: its new link replaces the old one
+	moved := pairURI(t, "198.51.100.77:443", "vps", "10.83.142.0/24")
+	w = req(t, a, "POST", "/api/servers", lan, "", map[string]string{"uri": moved})
+	decode(t, w, &added)
+	if w.Code != 200 || added.Name != "vps" {
+		t.Fatalf("moved server: %d %s", w.Code, w.Body)
+	}
+	if n := len(a.store.Get().Client.Servers); n != 2 || !strings.Contains(a.store.Get().Client.Servers[1].PairingURI, strings.TrimPrefix(moved, "tailbond://pair?")[:20]) {
+		t.Fatalf("moved server added as another one: %d servers", n)
+	}
+	if p, _ := pairing.Decode(a.store.Get().Client.Servers[1].PairingURI); p.Server != "198.51.100.77:443" {
+		t.Fatalf("vps address not updated: %s", p.Server)
+	}
+	req(t, a, "POST", "/api/servers", lan, "", map[string]string{"uri": vps}) // back to the old address for the rest
 	clash := pairURI(t, "192.0.2.50:443", "cabin", "")
 	w = req(t, a, "POST", "/api/servers", lan, "", map[string]string{"uri": clash})
 	decode(t, w, &e)

@@ -94,11 +94,20 @@ Devices keep working after a restore:
 
 What can change is **where they connect**:
 
-Before restoring, turn tailbond off on the old machine
-(`sudo systemctl disable --now tailbond`): two machines with the same devices
-and keys would keep taking them from each other. A restore keeps the new
-machine's own public address and tunnel port (the ones its firewall allows);
-the preview lists what devices need.
+In this order, so no device is cut off (the restore preview lists the same
+steps for your devices):
+
+1. Restore on the new machine while the old one still runs; devices keep
+   using the old one. A restore keeps the new machine's own public address
+   and tunnel port (the ones its firewall allows).
+2. Devices that have only a link (no Tailscale on them) get their new link
+   from the new machine's Devices tab: a GL router takes it in its tailbond
+   panel (Add another server, Paste a link: it replaces the old one), a phone
+   by scanning the QR code. A travel router with the kill switch on needs
+   this before step 3.
+3. Turn tailbond off on the old machine (`sudo systemctl disable --now
+   tailbond`) and move its Tailscale name to the new one (below); devices
+   with Tailscale follow within a few minutes.
 
 - **Same public address or DDNS name** (you moved the box, or the DDNS name
   follows it): nothing to do.
@@ -115,9 +124,7 @@ the preview lists what devices need.
   old machine's name (admin console → Machines: remove or rename the old one,
   then rename the new one). If the subnet route was approved for the old
   machine, approve it for the new one.
-- A travel router with the kill switch on and without Tailscale has no
-  internet until it has the new address: send it its new link before you
-  switch over.
+
 
 ## A new travel router
 

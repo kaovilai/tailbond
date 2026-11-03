@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net"
@@ -383,10 +384,20 @@ func (a *Agent) addServer(uri, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var added string
+	var added, moved string
 	if _, err := a.store.Update(func(c *config.Config) error {
 		if n := sameServer(c, p); n != "" {
 			return &addServerError{code: "exists", conflict: n}
+		}
+		// the same credential at a new address: that server moved (a new
+		// machine, a restored backup); take its new link in place
+		for i, e := range c.Client.Servers {
+			q, err := pairing.Decode(e.PairingURI)
+			if err == nil && q.User == p.User && subtle.ConstantTimeCompare([]byte(q.Key), []byte(p.Key)) == 1 {
+				c.Client.Servers[i].PairingURI = uri
+				moved = e.Name
+				return nil
+			}
 		}
 		if n, sub := subnetClash(c, p, ""); n != "" {
 			return &addServerError{code: "subnet_in_use", conflict: n, subnet: sub.String()}
@@ -400,6 +411,18 @@ func (a *Agent) addServer(uri, name string) (string, error) {
 		return nil
 	}); err != nil {
 		return "", err
+	}
+	if moved != "" {
+		a.Logf("server %s moved: its new link (%s) replaces the old one", moved, p.Server)
+		a.afterServersChanged(switchList)
+		a.mu.Lock()
+		active := a.client.activeServer
+		a.mu.Unlock()
+		if active == moved {
+			a.switchServer(moved, switchList)
+		}
+		a.connectIfIdle()
+		return moved, nil
 	}
 	a.Logf("added server %s (%s) as a backup", added, p.Server)
 	a.afterServersChanged(switchList)
