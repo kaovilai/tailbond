@@ -9,10 +9,16 @@ through it. It runs on:
 - an Android app.
 
 Two new features:
-- **Automatic updates**: every device keeps tailbond up to date by itself.
-  - The home server downloads updates first and passes them on to the travel router and the phone.
-  - An update that doesn't work is undone automatically.
-  - You can choose Automatic / Tell me only / Off, and for the home server a night-time window.
+- **Updates**: each device checks for a new tailbond release about once a day
+  and says "Update available".
+  - The VPS and the travel router update with one click ("Update now"), or by
+    themselves if you choose Automatic. A new version that doesn't start is
+    undone automatically.
+  - The Fedora home server gets updates from the system's package updates
+    (dnf), like any other app installed there.
+  - The phone app shows the update and downloads it; an app store
+    (Obtainium) can install updates automatically.
+  - You choose Tell me / Automatic / Off.
 - **Backup and restore**: an encrypted backup file with all of tailbond's settings, made with a passphrase. It can be restored on the same device or moved to a new one.
 
 You only see the PNGs listed in the manifests, not the product. Judge only
@@ -23,8 +29,8 @@ what a real user would see.
 Do each task as your persona, using only what the screens show:
 
 1. **Make sure everything stays up to date**: home server, travel router and
-   phone. Can you tell what version each runs, whether updates install by
-   themselves and when, and whether anything is out of date?
+   phone. Can you tell what version each runs, how each one gets updated
+   (and whether it happens by itself), and whether anything is out of date?
 2. **Move the home server to a new machine using a backup**: make a backup of
    the old home server, restore it on the new one, and understand what happens
    to the travel router and the phone (do they need anything?).

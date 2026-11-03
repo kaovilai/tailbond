@@ -202,11 +202,38 @@ The server's mode sets its default for downloads. Each device's own mode decides
 
 ## Updates
 
-The server updates itself in its maintenance window (default policy `auto`;
-**Settings → Updates**) and serves each release to your routers and phones
-(the mirror). Updates go to `/var/lib/tailbond/update/`, never over the
-RPM's files, so `rpm -V tailbond-server` stays clean; a `dnf upgrade` to a
-newer package simply takes over. How it all works: [updates.md](updates.md).
+Updates come from `dnf`, like any other package, from the project's COPR
+repository:
+
+```sh
+sudo dnf copr enable kaovilai/tailbond
+sudo dnf install tailbond-server        # or, later: sudo dnf upgrade tailbond-server
+```
+
+For automatic updates, turn on `dnf-automatic` (`sudo dnf install
+dnf-automatic && sudo systemctl enable --now dnf-automatic.timer`, with
+`apply_updates = yes` in `/etc/dnf/automatic.conf`); an upgrade restarts
+tailbond (`%systemd_postun_with_restart`). The dashboard (**Settings → Updates**) checks
+GitHub's latest release about once a day and says when one is out, with the
+command; **Off** stops the check. More: [updates.md](updates.md).
+
+### COPR
+
+Maintainers, once: create the project on
+[copr.fedorainfracloud.org](https://copr.fedorainfracloud.org) (name
+`tailbond`, x86_64 Fedora chroots only: the SRPM carries prebuilt binaries),
+take the API token file from <https://copr.fedorainfracloud.org/api/> and
+store it in the repository:
+
+```sh
+gh secret set COPR_CONFIG < ~/.config/copr
+gh variable set COPR_PROJECT --body "kaovilai/tailbond"   # optional, default "tailbond"
+```
+
+On every `v*` tag CI then runs `copr-cli buildscm --method make_srpm` on the
+tag: COPR runs `.copr/Makefile` (builds mqvpn and tailbondd, then
+`packaging/fedora/build-rpm.sh` with `SRPM_OUT`) and builds the RPM from that
+SRPM. Without the secret CI skips the COPR step with a notice.
 
 ## Troubleshooting
 

@@ -56,12 +56,10 @@ needs it) and the tunnel connects once paired. The LAN keeps its internet
 until then (the kill switch arms only when paired and on). One command, if
 you do have SSH: `opkg install /tmp/tailbond_*_neon-vfpv4.ipk`.
 
-Updates install themselves from your home server, which checked GitHub's
-proof of where each release was built, with a health check and rollback. The
-router package leaves that check out to save space and trusts the server it
-paired with, so it doesn't update straight from GitHub; a GL router used as
-the home server checks checksums only
-([updates.md](updates.md#how-an-update-is-checked-no-signing-key)).
+The tailbond panel shows when a new release is out; **Update now** (or
+**Automatic**) installs it with `opkg`, checked against the release's
+`SHA256SUMS`, and puts the previous package back if the new one doesn't come
+up ([updates.md](updates.md)).
 
 A firmware upgrade removes every package you installed, tailbond too
 (Speedify documents the same for its GL package). With **Keep Settings**
@@ -336,14 +334,14 @@ So the package leaves itself a way back:
 | File (kept) | What it does |
 |---|---|
 | `/etc/tailbond/pkg/tailbond_<version>_<arch>.ipk`, `current` | the installed package (and the previous one, for rollbacks) |
-| `/etc/tailbond/pkg/reinstall` | installs that package if tailbond is missing; else the home server mirror's (over Tailscale); retries for 20 minutes; at most once per boot |
+| `/etc/tailbond/pkg/reinstall` | installs that package if tailbond is missing; else downloads that version from the GitHub release (checked against `SHA256SUMS`); retries for 20 minutes; at most once per boot |
 | one line in `/etc/rc.local` (`# tailbond-reinstall`) | runs it in the background at boot |
 | `/lib/upgrade/tailbond.sh` (not kept, runs before the flash) | saves the running package if the cache is empty and adds these files to the keep list |
 
 After the upgrade, `logread -e tailbond-reinstall` shows what happened, and
 the panel says "reinstalled after a firmware upgrade". Removing the package
 (`opkg remove tailbond`) removes the rc.local line and the cached packages;
-`/etc/tailbond/` stays. Details and what is verified: [updates.md](updates.md#firmware-upgrades-on-glinet-routers).
+`/etc/tailbond/` stays. See also [updates.md](updates.md#glinet-firmware-upgrades).
 
 ## Logs and troubleshooting
 

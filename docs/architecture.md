@@ -550,197 +550,101 @@ See [android.md](android.md#skipping-the-tunnel).
 
 ## Updates
 
-Every tailbond install can update itself from a channel **manifest** whose
-authenticity comes from a **GitHub artifact attestation** (Sigstore keyless:
-no signing key anywhere). A home server also acts as an **update mirror**, so routers and phones don't need
-to reach GitHub (hotel Wi-Fi, captive portals, no GitHub remote at all).
-Details for users: [updates.md](updates.md).
+Like most open-source projects: tagged **GitHub releases** with every
+artifact and a `SHA256SUMS` file (plus GitHub build-provenance attestations,
+which anyone can check with `gh attestation verify`; the agent doesn't need
+them). Each install checks the GitHub "latest release" API about once a day,
+shows "Update available", and updates with the platform's normal mechanism.
+Users' guide: [updates.md](updates.md).
 
-### Manifest and attestation
+### Release assets (CI job `release`, on `v*` tags)
 
-A channel (`stable`, `beta`) is one file `<channel>.json` plus its
-attestation `<channel>.json.sigstore.json` under the update source (`update.source`, a base URL;
-default set at build time, e.g.
-`https://github.com/OWNER/REPO/releases/download/channels`; CI re-uploads
-both files to that rolling release on every tag). Format 1:
+`tailbond-linux-x86_64.tar.gz`, `tailbond-linux-aarch64.tar.gz` (static
+bundle with `install.sh`), `tailbond_<v>-r1_aarch64_cortex-a53.ipk`,
+`tailbond_<v>-r1_aarch64_cortex-a53_neon-vfpv4.ipk`,
+`tailbond-server-<v>-1.fc44.x86_64.rpm`, `tailbond-<v>.apk` (release-signed),
+`tailbondd-<tag>-linux-<arch>.tar.gz`, and `SHA256SUMS` (`sha256sum` format
+over all of them). A `-pre` tag (`v1.2.3-beta.1`) is a GitHub pre-release,
+which the "latest release" API never returns.
 
-```json
-{
-  "format": 1,
-  "channel": "stable",
-  "version": "0.2.0",
-  "released": "2026-11-02T10:00:00Z",
-  "protocol": 2,
-  "requires_server_protocol": 1,
-  "security": false,
-  "notes_url": "https://github.com/OWNER/REPO/releases/tag/v0.2.0",
-  "artifacts": [
-    {"name": "tailbond-linux-x86_64.tar.gz", "kind": "linux", "arch": "x86_64",
-     "url": "https://…/v0.2.0/tailbond-linux-x86_64.tar.gz", "sha256": "…", "size": 9123456},
-    {"name": "tailbond_0.2.0-r1_aarch64_cortex-a53.ipk", "kind": "ipk", "arch": "aarch64_cortex-a53", "url": "…", "sha256": "…", "size": 0},
-    {"name": "tailbond_0.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk", "kind": "ipk", "arch": "aarch64_cortex-a53_neon-vfpv4", "url": "…", "sha256": "…", "size": 0},
-    {"name": "tailbond-server-0.2.0-1.fc44.x86_64.rpm", "kind": "rpm", "arch": "x86_64", "url": "…", "sha256": "…", "size": 0},
-    {"name": "tailbond-0.2.0.apk", "kind": "apk", "arch": "arm64-v8a", "url": "…", "sha256": "…", "size": 0,
-     "version_code": 20000}
-  ]
-}
-```
+### The check
 
-- `version`: semver (`MAJOR.MINOR.PATCH[-pre]`); a leading `v` and an
-  OpenWrt `-rN` revision are ignored for ordering. A build whose own version
-  isn't semver (`dev`, a git hash, `-dirty`) never installs anything by itself.
-- `protocol`: the agent protocol this release speaks (`update.Protocol`;
-  `GET /api/hello` and `/api/status` report it as `protocol`).
-  `requires_server_protocol`: a **client** (router, phone) installs this
-  release only if its active server reports at least this protocol. Servers
-  install first; clients follow.
-- `security: true`: install even while traffic would otherwise defer it
-  (the maintenance window still applies to servers).
-- `linux` tarballs contain `tailbondd`, `mqvpn` and `hooks/`, all static.
+`GET <api_url>/repos/<repo>/releases/latest` (`api_url` default
+`https://api.github.com`; `repo` default `kaovilai/tailbond`, also accepted as
+`https://github.com/<owner>/<name>`). From the answer: `tag_name` (version:
+semver, leading `v` dropped), `html_url` (changelog), `assets[].name` /
+`browser_download_url`. A newer version than the running one is `available`.
+A build whose own version isn't semver (`dev`, `-dirty`, a git hash) shows
+what's available but never installs by itself.
 
-`<channel>.json.sigstore.json` is a Sigstore bundle (v0.3, JSON) from
-`actions/attest` in the release job: one SLSA build provenance attestation
-(`https://slsa.dev/provenance/v1`) whose subjects are every release file and
-the manifests. It is accepted (`update.verify: attestation`, the default) when,
-with sigstore-go against Sigstore's public-good trusted root (TUF, cached in
-`<state_dir>/update/sigstore`; or `update.trusted_root`):
+**Verification**: the asset and `SHA256SUMS` are downloaded over HTTPS (http
+only when `api_url` itself is http, for tests); the asset's SHA-256 must match
+its line in `SHA256SUMS`, else nothing is installed.
 
-- the certificate chains to Fulcio, has SCTs, and the signature is in Rekor
-  (inclusion proof, integrated time inside the certificate's validity);
-- the certificate's issuer is `https://token.actions.githubusercontent.com`,
-  its SAN matches `^https://github.com/<repo>/<workflow>@refs/tags/v` and
-  its Source Repository URI extension is `https://github.com/<repo>`, where
-  `<repo>` is `update.repo` or the build's `update.BuildRepo`
-  (`TB_UPDATE_REPO`) and `<workflow>` is `update.workflow` or
-  `update.BuildWorkflow` (default `.github/workflows/ci.yml`);
-- the statement's subjects include the manifest's SHA-256.
+### Install methods (`update.method` in the status)
 
-Several bundles (JSON lines) may be given; one must pass. Without the file
-the agent asks `GET https://api.github.com/repos/<repo>/attestations/sha256:<hex>?predicate_type=https://slsa.dev/provenance/v1`
-(bundles inline or behind a snappy-compressed `bundle_url`; `TB_GITHUB_TOKEN`
-optional). `update.verify: sha256-only` skips the attestation (setups
-without GitHub). A client takes its server mirror's manifest as is: it was
-checked by the server, and the channel is authenticated (tunnel with the
-pinned certificate, or the tailnet). Builds with `-tags noattest` (the
-OpenWrt package) have no verifier: as clients they update from the mirror
-only (or with `sha256-only`); as a server their default is `sha256-only`.
-Every artifact is checked against `sha256` and `size` before use.
+| method | detected by | one-click / automatic install |
+|---|---|---|
+| `static` | `/etc/tailbond/install.env` (written by `install.sh`) | yes: download `tailbond-linux-<arch>.tar.gz` + check, unpack under `<state_dir>/update/`, run the new bundle's `install.sh --update --bundle-dir <dir>` detached (`systemd-run --unit tailbond-update`): it keeps `<bin>.prev`, replaces the binaries and hooks, restarts the service, and if the service isn't up on the new version within 60 s puts `.prev` back and restarts again |
+| `opkg` | OpenWrt (`/etc/openwrt_release` + `opkg`) | yes: download the ipk whose arch `opkg print-architecture` lists + check, keep it in `/etc/tailbond/pkg/`, run `/usr/lib/tailbond/update-ipk` detached (`opkg install`, health check, previous ipk back on failure) |
+| `dnf` | `tailbondd` owned by an RPM | no: the status says so and the UI shows `sudo dnf upgrade tailbond-server` (COPR, `dnf-automatic`) |
+| `none` | anything else (a dev build, a copied binary) | no: shown only |
 
-### Config (`update`, additive, all optional)
+Both installers write `<state_dir>/update-result.json`
+(`{"result": "ok"|"rolled_back"|"failed", "version", "from", "at", "detail"}`;
+OpenWrt `state_dir` is `/etc/tailbond/state`), which the agent reports after
+its restart. `detail` `reinstalled_after_firmware_upgrade`: GL firmware
+upgrade, see below.
+
+**GL firmware upgrades**: the installed ipk is kept in `/etc/tailbond/pkg/`
+(kept by `/lib/upgrade/keep.d/tailbond`); a line in the kept `/etc/rc.local`
+runs `/etc/tailbond/pkg/reinstall` at boot, which reinstalls it when the
+firmware upgrade removed the package (else downloads that version's ipk from
+the GitHub release, checked against its `SHA256SUMS`).
+
+**Android**: the app makes the same check (repo built in) and shows "Update
+available", which opens the release APK in the browser; Android installs it
+over the app (same signing key). Automatic updates: Obtainium.
+
+### Config (`update`, all optional)
 
 ```json
-"update": {"policy": "auto", "channel": "stable", "source": "", "window": "03:00-05:00",
-           "check_every_hours": 6, "pin": "", "defer_kbps": 300,
-           "mirror": true, "mirror_max_mb": 600,
-           "verify": "attestation", "repo": "", "workflow": "", "trusted_root": ""}
+"update": {"policy": "notify", "repo": "kaovilai/tailbond", "check_every_hours": 24, "api_url": ""}
 ```
 
-- `policy`: `auto` (default; servers install inside `window`, local time;
-  clients any time unless deferred), `notify` (check and show, install only
-  on request), `off` (no checks). `pin`: install exactly this version (from
-  the manifest or the mirror cache) and nothing newer, for IaC (Ansible
-  `tailbond_update_policy: pinned`).
-- `defer_kbps`: clients don't install while the tunnel carried more than this
-  (tx+rx) on average over the last minute (a call or a stream), unless the
-  release is `security`.
-- `mirror`, `mirror_max_mb` (server role): mirror the channel, keep the
-  current and the previous version (keep-last-2) within the cap.
-- `verify`: `attestation` | `sha256-only` (empty: attestation; a `noattest`
-  server: sha256-only). `repo` (`owner/name`), `workflow`
-  (`.github/workflows/<file>.yml`), `trusted_root` (a trusted_root.json
-  path): see above. Older configs' `trusted_keys` is ignored.
+- `policy`: `notify` (default: check and show; install on request), `auto`
+  (install when found, methods `static` and `opkg`), `off` (no checks).
+- Older keys (`channel`, `window`, `pin`, `source`, `mirror`, …) are ignored.
 
-Status (`/api/status`, additive): `protocol`, and
+### Status (`/api/status`, additive)
 
 ```json
-"update": {"current": "0.1.0", "available": "0.2.0", "policy": "auto", "channel": "stable",
-           "state": "idle", "source": "mirror", "last_check": "…", "last_result": "…",
-           "notes_url": "…", "security": false, "deferred": "", "window": "03:00-05:00",
-           "outdated": [{"name": "slate7", "kind": "router", "version": "0.1.0"}]}
+"update": {"current": "0.1.0", "available": "0.2.0",
+           "notes_url": "https://github.com/kaovilai/tailbond/releases/tag/v0.2.0",
+           "policy": "notify", "repo": "kaovilai/tailbond", "method": "static",
+           "state": "idle", "last_check": "…", "last_result": "ok",
+           "last_result_version": "0.1.0", "last_result_at": "…", "detail": "",
+           "error": "", "outdated": [{"name": "slate7", "kind": "router", "version": "0.1.0"}]}
 ```
 
-- `state`: `idle` | `checking` | `downloading` | `waiting` (window or
-  deferral; `deferred` says why) | `installing` | `trial` (new version
-  running, health check pending) | `failed` | `rolled_back` | `off`.
-- `source`: `mirror` (the home server) | `public` (update.source) | `upload` (an offline upload, server) | `cache` (server: the last good manifest, the public source being unreachable; `error` says why).
-- `outdated` (server role): registered clients whose last reported version
-  is older than this server's.
-- additive: `verify` (the effective policy), `verified` (how the offered
-  manifest was trusted: `attestation` | `mirror` | `sha256`), `repo` (with
-  `verify: attestation`).
-- additive: `deferred_code` (`busy` | `window` | `server` | `notify`) next
-  to the plain `deferred` text; `last_result_version`, `last_result_at`
-  (RFC 3339) for `last_result` (`ok` | `rolled_back` | `failed`); `detail`
-  (e.g. `reinstalled_after_firmware_upgrade`); `error` (the last check's
-  problem, if any).
+- `state`: `idle` | `checking` | `downloading` | `installing` | `failed` |
+  `rolled_back` | `off`.
+- `outdated` (server): registered clients whose last reported version is
+  older than this server's. Clients send `X-Tailbond-Version` and
+  `X-Tailbond-Kind` (`router` | `android`) with their API requests
+  (`GET /api/peers`, `/api/pairing`); the server shows them as
+  `clients[].version` / `clients[].kind`.
 
-Clients report their version to their server: every request a paired
-client makes with its API token (`GET /api/peers`, `/updates/…`,
-`/api/pairing`) carries `X-Tailbond-Version` and `X-Tailbond-Kind`
-(`router` | `android`); the server records them per client
-(`clients[].version`, `clients[].kind`, additive).
-
-### HTTP (additive)
+### HTTP
 
 | Method | Path | Body / result |
 |---|---|---|
-| GET | `/api/update` | the `update` status object plus `manifest` (summary of the verified manifest) |
+| GET | `/api/update` | the `update` status object |
 | POST | `/api/update/check` | check now |
-| POST | `/api/update/install` | install `available` now (ignores the window and deferral, not compatibility); `{"version"}` optional (a cached version, e.g. to go back) |
-| POST | `/api/update/policy` | `{"policy","channel","window","source","pin","verify","repo"}` (any subset) |
-| POST | `/api/update/upload?name=<file>` | server, admin: `Content-Type: application/octet-stream`, one file (`<channel>.json`, `<channel>.json.sigstore.json`, or an artifact) into the mirror cache, for offline setups. The manifest is verified as soon as it can be: at once with `sha256-only`, else when its `.sigstore.json` is there (or GitHub's API has it): `{"manifest": "<version>", "verified": "attestation"\|"sha256"}`, or `{"waiting_for": "<channel>.json.sigstore.json"}`; a manifest that fails is deleted (400). An artifact is checked against the stored manifest: `{"checksum_ok": true}` |
-| GET | `/updates/<channel>.json`, `/updates/<channel>.json.sigstore.json` | server mirror: the cached, verified manifest and its attestation (byte-identical; the attestation only if it had one) |
-| GET | `/updates/files/<name>` | server mirror: a cached artifact |
+| POST | `/api/update/install` | install `available` now (methods `static`, `opkg`; else 400 with what to do) |
+| POST | `/api/update/policy` | `{"policy", "repo"}` (any subset) |
 | GET | `/api/pairing` | server, client token: this client's current pairing URI (same credential), so a client learns a new public address after the server moved |
 
-`/updates/…` and `GET /api/pairing` are served on the admin listener and the
-tunnel address; they need a client API token, an admin session, or a
-tailnet / loopback source (the mirror holds only public, verified files).
-Clients try the mirror first (`http://<active server tunnel IP>:8077`, then
-its Tailscale name) and fall back to `update.source`.
-
-### Applying an update
-
-**Linux (Fedora RPM, generic bundle)**: package-owned files are never
-replaced (`rpm -V` stays clean, `ProtectSystem=full` is fine).
-- Updates unpack to `<state_dir>/update/versions/<v>/{tailbondd,mqvpn,hooks/}`.
-- `<state_dir>/update/state.json` records `{active, prev, trial, failed}`.
-- The package's `tailbondd` (the *base*) checks that file first at every
-  start. If `active` is newer than itself, it `exec`s that version's binary;
-  the running agent then uses the same version's `mqvpn`.
-- **Install**: download → verify → unpack → `trial = {version, deadline
-  (now + 90 s), boots: 0, clients_before}` → the agent exits with status 75;
-  systemd's `Restart=on-failure` (`RestartSec` short) starts the base again.
-- **Health check** (the new version, within 90 s): the API serves, mqvpn
-  runs (server: control API answers; client: tunnel connected if it was
-  before), and a server that had connected clients sees one again. Pass →
-  `active` stays and `trial` clears. Fail → the version is added to `failed`,
-  `active = prev`, exit 75.
-- **The base**: at each start during a trial it increments `boots`. If
-  `boots > 3` or the deadline has passed, it rolls back before exec'ing.
-  So a version that crashes or hangs on start is rolled back by the base.
-  A `failed` version is never installed again automatically.
-- An RPM or bundle upgrade whose base is newer than `active` wins: the base
-  runs itself.
-
-**OpenWrt / GL.iNet**: the agent picks the ipk whose `arch` is in
-`opkg print-architecture`, verifies it, keeps it in `/etc/tailbond/pkg/`
-(kept across sysupgrade by keep.d; current + previous), and runs
-`/usr/lib/tailbond/update-ipk <new.ipk> <prev.ipk>` detached:
-`opkg install`, restart, wait up to 90 s for the API and the tunnel/role,
-else reinstall the previous ipk. After a firmware upgrade a kept
-`/etc/tailbond/pkg/reinstall`, run from a line in the kept `/etc/rc.local`,
-reinstalls the package from that cache (or the home mirror) on first boot
-([glinet.md](glinet.md), [updates.md](updates.md)).
-
-**Android**: the app reads the manifest (mirror first; the public source
-over HTTPS only), downloads the APK and checks its SHA-256 and size and that
-its signing certificate is the installed app's, then installs it with a `PackageInstaller` session
-(`REQUEST_INSTALL_PACKAGES`; Android 12+ `setRequireUserAction(
-USER_ACTION_NOT_REQUIRED)`, silent once the app installed itself the first
-time). Release APKs are signed with the release key
-(`scripts/release/gen-android-keystore.sh`, kept in repository secrets);
-debug and release builds can't update each other.
 
 ## Backup and restore
 
