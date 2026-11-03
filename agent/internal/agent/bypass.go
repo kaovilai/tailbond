@@ -94,8 +94,15 @@ func (a *Agent) bypassWatcher(ctx context.Context) {
 	}
 }
 
-// clearBypass removes the rules when the agent stops.
+// clearBypass removes the rules when the agent stops. An apply still
+// queued from before is dropped (bypassGen), one running is waited for.
 func (a *Agent) clearBypass() {
+	a.bypassGen.Add(1)
+	a.mu.Lock()
+	a.client.bypass.applied = ""
+	a.mu.Unlock()
+	a.bypassMu.Lock()
+	defer a.bypassMu.Unlock()
 	a.hooks.Run(hooks.BypassApply, a.bypassEnv("clear", a.bypassStatusFile()))
 }
 
@@ -169,7 +176,19 @@ func (a *Agent) applyBypass(force bool) {
 			return
 		}
 	}
-	a.runHook(hooks.BypassApply, a.bypassEnv("apply", a.bypassStatusFile()))
+	gen, env := a.bypassGen.Load(), a.bypassEnv("apply", a.bypassStatusFile())
+	select {
+	case a.hookq <- func() {
+		a.bypassMu.Lock()
+		defer a.bypassMu.Unlock()
+		if a.bypassGen.Load() != gen {
+			return // cleared since: don't put the rules back
+		}
+		a.hooks.Run(hooks.BypassApply, env)
+	}:
+	default:
+		a.Logf("hook queue full, dropping %s", hooks.BypassApply)
+	}
 }
 
 func mustJSON(v any) string {

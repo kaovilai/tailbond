@@ -89,6 +89,11 @@ type Agent struct {
 	subnetMoved chan struct{}
 	// bypassNow re-applies the bypass rules (WAN changes).
 	bypassNow chan struct{}
+	// bypass hook runs are serialised (bypassMu); a queued apply from
+	// before the last clear (bypassGen) is dropped, so rules never come
+	// back after the agent cleared them
+	bypassMu  sync.Mutex
+	bypassGen atomic.Int64
 	// auto-updates and backups (update.go, backupapi.go)
 	upd     *updater
 	restart chan struct{}
