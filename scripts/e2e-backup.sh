@@ -135,7 +135,8 @@ if wait_for 90 "client reconnected" sh -c "ip netns exec $NS_S curl -fsS -m 2 ht
 else
   bad "server clients: $(sapi "http://$API/api/clients")"
 fi
-capi "http://$API/api/status" | jq -e '.state == "connected"' >/dev/null \
+# the client's status follows within its 1 s poll
+wait_for 10 "client status connected" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
   && ok "the client reconnected with its old pairing (same key, same pinned certificate)" \
   || bad "client after restore: $(capi "http://$API/api/status" | jq -c '{state, error}')"
 
