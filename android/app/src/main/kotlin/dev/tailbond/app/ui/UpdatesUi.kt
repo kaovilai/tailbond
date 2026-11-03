@@ -104,11 +104,9 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
     val a = s.availability
     LaunchedEffect(Unit) { actions.updatesShown() }
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-        val bad = s.error != null && a != Availability.AVAILABLE && !s.checking
+        // a failed check stays neutral (no error colours): tailbond itself works as before
         Card(
-            colors = CardDefaults.cardColors(
-                containerColor = if (bad) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-            ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
             modifier = Modifier.fillMaxWidth().padding(16.dp),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

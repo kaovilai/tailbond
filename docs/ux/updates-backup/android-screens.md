@@ -23,7 +23,7 @@ android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.Up
 | 10-updates-up-to-date | Settings → Updates. Up to date, checked today. Check now; policy "Tell me" / "Off"; what the check sends; "Automatic: use Obtainium" (tailbond doesn't install updates itself; Obtainium does it automatically on the phone) with "How to set up Obtainium" (the docs) |
 | 10-updates-up-to-date-dark | The same in dark theme |
 | 11-updates-available | "Update available: v0.2.0" with "Download update" (opens the APK in the browser) and "What's new" (the release page), and what happens after the download: Android asking to allow the browser to install apps is normal, and tailbond reconnects by itself after the update |
-| 12-updates-check-failed | "Couldn't check for updates": no internet or GitHub unreachable; when it tried and when the last good check was |
+| 12-updates-check-failed | "Couldn't check for updates" as a calm, neutral note (no error colours): no internet or GitHub unreachable, tailbond works as before and tries again later by itself, or Check now; when it tried and when the last good check was |
 | 13-updates-off | Policy Off, never checked: "Updates are off", Check now still works |
 | 19-updates-debug-build | A debug build with 0.2.0 available: no "Download update" (a release APK won't install over a debug build, which has a different key), only "What's new"; how to switch: back up first (Settings → Backup) so the settings are kept, uninstall, install the release APK, restore |
 | 30-backup-page | Settings → Back up and restore |

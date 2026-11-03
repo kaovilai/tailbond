@@ -244,7 +244,10 @@ class UpdateCheckerTest {
         c.check()
         var s = c.status.value
         assertEquals("Couldn't check for updates", UpdateWords.headline(s, env.policy))
-        assertEquals("No internet connection, or GitHub can't be reached.", UpdateWords.detail(s, env.policy))
+        assertEquals(
+            "No internet connection, or GitHub can't be reached. tailbond works as before; it tries again later by itself, or tap Check now.",
+            UpdateWords.detail(s, env.policy),
+        )
         assertEquals(0L, s.lastCheckMs)
         assertEquals(env.now, s.lastAttemptMs)
         // retried after an hour, not at once

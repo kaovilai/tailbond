@@ -28,7 +28,8 @@ object UpdateWords {
         return when {
             s.checking -> null
             a == Availability.AVAILABLE -> "You have ${s.current}."
-            s.error != null -> s.error.trimEnd('.') + "."
+            // calm on purpose: a failed check isn't tailbond failing
+            s.error != null -> s.error.trimEnd('.') + ". tailbond works as before; it tries again later by itself, or tap Check now."
             a == Availability.DEV_BUILD ->
                 "This build (${s.current.ifBlank { "no version" }}) isn't a numbered release, so tailbond doesn't tell you to update it."
             a == Availability.NO_APK -> "Version ${s.latest} is out, but it has no Android app yet."
