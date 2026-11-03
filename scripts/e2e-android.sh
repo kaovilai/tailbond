@@ -58,6 +58,9 @@ srv_status() { api "http://$API/api/status"; }
 srv_client() { srv_status | jq -c --arg n "$CLIENT" '.clients[] | select(.name == $n)'; }
 srv_active_paths() { srv_status | jq --arg n "$CLIENT" '[.clients[] | select(.name == $n and .connected) | .paths[] | select(.state == "active")] | length'; }
 srv_paths_ge() { [ "$(srv_active_paths)" -ge "$1" ]; }
+# Both of the phone's networks carry an active path (mqvpn status 1). The
+# server's count alone can't tell: it also lists the handshake path (id 0).
+app_two_paths() { app_is '[.paths[] | select(.status == 1) | .kind] | (index("WIFI") != null and index("CELLULAR") != null)'; }
 # GET through the tunnel with toybox nc (no curl/wget on Android)
 fetch_token() {
   sh_ "printf 'GET $TOKEN_URL_PATH HTTP/1.0\\r\\nHost: 10.77.0.1\\r\\n\\r\\n' | nc -w 5 10.77.0.1 8099" 2>/dev/null
@@ -152,8 +155,8 @@ grep -qE 'ni\{VPN CONNECTED|Transports: VPN' "$OUT/connectivity-connected.txt" \
 TUN="$(sh_ ip -o -4 addr show | awk '$4 ~ /^10\.77\.0\./ {print $2; exit}')"
 if [ -n "$TUN" ]; then
   ok "$TUN has $(sh_ ip -o -4 addr show dev "$TUN" | awk '{print $4}')"
-  # (/sys/class/net is closed to adb's shell by SELinux)
-  MTU="$(sh_ ip -o link show dev "$TUN" | sed -n 's/.* mtu \([0-9]*\).*/\1/p')"
+  # from the ip addr dump: SELinux closes /sys/class/net to adb's shell
+  MTU="$(sed -n "s/^[0-9]*: $TUN: .* mtu \([0-9]*\) .*/\1/p" "$OUT/ip-addr-connected.txt")"
   # 1280 (the client default, like tailbondd's client.mtu), less the 8-byte
   # reorder header when the mode negotiates reordering (Speed)
   if [ "$MTU" = 1280 ] || [ "$MTU" = 1272 ]; then ok "$TUN MTU $MTU (1280 cap)"; else bad "$TUN MTU is $MTU, not 1280 (1272 with reorder)"; fi
@@ -195,9 +198,9 @@ shot home-connected
 
 say "multipath: Wi-Fi + cellular"
 TWO=false
-if wait_for 60 srv_paths_ge 2; then
+if wait_for 60 app_two_paths && srv_paths_ge 2; then
   TWO=true
-  ok "server sees 2 active paths: $(srv_client | jq -c '[.paths[] | {state, srtt_ms}]'); app: $(app_status | jq -c '[.paths[] | {name, kind, status}]')"
+  ok "Wi-Fi and cellular both carry the tunnel; server: $(srv_client | jq -c '[.paths[] | {state, srtt_ms}]'); app: $(app_status | jq -c '[.paths[] | {name, kind, status}]')"
 else
   dump_net multipath
   note "server sees $(srv_active_paths) active path(s), not 2. App paths: $(app_status | jq -c '[.paths[] | {name, kind, status}]'). Networks: $(grep -oE 'ni\{[A-Z_]+ [A-Z_]+' "$OUT/connectivity-multipath.txt" | sort -u | tr '\n' ' ')"
@@ -213,7 +216,7 @@ if $TWO; then
   fi
   if sh_ ping -c 3 -W 3 10.77.0.1 >"$OUT/ping-cellular.txt" 2>&1; then ok "ping 10.77.0.1 over cellular: $(grep -E 'packets transmitted' "$OUT/ping-cellular.txt")"
   else bad "ping 10.77.0.1 with Wi-Fi off failed"; fi
-  app_is '.state == "CONNECTED"' && ok "app still connected: $(app_status | jq -c '[.paths[] | {name, kind, status}]')" \
+  app_is '.state == "CONNECTED" and ([.paths[] | select(.kind == "CELLULAR" and .status == 1)] | length) == 1' && ok "app still connected on cellular: $(app_status | jq -c '[.paths[] | {name, kind, status}]')" \
     || bad "app not connected with Wi-Fi off: $(app_status | jq -c '{state, message}')"
   shot wifi-off
   sh_ svc wifi enable
