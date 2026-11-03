@@ -16,13 +16,17 @@ export const clock = new Date(T).toISOString();
 const hAgo = (hrs) => new Date(T - hrs * 3600e3).toISOString();
 const NOTES = 'https://github.com/tailbond/tailbond/releases/tag/v0.2.0';
 
-const upd = (over = {}) => ({ current: '0.1.0', policy: 'auto', channel: 'stable', state: 'idle', last_check: hAgo(1.5), window: '03:00-05:00', ...over });
-const avail = (over = {}) => upd({ available: '0.2.0', notes_url: NOTES, ...over });
+// verify/verified/repo: how an update is checked (GitHub attestation of the
+// release workflow; a router trusts its home server's copy; a GL router as
+// the home server has no attestation check: checksums only)
+const upd = (over = {}) => ({ current: '0.1.0', policy: 'auto', channel: 'stable', state: 'idle', last_check: hAgo(1.5), window: '03:00-05:00', verify: 'attestation', repo: 'tailbond/tailbond', ...over });
+const avail = (over = {}) => upd({ available: '0.2.0', notes_url: NOTES, verified: 'attestation', ...over });
 const mirror = { version: '0.2.0', files: 5, bytes: 58.4e6 };
 
 // ---- GL travel router (Slate 7) ----
 const sched = { passphrase_set: true, every_hours: 24, keep: 7, push: true, last: hAgo(5), last_push: hAgo(5) };
-const router = (u, bk = sched) => {
+const router = (u0, bk = sched) => {
+  const u = { ...u0, ...(u0.available && u0.verified === 'attestation' ? { verified: 'mirror', source: u0.source || 'mirror' } : {}) };
   const fx = connected(twoWans, { update: u, settings: { backup: bk } });
   return { ...fx, clock, info: { installed: true, version: u.current === '0.2.0' ? '0.2.0-r1' : '0.1.0-r42', role: 'client', enabled: true, running: true, kill_switch: true } };
 };
@@ -72,7 +76,8 @@ const flintBackups = [
   { name: 'slate7-2026-11-02T1700.tbbackup', client: 'slate7', size: 6100, created: hAgo(5) },
   { name: 'beryl-2026-10-30T2210.tbbackup', client: 'beryl', size: 5900, created: hAgo(72) },
 ];
-const flint = (u) => {
+const flint = (u0) => {
+  const u = { ...u0, verify: 'sha256-only', repo: undefined, ...(u0.verified ? { verified: 'sha256' } : {}) };
   const fx = serverBase({ clients: flintClients, update: u }, {}, { backup: { passphrase_set: true, every_hours: 24, keep: 7, last: hAgo(19) } });
   return { ...withApi(fx, {
     'GET /api/update': u,
@@ -88,7 +93,7 @@ const upFiles = [
   ['tailbond_0.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk', 8.9e6],
   ['stable.json', 2140],
   ['tailbond-0.2.0.apk', 27.8e6],
-  ['stable.json.sig', 120],
+  ['stable.json.sigstore.json', 13987],
   ['tailbond_0.2.0-r1_aarch64_cortex-a53.ipk', 8.8e6],
 ];
 // steps: {text} clicks the first element with that text, {click} a selector,
@@ -165,7 +170,7 @@ export const webStates = {
 };
 const vpsFiles = [
   ['tailbond-server-0.2.0-1.fc44.x86_64.rpm', 9.8e6],
-  ['stable.json.sig', 120],
+  ['stable.json.sigstore.json', 13987],
   ['tailbond_0.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk', 8.9e6],
   ['stable.json', 2140],
   ['tailbond-0.2.0.apk', 27.8e6],

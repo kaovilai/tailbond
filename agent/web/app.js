@@ -916,6 +916,14 @@ async function updAction(path, body, okMsg) {
   } catch (e) { toast(e.message, true); return null; }
 }
 
+// how the offered update was checked (status update.verified)
+function verifiedText(u) {
+  if (u.verified === 'attestation') return `verified: built by ${u.repo || 'the project'}'s release workflow on GitHub`;
+  if (u.verified === 'mirror') return `verified by ${homeName()} before it offered it`;
+  if (u.verified === 'sha256') return "checksums only (no GitHub proof of who built it)";
+  return '';
+}
+
 function renderUpdates(st) {
   const box = $('#upd-card');
   const u = updOf(st);
@@ -973,7 +981,10 @@ function renderUpdates(st) {
   if (u.last_check && policy !== 'off') meta.push(`Checked ${fmtAgo(u.last_check)}`);
   if (lr && lr.result === 'ok' && lr.detail !== 'reinstalled_after_firmware_upgrade' && lr.version) meta.push(`last update: ${lr.from ? lr.from + ' → ' : ''}${lr.version}${lr.at ? ', ' + fmtWhen(lr.at) : ''}, worked`);
   if (!srv) meta.push(u.source === 'mirror' ? `updates come from ${homeName()} (your home server)` : u.source === 'upload' ? 'from a file uploaded by hand' : u.source === 'public' ? `updates come from the internet (${homeName()} didn't have them)` : '');
+  if (u.available) meta.push(verifiedText(u));
   if (meta.filter(Boolean).length) now.push(h('p', { class: 'muted small', text: meta.filter(Boolean).join(' · ').replace(/^./, (c) => c.toUpperCase()) }));
+  if (u.error && !busy && u.state !== 'failed' && policy !== 'off') now.push(h('p', { class: 'small warn-text', text: `Last check: ${u.error}` }));
+  if (srv && u.verify === 'sha256-only') now.push(h('p', { class: 'muted small', text: "Checksums only (update.verify): tailbond trusts whoever serves the update list, without GitHub's proof of who built it. Fine for a server without GitHub; otherwise switch back to attestation." }));
   const acts = [];
   if (!pinned && policy !== 'off') acts.push(h('button', { class: 'btn', type: 'button', disabled: busy, onclick: () => updAction('/api/update/check', {}, 'Checking for updates…') }, 'Check now'));
   if (!pinned && u.available && !busy) acts.push(h('button', { class: 'btn primary', type: 'button', onclick: () => confirmInstall(u) }, `Install ${u.available} now`));
@@ -1044,7 +1055,7 @@ function closeDlg() { $('#ub-dialog').close(); }
 function openUpload() {
   ub.upFiles = [];
   const list = h('ul', { class: 'ub-files' });
-  const input = h('input', { type: 'file', multiple: true, id: 'up-files', accept: '.json,.sig,.ipk,.apk,.rpm,.gz' });
+  const input = h('input', { type: 'file', multiple: true, id: 'up-files', accept: '.json,.ipk,.apk,.rpm,.gz' });
   const go = h('button', { class: 'btn primary', type: 'button', disabled: true }, 'Upload');
   const draw = () => {
     list.replaceChildren(...ub.upFiles.map((f) => h('li', { class: 'up-' + f.st },
@@ -1053,8 +1064,9 @@ function openUpload() {
     go.disabled = !ub.upFiles.length || ub.upFiles.some((f) => f.st === 'send');
   };
   input.addEventListener('change', () => {
-    // the channel file and its signature first: the agent checks the files against it
-    const rank = (n) => (/\.json$/.test(n) ? 0 : /\.json\.sig$/.test(n) ? 1 : 2);
+    // the attestation, then the channel file (checked as soon as both are
+    // there), then the files: the agent checks them against it
+    const rank = (n) => (/\.json\.sigstore\.json$/.test(n) ? 0 : /\.json$/.test(n) ? 1 : 2);
     ub.upFiles = [...input.files].sort((a, b) => rank(a.name) - rank(b.name)).map((file) => ({ file, st: 'wait' }));
     draw();
   });
@@ -1075,7 +1087,7 @@ function openUpload() {
     const all = ok === ub.upFiles.length;
     result.className = all ? 'ub-note ok' : 'ub-note bad';
     result.textContent = all
-      ? `All ${ok} files added. Once the signature checks out (a few seconds), the update shows on this page and devices can get it from here.`
+      ? `All ${ok} files added. Once the update list checks out (a few seconds), the update shows on this page and devices can get it from here.`
       : `${ub.upFiles.length - ok} of ${ub.upFiles.length} files weren't accepted (see above). Check they come from the same release as stable.json, then upload those again.`;
     if (all) { go.classList.add('hidden'); closeBtn.className = 'btn primary'; closeBtn.textContent = 'Done'; }
     ubOpen();
@@ -1085,10 +1097,12 @@ function openUpload() {
   dlg(h('h3', { text: 'Upload an update' }),
     h('p', { class: 'small', text: "For a server without internet, or where GitHub is blocked. On a computer with internet, open the release page and download:" }),
     h('ul', { class: 'small ub-need' },
-      h('li', {}, h('b', { text: 'stable.json' }), ' and ', h('b', { text: 'stable.json.sig' }), ' (the list of files and its signature)'),
+      h('li', {}, h('b', { text: 'stable.json' }), ' and ', h('b', { text: 'stable.json.sigstore.json' }), " (the list of files, and GitHub's proof that this project's release built it)"),
       h('li', {}, 'the files your machines need: ', h('b', { text: '.rpm' }), ' or ', h('b', { text: '.tar.gz' }), ' for this server, ', h('b', { text: '.ipk' }), ' for GL routers, ', h('b', { text: '.apk' }), ' for phones')),
     h('label', { class: 'btn', for: 'up-files' }, 'Choose files…'), input, list,
-    h('p', { class: 'muted small', text: "tailbond checks the signature before using anything, so a wrong or changed file is refused. Devices then update from this server as usual." }),
+    h('p', { class: 'muted small', text: (ub.upd && ub.upd.verify === 'sha256-only')
+      ? 'Checksums only (update.verify): stable.json.sigstore.json is optional; every file is checked against stable.json, so a damaged file is refused. Devices then update from this server as usual.'
+      : "tailbond checks GitHub's proof and every file's checksum before using anything, so a wrong or changed file is refused. Devices then update from this server as usual." }),
     result,
     h('div', { class: 'row end' }, closeBtn, go));
 }

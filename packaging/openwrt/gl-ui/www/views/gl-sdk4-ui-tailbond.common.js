@@ -504,7 +504,8 @@
         }, function (e) { u.busy = false; u.err = self.humanError(e); });
       },
       pickUpload: function (e) {
-        var rank = function (n) { return /\.json$/.test(n) ? 0 : /\.json\.sig$/.test(n) ? 1 : 2; };
+        // the attestation, then the update list (checked once both are there), then the files
+        var rank = function (n) { return /\.json\.sigstore\.json$/.test(n) ? 0 : /\.json$/.test(n) ? 1 : 2; };
         this.ubFiles = Array.prototype.slice.call(e.target.files || []).sort(function (a, b) { return rank(a.name) - rank(b.name); });
         this.ub.files = this.ubFiles.map(function (f) { return { name: f.name, size: f.size, st: "wait", err: "" }; });
       },
@@ -579,7 +580,15 @@
         if (u.last_check && policy !== "off") meta.push("Checked " + fmtAgo(u.last_check));
         if (lr && lr.result === "ok" && lr.detail !== "reinstalled_after_firmware_upgrade" && lr.version) meta.push("last update: " + (lr.from ? lr.from + " → " : "") + lr.version + (lr.at ? ", " + fmtWhen(lr.at) : "") + ", worked");
         if (!srv && u.source) meta.push(u.source === "mirror" ? "updates come from " + (this.serverShort || "your home server") + " (your home server)" : u.source === "upload" ? "from a file uploaded by hand" : "updates come from the internet (" + (this.serverShort || "your home server") + " didn't have them)");
+        if (u.available) {
+          var how = u.verified === "attestation" ? "verified: built by " + (u.repo || "the project") + "'s release workflow on GitHub"
+            : u.verified === "mirror" ? "verified by " + (this.serverShort || "your home server") + " before it offered it"
+            : u.verified === "sha256" ? "checksums only (no GitHub proof of who built it)" : "";
+          if (how) meta.push(how);
+        }
         if (meta.length) body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, meta.join(" · ").replace(/^./, function (c) { return c.toUpperCase(); })));
+        if (u.error && !busyState && u.state !== "failed" && policy !== "off") body.push(h("div", { class: "tb-small", style: { marginTop: "6px", color: "#b07a12" } }, "Last check: " + u.error));
+        if (srv && u.verify === "sha256-only") body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, "Checksums only: this router can't check GitHub's proof of who built an update (that check is left out of the router version to save space), so it trusts the update list it downloads from GitHub over HTTPS. A Linux home server checks the proof; see docs/updates.md."));
         var acts = [];
         if (!pinned && policy !== "off") acts.push(this.btn(h, "Check now", function () { self.updPost("/api/update/check", {}, "Checking for updates…"); }, "", busyState || this.busy.upd));
         if (!pinned && u.available && !busyState) acts.push(this.btn(h, "Install " + u.available + " now", function () { self.confirmInstall(u); }, "primary", this.busy.upd));
@@ -753,16 +762,18 @@
           kids.push(h("div", { class: "tb-dialog-t" }, "Upload an update"),
             p("For a router without internet, or where GitHub is blocked. On a computer with internet, open the release page and download:"),
             h("ul", { class: "tb-steps", style: { marginTop: 0 } }, [
-              h("li", [h("b", "stable.json"), " and ", h("b", "stable.json.sig"), " (the list of files and its signature)"]),
+              h("li", [h("b", "stable.json"), " and ", h("b", "stable.json.sigstore.json"), " (the list of files, and GitHub's proof that this project's release built it)"]),
               h("li", ["the files your devices need: ", h("b", ".ipk"), " for GL routers, ", h("b", ".apk"), " for phones"])
             ]),
-            h("label", { class: "tb-btn small", style: { marginTop: "10px" } }, ["Choose files…", h("input", { class: "tb-up", style: { display: "none" }, attrs: { type: "file", multiple: true, accept: ".json,.sig,.ipk,.apk,.rpm,.gz" }, on: { change: function (e) { self.pickUpload(e); } } })]),
+            h("label", { class: "tb-btn small", style: { marginTop: "10px" } }, ["Choose files…", h("input", { class: "tb-up", style: { display: "none" }, attrs: { type: "file", multiple: true, accept: ".json,.ipk,.apk,.rpm,.gz" }, on: { change: function (e) { self.pickUpload(e); } } })]),
             u.files.length ? h("div", { class: "tb-list", style: { marginTop: "10px" } }, u.files.map(function (f) {
               var stx = { wait: ["", ""], send: ["#b07a12", "uploading…"], ok: ["#13a35a", "✓ added"], bad: ["#f56c6c", "✗ " + f.err] }[f.st];
               return h("div", { class: "tb-li", style: { padding: "6px 0" } }, [h("span", { class: "tb-mono tb-grow", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name), h("span", { class: "tb-muted tb-small" }, fmtBytes(f.size)), h("span", { class: "tb-small", style: { color: stx[0], minWidth: "70px", textAlign: "right" } }, stx[1])]);
             })) : null,
-            p("tailbond checks the signature before using anything, so a wrong or changed file is refused. Devices then update from this router as usual.", { fontSize: "12px", marginTop: "10px" }),
-            u.done ? this.alert(h, "ok", null, "All " + u.files.length + " files added. Once the signature checks out (a few seconds), the update shows on this page and devices can get it from here.") : null,
+            p((this.upd().verify === "sha256-only"
+              ? "Checksums only: every file is checked against stable.json, so a damaged file is refused (stable.json.sigstore.json is optional here). To check GitHub's proof yourself first: gh attestation verify stable.json -R OWNER/REPO on the computer. "
+              : "tailbond checks GitHub's proof and every file's checksum before using anything, so a wrong or changed file is refused. ") + "Devices then update from this router as usual.", { fontSize: "12px", marginTop: "10px" }),
+            u.done ? this.alert(h, "ok", null, "All " + u.files.length + " files added. Once the update list checks out (a few seconds), the update shows on this page and devices can get it from here.") : null,
             err);
           foot = u.done ? [this.btn(h, "Done", close, "primary")]
             : [this.btn(h, "Close", close), this.btn(h, u.busy ? "Uploading…" : "Upload", function () { self.doUpload(); }, "primary", u.busy || !u.files.length)];
