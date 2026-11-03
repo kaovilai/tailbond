@@ -188,8 +188,9 @@ Two ways to stay current:
 - **Recommended: [Obtainium](https://obtainium.imranr.dev/).** It tracks
   GitHub releases and installs updates for you. In Obtainium tap **Add App**,
   paste `https://github.com/kaovilai/tailbond`, keep the source "GitHub", and
-  set the APK filter to `tailbond-[0-9].*\.apk`. It works only with the
-  release APK (same key as the one installed), not a debug build.
+  set the APK filter to `^tailbond-[0-9.]+\.apk$` (leaves out `-debug` and
+  pre-release APKs). It works only with the release APK (same key as the
+  one installed), not a debug build.
 - **In the app**: Settings → **Updates**. About once a day (when the app
   comes to the front or the page opens, and the last check is older than
   24 h; **Check now** any time) it asks
@@ -207,6 +208,12 @@ Two ways to stay current:
 The app's requests to its server (`GET /api/peers` and the others with the
 client token) carry `X-Tailbond-Version` and `X-Tailbond-Kind: android`, so
 the server's dashboard can show which phones are out of date.
+
+Installing an update ends the app's process, so the tunnel drops. If it was
+on (tailbond remembers whether you turned it on or off), the
+`MY_PACKAGE_REPLACED` broadcast reconnects it, as long as Android still lets
+tailbond be the VPN (`VpnService.prepare()` needs no dialog) and a server is
+paired.
 
 **The release key.** Android installs an update only if it's signed with
 the same key as the installed app, so every release APK is signed with one

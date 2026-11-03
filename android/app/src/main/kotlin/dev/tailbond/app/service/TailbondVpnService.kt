@@ -130,6 +130,7 @@ class TailbondVpnService : MqvpnVpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_DISCONNECT -> {
+                TunnelWanted.set(this, false)
                 stopping = true
                 restartPending = false
                 endRun()
@@ -154,6 +155,7 @@ class TailbondVpnService : MqvpnVpnService() {
         val list = repo.servers.value
         if (list.isEmpty()) {
             LiveState.reset(ConnState.ERROR, getString(R.string.err_not_paired), ErrorKind.NOT_PAIRED)
+            TunnelWanted.set(this, false)
             finish()
             return START_NOT_STICKY
         }
@@ -162,6 +164,8 @@ class TailbondVpnService : MqvpnVpnService() {
             if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
         )
         stopping = false
+        // reconnected after an app update (PackageReplacedReceiver) while this stays true
+        TunnelWanted.set(this, true)
         // turning tailbond on again ends a "Switch back to Tailscale"
         if (repo.settings.value.handedToTailscale) repo.updateSettings { it.copy(handedToTailscale = false) }
         if (!running && session == null) startRun(list)
@@ -302,6 +306,7 @@ class TailbondVpnService : MqvpnVpnService() {
     private fun onServersChanged(list: List<ServerProfile>) {
         if (!running) return
         if (list.isEmpty()) {
+            TunnelWanted.set(this, false)
             stopping = true
             endRun()
             if (session != null) stopTunnel() else finish()
@@ -597,6 +602,7 @@ class TailbondVpnService : MqvpnVpnService() {
 
     override fun onRevoke() {
         // another VPN took over, or the user revoked us
+        TunnelWanted.set(this, false)
         stopping = true
         session = null
         main.launch { endRun() }
