@@ -152,7 +152,8 @@ grep -qE 'ni\{VPN CONNECTED|Transports: VPN' "$OUT/connectivity-connected.txt" \
 TUN="$(sh_ ip -o -4 addr show | awk '$4 ~ /^10\.77\.0\./ {print $2; exit}')"
 if [ -n "$TUN" ]; then
   ok "$TUN has $(sh_ ip -o -4 addr show dev "$TUN" | awk '{print $4}')"
-  MTU="$(sh_ cat "/sys/class/net/$TUN/mtu")"
+  # (/sys/class/net is closed to adb's shell by SELinux)
+  MTU="$(sh_ ip -o link show dev "$TUN" | sed -n 's/.* mtu \([0-9]*\).*/\1/p')"
   # 1280 (the client default, like tailbondd's client.mtu), less the 8-byte
   # reorder header when the mode negotiates reordering (Speed)
   if [ "$MTU" = 1280 ] || [ "$MTU" = 1272 ]; then ok "$TUN MTU $MTU (1280 cap)"; else bad "$TUN MTU is $MTU, not 1280 (1272 with reorder)"; fi
