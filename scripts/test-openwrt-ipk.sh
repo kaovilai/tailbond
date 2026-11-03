@@ -160,6 +160,14 @@ grep -q 'nftset=/bank.example/4#inet#tailbond#' /etc/tailbond/state/bypass-nftse
 jsonfilter -i /etc/tailbond/state/bypass-status.json -e '@.domains' | grep -qx none && ok "plain dnsmasq detected: website rules wait (domains=none)" || bad "domains status"
 if nft list tables >/dev/null 2>&1; then
 	grep -q dnsmasq-full /etc/tailbond/state/bypass-status.json && ok "the reason names dnsmasq-full" || bad "reason"
+	# bypass-status.json is there from the agent's start (no rules yet): wait
+	# for the hook run that loads the two rules added above
+	applied() {
+		nft list table inet tailbond 2>/dev/null | grep -q 'ether saddr aa:bb:cc:dd:ee:ff' &&
+			ip rule | grep -q 'fwmark 0x2000000/0x7000000 lookup 77' && ip rule | grep -q 'fwmark 0x1000000/0x7000000 lookup main'
+	}
+	i=0; while [ $i -lt 30 ] && ! applied; do sleep 1; i=$((i+1)); done
+	applied || uclient-fetch -q -O - http://127.0.0.1:8077/api/logs | grep -o '[^"]*bypass[^"]*' | tail -n 20
 	nft list table inet tailbond | grep -q 'ether saddr aa:bb:cc:dd:ee:ff' && ok "nft table inet tailbond loaded (device rule)" || bad "nft table"
 	ip rule | grep -q 'fwmark 0x2000000/0x7000000 lookup 77' && ip rule | grep -q 'fwmark 0x1000000/0x7000000 lookup main' \
 		&& ok "ip rules for 'always tailbond' and 'direct'" || { bad "ip rules"; ip rule; }
