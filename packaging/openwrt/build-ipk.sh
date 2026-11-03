@@ -20,11 +20,8 @@
 #                             app a home server offers on its phone page
 # Env: TB_VERSION (default: <tag>-r1 on a v* tag, else 0.1.0-r<commit count>;
 #      a leading v is dropped), TB_ARCHS (space separated),
-#      TB_UPDATE_REPO / TB_UPDATE_SOURCE (release repository + update source
-#      compiled into tailbondd, scripts/release/ldflags.sh).
-# tailbondd is built with -tags noattest: no GitHub attestation verifier
-# (sigstore-go adds ~8 MB); the router takes updates from its server's
-# mirror, which verified them (docs/updates.md).
+#      TB_UPDATE_REPO (the GitHub repository whose releases the update
+#      check reads, compiled into tailbondd, scripts/release/ldflags.sh).
 #
 # Versions: TB_VERSION is <semver>-r<N>. The file name keeps it as is
 # (tailbond_1.2.3-beta.1-r1_<arch>.ipk); the control Version turns the
@@ -95,7 +92,7 @@ elif [ -d "$ROOT/agent/cmd/tailbondd" ]; then
     tailbondd="$stage/tailbondd"
     ldflags="$(tb_ldflags "${AGENT_VERSION:-$TB_VERSION}")"
     (cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-        go build -trimpath -tags noattest -ldflags "$ldflags" -o "$tailbondd" ./cmd/tailbondd)
+        go build -trimpath -ldflags "$ldflags" -o "$tailbondd" ./cmd/tailbondd)
 else
     die "no agent/ in this tree: set TAILBONDD_BIN to a linux/arm64 tailbondd binary"
 fi

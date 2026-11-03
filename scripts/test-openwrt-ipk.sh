@@ -10,14 +10,14 @@
 # package keeps the settings; update-ipk installs a newer package and rolls
 # back one whose agent never answers; a simulated firmware upgrade (the
 # sysupgrade hook's keep list restored onto a system without the package)
-# reinstalls it at boot from the kept cache, and from a home server mirror
-# when the cache is gone.
+# reinstalls it at boot from the kept cache, and from the GitHub release
+# (checked against SHA256SUMS) when the cache is gone.
 #
 #   scripts/test-openwrt-ipk.sh [path/to/tailbond_*_aarch64_cortex-a53.ipk]
 #
 # The image has no feed for our Depends (kmod-tun, ip-full, ...), so the
-# test strips them; lua + lua-cjson (present on GL firmware) and uhttpd (the
-# fake mirror) come from the OpenWrt feed, so the container needs network.
+# test strips them; lua + lua-cjson (present on GL firmware) and uhttpd (a
+# fake GitHub) come from the OpenWrt feed, so the container needs network.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -52,8 +52,7 @@ repack "$TMP/tailbond_0.0.1-r1_aarch64_cortex-a53.ipk" 0.0.1-r1
 repack "$TMP/tailbond_99.0.0-r1_aarch64_cortex-a53.ipk" 99.0.0-r1
 printf '#!/bin/sh\necho "broken build" >&2\nexit 1\n' >"$TMP/broken-tailbondd"
 repack "$TMP/tailbond_99.1.0-r1_aarch64_cortex-a53.ipk" 99.1.0-r1 "$TMP/broken-tailbondd"
-# A pairing link whose payload names the server (the mirror fallback finds
-# it through `tailscale ip`).
+# A pairing link whose payload names the server.
 printf '%s' '{"v":1,"name":"slate7","server_name":"homebox","sni":"homebox.tail1234.ts.net","server":"203.0.113.7:443"}' |
     base64 -w0 | tr '+/' '-_' | tr -d '=' >"$TMP/pair-d.txt"
 
@@ -283,39 +282,45 @@ mkdir -p /tmp/tailbond-reinstall.ran # this boot's run already happened
 /etc/tailbond/pkg/reinstall boot
 [ ! -f /usr/lib/opkg/info/tailbond.control ] && ok "at most once per boot" || bad "ran twice in one boot"
 
-echo "== reinstall from the home server's mirror when the cache is gone"
-rm -f /etc/tailbond/pkg/*.ipk /etc/tailbond/pkg/current /etc/tailbond/pkg/previous
+echo "== reinstall from the GitHub release when the cached ipk is gone"
 if opkg install uhttpd >/dev/null 2>&1; then
-	M=/tmp/mirror/updates
-	mkdir -p $M/files
+	G=/tmp/gh
 	n=tailbond_99.0.0-r1_aarch64_cortex-a53.ipk
-	cp $V99 $M/files/$n
-	chmod 644 $M/files/$n # uhttpd serves world-readable files only
-	mf() { # SHA
-		printf '{"format":1,"channel":"stable","version":"99.0.0","artifacts":[{"name":"tailbond-linux-x86_64.tar.gz","kind":"linux","arch":"x86_64","url":"x","sha256":"0","size":1},{"name":"%s","kind":"ipk","arch":"aarch64_cortex-a53","url":"x","sha256":"%s","size":%s}]}\n' \
-			"$n" "$1" "$(wc -c <$M/files/$n | tr -d ' ')" >$M/stable.json
+	mkdir -p $G/dl $G/repos/kaovilai/tailbond/releases/tags
+	cp $V99 $G/dl/$n
+	cp $V99 $G/dl/tailbond_99.0.0-r1_aarch64_generic.ipk
+	chmod 644 $G/dl/* # uhttpd serves world-readable files only
+	rel() { # FILE: a release with both ipks and SHA256SUMS
+		printf '{"tag_name":"v99.0.0","assets":[{"name":"%s","browser_download_url":"http://127.0.0.1:8099/dl/%s"},{"name":"tailbond_99.0.0-r1_aarch64_generic.ipk","browser_download_url":"http://127.0.0.1:8099/dl/tailbond_99.0.0-r1_aarch64_generic.ipk"},{"name":"SHA256SUMS","browser_download_url":"http://127.0.0.1:8099/dl/SHA256SUMS"}]}\n' "$n" "$n" >"$1"
 	}
-	mf 0000000000000000000000000000000000000000000000000000000000000000
-	uhttpd -f -p 127.0.0.1:8099 -h /tmp/mirror >/dev/null 2>&1 &
+	rel $G/repos/kaovilai/tailbond/releases/tags/v99.0.0
+	rel $G/repos/kaovilai/tailbond/releases/latest
+	echo "0000000000000000000000000000000000000000000000000000000000000000  $n" >$G/dl/SHA256SUMS
+	chmod 644 $G/dl/SHA256SUMS $G/repos/kaovilai/tailbond/releases/latest $G/repos/kaovilai/tailbond/releases/tags/v99.0.0
+	uhttpd -f -p 127.0.0.1:8099 -h $G >/dev/null 2>&1 &
 	U1=$!
 	sleep 1
-	TB_MIRROR=http://127.0.0.1:8099 TB_TRIES=1 /etc/tailbond/pkg/reinstall now 2>/tmp/reinstall.err
-	[ ! -f /usr/lib/opkg/info/tailbond.control ] && [ ! -e /etc/tailbond/pkg/$n ] && grep -q "doesn't match the manifest" /tmp/reinstall.err \
-		&& ok "an ipk that doesn't match the manifest's sha256 is refused" || { bad "bad sha256 check"; cat /tmp/reinstall.err; }
-	mf "$(sha256sum $M/files/$n | cut -d' ' -f1)"
-	# The server by name, through a stand-in tailscale CLI, on :8077 as the real mirror.
-	printf '#!/bin/sh\n[ "$1 $2 $3" = "ip -4 homebox" ] && echo 127.0.0.1\n' >/usr/sbin/tailscale && chmod +x /usr/sbin/tailscale
-	uhttpd -f -p 127.0.0.1:8077 -h /tmp/mirror >/dev/null 2>&1 &
-	U2=$!
-	sleep 1
-	TB_TRIES=1 /etc/tailbond/pkg/reinstall now 2>/tmp/reinstall.err
+	# the pointer still names the installed version; its ipk is gone
+	rm -f /etc/tailbond/pkg/*.ipk
+	echo $n >/etc/tailbond/pkg/current
+	TB_API_URL=http://127.0.0.1:8099 TB_TRIES=1 /etc/tailbond/pkg/reinstall now 2>/tmp/reinstall.err
+	[ ! -f /usr/lib/opkg/info/tailbond.control ] && [ ! -e /etc/tailbond/pkg/$n ] && grep -q "doesn't match the release's SHA256SUMS" /tmp/reinstall.err \
+		&& ok "an ipk that doesn't match SHA256SUMS is refused" || { bad "bad sha256 check"; cat /tmp/reinstall.err; }
+	(cd $G/dl && sha256sum $n tailbond_99.0.0-r1_aarch64_generic.ipk >SHA256SUMS && chmod 644 SHA256SUMS)
+	TB_API_URL=http://127.0.0.1:8099 TB_TRIES=1 /etc/tailbond/pkg/reinstall now 2>/tmp/reinstall.err
 	[ "$(ver)" = 99.0.0-r1 ] && [ "$(cat /etc/tailbond/pkg/current)" = $n ] && [ "$(res detail)" = reinstalled_after_firmware_upgrade ] \
-		&& ok "found the paired server (pairing link -> tailscale ip), verified and installed its ipk" || { bad "mirror reinstall"; cat /tmp/reinstall.err /tmp/tailbond-reinstall.log; }
+		&& ok "downloaded that version's ipk from the GitHub release, checked it, installed it" || { bad "GitHub reinstall"; cat /tmp/reinstall.err /tmp/tailbond-reinstall.log; }
 	[ "$(uci -q get tailbond.main.keep_test)" = kept ] && ok "settings intact" || bad "settings lost"
-	kill $U1 $U2 2>/dev/null
-	rm -f /usr/sbin/tailscale
+	# nothing cached at all: the latest release's ipk for this router (cortex-a53 beats generic)
+	cp /etc/tailbond/pkg/reinstall /tmp/reinstall
+	opkg remove tailbond >/dev/null 2>&1
+	mkdir -p /tmp/pkgB
+	TB_PKG_DIR=/tmp/pkgB TB_API_URL=http://127.0.0.1:8099 TB_TRIES=1 /tmp/reinstall now 2>/tmp/reinstall.err
+	[ "$(ver)" = 99.0.0-r1 ] && [ "$(cat /tmp/pkgB/current)" = $n ] \
+		&& ok "no cache: the latest release's ipk for this architecture" || { bad "latest reinstall"; cat /tmp/reinstall.err /tmp/tailbond-reinstall.log; ls /tmp/pkgB; }
+	kill $U1 2>/dev/null
 else
-	echo "  SKIP mirror fallback: uhttpd not installable from the feed"
+	echo "  SKIP GitHub fallback: uhttpd not installable from the feed"
 fi
 
 [ "$fail" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"

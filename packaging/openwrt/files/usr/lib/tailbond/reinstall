@@ -10,17 +10,19 @@
 # runs it in the background at every boot:
 #
 #   reinstall boot    package installed: nothing to do. Missing: install
-#                     the cached ipk (/etc/tailbond/pkg/current), else the
-#                     one the home server's mirror offers; retry for up to
-#                     20 minutes (the network or GL's Tailscale may come up
-#                     later). At most once per boot.
+#                     the cached ipk (/etc/tailbond/pkg/current), else
+#                     download that version's ipk from the GitHub release
+#                     (the latest release's when nothing names one), checked
+#                     against the release's SHA256SUMS; retry for up to 20
+#                     minutes (the network may come up later). At most once
+#                     per boot.
 #   reinstall now     the same, ignoring the once-per-boot marker
 #
 # Logs to the system log (logread -e tailbond-reinstall). Writes
 # /etc/tailbond/state/update-result.json with detail
 # "reinstalled_after_firmware_upgrade" on success.
-# Env (tests): TB_PKG_DIR, TB_MIRROR (base URL(s) of a mirror, instead of the
-# servers in tailbond.json), TB_TRIES (40), TB_PAUSE (30 s).
+# Env (tests): TB_PKG_DIR, TB_API_URL (a fake GitHub API; http allowed then),
+# TB_TRIES (40), TB_PAUSE (30 s).
 
 PKGDIR="${TB_PKG_DIR:-/etc/tailbond/pkg}"
 STATE=/etc/tailbond/state
@@ -58,81 +60,58 @@ cached() {
 	[ -n "$f" ] && echo "$f"
 }
 
-# b64url_json PAIRING_URI -> the payload JSON (awk: stock OpenWrt's
-# busybox has no base64)
-b64url_json() {
-	local d
-	d="${1#*d=}"
-	printf '%s\n' "${d%%&*}" | awk 'BEGIN {
-		a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-		for (i = 0; i < 62; i++) v[substr(a, i + 1, 1)] = i
-		v["-"] = 62; v["_"] = 63; v["+"] = 62; v["/"] = 63
-	}
-	{
-		for (i = 1; i <= length($0); i++) {
-			c = substr($0, i, 1)
-			if (!(c in v)) continue
-			b = b * 64 + v[c]; n += 6
-			if (n >= 8) { n -= 8; p = 2 ^ n; printf "%c", int(b / p) % 256; b = b % p }
-		}
-	}'
+API="${TB_API_URL:-https://api.github.com}"
+
+# fetch URL FILE: https only (http only when the API is, for tests)
+fetch() {
+	case "$1" in
+	https://*) ;;
+	http://*) case "$API" in http://*) ;; *) log "refusing $1: not https"; return 1 ;; esac ;;
+	*) return 1 ;;
+	esac
+	uclient-fetch -q -T 120 -O "$2" "$1" 2>/dev/null
 }
 
-# Mirror candidates: each paired server's Tailscale address (the mirror
-# answers tailnet sources without a token; the tunnel isn't up without the
-# package).
-mirrors() {
-	local uri j name sni ip
-	if [ -n "${TB_MIRROR:-}" ]; then
-		echo "$TB_MIRROR"
-		return
-	fi
-	[ -f "$CONF" ] || return
-	for uri in $(jsonfilter -i "$CONF" -e '@.client.servers[*].pairing_uri' -e '@.client.pairing_uri' 2>/dev/null); do
-		j="$(b64url_json "$uri")"
-		[ -n "$j" ] || continue
-		name="$(echo "$j" | jsonfilter -e '@.server_name' 2>/dev/null)"
-		sni="$(echo "$j" | jsonfilter -e '@.sni' 2>/dev/null)"
-		[ -n "$name" ] || name="${sni%%.*}"
-		for h in $name $sni; do
-			ip="$(tailscale ip -4 "$h" 2>/dev/null | head -1)"
-			[ -n "$ip" ] && echo "http://$ip:8077"
-		done
-		case "$sni" in *.ts.net) echo "http://$sni:8077" ;; esac
-	done | awk '!seen[$0]++'
-}
-
-# from_mirror -> path of a verified ipk in $PKGDIR
-from_mirror() {
-	local channel tmp base a name sha size best
-	channel="$(jsonfilter -i "$CONF" -e '@.update.channel' 2>/dev/null)"
-	channel="${channel:-stable}"
-	tmp="$PKGDIR/.mirror.$$"
+# from_github -> path of a checked ipk in $PKGDIR: the release of the
+# version the cache pointer names (tailbond_<v>-r<N>_<arch>.ipk), else the
+# latest release's ipk for this router, checked against SHA256SUMS
+from_github() {
+	local repo name ver rel tmp a n url sums want
+	repo="$(jsonfilter -i "$CONF" -e '@.update.repo' 2>/dev/null)"
+	repo="${repo#https://github.com/}"
+	repo="${repo%/}"
+	repo="${repo%.git}"
+	repo="${repo:-kaovilai/tailbond}"
 	mkdir -p "$PKGDIR"
-	for base in $(mirrors); do
-		uclient-fetch -q -T 20 -O "$tmp.json" "$base/updates/$channel.json" 2>/dev/null || continue
+	tmp="$PKGDIR/.gh.$$"
+	name="$(cat "$PKGDIR/current" 2>/dev/null)"
+	ver="$(echo "$name" | sed -n 's/^tailbond_\(.*\)-r[0-9]*_.*\.ipk$/\1/p')"
+	if [ -n "$ver" ]; then rel="$API/repos/$repo/releases/tags/v$ver"; else rel="$API/repos/$repo/releases/latest"; name=""; fi
+	fetch "$rel" "$tmp.json" || { log "can't reach $rel yet"; rm -f "$tmp.json"; return 1; }
+	if [ -z "$name" ]; then
 		# opkg print-architecture lists by ascending priority: the last match wins
-		best=""
 		for a in $(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }'); do
-			name="$(jsonfilter -i "$tmp.json" -e "@.artifacts[@.kind='ipk' && @.arch='$a'].name" 2>/dev/null | head -1)"
-			[ -n "$name" ] && best="$name"
+			n="$(jsonfilter -i "$tmp.json" -e '@.assets[*].name' 2>/dev/null | grep -E "^tailbond_.*_${a}\.ipk$" | head -1)"
+			[ -n "$n" ] && name="$n"
 		done
-		[ -n "$best" ] || { log "$base: no ipk for this router's architecture"; continue; }
-		case "$best" in */* | .* | "") continue ;; esac
-		sha="$(jsonfilter -i "$tmp.json" -e "@.artifacts[@.name='$best'].sha256" 2>/dev/null | head -1)"
-		size="$(jsonfilter -i "$tmp.json" -e "@.artifacts[@.name='$best'].size" 2>/dev/null | head -1)"
-		uclient-fetch -q -T 120 -O "$tmp.ipk" "$base/updates/files/$best" 2>/dev/null || { log "$base: download of $best failed"; continue; }
-		if [ "$(sha256sum "$tmp.ipk" | cut -d' ' -f1)" = "$sha" ] && [ "$(wc -c <"$tmp.ipk" | tr -d ' ')" = "$size" ]; then
-			mv -f "$tmp.ipk" "$PKGDIR/$best"
-			echo "$best" >"$PKGDIR/current"
-			rm -f "$tmp.json"
-			log "downloaded $best from $base"
-			echo "$PKGDIR/$best"
-			return 0
-		fi
-		log "$base: $best doesn't match the manifest's sha256/size"
-	done
-	rm -f "$tmp.json" "$tmp.ipk"
+	fi
+	case "$name" in tailbond_*.ipk) ;; *) log "$rel: no ipk for this router"; rm -f "$tmp.json"; return 1 ;; esac
+	url="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='$name'].browser_download_url" 2>/dev/null | head -1)"
+	sums="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='SHA256SUMS'].browser_download_url" 2>/dev/null | head -1)"
+	rm -f "$tmp.json"
+	[ -n "$url" ] && [ -n "$sums" ] || { log "$rel: no $name or no SHA256SUMS"; return 1; }
+	fetch "$sums" "$tmp.sums" && fetch "$url" "$tmp.ipk" || { log "download of $name failed"; rm -f "$tmp.sums" "$tmp.ipk"; return 1; }
+	want="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$tmp.sums" | head -1)"
+	if [ -n "$want" ] && [ "$(sha256sum "$tmp.ipk" | cut -d' ' -f1)" = "$want" ]; then
+		mv -f "$tmp.ipk" "$PKGDIR/$name"
+		echo "$name" >"$PKGDIR/current"
+		rm -f "$tmp.sums"
+		log "downloaded $name from the GitHub release"
+		echo "$PKGDIR/$name"
+		return 0
+	fi
+	log "$name doesn't match the release's SHA256SUMS: not installing it"
+	rm -f "$tmp.sums" "$tmp.ipk"
 	return 1
 }
 
@@ -150,7 +129,7 @@ while [ "$i" -lt "$TRIES" ]; do
 	i=$((i + 1))
 	installed && exit 0 # installed meanwhile (by hand, GL's plug-in restore)
 	ipk="$(cached)"
-	[ -n "$ipk" ] || ipk="$(from_mirror)"
+	[ -n "$ipk" ] || ipk="$(from_github)"
 	if [ -n "$ipk" ]; then
 		if opkg install "$ipk" >/tmp/tailbond-reinstall.log 2>&1 && installed; then
 			result "$(ipk_version "$ipk")"
@@ -161,7 +140,7 @@ while [ "$i" -lt "$TRIES" ]; do
 		# missing dependencies come from the feeds, once online
 		[ "$updated" = 1 ] || { opkg update >/dev/null 2>&1 && updated=1; }
 	else
-		log "no cached package and no mirror reachable yet (try $i of $TRIES)"
+		log "no cached package and GitHub not reachable yet (try $i of $TRIES)"
 	fi
 	[ "$i" -lt "$TRIES" ] && sleep "$PAUSE"
 done
