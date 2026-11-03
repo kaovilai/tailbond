@@ -71,7 +71,12 @@ for try in 1 2 3; do
 	if opkg update >/tmp/opkg.log 2>&1 && opkg install lua lua-cjson >>/tmp/opkg.log 2>&1; then feed_ok=1; break; fi
 	sleep $((try * 5))
 done
-[ "$feed_ok" = 1 ] || { echo "need lua + lua-cjson from the feed:"; tail -n 25 /tmp/opkg.log; cat /etc/resolv.conf; exit 2; }
+[ "$feed_ok" = 1 ] || {
+	echo "need lua + lua-cjson from the feed:"; tail -n 25 /tmp/opkg.log
+	cat /etc/resolv.conf; nslookup downloads.openwrt.org; ip route
+	uclient-fetch -O /dev/null https://downloads.openwrt.org/releases/23.05.0/packages/aarch64_generic/base/Packages.gz
+	exit 2
+}
 
 echo "== install"
 opkg install /t/tailbond.ipk >/tmp/install.log 2>&1 && ok "opkg install" || { cat /tmp/install.log; bad "opkg install"; }
@@ -333,4 +338,7 @@ fi
 exit $fail
 IN
 chmod +x "$TMP/test.sh"
-podman run --rm --cap-add NET_ADMIN --platform linux/arm64 -v "$TMP:/t:z" "$IMAGE" /t/test.sh 2>&1 | grep -v 'image platform'
+# PODMAN: the podman command (CI: "sudo podman"; rootless networking on the
+# arm64 runner can't reach the feed).
+read -ra podman <<<"${PODMAN:-podman}"
+"${podman[@]}" run --rm --cap-add NET_ADMIN --platform linux/arm64 -v "$TMP:/t:z" "$IMAGE" /t/test.sh 2>&1 | grep -v 'image platform'
