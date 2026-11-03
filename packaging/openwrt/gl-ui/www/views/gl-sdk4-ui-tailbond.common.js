@@ -351,7 +351,7 @@
 
   // ---- updates and backups ----
   // JSON calls go through api() like everything else. Binary ones (the
-  // backup file, uploaded update files) and the restore calls (bodies up to
+  // backup file) and the restore calls (bodies up to
   // 2 MiB, more than /rpc should carry) use the same-origin proxy
   // /tailbond-api/ directly; it checks the same GL admin session.
   function proxy(method, path, body, type) {
@@ -418,20 +418,6 @@
     methods: {
       // the live update object (status) over GET /api/update
       upd: function () { return Object.assign({}, this.updX || {}, (this.st && this.st.update) || {}); },
-      // last_result "ok" | "rolled_back" | "failed" (+ detail/error), or an object
-      lastRes: function (u) {
-        var r = u.last_result;
-        if (!r) return u.detail === "reinstalled_after_firmware_upgrade" ? { result: "ok", detail: u.detail } : null;
-        return typeof r === "string" ? { result: r, detail: u.detail || u.error || "" } : r;
-      },
-      winPart: function (u, i) { return ((u.window || "03:00-05:00").split("-")[i]) || (i ? "05:00" : "03:00"); },
-      waitText: function (u) {
-        var d = (u.deferred || "").toLowerCase();
-        if (/traffic|call|busy/.test(d)) return "Waiting: a call or video is in progress. It installs once the connection is quiet.";
-        if (/server|protocol/.test(d)) return "Waiting for " + (this.serverShort || "your home server") + " to update first.";
-        if (/window/.test(d) || (!d && this.role === "server")) return "Waiting for " + this.winPart(u, 0) + ". It installs between " + this.winPart(u, 0) + " and " + this.winPart(u, 1) + ".";
-        return d ? "Waiting: " + u.deferred + "." : "Waiting.";
-      },
       loadUb: function () {
         var self = this, jobs = [api("GET", "/api/update").then(function (u) { self.updX = u; }).catch(function () {})];
         if (this.role === "server") jobs.push(api("GET", "/api/backups").then(function (b) { self.bks = Array.isArray(b) ? b : A(b && b.backups); }).catch(function () { self.bks = null; }));
@@ -442,21 +428,18 @@
         return this.run("upd", api("POST", path, body || {}), msg).then(function () { return self.loadUb(); }).catch(function () {});
       },
       confirmInstall: function (u) {
-        var self = this, conn = A(this.st.clients).filter(function (c) { return c.connected; }).length;
+        var self = this;
         this.confirm = {
-          title: "Install " + u.available + " now?",
-          body: (this.role === "server"
-            ? "tailbond on this router restarts (about a minute). " + (conn ? "The " + conn + " connected device" + (conn === 1 ? "" : "s") + " drop" + (conn === 1 ? "s" : "") + " for a moment and reconnect by themselves. " : "No device is connected right now. ")
-            : "tailbond restarts on this router; devices here are offline for about a minute. ") +
-            "If " + u.available + " doesn't work, it goes back to " + (u.current || "this version") + " by itself.",
-          ok: "Install now",
+          title: "Update to " + u.available + " now?",
+          body: "tailbond restarts; devices drop for a few seconds. If the new version doesn't start, it goes back by itself.",
+          ok: "Update now",
           run: function () { self.restartUntil = Date.now() + 180000; return self.updPost("/api/update/install", {}, "Installing " + u.available + "…"); }
         };
       },
       bset: function () { return (this.settings && this.settings.backup) || (this.st && this.st.backup) || {}; },
       openUb: function (kind) {
         this.ubFiles = [];
-        this.ub = { kind: kind, pass: "", pass2: "", err: "", busy: false, step: "pick", file: "", preview: null, files: [], summary: null, rollback: "", done: false };
+        this.ub = { kind: kind, pass: "", pass2: "", err: "", busy: false, step: "pick", file: "", preview: null, summary: null, rollback: "" };
         if (kind === "summary") {
           var self = this;
           api("GET", "/api/backup/summary").then(function (s) { if (self.ub) self.ub.summary = s; }).catch(function (e) { if (self.ub) self.ub.err = self.humanError(e); });
@@ -503,33 +486,6 @@
           u.busy = false; u.step = "done"; u.rollback = (r && r.rollback) || ""; self.ubBody = null;
         }, function (e) { u.busy = false; u.err = self.humanError(e); });
       },
-      pickUpload: function (e) {
-        // the attestation, then the update list (checked once both are there), then the files
-        var rank = function (n) { return /\.json\.sigstore\.json$/.test(n) ? 0 : /\.json$/.test(n) ? 1 : 2; };
-        this.ubFiles = Array.prototype.slice.call(e.target.files || []).sort(function (a, b) { return rank(a.name) - rank(b.name); });
-        this.ub.files = this.ubFiles.map(function (f) { return { name: f.name, size: f.size, st: "wait", err: "" }; });
-      },
-      doUpload: function () {
-        var self = this, u = this.ub, files = this.ubFiles;
-        u.busy = true;
-        var p = Promise.resolve();
-        files.forEach(function (f, i) {
-          p = p.then(function () {
-            var row = u.files[i];
-            if (row.st === "ok") return;
-            row.st = "send";
-            return proxy("POST", "/api/update/upload?name=" + encodeURIComponent(f.name), f, "application/octet-stream")
-              .then(function () { row.st = "ok"; }, function (e) { row.st = "bad"; row.err = (e && e.error) || "failed"; });
-          });
-        });
-        return p.then(function () {
-          u.busy = false;
-          var ok = u.files.filter(function (x) { return x.st === "ok"; }).length;
-          u.done = ok === u.files.length;
-          u.err = u.done ? "" : (u.files.length - ok) + " of " + u.files.length + " files weren't accepted (see above). Check they come from the same release as stable.json, then upload those again.";
-          return self.loadUb();
-        });
-      },
       saveSched: function (body, msg) {
         var self = this;
         return this.runE("sched", api("POST", "/api/backup/settings", body), msg).then(function () { self.ubSched = null; }, function (e) { if (self.ubSched) self.ubSched.err = self.humanError(e); });
@@ -539,107 +495,90 @@
       rUpdates: function (h) {
         var self = this, st = this.st, u = this.upd(), srv = this.role === "server";
         if (!st.update && !this.updX) return null; // an agent without updates
-        var lr = this.lastRes(u), pinned = !!u.pin, policy = u.policy || "auto";
-        var busyState = ["checking", "downloading", "installing", "trial"].indexOf(u.state) >= 0;
-        var chip = u.state === "rolled_back" ? ["err", "Went back to " + (u.current || "the previous version")]
+        var cur = u.current || (this.info && this.info.version) || st.version || "";
+        var policy = u.policy || "notify", off = policy === "off" || u.state === "off";
+        var selfUp = u.method === "opkg" || u.method === "static";
+        var busyState = ["checking", "downloading", "installing"].indexOf(u.state) >= 0;
+        var chip = u.state === "rolled_back" ? ["err", "Went back to " + (cur || "the previous version")]
           : u.state === "failed" ? ["err", "Update failed"]
-          : u.state === "installing" || u.state === "trial" ? ["blue", "Installing"]
+          : u.state === "installing" ? ["blue", "Installing"]
           : u.state === "checking" ? ["blue", "Checking"]
           : u.state === "downloading" ? ["blue", "Downloading"]
-          : pinned ? ["blue", "Pinned to " + u.pin]
-          : policy === "off" || u.state === "off" ? ["", "Updates off"]
+          : off ? ["", "Updates off"]
           : u.available ? ["warn", "Update available"] : ["ok", "Up to date"];
         var notes = u.notes_url ? h("a", { class: "tb-link", attrs: { href: u.notes_url, target: "_blank", rel: "noopener" } }, "What's new") : null;
-        var body = [h("div", { class: "tb-muted tb-small", style: { marginBottom: "10px" } }, "This router runs tailbond " + (u.current || (this.info && this.info.version) || st.version || ""))];
-        if (lr && lr.detail === "reinstalled_after_firmware_upgrade") {
-          body.push(this.alert(h, "ok", "tailbond was reinstalled after a firmware update",
-            "GL's firmware update removed it; it put itself back (" + (lr.version || u.current || "") + ") with all your settings" + (lr.at ? ", " + fmtWhen(lr.at) : "") + ". Nothing to do. It does this after every firmware update."));
+        var body = [h("div", { class: "tb-muted tb-small", style: { marginBottom: "10px" } }, "This router runs tailbond " + cur)];
+        var tried = u.last_result_version || u.available || "The new version";
+        if (u.detail === "reinstalled_after_firmware_upgrade") {
+          body.push(this.alert(h, "ok", "The GL firmware update removed tailbond; it reinstalled itself with your settings",
+            "Now on " + cur + (u.last_result_at ? ", since " + fmtWhen(u.last_result_at) : "") + ". Nothing to do; it does this after every firmware update."));
         }
-        if (u.state === "rolled_back" || (lr && lr.result === "rolled_back" && !u.available)) {
-          var bad = (lr && lr.version) || u.available || "The update";
-          body.push(this.alert(h, "err", bad + " didn't work here, so tailbond went back to " + (u.current || "the previous version") + " by itself",
-            (lr && lr.detail ? "Why: " + lr.detail + ". " : "") + "Everything works as before. It won't install " + bad + " again by itself; the next version installs as usual."));
+        if (u.state === "rolled_back") {
+          body.push(this.alert(h, "err", tried + " didn't start here, so tailbond went back to " + cur + " by itself",
+            (u.detail && u.detail !== "reinstalled_after_firmware_upgrade" ? "Why: " + u.detail + ". " : "") + "Everything works as before."));
         } else if (u.state === "failed") {
-          body.push(this.alert(h, "err", "Couldn't update to " + (u.available || (lr && lr.version) || "the new version"),
-            (u.error || (lr && lr.detail) ? (u.error || lr.detail) + ". " : "") + "Still on " + u.current + ", nothing changed. It tries again at the next check."));
+          body.push(this.alert(h, "err", "Couldn't update to " + tried, (u.error ? u.error + ". " : "") + "Still on " + cur + ", nothing changed."));
         }
         var big = function (kids) { return h("div", { class: "tb-row", style: { fontSize: "17px", fontWeight: 600, gap: "10px", flexWrap: "wrap" } }, kids); };
+        var line = function (kids, extra) { return h("div", { class: "tb-small", style: Object.assign({ marginTop: "4px", lineHeight: 1.55 }, extra || {}) }, kids); };
         if (u.state === "checking") body.push(big([h("div", { class: "tb-spin" }), "Checking for updates…"]));
-        else if (u.state === "downloading") body.push(big([h("div", { class: "tb-spin" }), "Downloading " + u.available + "…", notes]));
-        else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts; devices here are offline for about a minute. This page comes back by itself."));
-        else if (u.state === "trial") body.push(big([h("div", { class: "tb-spin" }), u.current + " is running"]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "Making sure everything works (up to 90 seconds); if not, it goes back by itself."));
-        else if (pinned) body.push(big(["Pinned by your setup to " + u.pin]), h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } },
-          "Whoever set up this router (Ansible or the config file, update.pin) keeps it on " + u.pin + (u.available && u.available !== u.pin ? ", so " + u.available + " isn't installed" : "") + ". Change the pin there to update."));
+        else if (u.state === "downloading") body.push(big([h("div", { class: "tb-spin" }), "Downloading " + u.available + "…"]));
+        else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts; this page comes back by itself in about a minute."));
+        else if (off) body.push(big(["Updates are off"]), line("tailbond doesn't check for new versions. Choose Tell me below to hear about them.", { color: "#909399" }));
         else if (u.available) {
-          body.push(big(["Update available: " + u.available, u.security ? h("span", { class: "tb-chip err" }, "Security fix") : null, notes]));
-          if (u.state === "waiting") body.push(h("div", { style: { color: "#b07a12", fontWeight: 600, marginTop: "4px" } }, this.waitText(u)));
-          else if (policy === "notify") body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "You chose “Tell me only”: install it when it suits you."));
-        } else if (policy !== "off" && u.state !== "off") body.push(big(["Up to date"]));
-        else body.push(big(["Updates are off"]), h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "tailbond doesn't look for new versions, so security fixes don't arrive either. Choose Automatic below to turn them back on."));
-        var meta = [];
-        if (u.last_check && policy !== "off") meta.push("Checked " + fmtAgo(u.last_check));
-        if (lr && lr.result === "ok" && lr.detail !== "reinstalled_after_firmware_upgrade" && lr.version) meta.push("last update: " + (lr.from ? lr.from + " → " : "") + lr.version + (lr.at ? ", " + fmtWhen(lr.at) : "") + ", worked");
-        if (!srv && u.source) meta.push(u.source === "mirror" ? "updates come from " + (this.serverShort || "your home server") + " (your home server)" : u.source === "upload" ? "from a file uploaded by hand" : "updates come from the internet (" + (this.serverShort || "your home server") + " didn't have them)");
-        if (u.available) {
-          var how = u.verified === "attestation" ? "verified: built by " + (u.repo || "the project") + "'s release workflow on GitHub"
-            : u.verified === "mirror" ? "verified by " + (this.serverShort || "your home server") + " before it offered it"
-            : u.verified === "sha256" ? "checksums only (no GitHub proof of who built it)" : "";
-          if (how) meta.push(how);
+          body.push(big(["Update available: " + u.available, notes]));
+          if (u.method === "dnf") {
+            var cmd = "sudo dnf upgrade tailbond-server";
+            body.push(line(["Updates for this server come from dnf: run ", h("code", cmd), ", or turn on dnf-automatic to get them by themselves."]),
+              h("div", { class: "tb-row", style: { marginTop: "6px" } }, [h("code", { style: { padding: "6px 8px" } }, cmd), this.btn(h, "Copy", function () { self.copy(cmd); }, "small")]));
+          } else if (!selfUp) {
+            var repo = String(u.repo || "kaovilai/tailbond").replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
+            body.push(line(["This build can't update itself; install the new release from ", h("a", { class: "tb-link", attrs: { href: "https://github.com/" + repo + "/releases", target: "_blank", rel: "noopener" } }, "the releases page"), "."]));
+          }
+        } else body.push(big(["Up to date"]));
+        var meta = [], lv = u.last_result_version, la = u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "";
+        if (u.last_check && !off) meta.push("Checked " + fmtAgo(u.last_check));
+        if (u.detail !== "reinstalled_after_firmware_upgrade" && lv) {
+          if (u.last_result === "ok") meta.push("last update: " + lv + la + ", worked");
+          else if (u.last_result === "rolled_back" && u.state !== "rolled_back") meta.push("last update: " + lv + la + " didn't start, went back");
+          else if (u.last_result === "failed" && u.state !== "failed") meta.push("last update to " + lv + la + " failed, nothing changed");
         }
-        if (meta.length) body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, meta.join(" · ").replace(/^./, function (c) { return c.toUpperCase(); })));
-        if (u.error && !busyState && u.state !== "failed" && policy !== "off") body.push(h("div", { class: "tb-small", style: { marginTop: "6px", color: "#b07a12" } }, "Last check: " + u.error));
-        if (srv && u.verify === "sha256-only") body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, "Checksums only: this router can't check GitHub's proof of who built an update (that check is left out of the router version to save space), so it trusts the update list it downloads from GitHub over HTTPS. A Linux home server checks the proof; see docs/updates.md."));
+        var checkErr = u.error && u.state !== "failed" && !busyState && !off;
+        if (meta.length || checkErr) body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, [meta.join(" · ").replace(/^./, function (c) { return c.toUpperCase(); }),
+          checkErr ? h("span", { style: { color: "#b07a12" } }, (meta.length ? " · " : "") + "Couldn't reach GitHub: " + u.error) : null]));
         var acts = [];
-        if (!pinned && policy !== "off") acts.push(this.btn(h, "Check now", function () { self.updPost("/api/update/check", {}, "Checking for updates…"); }, "", busyState || this.busy.upd));
-        if (!pinned && u.available && !busyState) acts.push(this.btn(h, "Install " + u.available + " now", function () { self.confirmInstall(u); }, "primary", this.busy.upd));
-        if (srv) acts.push(this.btn(h, "Upload an update", function () { self.openUb("upload"); }));
+        if (u.available && selfUp && !busyState && !off) acts.push(this.btn(h, "Update now", function () { self.confirmInstall(u); }, "primary", this.busy.upd));
+        if (!off) acts.push(this.btn(h, "Check now", function () { self.updPost("/api/update/check", {}, "Checking for updates…"); }, "", busyState || this.busy.upd));
         if (acts.length) body.push(h("div", { class: "tb-actions" }, acts));
 
         if (srv) {
-          var out = A(u.outdated), total = A(st.clients).length, m = u.mirror;
+          var out = A(u.outdated), total = A(st.clients).length;
+          var isPhone = function (c) { return c.kind === "android" || c.kind === "phone"; };
           var sec = [h("div", { class: "tb-sec-t" }, out.length ? out.length + " device" + (out.length === 1 ? "" : "s") + " out of date" : "Your devices")];
           if (out.length) {
             sec.push(h("div", { class: "tb-list" }, out.map(function (c) {
               return h("div", { class: "tb-li", style: { padding: "8px 0" } }, [
-                h("div", { class: "tb-wan-icon", style: { width: "32px", height: "32px" } }, [icon(h, c.kind === "android" || c.kind === "phone" ? "phone" : "router", 18)]),
+                h("div", { class: "tb-wan-icon", style: { width: "32px", height: "32px" } }, [icon(h, isPhone(c) ? "phone" : "router", 18)]),
                 h("div", { class: "tb-grow" }, [h("b", c.name), h("span", { class: "tb-muted" }, " · " + (KIND_NAME[c.kind] || c.kind || "device") + " · on " + (c.version || "an older version"))])
               ]);
             })));
-            sec.push(h("div", { class: "tb-muted tb-small" }, "They update by themselves from this router, usually within a few hours of their next check (a device that's off updates when it's back). This router updates first; devices follow."));
-          } else sec.push(h("div", { class: "tb-muted tb-small" }, total ? "All " + total + " device" + (total === 1 ? " is" : "s are") + " on " + (u.current || st.version) + " or newer." : "No devices yet."));
-          sec.push(h("div", { class: "tb-small", style: { marginTop: "10px", lineHeight: 1.6 } }, !m || !m.version
-            ? [h("b", "Update mirror: nothing to serve yet. "), policy === "off" ? "Updates are off, so devices download updates from the internet themselves." : "Once this router has a verified update, travel routers and phones get it from here."]
-            : [h("b", "Update mirror: serving " + m.version + " to your devices. "), "Travel routers and phones get updates from this router, even on hotel Wi-Fi that blocks GitHub" + (m.files ? " (" + m.files + " file" + (m.files === 1 ? "" : "s") + ", " + fmtBytes(m.bytes) + ")" : "") + "."]));
+            var how = [];
+            if (out.some(function (c) { return !isPhone(c); })) how.push("Routers: Update now in their tailbond panel, or Automatic.");
+            if (out.some(isPhone)) how.push("Phones: the app shows the update; Obtainium installs it automatically.");
+            sec.push(h("div", { class: "tb-muted tb-small" }, how.join(" ")));
+          } else sec.push(h("div", { class: "tb-muted tb-small" }, total ? "All " + total + " device" + (total === 1 ? " is" : "s are") + " on " + cur + " or newer." : "No devices yet."));
           body.push(h("div", { class: "tb-sec" }, sec));
         }
 
-        var set = [h("div", { class: "tb-sec-t" }, "When a new version is out")];
-        if (pinned) set.push(h("div", { class: "tb-muted tb-small" }, "Set by your setup: pinned to " + u.pin + "."));
-        else {
-          set.push(h("div", { class: "tb-seg" }, [["auto", "Automatic (recommended)"], ["notify", "Tell me only"], ["off", "Off"]].map(function (o) {
+        var opts = selfUp ? [["notify", "Tell me (recommended)"], ["auto", "Automatic"], ["off", "Off"]] : [["notify", "Tell me (recommended)"], ["off", "Off"]];
+        var set = [h("div", { class: "tb-sec-t" }, "When a new version is out"),
+          h("div", { class: "tb-seg" }, opts.map(function (o) {
             return h("button", { class: o[0] === policy ? "on" : "", attrs: { type: "button", disabled: !!self.busy.upd }, on: { click: function () { if (o[0] !== policy) self.updPost("/api/update/policy", { policy: o[0] }, "Saved"); } } }, o[1]);
-          })));
-          set.push(h("div", { class: "tb-help" }, policy === "auto"
-            ? (srv ? "Installs by itself inside the time below. Devices drop for a moment and reconnect by themselves. Security fixes go first." : "Installs by itself when the connection is quiet (not during a call or a stream). Security fixes go first.")
-            : policy === "notify" ? "Checks and tells you here; installs only when you click Install." : "Doesn't check. You'd miss security fixes, so only for setups that update another way."));
-          if (srv && policy === "auto") {
-            var w = this.updWin || (this.updWin = { a: this.winPart(u, 0), b: this.winPart(u, 1) });
-            set.push(h("div", { class: "tb-row", style: { marginTop: "10px", flexWrap: "wrap", gap: "8px" } }, [
-              "Install between",
-              h("input", { class: "tb-input", style: { width: "140px" }, attrs: { type: "time", "aria-label": "From" }, domProps: { value: w.a }, on: { input: function (e) { w.a = e.target.value; } } }),
-              "and",
-              h("input", { class: "tb-input", style: { width: "140px" }, attrs: { type: "time", "aria-label": "To" }, domProps: { value: w.b }, on: { input: function (e) { w.b = e.target.value; } } }),
-              this.btn(h, "Save", function () { self.updPost("/api/update/policy", { window: w.a + "-" + w.b }, "Updates install between " + w.a + " and " + w.b).then(function () { self.updWin = null; }); }, "small", this.busy.upd),
-              h("span", { class: "tb-muted tb-small" }, "(this router's time)")
-            ]));
-          }
-          set.push(h("div", { style: { marginTop: "12px" } }, this.updMore ? [
-            h("div", { class: "tb-row", style: { gap: "10px" } }, ["Channel", h("div", { class: "tb-seg" }, [["stable", "Stable"], ["beta", "Beta"]].map(function (o) {
-              return h("button", { class: o[0] === (u.channel || "stable") ? "on" : "", attrs: { type: "button" }, on: { click: function () { if (o[0] !== (u.channel || "stable")) self.updPost("/api/update/policy", { channel: o[0] }, o[0] === "beta" ? "Beta channel: new versions a little earlier" : "Stable channel"); } } }, o[1]);
-            }))]),
-            h("div", { class: "tb-help" }, "Beta gets new versions a week or two earlier, and may have rough edges. Stable is what most people use.")
-          ] : [h("a", { class: "tb-link tb-small", on: { click: function () { self.updMore = true; } } }, "More options (channel)")]));
-        }
+          })),
+          h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check for new versions."
+            : policy === "auto" ? "Checks GitHub once a day and installs a new version by itself. tailbond restarts; devices drop for a few seconds; if the new version doesn't start, it goes back by itself."
+            : "Checks GitHub once a day and shows new versions here" + (selfUp ? "; nothing installs until you click Update now." : ".")),
+          u.method === "dnf" ? h("div", { class: "tb-help" }, "Automatic updates come from dnf-automatic.") : null];
         body.push(h("div", { class: "tb-sec" }, set));
         return this.card(h, "Updates", body, h("span", { class: "tb-chip " + chip[0] }, chip[1]), "tb-upd");
       },
@@ -758,25 +697,6 @@
             p("The settings from " + ((u.preview && u.preview.host) || "the backup") + " are in place. A copy of the previous settings was kept" + (u.rollback ? " (" + u.rollback + ")" : "") + ", locked with the same passphrase, in case you want them back.", { color: "#303133" }),
             p("tailbond is restarting with them; this page comes back by itself in a few seconds.", { fontSize: "12px" }));
           foot = [this.btn(h, "Done", function () { close(); self.refreshAll(); }, "primary")];
-        } else if (k === "upload") {
-          kids.push(h("div", { class: "tb-dialog-t" }, "Upload an update"),
-            p("For a router without internet, or where GitHub is blocked. On a computer with internet, open the release page and download:"),
-            h("ul", { class: "tb-steps", style: { marginTop: 0 } }, [
-              h("li", [h("b", "stable.json"), " and ", h("b", "stable.json.sigstore.json"), " (the list of files, and GitHub's proof that this project's release built it)"]),
-              h("li", ["the files your devices need: ", h("b", ".ipk"), " for GL routers, ", h("b", ".apk"), " for phones"])
-            ]),
-            h("label", { class: "tb-btn small", style: { marginTop: "10px" } }, ["Choose files…", h("input", { class: "tb-up", style: { display: "none" }, attrs: { type: "file", multiple: true, accept: ".json,.ipk,.apk,.rpm,.gz" }, on: { change: function (e) { self.pickUpload(e); } } })]),
-            u.files.length ? h("div", { class: "tb-list", style: { marginTop: "10px" } }, u.files.map(function (f) {
-              var stx = { wait: ["", ""], send: ["#b07a12", "uploading…"], ok: ["#13a35a", "✓ added"], bad: ["#f56c6c", "✗ " + f.err] }[f.st];
-              return h("div", { class: "tb-li", style: { padding: "6px 0" } }, [h("span", { class: "tb-mono tb-grow", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name), h("span", { class: "tb-muted tb-small" }, fmtBytes(f.size)), h("span", { class: "tb-small", style: { color: stx[0], minWidth: "70px", textAlign: "right" } }, stx[1])]);
-            })) : null,
-            p((this.upd().verify === "sha256-only"
-              ? "Checksums only: every file is checked against stable.json, so a damaged file is refused (stable.json.sigstore.json is optional here). To check GitHub's proof yourself first: gh attestation verify stable.json -R OWNER/REPO on the computer. "
-              : "tailbond checks GitHub's proof and every file's checksum before using anything, so a wrong or changed file is refused. ") + "Devices then update from this router as usual.", { fontSize: "12px", marginTop: "10px" }),
-            u.done ? this.alert(h, "ok", null, "All " + u.files.length + " files added. Once the update list checks out (a few seconds), the update shows on this page and devices can get it from here.") : null,
-            err);
-          foot = u.done ? [this.btn(h, "Done", close, "primary")]
-            : [this.btn(h, "Close", close), this.btn(h, u.busy ? "Uploading…" : "Upload", function () { self.doUpload(); }, "primary", u.busy || !u.files.length)];
         } else if (k === "summary") {
           var sm = u.summary;
           var order = Object.keys(SUMMARY_LABEL);
@@ -820,7 +740,7 @@
         srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", histAll: false,
         bp: null, lan: null, bpEdit: null,
         // updates and backups
-        updX: null, bks: null, ub: null, ubSched: null, updWin: null, updMore: false, restartUntil: 0, restarting: false
+        updX: null, bks: null, ub: null, ubSched: null, restartUntil: 0, restarting: false
       };
     },
     computed: {

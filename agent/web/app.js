@@ -827,15 +827,16 @@ function setupLogin() {
 }
 
 // ---------- Updates & backup tab ----------
-// Updates: GET /api/update (+ the live `update` object in every status),
-// POST /api/update/{check,install,policy}, POST /api/update/upload?name=
-// (server, octet-stream). Backups: POST /api/backup → file,
-// GET /api/backup/summary, POST /api/restore/preview, POST /api/restore,
-// GET /api/backups (+ /api/backups/{name}), POST /api/backup/settings.
-// Scheduled-backup settings are read from GET /api/settings `backup`
-// (never the passphrase, only `passphrase_set`).
+// Updates (docs/architecture.md "Updates"): GET /api/update (+ the live
+// `update` object in every status), POST /api/update/check,
+// /api/update/install, /api/update/policy {"policy"}. Backups: POST
+// /api/backup → file, GET /api/backup/summary, POST /api/restore/preview,
+// POST /api/restore, GET /api/backups (+ /api/backups/{name}),
+// POST /api/backup/settings. Scheduled-backup settings are read from
+// GET /api/settings `backup` (never the passphrase, only `passphrase_set`).
 const KIND_NAME = { router: 'travel router', android: 'Android phone', phone: 'Android phone' };
-const ub = { upd: null, backups: null, sig: '', bsig: '', open: false, upFiles: [], schedEdit: false };
+const ub = { upd: null, backups: null, sig: '', bsig: '', open: false, schedEdit: false };
+const DNF_CMD = 'sudo dnf upgrade tailbond-server';
 
 function fmtWhen(t) {
   if (!t) return '';
@@ -850,43 +851,24 @@ function fmtAgo(t) {
   return `${Math.round(s / 86400)} days ago`;
 }
 function updOf(st) { return Object.assign({}, ub.upd || {}, (st && st.update) || {}); }
-// last_result: "ok" | "rolled_back" | "failed" with `detail`/`error` beside it
-// (or an object {"result","version","from","at","detail"}).
-function lastResult(u) {
-  const r = u.last_result;
-  if (!r) return u.detail === 'reinstalled_after_firmware_upgrade' ? { result: 'ok', detail: u.detail } : null;
-  return typeof r === 'string' ? { result: r, detail: u.detail || u.error || '' } : r;
-}
 function homeName() {
   const st = state.status || {};
   return st.active_server || ((state.settings && state.settings.paired_with) || st.server || 'your home server').split(/[.:]/)[0];
 }
-function winStart(u) { return ((u.window || '03:00-05:00').split('-')[0]) || '03:00'; }
-function winEnd(u) { return ((u.window || '03:00-05:00').split('-')[1]) || '05:00'; }
-function waitText(u) {
-  const d = (u.deferred || '').toLowerCase();
-  if (d.includes('traffic') || d.includes('call') || d.includes('busy')) return 'Waiting: a call or video is in progress. It installs once the connection is quiet.';
-  if (d.includes('server') || d.includes('protocol')) return `Waiting for ${homeName()} to update first.`;
-  if (d.includes('window') || (!d && state.role === 'server')) return `Waiting for ${winStart(u)}. It installs between ${winStart(u)} and ${winEnd(u)}.`;
-  return d ? `Waiting: ${u.deferred}.` : 'Waiting.';
+// the GitHub releases page of update.repo ("owner/name" or a github.com URL)
+function releasesUrl(u) {
+  const r = String(u.repo || 'kaovilai/tailbond').replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
+  return `https://github.com/${r}/releases`;
 }
-function restartWords(u) {
-  const st = state.status || {};
-  const v = u.available || 'the update';
-  if (state.role === 'server') {
-    const n = (st.clients || []).filter((c) => c.connected).length;
-    return `tailbond on this server restarts (about 30 seconds). ${n ? `The ${n} connected device${n === 1 ? '' : 's'} drop${n === 1 ? 's' : ''} for a moment and reconnect by themselves.` : 'No device is connected right now.'} If ${v} doesn't work, it goes back to ${u.current || 'this version'} by itself.`;
-  }
-  return `tailbond restarts on this machine (about a minute); the tunnel drops meanwhile. If ${v} doesn't work, it goes back to ${u.current || 'this version'} by itself.`;
-}
+// methods that install by themselves (one click, or Automatic)
+const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg';
 
 function renderMaint(st) {
   const u = st.update || {};
   const outdated = st.role === 'server' && Array.isArray(u.outdated) ? u.outdated.length : 0;
   const badge = $('#maint-badge');
-  const lr = lastResult(u);
-  const bad = u.state === 'rolled_back' || u.state === 'failed' || (lr && (lr.result === 'rolled_back' || lr.result === 'failed') && u.state !== 'idle');
-  const n = (u.available && !u.pin ? 1 : 0) + outdated;
+  const bad = u.state === 'rolled_back' || u.state === 'failed';
+  const n = (u.available && u.policy !== 'off' ? 1 : 0) + outdated;
   badge.textContent = bad ? '!' : String(n);
   badge.className = 'tab-badge' + (bad ? ' bad' : '') + (n || bad ? '' : ' hidden');
   if (state.tab !== 'maint') return;
@@ -916,131 +898,117 @@ async function updAction(path, body, okMsg) {
   } catch (e) { toast(e.message, true); return null; }
 }
 
-// how the offered update was checked (status update.verified)
-function verifiedText(u) {
-  if (u.verified === 'attestation') return `verified: built by ${u.repo || 'the project'}'s release workflow on GitHub`;
-  if (u.verified === 'mirror') return `verified by ${homeName()} before it offered it`;
-  if (u.verified === 'sha256') return "checksums only (no GitHub proof of who built it)";
-  return '';
+async function copyText(text, okMsg) {
+  try { await navigator.clipboard.writeText(text); } catch {
+    const t = h('textarea', { style: 'position:fixed;opacity:0' }); t.value = text; document.body.append(t); t.select();
+    try { document.execCommand('copy'); } catch { /* nothing more to try */ }
+    t.remove();
+  }
+  toast(okMsg || 'Copied');
 }
 
 function renderUpdates(st) {
   const box = $('#upd-card');
   const u = updOf(st);
   const srv = st.role === 'server';
-  const sig = JSON.stringify([u, srv, (st.clients || []).filter((c) => c.connected).length]);
-  if (sig === ub.sig || box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
+  const sig = JSON.stringify([u, srv, (st.clients || []).length]);
+  if (sig === ub.sig) return;
   ub.sig = sig;
-  const lr = lastResult(u);
-  const pinned = !!u.pin;
-  const policy = u.policy || 'auto';
-  const busy = ['checking', 'downloading', 'installing', 'trial'].includes(u.state);
-  // headline chip
-  const chip = u.state === 'rolled_back' ? ['s-failed', 'Went back to ' + (u.current || 'the previous version')]
+  const cur = u.current || st.version || '';
+  const policy = u.policy || 'notify';
+  const off = policy === 'off' || u.state === 'off';
+  const busy = ['checking', 'downloading', 'installing'].includes(u.state);
+  const chip = u.state === 'rolled_back' ? ['s-failed', 'Went back to ' + (cur || 'the previous version')]
     : u.state === 'failed' ? ['s-failed', 'Update failed']
-    : u.state === 'installing' || u.state === 'trial' ? ['s-pending', 'Installing']
+    : u.state === 'installing' ? ['s-pending', 'Installing']
     : u.state === 'checking' ? ['s-pending', 'Checking']
     : u.state === 'downloading' ? ['s-pending', 'Downloading']
-    : pinned ? ['s-standby', 'Pinned to ' + u.pin]
-    : policy === 'off' || u.state === 'off' ? ['s-off', 'Updates off']
+    : off ? ['s-off', 'Updates off']
     : u.available ? ['s-pending', 'Update available'] : ['s-active', 'Up to date'];
   const kids = [h('div', { class: 'ub-head' },
     h('div', { class: 'kind-ico' }, icon('update')),
-    h('div', { class: 'grow' }, h('h3', { text: 'Updates' }), h('div', { class: 'muted small', text: `This ${srv ? 'server' : 'machine'} runs tailbond ${u.current || st.version || ''}` })),
+    h('div', { class: 'grow' }, h('h3', { text: 'Updates' }), h('div', { class: 'muted small', text: `This ${srv ? 'server' : 'machine'} runs tailbond ${cur}` })),
     h('span', { class: 'chip ' + chip[0], text: chip[1] }))];
 
   // what's going on now
   const now = [];
   const notes = u.notes_url ? h('a', { href: u.notes_url, target: '_blank', rel: 'noopener', text: "What's new" }) : null;
-  if (lr && lr.detail === 'reinstalled_after_firmware_upgrade') {
-    now.push(h('div', { class: 'ub-note ok' }, h('b', { text: 'tailbond was reinstalled after a firmware update. ' }), `The firmware update removed it; it put itself back (${lr.version || u.current || ''}) with all your settings${lr.at ? ', ' + fmtWhen(lr.at) : ''}. Nothing to do.`));
-  }
-  if (u.state === 'rolled_back' || (lr && lr.result === 'rolled_back' && !u.available)) {
-    const v = (lr && lr.version) || u.available || 'The update';
-    now.push(h('div', { class: 'ub-note bad' }, h('b', { text: `${v} didn't work here, so tailbond went back to ${u.current || 'the previous version'} by itself. ` }),
-      lr && lr.detail ? `Why: ${lr.detail}. ` : '', `Everything works as before. It won't install ${v} again by itself; the next version installs as usual.`));
+  const tried = u.last_result_version || u.available || 'The new version';
+  if (u.state === 'rolled_back') {
+    now.push(h('div', { class: 'ub-note bad' }, h('b', { text: `${tried} didn't start here, so tailbond went back to ${cur} by itself. ` }),
+      u.detail ? `Why: ${u.detail}. ` : '', 'Everything works as before.'));
   } else if (u.state === 'failed') {
-    now.push(h('div', { class: 'ub-note bad' }, h('b', { text: `Couldn't update to ${u.available || (lr && lr.version) || 'the new version'}. ` }),
-      u.error || (lr && lr.detail) ? `${u.error || lr.detail}. ` : '', `Still on ${u.current}, nothing changed. It tries again at the next check.`));
+    now.push(h('div', { class: 'ub-note bad' }, h('b', { text: `Couldn't update to ${tried}. ` }),
+      u.error ? `${u.error}. ` : '', `Still on ${cur}, nothing changed.`));
   }
   if (u.state === 'checking') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), 'Checking for updates…'));
-  else if (u.state === 'downloading') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Downloading ${u.available}…`, notes ? ' ' : '', notes));
-  else if (u.state === 'installing') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Installing ${u.available}. tailbond restarts; this page comes back by itself in about a minute.`));
-  else if (u.state === 'trial') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `${u.current} is running. Making sure everything works (up to 90 seconds); if not, it goes back by itself.`));
-  else if (pinned) {
-    now.push(h('p', { class: 'ub-big', text: `Pinned by your setup to ${u.pin}` }),
-      h('p', { class: 'muted small', text: `Whoever set up this ${srv ? 'server' : 'machine'} (Ansible or the config file, update.pin) keeps it on ${u.pin}${u.available && u.available !== u.pin ? `, so ${u.available} isn't installed` : ''}. Change the pin there to update.` }));
-  } else if (u.available) {
-    now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, u.security ? h('span', { class: 'chip s-failed ub-secfix', text: 'Security fix' }) : null, notes ? ' · ' : '', notes));
-    if (u.state === 'waiting') now.push(h('p', { class: 'ub-wait', text: waitText(u) }));
-    else if (policy === 'notify') now.push(h('p', { class: 'muted small', text: 'You chose "Tell me only": install it when it suits you.' }));
-  } else if (policy !== 'off' && u.state !== 'off') {
-    now.push(h('p', { class: 'ub-big', text: 'Up to date' }));
-  } else now.push(h('p', { class: 'ub-big', text: 'Updates are off' }), h('p', { class: 'muted small', text: "tailbond doesn't look for new versions, so security fixes don't arrive either. Choose Automatic below to turn them back on." }));
+  else if (u.state === 'downloading') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Downloading ${u.available}…`));
+  else if (u.state === 'installing') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Installing ${u.available}`),
+    h('p', { class: 'muted small', text: 'tailbond restarts; this page comes back by itself in about a minute.' }));
+  else if (off) now.push(h('p', { class: 'ub-big', text: 'Updates are off' }),
+    h('p', { class: 'muted small', text: "tailbond doesn't check for new versions. Choose Tell me below to hear about them." }));
+  else if (u.available) {
+    now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, notes ? ' · ' : '', notes));
+    if (u.method === 'dnf') {
+      now.push(h('p', { class: 'small' }, 'Updates for this server come from dnf: run ', h('code', { text: DNF_CMD }), ', or turn on dnf-automatic to get them by themselves.'),
+        h('div', { class: 'ub-cmd' }, h('code', { text: DNF_CMD }),
+          h('button', { class: 'btn', type: 'button', onclick: () => copyText(DNF_CMD, 'Command copied') }, icon('copy', 'ico sm'), 'Copy')));
+    } else if (!selfUpdates(u)) {
+      now.push(h('p', { class: 'small' }, "This build can't update itself; install the new release from ",
+        h('a', { href: releasesUrl(u), target: '_blank', rel: 'noopener', text: 'the releases page' }), '.'));
+    }
+  } else now.push(h('p', { class: 'ub-big', text: 'Up to date' }));
+
   const meta = [];
-  if (u.last_check && policy !== 'off') meta.push(`Checked ${fmtAgo(u.last_check)}`);
-  if (lr && lr.result === 'ok' && lr.detail !== 'reinstalled_after_firmware_upgrade' && lr.version) meta.push(`last update: ${lr.from ? lr.from + ' → ' : ''}${lr.version}${lr.at ? ', ' + fmtWhen(lr.at) : ''}, worked`);
-  if (!srv) meta.push(u.source === 'mirror' ? `updates come from ${homeName()} (your home server)` : u.source === 'upload' ? 'from a file uploaded by hand' : u.source === 'public' ? `updates come from the internet (${homeName()} didn't have them)` : '');
-  if (u.available) meta.push(verifiedText(u));
-  if (meta.filter(Boolean).length) now.push(h('p', { class: 'muted small', text: meta.filter(Boolean).join(' · ').replace(/^./, (c) => c.toUpperCase()) }));
-  if (u.error && !busy && u.state !== 'failed' && policy !== 'off') now.push(h('p', { class: 'small warn-text', text: `Last check: ${u.error}` }));
-  if (srv && u.verify === 'sha256-only') now.push(h('p', { class: 'muted small', text: "Checksums only (update.verify): tailbond trusts whoever serves the update list, without GitHub's proof of who built it. Fine for a server without GitHub; otherwise switch back to attestation." }));
+  if (u.last_check && !off) meta.push(`Checked ${fmtAgo(u.last_check)}`);
+  const lv = u.last_result_version, la = u.last_result_at ? ', ' + fmtWhen(u.last_result_at) : '';
+  if (u.last_result === 'ok' && lv) meta.push(`last update: ${lv}${la}, worked`);
+  else if (u.last_result === 'rolled_back' && lv && u.state !== 'rolled_back') meta.push(`last update: ${lv}${la} didn't start, went back`);
+  else if (u.last_result === 'failed' && lv && u.state !== 'failed') meta.push(`last update to ${lv}${la} failed, nothing changed`);
+  const checkErr = u.error && u.state !== 'failed' && !busy && !off;
+  if (meta.length || checkErr) {
+    now.push(h('p', { class: 'muted small' }, meta.join(' · ').replace(/^./, (c) => c.toUpperCase()),
+      checkErr ? h('span', { class: 'warn-text', text: `${meta.length ? ' · ' : ''}Couldn't reach GitHub: ${u.error}` }) : null));
+  }
   const acts = [];
-  if (!pinned && policy !== 'off') acts.push(h('button', { class: 'btn', type: 'button', disabled: busy, onclick: () => updAction('/api/update/check', {}, 'Checking for updates…') }, 'Check now'));
-  if (!pinned && u.available && !busy) acts.push(h('button', { class: 'btn primary', type: 'button', onclick: () => confirmInstall(u) }, `Install ${u.available} now`));
-  if (srv) acts.push(h('button', { class: 'btn', type: 'button', onclick: openUpload }, 'Upload an update'));
+  if (u.available && selfUpdates(u) && !busy && !off) acts.push(h('button', { class: 'btn primary', type: 'button', onclick: () => confirmInstall(u) }, 'Update now'));
+  if (!off) acts.push(h('button', { class: 'btn', type: 'button', disabled: busy, onclick: () => updAction('/api/update/check', {}, 'Checking for updates…') }, 'Check now'));
   kids.push(h('div', { class: 'ub-now' }, now, acts.length ? h('div', { class: 'row' }, acts) : null));
 
-  // server: the devices and the mirror
+  // server: devices still on an older version
   if (srv) {
     const out = Array.isArray(u.outdated) ? u.outdated : [];
     const total = (st.clients || []).length;
     const sec = [h('h4', { text: out.length ? `${out.length} device${out.length === 1 ? '' : 's'} out of date` : 'Your devices' })];
     if (out.length) {
-      sec.push(h('ul', { class: 'ub-list' }, out.map((c) => h('li', {}, icon(c.kind === 'android' ? 'device' : 'ethernet', 'ico sm'), h('b', { text: c.name }),
+      sec.push(h('ul', { class: 'ub-list' }, out.map((c) => h('li', {}, icon(c.kind === 'android' || c.kind === 'phone' ? 'device' : 'ethernet', 'ico sm'), h('b', { text: c.name }),
         h('span', { class: 'muted', text: ` ${KIND_NAME[c.kind] || c.kind || 'device'} · on ${c.version || 'an older version'}` })))));
-      sec.push(h('p', { class: 'muted small', text: `They update by themselves from this server, usually within a few hours of their next check (a device that's off updates when it's back). This server updates first; devices follow.` }));
-    } else sec.push(h('p', { class: 'muted small', text: total ? `All ${total} device${total === 1 ? ' is' : 's are'} on ${u.current || st.version} or newer.` : 'No devices yet.' }));
-    // mirror: {"version","files","bytes"}; absent = off (or nothing cached yet)
-    const m = u.mirror;
-    sec.push(!m || !m.version
-      ? h('p', { class: 'small' }, h('b', { text: 'Update mirror: nothing to serve yet. ' }), policy === 'off' ? 'Updates are off, so devices download updates from the internet themselves.' : 'Once this server has a verified update, routers and phones get it from here.')
-      : h('p', { class: 'small' }, h('b', { text: `Update mirror: serving ${m.version} to your devices. ` }),
-        `Routers and phones get updates from this server, even on hotel Wi-Fi that blocks GitHub${m.files ? ` (${m.files} file${m.files === 1 ? '' : 's'}, ${fmtBytes(m.bytes)})` : ''}.`));
+      const how = [];
+      if (out.some((c) => c.kind !== 'android' && c.kind !== 'phone')) how.push('Routers: Update now in their tailbond panel, or Automatic.');
+      if (out.some((c) => c.kind === 'android' || c.kind === 'phone')) how.push('Phones: the app shows the update; Obtainium installs it automatically.');
+      sec.push(h('p', { class: 'muted small', text: how.join(' ') }));
+    } else sec.push(h('p', { class: 'muted small', text: total ? `All ${total} device${total === 1 ? ' is' : 's are'} on ${cur} or newer.` : 'No devices yet.' }));
     kids.push(h('div', { class: 'ub-sec' }, sec));
   }
 
-  // settings, in plain words
-  const set = [h('h4', { text: 'When a new version is out' })];
-  if (!pinned) {
-    set.push(seg([['auto', 'Automatic (recommended)'], ['notify', 'Tell me only'], ['off', 'Off']], policy, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
-    const expl = policy === 'auto'
-      ? (srv ? 'Installs by itself inside the time below. Devices drop for a moment and reconnect by themselves. Security fixes go first.' : 'Installs by itself when the connection is quiet (not during a call or a stream). Security fixes go first.')
-      : policy === 'notify' ? 'Checks and tells you here; installs only when you click Install.'
-      : "Doesn't check. You'd miss security fixes, so only for setups that update another way.";
-    set.push(h('p', { class: 'muted small', text: expl }));
-    if (srv && policy === 'auto') {
-      const a = h('input', { type: 'time', value: winStart(u), 'aria-label': 'From' });
-      const b = h('input', { type: 'time', value: winEnd(u), 'aria-label': 'To' });
-      set.push(h('div', { class: 'row ub-window' }, 'Install between ', a, ' and ', b,
-        h('button', { class: 'btn', type: 'button', onclick: () => updAction('/api/update/policy', { window: `${a.value}-${b.value}` }, `Updates install between ${a.value} and ${b.value}`) }, 'Save'),
-        h('span', { class: 'muted small', text: "(this server's time)" })));
-    }
-  } else set.push(h('p', { class: 'muted small', text: `Set by your setup: pinned to ${u.pin}.` }));
-  const more = h('details', { class: 'ub-more' }, h('summary', { text: 'More options' }),
-    h('div', { class: 'row' }, 'Channel ', seg([['stable', 'Stable'], ['beta', 'Beta']], u.channel || 'stable', (v) => updAction('/api/update/policy', { channel: v }, v === 'beta' ? 'Beta channel: new versions a little earlier' : 'Stable channel'), 'Channel')),
-    h('p', { class: 'muted small', text: 'Beta gets new versions a week or two earlier, and may have rough edges. Stable is what most people use.' }));
-  set.push(more);
-  kids.push(h('div', { class: 'ub-sec' }, set));
+  // the policy, in plain words
+  const opts = selfUpdates(u) ? [['notify', 'Tell me (recommended)'], ['auto', 'Automatic'], ['off', 'Off']] : [['notify', 'Tell me (recommended)'], ['off', 'Off']];
+  const help = policy === 'off' ? "Doesn't check for new versions."
+    : policy === 'auto' ? 'Checks GitHub once a day and installs a new version by itself. tailbond restarts; devices drop for a few seconds; if the new version doesn\'t start, it goes back by itself.'
+    : `Checks GitHub once a day and shows new versions here${selfUpdates(u) ? '; nothing installs until you click Update now' : ''}.`;
+  kids.push(h('div', { class: 'ub-sec' }, h('h4', { text: 'When a new version is out' }),
+    seg(opts, policy, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'),
+    h('p', { class: 'muted small', text: help }),
+    u.method === 'dnf' ? h('p', { class: 'muted small', text: 'Automatic updates come from dnf-automatic.' }) : null));
   box.replaceChildren(...kids);
 }
 
 function confirmInstall(u) {
-  dlg(h('h3', { text: `Install ${u.available} now?` }),
-    h('p', { text: restartWords(u) }),
+  dlg(h('h3', { text: `Update to ${u.available} now?` }),
+    h('p', { text: "tailbond restarts; devices drop for a few seconds. If the new version doesn't start, it goes back by itself." }),
     h('div', { class: 'row end' },
       h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'),
-      h('button', { class: 'btn primary', type: 'button', onclick: async () => { closeDlg(); await updAction('/api/update/install', {}, `Installing ${u.available}…`); } }, 'Install now')));
+      h('button', { class: 'btn primary', type: 'button', onclick: async () => { closeDlg(); await updAction('/api/update/install', {}, `Installing ${u.available}…`); } }, 'Update now')));
 }
 
 // ---- generic dialog ----
@@ -1050,62 +1018,6 @@ function dlg(...kids) {
   if (!d.open) d.showModal();
 }
 function closeDlg() { $('#ub-dialog').close(); }
-
-// ---- upload an update (server, offline) ----
-function openUpload() {
-  ub.upFiles = [];
-  const list = h('ul', { class: 'ub-files' });
-  const input = h('input', { type: 'file', multiple: true, id: 'up-files', accept: '.json,.ipk,.apk,.rpm,.gz' });
-  const go = h('button', { class: 'btn primary', type: 'button', disabled: true }, 'Upload');
-  const draw = () => {
-    list.replaceChildren(...ub.upFiles.map((f) => h('li', { class: 'up-' + f.st },
-      h('span', { class: 'grow', text: f.file.name }), h('span', { class: 'muted small', text: fmtBytes(f.file.size) }),
-      h('span', { class: 'small up-st', text: { wait: '', send: 'uploading…', ok: '✓ added', bad: '✗ ' + (f.err || 'failed') }[f.st] }))));
-    go.disabled = !ub.upFiles.length || ub.upFiles.some((f) => f.st === 'send');
-  };
-  input.addEventListener('change', () => {
-    // the attestation, then the channel file (checked as soon as both are
-    // there), then the files: the agent checks them against it
-    const rank = (n) => (/\.json\.sigstore\.json$/.test(n) ? 0 : /\.json$/.test(n) ? 1 : 2);
-    ub.upFiles = [...input.files].sort((a, b) => rank(a.name) - rank(b.name)).map((file) => ({ file, st: 'wait' }));
-    draw();
-  });
-  go.addEventListener('click', async () => {
-    for (const f of ub.upFiles) {
-      if (f.st === 'ok') continue;
-      f.st = 'send'; draw();
-      try {
-        const r = await fetch('/api/update/upload?name=' + encodeURIComponent(f.file.name), { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f.file });
-        if (r.status === 401) { showLogin(); throw new Error('sign in first'); }
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok || d.ok === false) throw new Error(d.error || r.statusText);
-        f.st = 'ok';
-      } catch (e) { f.st = 'bad'; f.err = e.message; }
-      draw();
-    }
-    const ok = ub.upFiles.filter((f) => f.st === 'ok').length;
-    const all = ok === ub.upFiles.length;
-    result.className = all ? 'ub-note ok' : 'ub-note bad';
-    result.textContent = all
-      ? `All ${ok} files added. Once the update list checks out (a few seconds), the update shows on this page and devices can get it from here.`
-      : `${ub.upFiles.length - ok} of ${ub.upFiles.length} files weren't accepted (see above). Check they come from the same release as stable.json, then upload those again.`;
-    if (all) { go.classList.add('hidden'); closeBtn.className = 'btn primary'; closeBtn.textContent = 'Done'; }
-    ubOpen();
-  });
-  const result = h('div', { class: 'hidden' });
-  const closeBtn = h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Close');
-  dlg(h('h3', { text: 'Upload an update' }),
-    h('p', { class: 'small', text: "For a server without internet, or where GitHub is blocked. On a computer with internet, open the release page and download:" }),
-    h('ul', { class: 'small ub-need' },
-      h('li', {}, h('b', { text: 'stable.json' }), ' and ', h('b', { text: 'stable.json.sigstore.json' }), " (the list of files, and GitHub's proof that this project's release built it)"),
-      h('li', {}, 'the files your machines need: ', h('b', { text: '.rpm' }), ' or ', h('b', { text: '.tar.gz' }), ' for this server, ', h('b', { text: '.ipk' }), ' for GL routers, ', h('b', { text: '.apk' }), ' for phones')),
-    h('label', { class: 'btn', for: 'up-files' }, 'Choose files…'), input, list,
-    h('p', { class: 'muted small', text: (ub.upd && ub.upd.verify === 'sha256-only')
-      ? 'Checksums only (update.verify): stable.json.sigstore.json is optional; every file is checked against stable.json, so a damaged file is refused. Devices then update from this server as usual.'
-      : "tailbond checks GitHub's proof and every file's checksum before using anything, so a wrong or changed file is refused. Devices then update from this server as usual." }),
-    result,
-    h('div', { class: 'row end' }, closeBtn, go));
-}
 
 // ---- backup & restore ----
 // a rough strength hint, not a gate (the gate is 10 characters)
