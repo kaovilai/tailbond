@@ -26,6 +26,8 @@
   var KIND_LABEL = { ethernet: "Ethernet", wifi: "Repeater", usb: "Tethering", cellular: "Cellular", "shared-cellular": "Shared by a phone", unknown: "Connection" };
   // Short nouns for the one-line status.
   var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "Tethering (phone)", cellular: "Cellular", "shared-cellular": "a phone's shared data", unknown: "a connection" };
+  // a phone's share is named by its own label ("Pixel 8's mobile data")
+  function nounOf(w) { return w.kind === "shared-cellular" ? String(w.label || "").replace(/ \(shared\)$/, "") : (KIND_NOUN[w.kind] || w.label); }
   var KIND_ORDER = { ethernet: 0, wifi: 1, usb: 2, cellular: 3, "shared-cellular": 4, unknown: 5 };
   var NOT_CONNECTED_FIX = {
     ethernet: "Plug a cable from the hotel or modem into the WAN port. It's used automatically once connected.",
@@ -1066,13 +1068,13 @@
         var self = this;
         ws.forEach(function (w) {
           var s = self.wanStatus(w)[1];
-          if (s.indexOf("In use") === 0) used.push(KIND_NOUN[w.kind] || w.label);
-          else if (s === "Not working right now") broken.push(KIND_NOUN[w.kind] || w.label);
-          else if (/saving data|Backup/.test(s)) saving.push(KIND_NOUN[w.kind] || w.label);
+          if (s.indexOf("In use") === 0) used.push(nounOf(w));
+          else if (s === "Not working right now") broken.push(nounOf(w));
+          else if (/saving data|Backup/.test(s)) saving.push(nounOf(w));
         });
         var line = used.length ? "Using " + used.join(" + ") : "Connected, waiting for a connection to carry traffic";
-        var portal = ws.filter(function (w) { return w.enabled && w.captive === "portal"; }).map(function (w) { return KIND_NOUN[w.kind] || w.label; });
-        var signing = ws.filter(function (w) { return w.enabled && w.captive === "portal" && w.signinUntil; }).map(function (w) { return KIND_NOUN[w.kind] || w.label; });
+        var portal = ws.filter(function (w) { return w.enabled && w.captive === "portal"; }).map(function (w) { return nounOf(w); });
+        var signing = ws.filter(function (w) { return w.enabled && w.captive === "portal" && w.signinUntil; }).map(function (w) { return nounOf(w); });
         if (signing.length) line = "Signing in on " + signing.join(", ") + ": all traffic from devices here goes out " + signing.join(", ") + " directly, not through " + (this.serverShort || "your home server") + ", until you're signed in";
         else if (portal.length) line += " · " + portal.join(", ") + " needs sign-in";
         if (broken.length) line += " · " + broken.join(", ") + " not working right now";

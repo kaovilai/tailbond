@@ -5,7 +5,7 @@
 // (bfStates, bfActions; desktop, plus phone for bfPhone).
 import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync } from 'node:fs';
-import { states, actions, bfStates, bfActions, bfPhone, landing, fedoraStatus, fedoraStatusApproved, fedoraStatusFresh, fedoraStatusPhone, fedoraStatusPhoneDone, fedoraHealth, fedoraHealthGood, fedoraHealthRoute } from './fixtures.mjs';
+import { shareStates, states, actions, bfStates, bfActions, bfPhone, landing, fedoraStatus, fedoraStatusApproved, fedoraStatusFresh, fedoraStatusPhone, fedoraStatusPhoneDone, fedoraHealth, fedoraHealthGood, fedoraHealthRoute } from './fixtures.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
@@ -112,6 +112,11 @@ async function fedoraAll(vp) {
 }
 
 const withActApi = (fx, act) => ({ ...fx, api: { ...fx.api, ...(act.api || {}) }, ...(act.after ? { after: act.after } : {}) });
+if (set === 'share') {
+  for (const vp of Object.keys(viewports)) for (const [name, fx] of Object.entries(shareStates)) await shot(name, fx, vp);
+  await browser.close();
+  process.exit(0);
+}
 if (set === 'bypass-failover') {
   for (const vp of Object.keys(viewports)) {
     for (const [name, fx] of Object.entries(bfStates)) if (vp === 'desktop' || bfPhone.includes(name)) await shot(name, fx, vp);
