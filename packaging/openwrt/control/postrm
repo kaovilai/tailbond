@@ -6,4 +6,21 @@ if [ -x /etc/init.d/nginx ] && nginx -t >/dev/null 2>&1; then
 	/etc/init.d/nginx reload >/dev/null 2>&1
 fi
 rm -f /tmp/luci-indexcache* 2>/dev/null
+# Removal (opkg runs no postrm on upgrade; the check is belt and braces):
+# no reinstall at boot (postinst adds the line back on a reinstall), and
+# the cached packages go, unless the package is back soon after: `opkg
+# install --force-reinstall` removes it first, possibly while installing
+# from that cache. /etc/tailbond/ (keys, pairing) stays.
+if [ "$1" != upgrade ]; then
+	if [ -f /etc/rc.local ] && grep -q '# tailbond-reinstall$' /etc/rc.local; then
+		grep -v '# tailbond-reinstall$' /etc/rc.local >/tmp/rc.local.tb && cat /tmp/rc.local.tb >/etc/rc.local
+		rm -f /tmp/rc.local.tb
+	fi
+	if [ -d /etc/tailbond/pkg ]; then
+		(
+			sleep "${TB_PKG_PURGE_DELAY:-120}"
+			[ -f /usr/lib/opkg/info/tailbond.control ] || rm -rf /etc/tailbond/pkg
+		) </dev/null >/dev/null 2>&1 &
+	fi
+fi
 exit 0

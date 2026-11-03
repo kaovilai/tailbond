@@ -1,0 +1,152 @@
+#!/bin/bash
+# tailbond server-up hook (generic Linux, packaging/linux). Run by tailbondd
+# after mqvpn's server starts.
+# Env: TB_TUN TB_SUBNET TB_SUBNET6 TB_PORT TB_DNS_IP TB_WEB_PORTS TB_ADVERTISE_ROUTE (+ TB_CONFIG TB_STATE_DIR).
+#
+# Same job as packaging/fedora/hooks/server-up, for whatever firewall the
+# machine has (checked at every start, so a firewalld that comes up later is
+# used from the next restart):
+# - firewalld running: open the UDP port (the "tailbond" service when it
+#   carries TB_PORT, else the bare port), put tb0 in the "tailbond" zone and
+#   masquerade client traffic toward the internet and tailscale0 (policy
+#   "tailbond-out"); tailnet peers may reach clients ("tailbond-in"); tailnet
+#   sources may reach the dashboard and the phone page (TB_WEB_PORTS).
+# - otherwise nftables: a table of its own, `inet tailbond` (forwarding to
+#   and from tb0, masquerade of the tunnel subnets). With ufw active, the
+#   installer added the persistent ufw rules (port, routed tb0 traffic);
+#   this table only adds the NAT ufw can't express without editing
+#   before.rules.
+# - no nft binary: iptables/ip6tables rules tagged "tailbond".
+# - nothing: a warning; bonded clients then reach only this machine.
+# - Tailscale: advertise TB_SUBNET as a subnet route (approve it once in the
+#   admin console) so tailnet peers can reach bonded clients.
+set -u
+
+TB_TUN="${TB_TUN:-tb0}"
+TB_PORT="${TB_PORT:-443}"
+TAILNET4=100.64.0.0/10
+TAILNET6=fd7a:115c:a1e0::/48
+
+log() { echo "$*"; }
+
+sysctl -qw net.ipv4.ip_forward=1
+[ -n "${TB_SUBNET6:-}" ] && sysctl -qw net.ipv6.conf.all.forwarding=1
+
+# iptables FORWARD rules: the fallback, and needed next to nftables when
+# something (Docker, a distro default) set the iptables FORWARD policy to DROP.
+ipt_forward() { # add|del
+  local op=-I c=(-m comment --comment tailbond) t
+  [ "$1" = del ] && op=-D
+  for t in iptables ip6tables; do
+    command -v "$t" >/dev/null 2>&1 || continue
+    [ "$t" = ip6tables ] && [ -z "${TB_SUBNET6:-}" ] && continue
+    if [ "$op" = -I ]; then
+      "$t" -C FORWARD -i "$TB_TUN" -j ACCEPT "${c[@]}" 2>/dev/null || "$t" -I FORWARD -i "$TB_TUN" -j ACCEPT "${c[@]}"
+      "$t" -C FORWARD -o "$TB_TUN" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT "${c[@]}" 2>/dev/null ||
+        "$t" -I FORWARD -o "$TB_TUN" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT "${c[@]}"
+      if [ "$t" = iptables ]; then
+        "$t" -C FORWARD -i tailscale0 -o "$TB_TUN" -s "$TAILNET4" -j ACCEPT "${c[@]}" 2>/dev/null ||
+          "$t" -I FORWARD -i tailscale0 -o "$TB_TUN" -s "$TAILNET4" -j ACCEPT "${c[@]}"
+      fi
+    else
+      "$t" -D FORWARD -i "$TB_TUN" -j ACCEPT "${c[@]}" 2>/dev/null
+      "$t" -D FORWARD -o "$TB_TUN" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT "${c[@]}" 2>/dev/null
+      [ "$t" = iptables ] && "$t" -D FORWARD -i tailscale0 -o "$TB_TUN" -s "$TAILNET4" -j ACCEPT "${c[@]}" 2>/dev/null
+    fi
+  done
+  true
+}
+forward_drop() { command -v iptables >/dev/null 2>&1 && iptables -S FORWARD 2>/dev/null | grep -q -- '^-P FORWARD DROP'; }
+
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  fw() { firewall-cmd -q "$@" 2>/dev/null; firewall-cmd -q --permanent "$@" 2>/dev/null; true; }
+  if ! firewall-cmd --info-zone=tailbond >/dev/null 2>&1; then
+    log "firewalld: tailbond zone not loaded, reloading"
+    firewall-cmd -q --reload
+  fi
+  defzone="$(firewall-cmd --get-default-zone)"
+  # UDP $TB_PORT in the zone of the interface that has the default route,
+  # else the default zone.
+  wanif="$(ip -o route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')"
+  wanzone="$defzone"
+  if [ -n "$wanif" ] && z="$(firewall-cmd --get-zone-of-interface="$wanif" 2>/dev/null)"; then wanzone="$z"; fi
+  if firewall-cmd --info-service=tailbond 2>/dev/null | grep -q "ports: .*\b$TB_PORT/udp"; then
+    fw --zone="$wanzone" --add-service=tailbond
+  else
+    fw --zone="$wanzone" --add-port="$TB_PORT/udp"
+  fi
+  firewall-cmd -q --zone=tailbond --change-interface="$TB_TUN" 2>/dev/null || true
+  fw --policy=tailbond-out --add-rich-rule="rule family=ipv4 source address=$TB_SUBNET masquerade"
+  [ -n "${TB_SUBNET6:-}" ] && fw --policy=tailbond-out --add-rich-rule="rule family=ipv6 source address=$TB_SUBNET6 masquerade"
+  if command -v tailscale >/dev/null 2>&1; then fw --zone="$wanzone" --add-port=41641/udp; fi
+  tszone="$(firewall-cmd --get-zone-of-interface=tailscale0 2>/dev/null)" || tszone="$defzone"
+  for p in ${TB_WEB_PORTS:-8077 80}; do
+    fw --zone="$tszone" --add-rich-rule="rule family=ipv4 source address=$TAILNET4 port port=$p protocol=tcp accept"
+    fw --zone="$tszone" --add-rich-rule="rule family=ipv6 source address=$TAILNET6 port port=$p protocol=tcp accept"
+  done
+  log "firewalld: udp/$TB_PORT open in zone $wanzone; tcp ${TB_WEB_PORTS:-8077 80} from the tailnet in zone $tszone; $TB_TUN in zone tailbond; masquerade $TB_SUBNET ${TB_SUBNET6:-}"
+elif command -v nft >/dev/null 2>&1; then
+  v6=""
+  if [ -n "${TB_SUBNET6:-}" ]; then
+    v6="ip6 saddr $TB_SUBNET6 oifname != \"$TB_TUN\" masquerade"
+  fi
+  # Recreated on every start: the subnet or tunnel may have changed.
+  nft delete table inet tailbond 2>/dev/null
+  if nft -f - <<EOF
+table inet tailbond {
+  chain forward {
+    type filter hook forward priority filter - 5; policy accept;
+    iifname "$TB_TUN" accept
+    oifname "$TB_TUN" ct state established,related accept
+    iifname "tailscale0" oifname "$TB_TUN" ip saddr $TAILNET4 accept
+    iifname "tailscale0" oifname "$TB_TUN" ip6 saddr $TAILNET6 accept
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr $TB_SUBNET oifname != "$TB_TUN" masquerade
+    $v6
+  }
+}
+EOF
+  then
+    log "nftables: table inet tailbond: forward $TB_TUN, masquerade $TB_SUBNET ${TB_SUBNET6:-}"
+  else
+    log "nftables: could not load table inet tailbond; bonded clients won't reach the internet"
+  fi
+  if forward_drop; then
+    ipt_forward add
+    log "iptables FORWARD policy is DROP: added ACCEPT rules for $TB_TUN (comment tailbond)"
+  fi
+elif command -v iptables >/dev/null 2>&1; then
+  c=(-m comment --comment tailbond)
+  iptables -t nat -C POSTROUTING -s "$TB_SUBNET" ! -o "$TB_TUN" -j MASQUERADE "${c[@]}" 2>/dev/null ||
+    iptables -t nat -A POSTROUTING -s "$TB_SUBNET" ! -o "$TB_TUN" -j MASQUERADE "${c[@]}"
+  if [ -n "${TB_SUBNET6:-}" ] && command -v ip6tables >/dev/null 2>&1; then
+    ip6tables -t nat -C POSTROUTING -s "$TB_SUBNET6" ! -o "$TB_TUN" -j MASQUERADE "${c[@]}" 2>/dev/null ||
+      ip6tables -t nat -A POSTROUTING -s "$TB_SUBNET6" ! -o "$TB_TUN" -j MASQUERADE "${c[@]}"
+  fi
+  ipt_forward add
+  log "iptables: masquerade $TB_SUBNET ${TB_SUBNET6:-}, forward $TB_TUN (comment tailbond)"
+else
+  log "WARNING: no firewalld, nft or iptables: no NAT for $TB_SUBNET, bonded clients reach only this machine"
+fi
+
+# Tailscale: merge TB_SUBNET into the advertised routes (keeps existing ones,
+# including an exit node).
+if [ "${TB_ADVERTISE_ROUTE:-1}" = 0 ]; then
+  log "tailscale: not advertising $TB_SUBNET (no_advertise_route)"
+elif command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+  cur="$(tailscale debug prefs 2>/dev/null | tr -d ' \n\t' | sed -n 's/.*"AdvertiseRoutes":\[\([^]]*\)\].*/\1/p' | tr -d '"')"
+  case ",$cur," in
+    *",$TB_SUBNET,"*) log "tailscale: $TB_SUBNET already advertised" ;;
+    *)
+      routes="${cur:+$cur,}$TB_SUBNET"
+      if tailscale set --advertise-routes="$routes"; then
+        log "tailscale: advertising $routes (approve $TB_SUBNET in the admin console if needed)"
+      else
+        log "tailscale: could not advertise $TB_SUBNET"
+      fi
+      ;;
+  esac
+fi
+exit 0

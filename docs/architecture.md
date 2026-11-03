@@ -15,6 +15,7 @@ Every component below MUST follow this document. Change it here first.
 | Fedora package | `packaging/fedora/` | Fedora 43+ | RPM: `tailbond-server` (mqvpn + tailbondd + units + firewalld service) |
 | OpenWrt / GL.iNet package | `packaging/openwrt/` | Flint 3 (GL-BE9300), Slate 7 (GL-BE3600), any aarch64_cortex-a53 OpenWrt | `.ipk` with static musl mqvpn + tailbondd, init.d, UCI, GL admin panel (VPN → tailbond: oui view + `/rpc` Lua object, [glinet.md](glinet.md)) |
 | Android app | `android/` | Android 8+ arm64 | fork of mqvpn's Android app, rebranded `dev.tailbond.app` |
+| Generic Linux server bundle | `packaging/linux/` (+ Ansible role `packaging/ansible/roles/tailbond/`) | Debian/Ubuntu, Alma/RHEL/Rocky 9–10, Fedora; x86_64 | static mqvpn + tailbondd, `install.sh` (ports, subnet, firewall, systemd memory limits), for a VPS server ([vps.md](vps.md)) |
 
 Roles of `tailbondd` (`--role` / config `role`):
 - `server`: home endpoint (Fedora box or Flint 3). Runs `mqvpn --mode server`.
@@ -74,6 +75,14 @@ tailbond://pair?d=<base64url(JSON)>
 
 `server` may be a DDNS hostname. The Android app and client-role agent both import this.
 
+Additive keys (servers since multi-server support always send them; importers
+must accept payloads without them):
+- `server_name`: the server's own short name (`homebox`, `vps`), used as the
+  server's name in a client's [server list](#multiple-servers-and-failover).
+  Missing: the first label of `sni`, else the host of `server`.
+- `subnet`: the server's IPv4 tunnel subnet (`server.subnet`, e.g.
+  `10.77.0.0/24`). Missing: the /24 around `dns[0]`, else `10.77.0.0/24`.
+
 ## mqvpn client control API (patch)
 
 Upstream mqvpn only serves the control API in server mode. `patches/mqvpn/0001-client-control-api.patch` adds it to client mode on Linux: `[Control] Listen` / `--control-port` in client mode serve `get_status` and `get_stats` with the **same JSON shape as server mode**, as one client object whose path entries additionally carry `"iface"` (the bound interface name). Keep the patch upstreamable (small, confined to `src/platform/linux/` + `src/platform/posix/`).
@@ -94,7 +103,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/clients` | server: registered clients and live sessions |
 | POST | `/api/clients` | server: `{"name"}`, returns `{"uri","qr_svg"}` |
 | DELETE | `/api/clients/{name}` | server: revoke |
-| POST | `/api/pair` | client: `{"uri"}` to import a pairing |
+| POST | `/api/pair` | client: `{"uri"}` to import a pairing (additive: it replaces the primary server; `"add": true` = `POST /api/servers`) |
 | GET | `/api/tailscale` | `tailscale status --json` summary + route approval state |
 | GET | `/tailbond.apk` | additive: the Android app, if the file at `android_apk` exists (else 404); `/api/settings` reports `android_apk: true/false` |
 | GET | `/api/peers` | server, additive: the tailnet machines bonded clients reach (below). Auth: client API token, or an admin session |
@@ -102,20 +111,30 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/logs?since=<seq>&limit=<n>` | additive: `{"entries":[{"seq","t","src":"agent\|mqvpn\|hook","line"}]}` ring buffer |
 | GET/POST | `/api/settings` | additive: read role/TLS/pairing info; set `public_addr`, `ui_password`, `captive_portal_detect` (client) |
 | POST | `/api/logout` | additive |
-| GET | `/api/hello` | additive, **unauthenticated**: `{"tailbond":true,"name","version","role"}` ([pairing over Tailscale](#pairing-over-tailscale)) |
+| GET | `/api/hello` | additive, **unauthenticated**: `{"tailbond":true,"name","version","role"}` ([pairing over Tailscale](#pairing-over-tailscale)); additive: `protocol` ([updates](#updates)) |
 | POST | `/api/pair-requests` | server, additive, **tailnet sources only**: `{"name","kind":"router"\|"phone"}` → 202 `{"id","token","status":"pending","name","expires"}` |
 | GET | `/api/pair-requests/{id}` | server, additive: the requester polls with `Authorization: Bearer <token>` from the same address → `{"id","status","name","expires"}`, plus `"uri"` once approved |
 | GET | `/api/pair-requests` | server, additive (admin): every live request `{"id","name","kind","device","dns_name","hostname","os","user","user_name","ip","status","created","expires","client","repair"}` |
 | POST | `/api/pair-requests/{id}/approve`, `/decline` | server, additive (admin): body `{"name"}` optional. Refused (403) from the requesting address |
 | GET | `/api/discover?refresh=1` | client, additive: tailbond servers among online tailnet peers `{"tailscale_installed","tailscale_running","self","tailnet","servers":[{"name","dns_name","ip","os","version"}],"checked","at"}` |
-| GET/POST/DELETE | `/api/join` | client, additive: ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel |
-| DELETE | `/api/pair` | client, additive: forget the pairing (tunnel stops, LAN back on the WANs) |
+| GET/POST/DELETE | `/api/join` | client, additive: ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel. Additive: `"add": true` adds the approved server to the [server list](#multiple-servers-and-failover) as a backup instead of replacing the primary; `error` may then be `subnet_in_use` or `exists`, with `conflict` (the server already in the list) and `subnet` |
+| DELETE | `/api/pair` | client, additive: forget the pairing, every server in the list (tunnel stops, LAN back on the WANs) |
 | GET | `/api/peers` | client, additive: the server's list (below), fetched through the tunnel with this client's token, cached 20 s |
 | POST/DELETE | `/api/captive/signin` | client, additive: `{"name": <network or device>}` sign-in mode on a WAN behind a portal (409 otherwise) / off ([captive portals](#captive-portals)) |
 | POST | `/api/captive/check` | client, additive: `{"name"}` re-check now (`""` = all) |
 | GET | `/api/health` | additive: [setup health](#setup-health) |
 | GET | `/tailbond-glinet.ipk` | additive: the GL router package, from `glinet_ipk` (default `/usr/share/tailbond/tailbond-glinet.ipk`) or rebuilt from opkg's records of the installed package |
 | GET | `/get` | server, additive, **unauthenticated**: the [phone page](#phone-page) (HTML), also served on port 80 |
+| GET | `/api/servers` | client, additive: `{"servers":[…],"active_server","failover":{…}}`, the same objects as in `/api/status` ([multiple servers](#multiple-servers-and-failover)) |
+| POST | `/api/servers` | client, additive: `{"uri", "name"?}` adds a server at the end of the list (a backup). 409 `{"error":"subnet_in_use","conflict":"<server>","subnet"}` when its tunnel subnet overlaps another server's; 409 `{"error":"exists","conflict"}` when it's the same server |
+| DELETE | `/api/servers/{name}` | client, additive: forget one server (the next one takes over if it was active) |
+| POST | `/api/servers/active` | client, additive: `{"name"}` "Use this server now" (switches immediately; no automatic failback until it fails) |
+| POST | `/api/servers/order` | client, additive: `{"names":[…]}` the full list in the new order; the first is the primary |
+| POST | `/api/servers/policy` | client, additive: `{"policy":"prefer"\|"always","server"?,"switch_after_sec"?,"failback_after_sec"?}` |
+| GET | `/api/bypass` | client, additive: `{"rules":[…],"support":{…},"wans":[{"name","label","up","default"}],"counters":{"<id>":{"connections"}}}` (connections a rule sent past the tunnel since it was applied) ([bypass rules](#bypass-rules-client-role)) |
+| POST | `/api/bypass` | client, additive: one rule; without `id` (or an unknown one) it is added, else replaced. Returns the stored rule (with its `id`) |
+| DELETE | `/api/bypass/{id}` | client, additive |
+| GET | `/api/lan-clients` | client, additive: devices on the LAN `[{"mac","ip","name","online"}]` from the DHCP leases (`client.leases_file`, default `/tmp/dhcp.leases`) and the neighbour table, online first, then by name |
 
 `GET /api/settings` (server role) additionally reports `landing_url` (where
 phones get tailbond: `http://<full MagicDNS name>/` while the phone page
@@ -205,6 +224,7 @@ Additive fields (consumers must ignore unknown keys):
 - `pair_requests` (server): the pending requests, same shape as `GET /api/pair-requests`;
 - `join` (client): the `GET /api/join` object while not idle;
 - path (client): `network` and `label` (OpenWrt: `wan`/"Ethernet", `wwan`/"Repeater", `tethering`/"Tethering", `modem_*`/"Cellular"), `captive` (`open`\|`portal`\|`offline`), `portal_url`, `signin_until`, `captive_source` (`tailbond`\|`glinet`); a WAN held back behind a portal has `state: standby`, not `failed`;
+- `servers[]`, `active_server`, `failover` (client): see [multiple servers](#multiple-servers-and-failover);
 - `clients[]` (server role), one per registered or connected client:
   `{"name","registered","connected","endpoint","scheduler","connected_sec","tx_bps","rx_bps","tx_bytes","rx_bytes","paths":[path…]}`.
   Server-side paths have no `iface` (mqvpn's server doesn't know it) and `kind` is `unknown`.
@@ -229,7 +249,8 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 ## Build outputs
 
 - `scripts/build-mqvpn-native.sh` → `third_party/mqvpn/build/mqvpn` (Fedora).
-- `scripts/build-mqvpn-aarch64-musl.sh` → static `out/aarch64/mqvpn` via `podman` + `docker.io/library/alpine` (linux/arm64, qemu-user-static).
+- `scripts/build-mqvpn-musl.sh <aarch64|x86_64>` → static `out/<arch>/mqvpn` via `podman` + `docker.io/library/alpine` (native when the host has that arch, else qemu-user-static); `scripts/build-mqvpn-aarch64-musl.sh` is the aarch64 shorthand.
+- `packaging/linux/build-bundle.sh` → `out/linux/tailbond-linux-<arch>.tar.gz` (installer, static binaries, hooks, unit).
 - `agent`: `CGO_ENABLED=0 go build` for linux/amd64 and linux/arm64.
 - RPM: `packaging/fedora/build-rpm.sh` → `out/rpm/`.
 - IPK: `packaging/openwrt/build-ipk.sh` → `out/ipk/tailbond_<ver>_aarch64_cortex-a53.ipk` (plain ar/tar ipk; no OpenWrt SDK needed since binaries are static).
@@ -243,14 +264,18 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 |---|---|---|
 | `server-up` | after mqvpn server starts | env `TB_TUN`, `TB_SUBNET`, `TB_SUBNET6`, `TB_PORT`, `TB_DNS_IP`, `TB_WEB_PORTS` (additive: the tcp ports the agent serves to the tailnet, dashboard then phone page, e.g. `8077 80`), `TB_ADVERTISE_ROUTE` (additive: `0` when `server.no_advertise_route` is set) |
 | `server-down` | after mqvpn server stops | same |
-| `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES` |
-| `client-down` | tunnel down | same; `TB_RELEASE=1` when the user turned tailbond off or unpaired (the LAN goes back to the WANs whatever the kill switch says) |
+| `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES`; additive: `TB_SERVER_NAME`, `TB_SUBNET` (the active server's tunnel subnet), `TB_DNS_IP` (its tunnel DNS, `""` when it has none) |
+| `client-down` | tunnel down | the env `client-up` got for that tunnel (a server switch tears down the old server's routes, then brings up the new one's); `TB_RELEASE=1` when the user turned tailbond off or unpaired (the LAN goes back to the WANs whatever the kill switch says); additive: `TB_SWITCH=1` when another server is about to take over |
+| `bypass-apply` | client, additive: start, rule changes, WAN up/down (SIGHUP), every 5 minutes, stop | env `TB_BYPASS_FILE` (JSON `{"rules":[enabled rules]}`; next to it the agent renders every variant: `bypass.nft`, `bypass.ipset`, `bypass.iptables`, `bypass.ip6tables`, `bypass-nftset.conf`, `bypass-ipset.conf`, `bypass-wans` (`<network> <mark> <table>` per line), `bypass-marks` (`<mask> <direct> <tunnel>`), `bypass-domains`), `TB_BYPASS_STATUS` (the hook writes `{"domains":"nftset"\|"ipset"\|"none","firewall":"nft"\|"iptables"\|"none","reason"}` there), `TB_BYPASS_ACTION` = `apply` \| `counters` (write `{"counters":{"<id>":{"connections"}}}` to `TB_BYPASS_STATUS`) \| `clear` (agent stopping: remove everything) |
 | `portal-open` | sign-in mode on for one WAN (client) | env `TB_PORTAL_DEV`, `TB_PORTAL_NET`, `TB_PORTAL_DNS` (the WAN's DHCP DNS, comma separated), `TB_PORTAL_URL`, `TB_PORTAL_SOURCE` (`tailbond`\|`glinet`) |
 | `portal-close` | sign-in mode off (open, timeout, stopped, shutdown) | same |
 
 Every hook also gets `TB_ROLE`, `TB_MODE`, `TB_STATE_DIR` and `TB_CONFIG` (path of the generated mqvpn INI). Besides `<hooks_dir>/<hook>`, executables in `<hooks_dir>/<hook>.d/` run in lexical order.
 
+`bypass-apply` exists only on OpenWrt; Fedora and the generic Linux installer have no client role, so they ship none (a missing hook is not an error).
+
 - Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`, `TB_WEB_PORTS` from tailnet source ranges only), `tailscale set --advertise-routes`. Without a running firewalld they fall back to mqvpn's NAT script plus iptables masquerade toward `tailscale0`.
+- Generic Linux hooks (`packaging/linux/hooks/`, installed to `/usr/local/lib/tailbond/hooks` and set as `hooks_dir`): firewalld like Fedora, else an nftables `table inet tailbond`, else iptables (plus FORWARD accepts when that policy is DROP); same Tailscale route handling.
 - OpenWrt hooks (`packaging/openwrt/hooks/`): UCI network/firewall zone `tailbond` for `tb0`, forwarding `lan → tailbond`, policy routing of LAN through `tb0`, server-role equivalents for Flint 3.
 - The agent runs mqvpn with `manage_routes = false` on OpenWrt and lets hooks route. On Fedora (server only), internet NAT comes from the firewalld `tailbond-out` policy, or from mqvpn's own NAT script when firewalld isn't running.
 
@@ -287,6 +312,16 @@ Additive keys (all optional):
 - `server.users[].ts_node`: the Tailscale stable node ID that asked to pair (re-asking re-issues this user's key);
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;
 - `client.captive_portal_detect` (default `true`), `client.captive_probe_urls` (default: Google's `generate_204`, Firefox's `success.txt`).
+- `client.servers`: `[{"name","pairing_uri","enabled"}]`, the ordered server list (first = primary); `client.failover`: `{"policy":"prefer"|"always","server","switch_after_sec":15,"failback_after_sec":120,"probe_every_sec":10}` ([multiple servers](#multiple-servers-and-failover));
+- `update`: auto-updates and the server's update mirror ([updates](#updates)); `backup`: scheduled encrypted backups ([backup and restore](#backup-and-restore));
+- `client.bypass`: `[{"id","kind","match","ip","host","target","wan","enabled","note"}]` ([bypass rules](#bypass-rules-client-role)); `client.leases_file` (default `/tmp/dhcp.leases`); `client.bypass_mark_mask` (default `"0x07000000"`), `client.bypass_local_dns` (default `true`).
+
+**Migration.** A config with `client.pairing_uri` and no `client.servers`
+loads as a one-server list (`[{"name": <payload server_name>, "pairing_uri"}]`)
+and is saved that way on the next change. `client.pairing_uri` stays
+written, always equal to the primary's URI, so older tools and
+`/etc/init.d/tailbond` keep working. A `client.pairing_uri` that isn't in the
+list (set by hand or through UCI) replaces the primary.
 
 ## Pairing over Tailscale
 
@@ -308,6 +343,8 @@ Both ends are on one tailnet; no link to copy.
    again returns the same one), at most 3 new requests per device per
    10 minutes and 16 pending in total (429). Requests are in memory: a
    restart drops them and the device simply asks again.
+   Additive: the body may carry `"avoid_subnets": ["10.77.0.0/24"]` (the
+   asking client's other servers), see [distinct subnets](#multiple-servers-and-failover).
 3. **Approval.** The admin sees pending requests in the dashboard, the GL
    panel and `pair_requests` in `/api/status`, and approves or declines with
    one tap (not from the requesting address). Approval creates a client
@@ -322,6 +359,371 @@ Both ends are on one tailnet; no link to copy.
    (Android: the normal confirm dialog). Pending requests expire after 10
    minutes, approved ones are served for 10 minutes, declined/expired ones
    stay listed for an hour.
+
+## Multiple servers and failover
+
+Client role (router agent and Android app). The client keeps an **ordered
+list of servers**, e.g. `homebox` (primary, at home) and `vps` (a backup VPS).
+Each comes from its own pairing (link, QR, or asking over Tailscale with
+`POST /api/join {"server", "add": true}`) and has its own tunnel subnet,
+DNS IP and tailnet routes. One tunnel runs at a time, to the **active**
+server; the others are on standby.
+
+**Distinct subnets.** Two servers must not share a tunnel subnet (both would
+advertise it to the tailnet, and a server switch would keep stale routes).
+- A server's subnet is `server.subnet` (default `10.77.0.0/24`). The generic
+  Linux installer (`packaging/linux/install.sh`, a VPS) picks a random free
+  `/24` in `10.78.0.0`–`10.99.255.0` that overlaps no local route.
+- Asking to pair sends `{"avoid_subnets": [the client's other servers' subnets]}`
+  with `POST /api/pair-requests`. If the server's subnet is in that list and
+  the server has **no registered clients yet**, approving moves the server
+  to the first free `/24` from `10.78.0.0/24` up (not in `avoid_subnets`, not
+  overlapping a local route), saves it, logs it and restarts mqvpn (the
+  hooks re-run with the new `TB_SUBNET`). A server that already has clients
+  keeps its subnet.
+- The client refuses a server whose subnet overlaps one already in its list
+  (`409 subnet_in_use`); the UI says which server clashes and how to change
+  `server.subnet` on the new one.
+
+**Health.** The active server is working while mqvpn reports the
+connection established and, with the control API, at least one path is
+`active` and the server still answers: the mqvpn client sends keep-alive
+PINGs, so on a live path `pkt_recv` moves whenever `pkt_sent` does. When
+every path has had sends go unanswered for 5 s, the tunnel counts as down
+(mqvpn itself would only give up after its 120 s idle timeout). Without the
+control API (unpatched mqvpn) only the connection state counts. Standby servers are checked every `probe_every_sec` (10 s) with
+one UDP datagram to their mqvpn port, sent outside the tunnel (router: bound
+to a WAN; Android: on the underlying network): a 60-byte QUIC short-header
+packet with a random connection ID, which any QUIC server answers with a
+Stateless Reset (RFC 9000 §10.3; xquic does, without creating state). Any
+reply within 2 s = reachable. This is not a tunnel pinger: the active
+tunnel's health comes only from mqvpn.
+
+**Policy** (`client.failover.policy`):
+- `prefer` (default, "Prefer <primary>, use <backup> if <primary> is down"):
+  - **failover**: when the active server has not been working for
+    `switch_after_sec` (default 15 s; counted from the later of the last
+    working moment and the switch to it), switch to the next server in list
+    order (wrapping), skipping ones whose last probe failed when another one
+    answered;
+  - **failback**: when a server earlier in the list than the active one has
+    answered every probe for `failback_after_sec` (default 120 s), switch
+    back to it. One failed probe restarts the count (hysteresis). If a
+    failback doesn't come up within `switch_after_sec`, the hold for that
+    server doubles for the next try (up to 16×, reset once it stays working
+    for 10 minutes), so a server that answers probes but can't carry a
+    tunnel doesn't make the client flap.
+- `always` ("Always use <server>"): only `client.failover.server`; no automatic
+  switching.
+- **Manual** ("Use this server now", `POST /api/servers/active`): switch at
+  once; no failback while that server works; if it fails, `prefer` resumes.
+
+A switch stops mqvpn, runs `client-down` with the old server's env
+(`TB_SWITCH=1`; with the kill switch on the LAN is blocked for the few
+seconds until the new tunnel is up), writes the new server's config and
+starts mqvpn; `client-up` then gets the new server's `TB_SERVER_IP`,
+`TB_SUBNET`, `TB_DNS_IP`, `TB_TAILNET_ROUTES`. Bypass rules don't depend on
+the server and stay in place.
+
+Status (`/api/status`, `/api/servers`), additive:
+
+```json
+"active_server": "vps",
+"servers": [
+  {"name": "homebox", "role": "primary", "state": "unreachable", "active": false,
+   "last_ok": "2026-11-01T08:00:00Z", "subnet": "10.77.0.0/24", "server": "home.example.net:443"},
+  {"name": "vps", "role": "backup", "state": "active", "active": true,
+   "last_ok": "2026-11-01T08:03:10Z", "subnet": "10.83.142.0/24", "server": "203.0.113.9:8443"}
+],
+"failover": {"policy": "prefer", "server": "", "switch_after_sec": 15, "failback_after_sec": 120,
+             "reason": "primary_down", "since": "2026-11-01T08:01:02Z", "failback_in_sec": 80}
+```
+
+- `state`: `active` (the active server, tunnel working), `connecting` (active, not working yet), `standby` (answered its last probe), `unreachable` (didn't), `unknown` (not probed yet), `off` (`enabled: false`).
+- `role`: `primary` for the first in the list, else `backup`.
+- `last_ok`: when the tunnel last worked (active) or the last probe was answered (others); omitted if never.
+- `failover.reason`: why the active server isn't the primary: `""` (it is), `primary_down`, `manual`, `policy` (`always`).
+- `failback_in_sec`: present while counting down to a failback.
+- `history`: the last 20 switches since the agent started, newest first:
+  `[{"at","from","to","reason":"failover"|"failback"|"manual"|"policy"|"list","detail"}]`
+  (`detail`, for failovers: why the old server stopped working, e.g. "no answer on any path for 5 s").
+
+In `GET /api/bypass`, `wans[].default` marks the WAN carrying the router's
+default route now, i.e. where "Use the internet directly" goes.
+
+`status.server` and `tunnel_ip` describe the active server. Apps word it as
+"Using vps (homebox is unreachable)" / "Back to homebox in 1:20".
+
+The optional split "VPS for internet, home for tailnet" (two tunnels at once)
+is not implemented: mqvpn runs one client per TUN and the hooks route the
+LAN to one table. It would need a second mqvpn client, a second table and
+per-destination rules; noted as future work.
+
+## Bypass rules (client role)
+
+On the travel router, LAN traffic can skip the tunnel by rule
+(`client.bypass`, like OpenMPTCProuter's OMR-ByPass):
+
+```json
+{"id": "b3f9", "kind": "domain", "match": "bank.example", "target": "direct", "enabled": true, "note": "Bank"}
+{"id": "c1d2", "kind": "device", "match": "aa:bb:cc:dd:ee:ff", "ip": "192.168.8.23", "host": "work-laptop", "target": "tunnel", "enabled": true, "note": "Work laptop"}
+{"id": "e5f6", "kind": "ip", "match": "203.0.113.0/24", "target": "wan", "wan": "wwan", "enabled": true}
+{"id": "a7b8", "kind": "port", "match": "udp/4500", "target": "direct", "enabled": true, "note": "Wi-Fi calling"}
+```
+
+- `kind`/`match`:
+  - `domain`: a domain and all its subdomains (`netflix.com`; a leading `*.` is dropped);
+  - `device`: a LAN device's MAC (from `GET /api/lan-clients`), with `ip` used only when `match` is empty. Optional `host`, the device's DHCP name: the rule then also covers every MAC the router currently leases under that name (checked every 30 s), so a laptop that comes back with a new private Wi-Fi address still matches. A MAC another device rule names is never taken over;
+  - `ip`: an IPv4/IPv6 address or CIDR;
+  - `port`: `tcp/<port>`, `udp/<port>` or a range `udp/5060-5061`.
+- `target`:
+  - `direct`: the main table, i.e. GL's normal multi-WAN ("Use the internet directly");
+  - `wan` + `wan` (an OpenWrt network: `wan`, `wwan`, `tethering`, `modem_…`): only that WAN ("Use only <WAN>");
+  - `tunnel`: through tailbond even if another rule says otherwise ("Always use tailbond").
+- `id`: 1–16 of `[a-z0-9]`, assigned by the agent; `note` ≤ 64 characters. At most 64 rules.
+
+**How it's applied** (OpenWrt `bypass-apply` hook):
+- An nftables table `inet tailbond` (fw4) or iptables `mangle` chain `tailbond_bypass` plus ipsets (fw3).
+- It marks LAN-originated packets in prerouting with an fwmark under `client.bypass_mark_mask` (default `0x07000000`; Tailscale uses `0x00ff0000`, mwan3 `0x3f00`).
+- The mark is saved to conntrack, so a flow keeps its route even after a DNS answer expires.
+- Device rules are evaluated first, then port, IP and domain rules, each in list order. The first match wins. A device rule with `target: tunnel` therefore beats a domain bypass.
+- Domains: dnsmasq adds every address it resolves for the domain to the rule's set, whichever upstream answered:
+  - `nftset=/d/4#inet#tailbond#bp_<id>_4,6#…` on fw4;
+  - `ipset=/d/tb_<id>_4,tb_<id>_6` on fw3;
+  - written to dnsmasq's conf-dir.
+  For `direct`/`wan` rules it also sends that domain's queries to the WAN's own DNS servers (`server=/d/<ip>`), so the domain resolves while the tunnel is down and CDNs answer for where the router is.
+- Both directives need **dnsmasq-full**. Without it (`support.domains = "none"`), domain rules are kept but inactive, the panel says why, and device/IP/port rules still work.
+- Limits:
+  - matching is on the addresses the router's dnsmasq hands out;
+  - a device using its own DNS-over-HTTPS/DoT resolver, or hard-coded IPs, isn't matched;
+  - ECH hides nothing here (matching happens at DNS, not SNI) but means there's no SNI fallback;
+  - CDNs share IPs between sites, so a bypassed domain can take other sites on the same addresses with it.
+
+**Rule priorities** (`ip rule`, base `P = client.rule_priority`, default 1077; v4 and v6):
+
+| Priority | Rule | Purpose |
+|---|---|---|
+| P-7 (1070) | `fwmark T/mask lookup main suppress_prefixlength 0`, same for each `W<i>` | marked traffic (and its marked replies) still reaches the LAN and other local routes |
+| P-6 (1071) | `fwmark T/mask lookup 77` | "Always use tailbond": the tunnel, or the kill switch's blackhole while it's down |
+| P-5 (1072) | `fwmark D/mask lookup main` | "Use the internet directly" |
+| P-4 (1073) | `fwmark W<i>/mask lookup 80+i` | "Use only <WAN>": that WAN's default route (table refreshed on WAN changes) |
+| P-3 (1074) | `iif <lan> lookup 78` | captive-portal sign-in mode |
+| P-2 (1075) | `to <server> lookup main` | the active server's address never enters the tunnel |
+| P-1 (1076) | `iif <lan> lookup main suppress_prefixlength 0` | LAN-to-LAN and other non-default routes |
+| P (1077) | `iif <lan> lookup 77` | everything else: the tunnel (or the kill switch's blackhole) |
+
+Marks: `T` = `0x02000000`, `D` = `0x01000000`, `W<i>` = `0x03000000 + i<<24` (up to 5 WANs), each within the mask.
+
+Replies carry their connection's mark too (restored from conntrack on every
+interface), and the hook turns on `net.ipv4.conf.all.src_valid_mark` (as
+wg-quick does; the previous value comes back on `clear`). The kernel checks
+a reply's source by looking up routes as if it came from the LAN device; that
+lookup would otherwise land in table 77, which is a blackhole while the kill
+switch is armed, so with `rp_filter` on every reply to a bypassed device would
+be dropped exactly when bypassing matters.
+
+Interplay:
+- **Kill switch**: bypassed traffic is intentional, so `direct`/`wan` rules keep working while the tunnel is down. Everything else stays blocked, and so does `tunnel`-target traffic.
+- **Sign-in mode** (captive portals) applies after the bypass rules: a "tunnel" device keeps using the tunnel during sign-in, while every other LAN device reaches the portal WAN.
+- **GL Login Mode** is the same sign-in mode.
+- **Tailscale on the router**: its rules (priority 5210+) come after these.
+- **Idempotence**: the hook rebuilds the nft table / chain and the dnsmasq file from the rule file on every run. It restarts dnsmasq only when the file changed, and replaces ip rules instead of adding them. `TB_BYPASS_ACTION=clear` removes all of it.
+
+**UCI mirror.** `config bypass` sections in `/etc/config/tailbond`
+(`option kind/match/ip/target/wan/note`, `option enabled`) replace
+`client.bypass` when present (like `config path`); otherwise the rules saved
+from the panel are kept across re-renders. UCI `client.bypass_mark_mask` and
+`client.bypass_local_dns` (default `1`: the per-domain WAN DNS above) render
+to the JSON keys of the same name.
+
+**Counters.** Each rule has an nft named counter (`c_<id>`) or an iptables
+rule counter (comment `tb:<id>`). It counts the first packet of every
+connection the rule matched; later packets follow the connection's saved
+mark. The panel shows "N connections".
+
+**Android**: per-app exclusion already exists (`addDisallowedApplication`).
+Per-website bypass, on Android 13+ (API 33):
+- the app resolves each website through the tunnel's DNS when the tunnel comes up, and every 10 minutes while it's up;
+- it adds the resulting addresses to the VPN with `VpnService.Builder.excludeRoute`, which needs a tunnel rebuild (a short reconnect) when the addresses change;
+- older Android versions show the limit instead.
+See [android.md](android.md#skipping-the-tunnel).
+
+## Updates
+
+Like most open-source projects: tagged **GitHub releases** with every
+artifact and a `SHA256SUMS` file (plus GitHub build-provenance attestations,
+which anyone can check with `gh attestation verify`; the agent doesn't need
+them). Each install checks the GitHub "latest release" API about once a day,
+shows "Update available", and updates with the platform's normal mechanism.
+Users' guide: [updates.md](updates.md).
+
+### Release assets (CI job `release`, on `v*` tags)
+
+`tailbond-linux-x86_64.tar.gz`, `tailbond-linux-aarch64.tar.gz` (static
+bundle with `install.sh`), `tailbond_<v>-r1_aarch64_cortex-a53.ipk`,
+`tailbond_<v>-r1_aarch64_cortex-a53_neon-vfpv4.ipk`,
+`tailbond-server-<v>-1.fc44.x86_64.rpm`, `tailbond-<v>.apk` (release-signed),
+`tailbondd-<tag>-linux-<arch>.tar.gz`, and `SHA256SUMS` (`sha256sum` format
+over all of them). A `-pre` tag (`v1.2.3-beta.1`) is a GitHub pre-release,
+which the "latest release" API never returns.
+
+### The check
+
+`GET <api_url>/repos/<repo>/releases/latest` (`api_url` default
+`https://api.github.com`; `repo` default `kaovilai/tailbond`, also accepted as
+`https://github.com/<owner>/<name>`). From the answer: `tag_name` (version:
+semver, leading `v` dropped), `html_url` (changelog), `assets[].name` /
+`browser_download_url`. A newer version than the running one is `available`.
+A build whose own version isn't semver (`dev`, `-dirty`, a git hash) shows
+what's available but never installs by itself.
+
+**Verification**: the asset and `SHA256SUMS` are downloaded over HTTPS (http
+only when `api_url` itself is http, for tests); the asset's SHA-256 must match
+its line in `SHA256SUMS`, else nothing is installed.
+
+### Install methods (`update.method` in the status)
+
+| method | detected by | one-click / automatic install |
+|---|---|---|
+| `static` | `/etc/tailbond/install.env` (written by `install.sh`) | yes: download `tailbond-linux-<arch>.tar.gz` + check, unpack under `<state_dir>/update/`, run the new bundle's `install.sh --update --bundle-dir <dir>` detached (`systemd-run --unit tailbond-update`): it keeps `<bin>.prev`, replaces the binaries and hooks, restarts the service, and if the service isn't up on the new version within 60 s puts `.prev` back and restarts again |
+| `opkg` | OpenWrt (`/etc/openwrt_release` + `opkg`) | yes: download the ipk whose arch `opkg print-architecture` lists + check, keep it in `/etc/tailbond/pkg/`, run `/usr/lib/tailbond/update-ipk` detached (`opkg install`, health check, previous ipk back on failure) |
+| `dnf` | `tailbondd` owned by an RPM | no: the status says so and the UI shows `sudo dnf upgrade tailbond-server` (COPR, `dnf-automatic`) |
+| `none` | anything else (a dev build, a copied binary) | no: shown only |
+
+Both installers write `<state_dir>/update-result.json`
+(`{"result": "ok"|"rolled_back"|"failed", "version", "from", "at", "detail"}`;
+OpenWrt `state_dir` is `/etc/tailbond/state`), which the agent reports after
+its restart. `detail` `reinstalled_after_firmware_upgrade`: GL firmware
+upgrade, see below.
+
+**GL firmware upgrades**: the installed ipk is kept in `/etc/tailbond/pkg/`
+(kept by `/lib/upgrade/keep.d/tailbond`); a line in the kept `/etc/rc.local`
+runs `/etc/tailbond/pkg/reinstall` at boot, which reinstalls it when the
+firmware upgrade removed the package (else downloads that version's ipk from
+the GitHub release, checked against its `SHA256SUMS`).
+
+**Android**: the app makes the same check (repo built in) and shows "Update
+available", which opens the release APK in the browser; Android installs it
+over the app (same signing key). Automatic updates: Obtainium.
+
+### Config (`update`, all optional)
+
+```json
+"update": {"policy": "notify", "repo": "kaovilai/tailbond", "check_every_hours": 24, "api_url": ""}
+```
+
+- `policy`: `notify` (default: check and show; install on request), `auto`
+  (install when found, between 03:00 and 05:00 local time, methods `static`
+  and `opkg`; a version that rolled back isn't installed automatically
+  again), `off` (no checks).
+- Older keys (`channel`, `window`, `pin`, `source`, `mirror`, …) are ignored.
+
+### Status (`/api/status`, additive)
+
+```json
+"update": {"current": "0.1.0", "available": "0.2.0",
+           "notes_url": "https://github.com/kaovilai/tailbond/releases/tag/v0.2.0",
+           "policy": "notify", "repo": "kaovilai/tailbond", "method": "static",
+           "state": "idle", "last_check": "…", "last_result": "ok",
+           "last_result_version": "0.1.0", "last_result_at": "…", "detail": "",
+           "error": "", "outdated": [{"name": "slate7", "kind": "router", "version": "0.1.0"}]}
+```
+
+- `state`: `idle` | `checking` | `downloading` | `installing` | `failed` |
+  `rolled_back` | `off`.
+- `auto_window`: when `auto` installs (`"03:00-05:00"`); `dnf_automatic`
+  (method `dnf`): `install` | `download` (a dnf-automatic timer with Fedora's
+  default `apply_updates = no`) | `off`; it covers every package.
+- `outdated` (server): registered clients whose last reported version is
+  older than this server's. Clients send `X-Tailbond-Version` and
+  `X-Tailbond-Kind` (`router` | `android`) with their API requests
+  (`GET /api/peers`, `/api/pairing`); the server shows them as
+  `clients[].version` / `clients[].kind`.
+
+### HTTP
+
+| Method | Path | Body / result |
+|---|---|---|
+| GET | `/api/update` | the `update` status object |
+| POST | `/api/update/check` | check now |
+| POST | `/api/update/install` | install `available` now (methods `static`, `opkg`; else 400 with what to do) |
+| POST | `/api/update/policy` | `{"policy", "repo"}` (any subset) |
+| GET | `/api/pairing` | server, client token: this client's current pairing URI (same credential), so a client learns a new public address after the server moved |
+
+
+## Backup and restore
+
+An encrypted backup file `.tbbackup` (format 1):
+
+```
+TBBACKUP1\n
+{"v":1,"kdf":"scrypt","n":32768,"r":8,"p":1,"salt":"<b64, 16 bytes>","nonce":"<b64, 12 bytes>",
+ "role":"server","platform":"fedora|openwrt|linux|android","host":"homebox","agent_version":"0.2.0",
+ "created":"2026-11-02T10:00:00Z"}\n
+<base64 of AES-256-GCM(key = scrypt(passphrase, salt, n, r, p, 32), nonce, plaintext, aad = the header line bytes)>\n
+```
+
+- AES-GCM, not XChaCha20-Poly1305: Android has no XChaCha in the platform,
+  and the per-file random salt gives every file its own key, so nonce reuse
+  can't happen. The header is authenticated (AAD).
+- A wrong passphrase and a corrupted file both fail the GCM check
+  ("wrong passphrase or damaged file").
+
+Plaintext: JSON `{"format":1,"config":<tailbond.json>,"files":{"<name>":"<b64>"},"uci":"<uci export tailbond>"}`.
+- `config` is the whole config: users and keys, pairings and servers,
+  approvers, bypass rules, modes, paths, update policy, UI password.
+- `files`: the state files that matter: `server.crt`, `server.key`
+  (self-signed TLS, so clients' pins keep working) and `global.key`.
+  `ts-cert.pem`/`ts-key.pem` are left out; Tailscale reissues them.
+- `uci`: `/etc/config/tailbond` on OpenWrt.
+- Android's backup is the app's own JSON (profiles/servers, settings,
+  excluded apps, websites), same container, `"platform":"android"`.
+
+There is never an unencrypted export of secrets. `tailbondd backup --plain`
+/ `GET /api/backup/summary` give a JSON summary without keys or passwords,
+for inspection.
+
+**Restore**:
+- A backup is restored onto the same role. Another machine is fine: a new
+  VPS, a new home server.
+- Restore first saves the current config as an encrypted rollback copy
+  (`<state_dir>/backups/before-restore-<time>.tbbackup`, same passphrase),
+  then replaces the config and the files and restarts the agent.
+- Clients keep working: same users and keys, and the same pinned certificate
+  when it was self-signed.
+- If the public address changed: set `server.public_addr`. Clients then fetch
+  their refreshed pairing (`GET /api/pairing`, same credential) from the
+  server's Tailscale name, every 6 h, and right away when every server has
+  been unreachable for 2 minutes. Phones re-ask over Tailscale (the server
+  re-issues the same credential, `ts_node`), or scan the client's link again.
+
+**Scheduled backups** (`backup`, additive, server and router):
+`{"passphrase": "", "every_hours": 24, "keep": 7, "push": true}`.
+- With a passphrase set, the agent writes `<state_dir>/backups/<host>-<time>.tbbackup`
+  and keeps the newest `keep`.
+- A client with `push` sends its newest backup to its server
+  (`POST /api/backups/push`, client token, ≤ 1 MiB, opaque). The server
+  keeps the newest 3 per client in `<state_dir>/client-backups/<name>/`;
+  a server's own backup carries them (`files["client-backups/<name>/<file>"]`,
+  still encrypted with the client's passphrase).
+
+| Method | Path | Body / result |
+|---|---|---|
+| POST | `/api/backup` | `{"passphrase"}` (≥ 10 characters) → the `.tbbackup` file (`application/octet-stream`, attachment) |
+| GET | `/api/backup/summary` | what a backup would contain, no secrets |
+| POST | `/api/restore/preview` | `{"file": "<base64>", "passphrase"}` → `{"role","host","created","agent_version","changes":[{"what","from","to"}],"warnings":[…]}` (role mismatch is an error) |
+| POST | `/api/restore` | same body plus `"confirm": true` → restores, keeps the rollback copy, restarts |
+| GET | `/api/backups` | admin: the local scheduled backups and the clients' pushed ones `[{"name","client","size","created"}]` |
+| GET | `/api/backups/{name}[?client=<client>]` | admin: download one (still encrypted); `client` for a client's pushed backup (`name` is a plain file name in the list) |
+| POST | `/api/backups/push` | client token: a client's own encrypted backup |
+| POST | `/api/backup/settings` | `{"passphrase","every_hours","keep","push"}`: an omitted passphrase keeps the current one, `""` turns scheduled backups off. `GET /api/settings` reports `backup: {"passphrase_set","every_hours","keep","push","last","last_push","last_error"}` |
+
+Request bodies for these endpoints may be up to 2 MiB.
+
+CLI:
+- `tailbondd backup --out FILE [--passphrase-file F]`: the passphrase comes from the file, from `TB_BACKUP_PASSPHRASE`, or a prompt.
+- `tailbondd backup --plain` prints the summary.
+- `tailbondd restore FILE [--yes] [--passphrase-file F]`: run it with the service stopped, or restart the service right after (the running agent would otherwise keep its settings in memory).
 
 ## Captive portals
 

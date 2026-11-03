@@ -71,6 +71,18 @@ object PairRequestClient {
     }
 
     var transport: Transport = Transport(::socketExchange)
+    /** Quick probes (server suggestions): same exchange, short timeouts; replaced in tests. */
+    var probeTransport: Transport = Transport { a, p, m, path, b, t -> socketExchange(a, p, m, path, b, t, PROBE_TIMEOUT_MS, PROBE_TIMEOUT_MS) }
+    const val PROBE_TIMEOUT_MS = 1_500
+
+    /** Whether a tailbond server answers at [addr] (GET /api/hello, role server). Blocking, about 1.5 s at most; false on any error. */
+    fun isServer(addr: InetAddress): Boolean = try {
+        val (code, body) = probeTransport.exchange(addr, PORT, "GET", "/api/hello", null, null)
+        val h = runCatching { json.decodeFromString(Hello.serializer(), body) }.getOrNull()
+        code == 200 && h?.tailbond == true && h.role == "server"
+    } catch (_: Exception) {
+        false
+    }
     var resolver: Resolver = Resolver { InetAddress.getAllByName(it).toList() }
 
     /** "homebox", "homebox.tail1234.ts.net", "http://homebox:8077/", "100.101.1.1" -> host. */
@@ -99,14 +111,19 @@ object PairRequestClient {
             else throw AskException(Failure.NOT_TAILNET, "$host is ${addrs.first().hostAddress}, not a Tailscale address")
     }
 
-    /** Asks the server at [addr] to pair this phone as [name]. Blocking. */
-    fun ask(addr: InetAddress, name: String): Created {
+    /**
+     * Asks the server at [addr] to pair this phone as [name]. [avoidSubnets]:
+     * the tunnel subnets of the servers this phone already has, so a new
+     * server without clients can move off them. Blocking.
+     */
+    fun ask(addr: InetAddress, name: String, avoidSubnets: List<String> = emptyList()): Created {
         val hello = try { transport.exchange(addr, PORT, "GET", "/api/hello", null, null) } catch (e: IOException) {
             throw AskException(Failure.UNREACHABLE, e.message ?: "unreachable")
         }
         val h = runCatching { json.decodeFromString(Hello.serializer(), hello.second) }.getOrNull()
         if (hello.first != 200 || h?.tailbond != true || h.role != "server") throw AskException(Failure.NOT_SERVER, "not a tailbond server")
-        val body = """{"name":${jsonString(name)},"kind":"phone"}"""
+        val avoid = if (avoidSubnets.isEmpty()) "" else ",\"avoid_subnets\":[" + avoidSubnets.joinToString(",") { jsonString(it) } + "]"
+        val body = """{"name":${jsonString(name)},"kind":"phone"$avoid}"""
         val (code, text) = try { transport.exchange(addr, PORT, "POST", "/api/pair-requests", body, null) } catch (e: IOException) {
             throw AskException(Failure.UNREACHABLE, e.message ?: "unreachable")
         }
@@ -130,14 +147,20 @@ object PairRequestClient {
     private fun jsonString(s: String) = JsonPrimitive(s).toString()
 
     /** Minimal HTTP/1.0 over a socket (the server closes after replying). */
-    private fun socketExchange(addr: InetAddress, port: Int, method: String, path: String, body: String?, token: String?): Pair<Int, String> {
+    internal fun socketExchange(
+        addr: InetAddress, port: Int, method: String, path: String, body: String?, token: String?,
+        connectMs: Int = 5_000, readMs: Int = 8_000,
+        /** Extra request headers (X-Tailbond-Version / X-Tailbond-Kind with the client token). */
+        headers: Map<String, String> = emptyMap(),
+    ): Pair<Int, String> {
         Socket().use { s ->
-            s.connect(InetSocketAddress(addr, port), 5_000)
-            s.soTimeout = 8_000
+            s.connect(InetSocketAddress(addr, port), connectMs)
+            s.soTimeout = readMs
             val payload = body?.toByteArray(Charsets.UTF_8)
             val head = buildString {
                 append("$method $path HTTP/1.0\r\nHost: ${addr.hostAddress}\r\nAccept: application/json\r\nConnection: close\r\n")
                 if (token != null) append("Authorization: Bearer $token\r\n")
+                headers.forEach { (k, v) -> append("$k: $v\r\n") }
                 if (payload != null) append("Content-Type: application/json\r\nContent-Length: ${payload.size}\r\n")
                 append("\r\n")
             }

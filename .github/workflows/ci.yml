@@ -17,6 +17,12 @@ concurrency:
 env:
   TB_JOBS: 4
   JOBS: 4
+  # Compiled into every tailbondd (scripts/release/ldflags.sh): the
+  # repository whose GitHub releases the update check reads (docs/updates.md).
+  TB_UPDATE_REPO: ${{ github.repository }}
+  # The release version on v* tags (the build scripts drop the v); empty
+  # otherwise, so they use git describe (dev builds never self-update).
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
 
 jobs:
   agent:
@@ -34,6 +40,8 @@ jobs:
       - name: go test -race
         working-directory: agent
         run: go test -race ./...
+      - name: OpenWrt bypass hook on real OpenWrt userland (podman)
+        run: scripts/test-openwrt-bypass-hook.sh
       - name: Build linux/amd64 + linux/arm64
         run: agent/build.sh
       - uses: actions/upload-artifact@v7
@@ -51,13 +59,14 @@ jobs:
         run: |
           mapfile -t files < <(git ls-files 'scripts/*.sh' 'scripts/**/*.sh' 'agent/*.sh' \
             'android/scripts/*.sh' 'packaging/fedora/*.sh' 'packaging/fedora/hooks/*' \
-            'packaging/openwrt/*.sh')
+            'packaging/openwrt/*.sh' 'packaging/linux/*.sh' 'packaging/linux/hooks/*')
           shellcheck -S warning "${files[@]}"
       - name: OpenWrt hooks and init (busybox sh)
         run: |
           mapfile -t files < <(git ls-files 'packaging/openwrt/hooks/*' 'packaging/openwrt/control/postinst' \
-            'packaging/openwrt/control/prerm' 'packaging/openwrt/files/etc/init.d/*' \
-            'packaging/openwrt/files/etc/uci-defaults/*' 'packaging/openwrt/files/usr/lib/tailbond/*')
+            'packaging/openwrt/control/prerm' 'packaging/openwrt/control/postrm' 'packaging/openwrt/files/etc/init.d/*' \
+            'packaging/openwrt/files/etc/uci-defaults/*' 'packaging/openwrt/files/usr/lib/tailbond/*' \
+            'packaging/openwrt/files/lib/upgrade/*')
           shellcheck -S warning --shell=busybox -x "${files[@]}"
 
   e2e:
@@ -75,7 +84,7 @@ jobs:
       - name: Install build + test deps
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q cmake build-essential libevent-dev iproute2 curl netcat-openbsd openssl
+          sudo apt-get install -y -q cmake build-essential libevent-dev iproute2 curl netcat-openbsd openssl dnsmasq-base nftables bind9-dnsutils jq python3
       - name: mqvpn submodule revision
         id: mq
         run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
@@ -92,10 +101,20 @@ jobs:
         run: sudo scripts/smoke-client-control.sh
       - name: e2e-netns
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
+      - name: e2e-backup (backup, wipe, restore, the client reconnects)
+        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-backup.sh
+      - name: Server memory and CPU under load (informational)
+        continue-on-error: true
+        run: MB=100 MQVPN="$PWD/out/native/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/measure-server-mem.sh
 
   android:
     name: Android APK
     runs-on: ubuntu-24.04
+    env:
+      # Release signing (docs/updates.md, "Android signing key"): secrets
+      # from scripts/release/gen-android-keystore.sh. Without them only the
+      # debug APK is built, and a release tag fails in job "release".
+      TB_HAS_RELEASE_KEY: ${{ secrets.TB_RELEASE_KEYSTORE_B64 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -124,6 +143,44 @@ jobs:
           name: android-apk
           path: out/android/tailbond-debug.apk
           if-no-files-found: error
+      - name: Release APK (signed with the release key)
+        if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
+        env:
+          TB_RELEASE_KEYSTORE_B64: ${{ secrets.TB_RELEASE_KEYSTORE_B64 }}
+          TB_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.TB_RELEASE_KEYSTORE_PASSWORD }}
+          TB_RELEASE_KEY_ALIAS: ${{ secrets.TB_RELEASE_KEY_ALIAS }}
+          TB_RELEASE_KEY_PASSWORD: ${{ secrets.TB_RELEASE_KEY_PASSWORD }}
+        run: |
+          export TB_RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$TB_RELEASE_KEYSTORE"' EXIT
+          (umask 077; printf '%s' "$TB_RELEASE_KEYSTORE_B64" | base64 -d >"$TB_RELEASE_KEYSTORE")
+          android/scripts/build-release-apk.sh
+      # The key never changes by accident: a phone refuses an update signed
+      # with another key (variable from gen-android-keystore.sh).
+      - name: Release APK is signed with the known key
+        if: env.TB_HAS_RELEASE_KEY == 'true' && vars.TB_RELEASE_CERT_SHA256 != ''
+        env:
+          WANT: ${{ vars.TB_RELEASE_CERT_SHA256 }}
+        run: |
+          signers=("$ANDROID_HOME"/build-tools/*/apksigner)
+          signer="$(printf '%s\n' "${signers[@]}" | sort -V | tail -n1)"
+          for apk in out/android/tailbond-*.apk; do
+            [ "$apk" = out/android/tailbond-debug.apk ] && continue
+            got="$("$signer" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n1)"
+            echo "$apk: $got"
+            if [ "${got,,}" != "${WANT,,}" ]; then
+              echo "::error::$apk is signed with $got, not the release key $WANT (TB_RELEASE_CERT_SHA256). A new key makes every user reinstall: restore the old key with scripts/release/gen-android-keystore.sh --restore."
+              exit 1
+            fi
+          done
+      - uses: actions/upload-artifact@v7
+        if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
+        with:
+          name: android-release-apk
+          path: |
+            out/android/tailbond-*.apk
+            !out/android/tailbond-debug.apk
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -150,6 +207,19 @@ jobs:
         with:
           name: android-apk
           path: out/android/
+      # The signed release APK, when built: the app a home server offers
+      # must be the one phones update to (debug and release can't update
+      # each other).
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: android-release-apk
+          path: out/android-release/
+      - name: Use the release APK when there is one
+        run: |
+          for f in out/android-release/tailbond-*.apk; do
+            if [ -f "$f" ]; then echo "TAILBOND_APK=$PWD/$f" >>"$GITHUB_ENV"; fi
+          done
       - name: mqvpn submodule revision
         id: mq
         run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
@@ -157,11 +227,14 @@ jobs:
         uses: actions/cache@v6
         with:
           path: out/build/mqvpn-aarch64
-          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
-          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/lib/*.sh') }}-
+          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
+          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
       - name: Static aarch64 mqvpn
         run: scripts/build-mqvpn-aarch64-musl.sh
       - name: Build ipk
+        env:
+          # tailbond_<version>-r1_<arch>.ipk on v* tags (else 0.1.0-r<n>)
+          TB_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}-r1', github.ref_name) || '' }}
         run: packaging/openwrt/build-ipk.sh
       - name: Install test in OpenWrt 23.05 arm64
         run: scripts/test-openwrt-ipk.sh
@@ -170,6 +243,122 @@ jobs:
           name: glinet-ipk
           path: out/ipk/*.ipk
           if-no-files-found: error
+
+  mqvpn-x86_64:
+    name: Static x86_64 mqvpn (musl)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: mqvpn submodule revision
+        id: mq
+        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+      - name: Cache x86_64 mqvpn build tree
+        uses: actions/cache@v6
+        with:
+          path: out/build/mqvpn-x86_64
+          key: mqvpn-x86_64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
+          restore-keys: mqvpn-x86_64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+      - name: Build (native amd64 Alpine, podman)
+        run: scripts/build-mqvpn-musl.sh x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mqvpn-x86_64
+          path: out/x86_64/mqvpn
+          if-no-files-found: error
+
+  linux-bundle:
+    name: Generic Linux bundle (VPS)
+    runs-on: ubuntu-24.04
+    needs: [agent, mqvpn-x86_64]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true # mqvpn's LICENSE and NOTICE
+      - uses: actions/download-artifact@v8
+        with:
+          name: tailbondd
+          path: out/agent/
+      - uses: actions/download-artifact@v8
+        with:
+          name: mqvpn-x86_64
+          path: out/x86_64/
+      - name: Build bundle
+        run: |
+          chmod +x out/x86_64/mqvpn out/agent/linux-*/tailbondd
+          TB_ARCHS=x86_64 packaging/linux/build-bundle.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-bundle
+          path: out/linux/*.tar.gz
+          if-no-files-found: error
+
+  vps-install:
+    name: VPS install (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    needs: linux-bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["almalinux:10", "debian:12", "ubuntu:24.04"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-bundle
+          path: out/linux/
+      - name: install.sh in ${{ matrix.image }} (dry-run decisions, install, re-run, run, uninstall)
+        env:
+          IMAGE: docker.io/library/${{ matrix.image }}
+        run: |
+          sudo podman run --rm --cap-add NET_ADMIN --device /dev/net/tun -v "$PWD:/src:ro" "$IMAGE" \
+            bash /src/packaging/linux/test-install.sh /src/out/linux/tailbond-linux-x86_64.tar.gz
+      - name: systemd unit (almalinux/10-init)
+        if: matrix.image == 'almalinux:10'
+        run: |
+          sudo podman run -d --name tb --systemd=always --cap-add NET_ADMIN --device /dev/net/tun \
+            -v "$PWD:/src:ro" docker.io/almalinux/10-init
+          sudo podman exec tb bash -euc '
+            for _ in $(seq 1 30); do systemctl is-system-running -q --wait 2>/dev/null && break; sleep 1; done
+            dnf install -y -q iproute nftables tar gzip >/dev/null
+            mkdir -p /tmp/b && tar -C /tmp/b -xzf /src/out/linux/tailbond-linux-x86_64.tar.gz
+            /tmp/b/tailbond-linux-x86_64/install.sh --no-tailscale --public-addr 203.0.113.7
+            systemctl is-active tailbond
+            # the dashboard'"'"'s "Update now" path: install.sh --update in its own
+            # transient unit (systemd-run), which restarts tailbond and checks it
+            systemd-run --unit tailbond-update-ci --collect --wait --quiet -- \
+              /tmp/b/tailbond-linux-x86_64/install.sh --update --force --bundle-dir /tmp/b/tailbond-linux-x86_64
+            grep -q "\"result\":\"ok\"" /var/lib/tailbond/update-result.json
+            systemctl is-active tailbond
+            test -x /usr/local/bin/tailbondd.prev
+            systemctl show tailbond -p MemoryHigh -p MemoryMax -p OOMScoreAdjust
+            systemctl show tailbond -p MemoryMax | grep -qx MemoryMax=167772160
+            nft list table inet tailbond | grep -q masquerade
+            /tmp/b/tailbond-linux-x86_64/uninstall.sh --purge
+            ! systemctl is-active -q tailbond'
+          sudo podman rm -f tb
+      - uses: actions/setup-go@v6
+        if: matrix.image == 'almalinux:10'
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Updates (fake GitHub release, Update now, rollback, install.sh --update, SHA256SUMS)
+        if: matrix.image == 'almalinux:10'
+        run: |
+          sudo -E env "PATH=$PATH" scripts/e2e-update-vps.sh out/linux/tailbond-linux-x86_64.tar.gz docker.io/library/almalinux:10
+
+  ansible:
+    name: Ansible role lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: ansible-lint
+        run: |
+          pipx install ansible-core
+          pipx inject ansible-core ansible-lint --include-apps
+          ansible-galaxy collection install ansible.posix community.general
+          cd packaging/ansible && ansible-lint roles/tailbond
 
   rpm:
     name: Fedora RPM
@@ -190,6 +379,16 @@ jobs:
         with:
           name: android-apk
           path: out/android/
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: android-release-apk
+          path: out/android-release/
+      - name: Use the release APK when there is one
+        run: |
+          for f in out/android-release/tailbond-*.apk; do
+            if [ -f "$f" ]; then echo "TAILBOND_APK=$PWD/$f" >>"$GITHUB_ENV"; fi
+          done
       - name: Build RPM
         run: packaging/fedora/build-rpm.sh
       - name: Install and remove test
@@ -208,27 +407,72 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, openwrt, rpm]
+    needs: [agent, shellcheck, e2e, android, openwrt, rpm, linux-bundle, vps-install]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # build provenance (actions/attest-build-provenance): no keys
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist/
-      - name: Checksums
+      - name: Collect assets and SHA256SUMS
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          find dist -type f \( -name '*.apk' -o -name '*.ipk' -o -name '*.rpm' -o -name tailbondd \) \
-            -exec sha256sum {} + | sed 's|  dist/|  |' > SHA256SUMS
-          cat SHA256SUMS
-      - name: Publish GitHub release
+          mkdir -p assets
+          cp dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz assets/
+          if ! compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
+            # never publish an APK that can't update the installed app
+            echo "::error::no release APK: the Android signing secrets are missing (TB_RELEASE_KEYSTORE_B64 ...). Run scripts/release/gen-android-keystore.sh once (or --restore the key from its backup), then re-run this tag. docs/android.md, Release key."
+            exit 1
+          fi
+          cp dist/android-release-apk/tailbond-*.apk assets/
+          for d in dist/tailbondd/linux-*; do
+            tar -czf "assets/tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
+          done
+          (cd assets && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
+      # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
+      # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: assets/*
+      - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          for d in dist/tailbondd/linux-*; do
-            tar -czf "tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
-          done
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag \
-            dist/android-apk/*.apk dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm \
-            tailbondd-*.tar.gz SHA256SUMS
+          pre=()
+          # v1.2.3-beta.1: a pre-release, which the update check never offers
+          [[ "$TAG" == *-* ]] && pre=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag "${pre[@]}" assets/*
+
+  copr:
+    name: COPR build (Fedora)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-24.04
+    env:
+      # secret COPR_CONFIG: the ~/.config/copr file from
+      # https://copr.fedorainfracloud.org/api/ (docs/fedora-server.md, COPR)
+      HAS_COPR: ${{ secrets.COPR_CONFIG != '' }}
+    steps:
+      - name: No COPR_CONFIG secret
+        if: env.HAS_COPR != 'true'
+        run: 'echo "::notice::secret COPR_CONFIG is not set, so no COPR build (docs/fedora-server.md, COPR)"'
+      - name: Start the COPR build of this tag
+        if: env.HAS_COPR == 'true'
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+          COPR_PROJECT: ${{ vars.COPR_PROJECT || 'tailbond' }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pipx install copr-cli
+          mkdir -p ~/.config
+          (umask 077; printf '%s\n' "$COPR_CONFIG" >~/.config/copr)
+          copr-cli buildscm --clone-url "https://github.com/$GITHUB_REPOSITORY" --commit "$TAG" \
+            --method make_srpm --nowait "$COPR_PROJECT"

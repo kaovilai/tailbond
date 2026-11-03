@@ -1,0 +1,148 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reinstall tailbond after a firmware upgrade.
+#
+# A GL.iNet / OpenWrt firmware upgrade with "Keep settings" keeps
+# /etc/tailbond/ (/lib/upgrade/keep.d/tailbond), /etc/config/ and
+# /etc/rc.local, but not the package. The package keeps a copy of this
+# script in /etc/tailbond/pkg/reinstall and one line in /etc/rc.local that
+# runs it in the background at every boot:
+#
+#   reinstall boot    package installed: nothing to do. Missing: install
+#                     the cached ipk (/etc/tailbond/pkg/current), else
+#                     download that version's ipk from the GitHub release
+#                     (the latest release's when nothing names one), checked
+#                     against the release's SHA256SUMS; retry for up to 20
+#                     minutes (the network may come up later). At most once
+#                     per boot.
+#   reinstall now     the same, ignoring the once-per-boot marker
+#
+# Logs to the system log (logread -e tailbond-reinstall). Writes
+# /etc/tailbond/state/update-result.json with detail
+# "reinstalled_after_firmware_upgrade" on success.
+# Env (tests): TB_PKG_DIR, TB_API_URL (a fake GitHub API; http allowed then),
+# TB_TRIES (40), TB_PAUSE (30 s).
+
+PKGDIR="${TB_PKG_DIR:-/etc/tailbond/pkg}"
+STATE=/etc/tailbond/state
+CONF=/etc/tailbond/tailbond.json
+INFO=/usr/lib/opkg/info/tailbond.control
+MARKER=/tmp/tailbond-reinstall.ran
+TRIES="${TB_TRIES:-40}"
+PAUSE="${TB_PAUSE:-30}"
+
+log() { logger -t tailbond-reinstall "$*" 2>/dev/null; echo "$*" >&2; }
+installed() { [ -f "$INFO" ] && [ -x /usr/bin/tailbondd ]; }
+
+installed && exit 0
+case "${1:-boot}" in
+boot) mkdir "$MARKER" 2>/dev/null || exit 0 ;;
+now) ;;
+*) echo "usage: reinstall boot|now" >&2; exit 2 ;;
+esac
+
+ipk_version() {
+	tar -xzOf "$1" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null |
+		sed -n 's/^Version: *//p' | head -1 | tr '~' '-'
+}
+
+cached() {
+	local cur f
+	cur="$(cat "$PKGDIR/current" 2>/dev/null)"
+	if [ -n "$cur" ] && [ -f "$PKGDIR/$cur" ]; then
+		echo "$PKGDIR/$cur"
+		return 0
+	fi
+	# no pointer: the newest ipk there
+	# shellcheck disable=SC2012 # our own file names, no odd characters
+	f="$(ls -t "$PKGDIR"/tailbond_*.ipk 2>/dev/null | head -1)"
+	[ -n "$f" ] && echo "$f"
+}
+
+API="${TB_API_URL:-https://api.github.com}"
+
+# fetch URL FILE: https only (http only when the API is, for tests)
+fetch() {
+	case "$1" in
+	https://*) ;;
+	http://*) case "$API" in http://*) ;; *) log "refusing $1: not https"; return 1 ;; esac ;;
+	*) return 1 ;;
+	esac
+	uclient-fetch -q -T 120 -O "$2" "$1" 2>/dev/null
+}
+
+# from_github -> path of a checked ipk in $PKGDIR: the release of the
+# version the cache pointer names (tailbond_<v>-r<N>_<arch>.ipk), else the
+# latest release's ipk for this router, checked against SHA256SUMS
+from_github() {
+	local repo name ver rel tmp a n url sums want
+	repo="$(jsonfilter -i "$CONF" -e '@.update.repo' 2>/dev/null)"
+	repo="${repo#https://github.com/}"
+	repo="${repo%/}"
+	repo="${repo%.git}"
+	repo="${repo:-kaovilai/tailbond}"
+	mkdir -p "$PKGDIR"
+	tmp="$PKGDIR/.gh.$$"
+	name="$(cat "$PKGDIR/current" 2>/dev/null)"
+	ver="$(echo "$name" | sed -n 's/^tailbond_\(.*\)-r[0-9]*_.*\.ipk$/\1/p')"
+	if [ -n "$ver" ]; then rel="$API/repos/$repo/releases/tags/v$ver"; else rel="$API/repos/$repo/releases/latest"; name=""; fi
+	fetch "$rel" "$tmp.json" || { log "can't reach $rel yet"; rm -f "$tmp.json"; return 1; }
+	if [ -z "$name" ]; then
+		# opkg print-architecture lists by ascending priority: the last match wins
+		for a in $(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }'); do
+			n="$(jsonfilter -i "$tmp.json" -e '@.assets[*].name' 2>/dev/null | grep -E "^tailbond_.*_${a}\.ipk$" | head -1)"
+			[ -n "$n" ] && name="$n"
+		done
+	fi
+	case "$name" in tailbond_*.ipk) ;; *) log "$rel: no ipk for this router"; rm -f "$tmp.json"; return 1 ;; esac
+	url="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='$name'].browser_download_url" 2>/dev/null | head -1)"
+	sums="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='SHA256SUMS'].browser_download_url" 2>/dev/null | head -1)"
+	rm -f "$tmp.json"
+	[ -n "$url" ] && [ -n "$sums" ] || { log "$rel: no $name or no SHA256SUMS"; return 1; }
+	fetch "$sums" "$tmp.sums" && fetch "$url" "$tmp.ipk" || { log "download of $name failed"; rm -f "$tmp.sums" "$tmp.ipk"; return 1; }
+	want="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$tmp.sums" | head -1)"
+	if [ -n "$want" ] && [ "$(sha256sum "$tmp.ipk" | cut -d' ' -f1)" = "$want" ]; then
+		mv -f "$tmp.ipk" "$PKGDIR/$name"
+		echo "$name" >"$PKGDIR/current"
+		rm -f "$tmp.sums"
+		log "downloaded $name from the GitHub release"
+		echo "$PKGDIR/$name"
+		return 0
+	fi
+	log "$name doesn't match the release's SHA256SUMS: not installing it"
+	rm -f "$tmp.sums" "$tmp.ipk"
+	return 1
+}
+
+result() { # VERSION
+	mkdir -p "$STATE"
+	printf '{"result":"ok","version":"%s","from":"","at":"%s","detail":"reinstalled_after_firmware_upgrade"}\n' \
+		"$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$STATE/update-result.json.tmp" &&
+		mv -f "$STATE/update-result.json.tmp" "$STATE/update-result.json"
+}
+
+log "tailbond is not installed (firmware upgrade?): reinstalling"
+i=0
+updated=0
+while [ "$i" -lt "$TRIES" ]; do
+	i=$((i + 1))
+	installed && exit 0 # installed meanwhile (by hand, GL's plug-in restore)
+	ipk="$(cached)"
+	[ -n "$ipk" ] || ipk="$(from_github)"
+	if [ -n "$ipk" ]; then
+		if opkg install "$ipk" >/tmp/tailbond-reinstall.log 2>&1 && installed; then
+			result "$(ipk_version "$ipk")"
+			log "reinstalled $(basename "$ipk"); settings kept"
+			exit 0
+		fi
+		log "opkg install $(basename "$ipk") failed: $(grep -m1 -i -E 'error|cannot|satisfy' /tmp/tailbond-reinstall.log)"
+		# missing dependencies come from the feeds, once online
+		[ "$updated" = 1 ] || { opkg update >/dev/null 2>&1 && updated=1; }
+	else
+		log "no cached package and GitHub not reachable yet (try $i of $TRIES)"
+	fi
+	[ "$i" -lt "$TRIES" ] && sleep "$PAUSE"
+done
+log "giving up: install the tailbond package again (docs/glinet.md); your settings are kept in /etc/tailbond"
+exit 1

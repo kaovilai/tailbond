@@ -66,6 +66,37 @@ config client 'client'
 	#list captive_probe_url 'http://connectivitycheck.gstatic.com/generate_204'
 	# Routing table used while signing in to a portal
 	option portal_table '78'
+	# Bypass rules (VPN -> tailbond -> Bypass tailbond): fwmark bits they
+	# use (GL uses 0xff, 0xf000, Tailscale 0xff0000), and whether bypassed
+	# websites resolve through the WAN's own DNS
+	option bypass_mark_mask '0x07000000'
+	option bypass_local_dns '1'
+
+# Servers (home first, then backups) and the failover policy are kept in
+# /etc/tailbond/tailbond.json and set from the panel.
+
+# Bypass rules are normally added in the panel. Sections here replace the
+# panel's list, e.g.:
+#
+# config bypass
+#	# domain | device | ip | port
+#	option kind 'domain'
+#	option match 'bank.example'
+#	# direct | wan | tunnel
+#	option target 'direct'
+#	option note 'Bank'
+#
+# config bypass
+#	option kind 'device'
+#	option match 'aa:bb:cc:dd:ee:ff'
+#	option target 'tunnel'
+#	option note 'Work laptop'
+#
+# config bypass
+#	option kind 'port'
+#	option match 'udp/4500'
+#	option target 'wan'
+#	option wan 'wwan'
 
 # WANs need no configuration: every network in the firewall's wan zone
 # (GL: wan, wwan = repeater, tethering, modem_* = cellular, secondwan) is

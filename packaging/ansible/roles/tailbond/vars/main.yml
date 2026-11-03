@@ -1,0 +1,49 @@
+---
+# Internal: what the role writes into /etc/tailbond/tailbond.json.
+
+# A new file starts from these (same as install.sh's fresh config).
+_tailbond_conf_defaults:
+  listen: ":8077"
+  ui_password: ""
+  mode: speed
+  client:
+    pairing_uri: ""
+    paths: []
+
+# Optional keys tailbondd omits when false/zero.
+_tailbond_conf_omitempty:
+  disable_tailscale: false
+  landing_port: 0
+  landing_public_port: 0
+  server:
+    disable_dns: false
+
+# The update block the role owns.
+_tailbond_update_owned:
+  policy: "{{ tailbond_update_policy }}"
+  repo: "{{ tailbond_repo }}"
+
+# Owned by the role: set on every run, everything else is left alone
+# (server.users, approvers, ui_password, mode, ...).
+_tailbond_conf_owned: >-
+  {{ {
+       'role': 'server',
+       'update': _tailbond_update_owned,
+       'mqvpn_bin': tailbond_prefix ~ '/bin/mqvpn',
+       'state_dir': '/var/lib/tailbond',
+       'hooks_dir': tailbond_prefix ~ '/lib/tailbond/hooks',
+       'disable_tailscale': not (tailbond_tailscale | bool),
+       'landing_port': (tailbond_landing_port | int) if tailbond_tailscale | bool else -1,
+       'landing_public_port': (tailbond_landing_public_port | int) if (tailbond_tailscale | bool and tailbond_landing_port | int != -1) else 0,
+       'server': {
+         'port': tailbond_port | int,
+         'public_addr': tailbond_public_addr,
+         'subnet': tailbond_subnet,
+         'subnet6': _tailbond_subnet6,
+         'use_tailscale_cert': tailbond_tailscale | bool,
+         'disable_dns': tailbond_disable_dns | bool,
+       },
+     } | combine({'android_apk': tailbond_prefix ~ '/share/tailbond/tailbond.apk'} if _tailbond_apk.stat.exists | default(false) else {}) }}
+
+# The release tailbond_version names.
+_tailbond_release_url: "https://github.com/{{ tailbond_repo }}/releases/download/v{{ tailbond_version | regex_replace('^v', '') }}"

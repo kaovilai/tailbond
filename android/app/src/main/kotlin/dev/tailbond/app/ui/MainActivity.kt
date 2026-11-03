@@ -23,6 +23,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.tailbond.app.BuildConfig
+import dev.tailbond.app.failover.FailoverPolicy
+import dev.tailbond.app.update.UpdateManager
+import dev.tailbond.app.update.UpdatePolicy
 import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.PathSetting
@@ -41,6 +45,20 @@ class MainActivity : ComponentActivity() {
 
     private var tailscaleInstalled by mutableStateOf(false)
 
+    /** The passphrase typed in "Save a backup", until the file picker answers. Memory only. */
+    private var exportPassphrase: String? = null
+    private var exportName: String = ""
+    private val createBackup = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val pass = exportPassphrase
+        exportPassphrase = null
+        if (uri != null && pass != null) vm.exportBackup(uri, pass, exportName)
+        // the activity was recreated while the picker was open: the passphrase is gone on purpose
+        else if (uri != null) vm.backupError("Nothing was saved: tap Save a backup again and type the passphrase.")
+    }
+    private val openBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.restoreFilePicked(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -56,6 +74,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         tailscaleInstalled = tailscaleLaunchIntent() != null
+        // about once a day: GitHub's latest release (docs/android.md, "Updates")
+        vm.updatesDue()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -161,6 +181,50 @@ class MainActivity : ComponentActivity() {
         override fun dismissHandoff() = vm.askHandoff(null)
         override fun switchToTailscale() = this@MainActivity.switchToTailscale()
         override fun openVpnSettings() = startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+        override fun startAddServer() = vm.setPairTarget(PairTarget.Add)
+        override fun startRepair(id: String?) {
+            val target = id ?: vm.servers.value.firstOrNull { it.id == vm.live.value.failover?.activeId }?.id ?: vm.servers.value.firstOrNull()?.id
+            vm.setPairTarget(target?.let { PairTarget.Replace(it) })
+        }
+        override fun useServerNow(id: String) = vm.useServerNow(id)
+        override fun resumeAutomatic() = vm.resumeAutomatic()
+        override fun moveServer(id: String, delta: Int) = vm.moveServer(id, delta)
+        override fun removeServer(id: String) = vm.removeServer(id)
+        override fun setFailoverPolicy(policy: FailoverPolicy, server: String?) = vm.setFailoverPolicy(policy, server)
+        override fun dismissServerProblem() = vm.dismissServerProblem()
+        override fun clearPairTarget() = vm.setPairTarget(null)
+        override fun addWebsite(domain: String, note: String) = vm.addWebsite(domain, note)
+        override fun setWebsiteEnabled(domain: String, on: Boolean) = vm.setWebsiteEnabled(domain, on)
+        override fun removeWebsite(domain: String) = vm.removeWebsite(domain)
+        override fun updatesShown() = vm.updatesDue()
+        override fun checkUpdates() = vm.checkUpdates()
+        override fun setUpdatePolicy(p: UpdatePolicy) = vm.setUpdatePolicy(p)
+        override fun openUrl(url: String) {
+            if (!url.startsWith("https://")) return
+            try { startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) } catch (_: ActivityNotFoundException) {}
+        }
+        override fun exportBackup(passphrase: String) {
+            exportPassphrase = passphrase
+            exportName = vm.backupFileName()
+            try {
+                createBackup.launch(exportName)
+            } catch (_: ActivityNotFoundException) {
+                exportPassphrase = null
+                vm.backupError("This phone has no file picker to save with.")
+            }
+        }
+        override fun pickRestoreFile() {
+            try {
+                openBackup.launch(arrayOf("*/*"))
+            } catch (_: ActivityNotFoundException) {
+                vm.backupError("This phone has no file picker.")
+            }
+        }
+        override fun openRestore(passphrase: String) = vm.openRestore(passphrase)
+        override fun confirmRestore() = vm.confirmRestore()
+        override fun undoRestore() = vm.undoRestore()
+        override fun pushBackup(passphrase: String) = vm.pushBackup(passphrase)
+        override fun dismissBackup() = vm.dismissBackup()
     }
 
     @Composable
@@ -178,6 +242,19 @@ class MainActivity : ComponentActivity() {
             apps = vm.apps.collectAsStateWithLifecycle().value,
             ask = vm.ask.collectAsStateWithLifecycle().value,
             wifiSignIn = vm.wifiSignIn.collectAsStateWithLifecycle().value,
+            servers = vm.servers.collectAsStateWithLifecycle().value,
+            switches = vm.switches.collectAsStateWithLifecycle().value,
+            pairTarget = vm.pairTarget.collectAsStateWithLifecycle().value,
+            serverSuggestions = vm.serverSuggestions.collectAsStateWithLifecycle().value,
+            pendingTarget = vm.pendingTarget.collectAsStateWithLifecycle().value,
+            serverProblem = vm.serverProblem.collectAsStateWithLifecycle().value,
+            sdkInt = Build.VERSION.SDK_INT,
+            update = UpdateUi(
+                status = vm.updateStatus.collectAsStateWithLifecycle().value,
+                repo = UpdateManager.UPDATE_REPO,
+                debugBuild = BuildConfig.DEBUG,
+            ),
+            backup = vm.backup.collectAsStateWithLifecycle().value,
         )
         TailbondApp(state, actions)
     }

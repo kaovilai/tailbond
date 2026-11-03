@@ -62,6 +62,31 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST /api/join", a.hJoin)
 	mux.HandleFunc("DELETE /api/join", a.hJoinCancel)
 	mux.HandleFunc("GET /api/health", a.hHealth)
+	// Multiple servers and bypass rules (client role)
+	mux.HandleFunc("GET /api/servers", a.hServersGet)
+	mux.HandleFunc("POST /api/servers", a.hServersAdd)
+	mux.HandleFunc("DELETE /api/servers/{name}", a.hServersDelete)
+	mux.HandleFunc("POST /api/servers/active", a.hServersActive)
+	mux.HandleFunc("POST /api/servers/order", a.hServersOrder)
+	mux.HandleFunc("POST /api/servers/policy", a.hServersPolicy)
+	mux.HandleFunc("GET /api/bypass", a.hBypassGet)
+	mux.HandleFunc("POST /api/bypass", a.hBypassPost)
+	mux.HandleFunc("DELETE /api/bypass/{id}", a.hBypassDelete)
+	mux.HandleFunc("GET /api/lan-clients", a.hLANClients)
+	// Updates, the update mirror, backups (docs/architecture.md)
+	mux.HandleFunc("GET /api/update", a.hUpdateGet)
+	mux.HandleFunc("POST /api/update/check", a.hUpdateCheck)
+	mux.HandleFunc("POST /api/update/install", a.hUpdateInstall)
+	mux.HandleFunc("POST /api/update/policy", a.hUpdatePolicy)
+	mux.HandleFunc("GET /api/pairing", a.hPairing)
+	mux.HandleFunc("POST /api/backup", a.hBackup)
+	mux.HandleFunc("GET /api/backup/summary", a.hBackupSummary)
+	mux.HandleFunc("POST /api/backup/settings", a.hBackupSettings)
+	mux.HandleFunc("POST /api/restore/preview", a.hRestorePreview)
+	mux.HandleFunc("POST /api/restore", a.hRestore)
+	mux.HandleFunc("GET /api/backups", a.hBackups)
+	mux.HandleFunc("GET /api/backups/{name}", a.hBackupDownload)
+	mux.HandleFunc("POST /api/backups/push", a.hBackupPush)
 	// Captive portals (client role)
 	mux.HandleFunc("POST /api/captive/signin", a.hCaptiveSignin)
 	mux.HandleFunc("DELETE /api/captive/signin", a.hCaptiveSigninEnd)
@@ -86,12 +111,24 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 		// Bonded clients reach the server's tunnel address; there only the
 		// token-authenticated peer list exists (no UI, no admin API).
 		if a.viaTunnel(r) {
-			if r.URL.Path != "/api/peers" || r.Method != http.MethodGet {
+			if !tunnelPath(r) {
 				httpErr(w, http.StatusNotFound, errNotFound)
 				return
 			}
-			if a.clientForToken(r) == "" {
+			if client := a.clientForToken(r); client != "" {
+				a.noteClientVersion(r, client)
+			} else if r.URL.Path != "/api/hello" {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="tailbond"`)
+				httpErr(w, http.StatusUnauthorized, errors.New("client token required"))
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		// a client's pairing refresh and backup push: token, admin
+		// session, or a tailnet / loopback source
+		if r.URL.Path == "/api/pairing" || r.URL.Path == "/api/backups/push" {
+			if !a.tokenOrTailnet(r) {
 				httpErr(w, http.StatusUnauthorized, errors.New("client token required"))
 				return
 			}
@@ -110,7 +147,8 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 				}
 			}
 			// Mutations must come from our own page (no CSRF via simple forms).
-			if r.Method != http.MethodGet && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && r.Method != http.MethodDelete {
+			ct := r.Header.Get("Content-Type")
+			if r.Method != http.MethodGet && !strings.HasPrefix(ct, "application/json") && r.Method != http.MethodDelete {
 				httpErr(w, http.StatusUnsupportedMediaType, errors.New("send application/json"))
 				return
 			}
@@ -401,12 +439,20 @@ func (a *Agent) hPair(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		URI string `json:"uri"`
+		Add bool   `json:"add"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	if body.Add {
+		a.replyAddServer(w, r, body.URI, "")
+		return
+	}
 	p, err := a.importPairing(body.URI)
+	if writeAddServerError(w, err) {
+		return
+	}
 	if err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
@@ -450,6 +496,8 @@ type settingsView struct {
 	// dashboard from the tailnet without a password); empty when tagged
 	Owner     string   `json:"owner,omitempty"`
 	Approvers []string `json:"approvers,omitempty"`
+	// scheduled backups (no passphrase, only whether one is set)
+	Backup *backupStatus `json:"backup,omitempty"`
 }
 
 // hAPK offers the Android app to phones opening the dashboard (additive).
@@ -481,7 +529,7 @@ func apkAvailable(path string) bool {
 
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: a.glinetIPKAvailable()}
+	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: a.glinetIPKAvailable(), Backup: a.backupView()}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo
@@ -665,4 +713,16 @@ func (a *Agent) serveOn(ctx context.Context, what string, h http.Handler, addrs 
 			_ = bind(false)
 		}
 	}
+}
+
+// tunnelPath: what bonded clients may ask the server over the tunnel.
+func tunnelPath(r *http.Request) bool {
+	p := r.URL.Path
+	switch {
+	case r.Method == http.MethodGet && (p == "/api/peers" || p == "/api/hello" || p == "/api/pairing"):
+		return true
+	case r.Method == http.MethodPost && p == "/api/backups/push":
+		return true
+	}
+	return false
 }

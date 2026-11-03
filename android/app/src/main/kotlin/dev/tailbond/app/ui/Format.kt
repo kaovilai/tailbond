@@ -35,3 +35,7 @@ fun formatRatePair(rxBps: Long, txBps: Long): String {
     }
     return String.format(Locale.US, "↓%.1f ↑%.1f %s", rxBps / div, txBps / div, unit)
 }
+
+/** The tunnel notification's text: the failover note, the connections sentence, the rates. */
+fun notificationText(failoverNote: String?, connections: String?, rxBps: Long, txBps: Long): String =
+    listOfNotNull(failoverNote, connections, "↓ ${formatBps(rxBps)}  ↑ ${formatBps(txBps)}").joinToString(" · ")

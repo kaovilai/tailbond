@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- {{ ansible_managed }} -->
+<service>
+  <short>tailbond</short>
+  <description>tailbond bonding server: mqvpn Multipath QUIC (MASQUE) on UDP {{ tailbond_port }}. Allow this port in your provider's firewall too.</description>
+  <port protocol="udp" port="{{ tailbond_port }}"/>
+</service>

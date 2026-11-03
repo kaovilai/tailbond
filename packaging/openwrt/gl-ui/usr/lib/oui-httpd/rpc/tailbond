@@ -200,4 +200,15 @@ function M.set_role(params)
 	return { ok = true, role = role }
 end
 
+-- The client's kill switch (UCI client.kill_switch). No restart: the
+-- hooks read it the next time the tunnel comes up.
+function M.set_kill_switch(params)
+	local on = params and params.on
+	if on ~= true and on ~= false then
+		return { ok = false, error = "bad_value" }
+	end
+	os.execute("uci -q set tailbond.client.kill_switch=" .. (on and "1" or "0") .. " && uci -q commit tailbond")
+	return { ok = true, kill_switch = on }
+end
+
 return M

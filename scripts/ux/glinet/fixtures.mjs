@@ -243,3 +243,107 @@ export const fedoraStatusPhoneDone = {
 };
 // right after dnf install + systemctl enable --now: nothing paired yet
 export const fedoraStatusFresh = { ...serverStatus({ clients: [] }), uptime_sec: 40, server: '192.168.1.2:443', clients: [], pair_requests: [], totals: { tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0 } };
+
+// ---- bypass rules and more servers (failover) on the Slate 7 ----
+// out/ux/bypass-failover/glinet/ (glinet-screens.sh bypass-failover)
+const srv = (name, role, state, active, lastOkSec, subnet, server) =>
+  ({ name, role, state, active, ...(lastOkSec == null ? {} : { last_ok: ago(lastOkSec) }), subnet, server });
+const failover = (over = {}) => ({ policy: 'prefer', server: '', switch_after_sec: 15, failback_after_sec: 120, reason: '', ...over });
+const oneServer = { servers: [srv('homebox', 'primary', 'active', true, 1, '10.77.0.0/24', 'home.example.net:443')], active_server: 'homebox', failover: failover() };
+// One story on one clock (the panel's Date is fixed per screen, see `clock`):
+// minute 2 homebox stops answering → vps; 23 back on homebox; 38 someone
+// picks vps; 40.5 picks homebox again. Times shown (since, history,
+// "answered … ago") all come from this timeline.
+const T0 = Math.floor(now / 60000) * 60000 - 30 * 60000;
+const at = (min) => new Date(T0 + min * 60000).toISOString();
+const srvAt = (name, role, state, active, lastOkMin, subnet, server) => ({ name, role, state, active, ...(lastOkMin == null ? {} : { last_ok: at(lastOkMin) }), subnet, server });
+const home = (state, active, lastOkMin) => srvAt('homebox', 'primary', state, active, lastOkMin, '10.77.0.0/24', 'home.example.net:443');
+const vps = (state, active, lastOkMin) => srvAt('vps', 'backup', state, active, lastOkMin, '10.83.142.0/24', '203.0.113.9:8443');
+const sw = (min, from, to, reason, detail) => ({ at: at(min), from, to, reason, ...(detail ? { detail } : {}) });
+const h2 = sw(2, 'homebox', 'vps', 'failover', 'homebox stopped answering for 15 s');
+const h23 = sw(23, 'vps', 'homebox', 'failback');
+const h38 = sw(38, 'homebox', 'vps', 'manual');
+const h40 = sw(40.5, 'vps', 'homebox', 'manual');
+const onVpsAt = (st) => ({ server: '203.0.113.9:8443', tunnel_ip: '10.83.142.3', active_server: 'vps', ...st });
+// minute 60: homebox in use, vps on standby; four switches so far
+const homeAndVps = { uptime_sec: 19.5 * 60, servers: [home('active', true, 59.98), vps('standby', false, 59.92)], active_server: 'homebox', failover: failover({ since: at(40.5), history: [h40, h38, h23, h2] }) };
+// minute 4: homebox stopped answering at 1:45; vps since 2
+const onVps = onVpsAt({ uptime_sec: 120, servers: [home('unreachable', false, 1.75), vps('active', true, 3.98)], failover: failover({ reason: 'primary_down', since: at(2), history: [h2] }) });
+// minute 21:40: homebox answers again, back in 1:20 (at 23)
+const failingBack = onVpsAt({ uptime_sec: 19 * 60 + 40, servers: [home('standby', false, 21.6), vps('active', true, 21.65)], failover: failover({ reason: 'primary_down', since: at(2), failback_in_sec: 80, history: [h2] }) });
+// minute 40: someone picked vps at 38
+const pickedVps = onVpsAt({ uptime_sec: 120, servers: [home('standby', false, 39.9), vps('active', true, 39.98)], failover: failover({ reason: 'manual', since: at(38), history: [h38, h23, h2] }) });
+
+const bpWans = [{ name: 'wan', label: 'Ethernet', up: false }, { name: 'wwan', label: 'Repeater', up: true, default: true }, { name: 'tethering', label: 'Tethering', up: true }];
+const lanClients = [
+  { mac: '3c:22:fb:10:aa:01', ip: '192.168.8.23', name: 'work-laptop', online: true },
+  { mac: 'a4:83:e7:5c:21:9e', ip: '192.168.8.31', name: 'alex-iphone', online: true },
+  { mac: 'f0:27:2d:8b:44:10', ip: '192.168.8.40', name: 'Fire-TV-Stick', online: true },
+  { mac: '5e:91:0c:aa:73:2b', ip: '192.168.8.52', name: '', online: true },
+  { mac: 'b8:27:eb:12:34:56', ip: '192.168.8.60', name: 'kindle', online: false },
+];
+const bpOk = { domains: 'nftset', firewall: 'nft' };
+const bpRules = [
+  { id: 'b3f9', kind: 'domain', match: 'mybank.com', target: 'direct', enabled: true, note: 'Bank' },
+  { id: 'c1d2', kind: 'device', match: '3c:22:fb:10:aa:01', ip: '192.168.8.23', host: 'work-laptop', target: 'tunnel', enabled: true, note: 'work-laptop' },
+  { id: 'd4e5', kind: 'device', match: 'f0:27:2d:8b:44:10', ip: '192.168.8.40', host: 'Fire-TV-Stick', target: 'direct', enabled: true, note: 'Fire-TV-Stick' },
+  { id: 'a7b8', kind: 'port', match: 'udp/4500', target: 'direct', enabled: true, note: 'Wi-Fi calling' },
+  { id: 'a7b9', kind: 'port', match: 'udp/500', target: 'direct', enabled: true, note: 'Wi-Fi calling' },
+];
+const bpCounters = { b3f9: { connections: 37 }, c1d2: { connections: 0 }, d4e5: { connections: 212 }, a7b8: { connections: 4 }, a7b9: { connections: 2 } };
+const bypassApi = (rules, support = bpOk, counters = {}) => ({ 'GET /api/bypass': { rules, support, wans: bpWans, counters } });
+// every client screen has the bypass card (the four rules unless a state says otherwise)
+// the router is 10.77.0.3 (the phone screens use .2); work-laptop is on the LAN, so not in the tailnet list
+const bfPeers = { ...peers, peers: peers.peers.filter((m) => m.hostname !== 'work-laptop') };
+const bf = (statusOver = {}, api = {}) => withApi(connected(twoWans, { tunnel_ip: '10.77.0.3', ...oneServer, ...statusOver }),
+  { 'GET /api/lan-clients': lanClients, 'GET /api/peers': bfPeers, ...bypassApi(bpRules, bpOk, bpCounters), ...api });
+const discoverVps = { 'GET /api/discover': { tailscale_installed: true, tailscale_running: true, self: 'slate7', checked: 5, servers: [
+  { name: 'homebox', dns_name: 'homebox.tail1234.ts.net', ip: '100.101.1.1', os: 'linux', version: '0.1.0-r42' },
+  { name: 'vps', dns_name: 'vps.tail1234.ts.net', ip: '100.101.5.5', os: 'linux', version: '0.1.0-r42' },
+] } };
+const joinVps = (over) => ({ join: { server: '100.101.5.5:8077', server_name: 'vps', id: '7d0c3e55a1b2c3d4', name: 'slate7', since: ago(15), add: true, ...over } });
+
+export const bfStates = {
+  'bypass-empty': bf({}, bypassApi([])),
+  'bypass-rules': bf({}, bypassApi(bpRules, bpOk, bpCounters)),
+  'bypass-website-rules-wait': bf({}, bypassApi([
+    { id: 'b3f9', kind: 'domain', match: 'mybank.com', target: 'direct', enabled: true, note: 'Bank' },
+    { id: 'e1f2', kind: 'domain', match: 'netflix.com', target: 'direct', enabled: true, note: 'Streaming location' },
+    bpRules[1],
+  ], { domains: 'none', firewall: 'nft', reason: "This router's DNS server (dnsmasq) can't fill nftables sets, so website rules wait. Install dnsmasq-full; device, address and port rules work now." })),
+  'servers-single-home': bf({}, discoverVps),
+  'servers-home-active-vps-standby': { ...bf(homeAndVps), clock: at(60) },
+  'failover-using-vps-home-unreachable': { ...bf(onVps), clock: at(4) },
+  'failback-countdown': { ...bf(failingBack), clock: at(21 + 40 / 60) },
+  'failover-you-picked-vps': { ...bf(pickedVps), clock: at(40) },
+  // someone turned the kill switch off (UCI client.kill_switch=0)
+  'servers-kill-switch-off': { ...bf(homeAndVps), clock: at(60), info: { installed: true, version: '0.1.0-r42', role: 'client', enabled: true, running: true, kill_switch: false } },
+  'add-server-waiting-approval': bf(joinVps({ state: 'waiting' }), discoverVps),
+  'add-server-subnet-clash': bf(joinVps({ state: 'error', error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' }), discoverVps),
+  // the panel was open while homebox came back: one status on vps, then on homebox
+  // the panel was open while homebox came back at minute 23 (clock 26)
+  'back-on-homebox-since': { ...bf(homeAndVps), clock: at(26), settle: 2600, seq: { 'GET /api/status': [
+    bf({ ...failingBack, servers: [home('standby', false, 25.9), vps('active', true, 25.95)], failover: failover({ reason: 'primary_down', since: at(2), failback_in_sec: 1, history: [h2] }) }).api['GET /api/status'],
+    bf({ uptime_sec: 180, servers: [home('active', true, 25.98), vps('standby', false, 25.9)], active_server: 'homebox', failover: failover({ since: at(23), history: [h23, h2] }) }).api['GET /api/status'],
+  ] } },
+};
+// steps: {text} clicks the first element with that text, {click} a selector,
+// {button} a button by exact name, {fill: [selector, value]}.
+export const bfActions = {
+  'bypass-add-website-presets': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }] },
+  'bypass-add-streaming-preset': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }, { click: '.tb-dialog >> text=Streaming location' }] },
+  'bypass-add-device-picker': { base: 'bypass-rules', steps: [{ text: 'Add a rule' }, { click: '.tb-dialog >> text=A device' }, { click: '.tb-dialog >> text=alex-iphone' }] },
+  'bypass-add-wifi-calling': { base: 'bypass-empty', steps: [{ click: '.tb-card button.tb-preset >> text=Wi-Fi calling' }] },
+  // after clicking Add in that dialog: the card with the new row (and the toast)
+  'bypass-wifi-calling-added': { base: 'bypass-empty', full: true, after: { 'POST /api/bypass': bypassApi(bpRules.slice(3), bpOk, { a7b8: { connections: 0 }, a7b9: { connections: 0 } }) },
+    steps: [{ click: '.tb-card button.tb-preset >> text=Wi-Fi calling' }, { click: '.tb-dialog .tb-btn.primary' }, { wait: 500 }] },
+  'servers-recent-switches-all': { base: 'servers-home-active-vps-standby', full: true, steps: [{ text: 'Show all (4)' }] },
+  'add-server-open': { base: 'servers-single-home', full: true, steps: [{ text: 'Add a backup server' }] },
+  'add-server-paste-clash': { base: 'servers-single-home', full: true, api: { 'POST /api/servers': { __err: 409, data: { ok: false, error: 'subnet_in_use', conflict: 'homebox', subnet: '10.77.0.0/24' } } },
+    steps: [{ text: 'Add a backup server' }, { text: 'No Tailscale there? Paste a pairing link from it' }, { fill: ['.tb-sec textarea', 'tailbond://pair?d=eyJ2IjoxLCJzIjoiMjAzLjAuMTEzLjk6ODQ0MyJ9'] }, { button: 'Add' }] },
+};
+// also rendered at phone width
+export const bfPhone = ['bypass-rules', 'bypass-add-device-picker', 'failover-using-vps-home-unreachable'];
+
+// building blocks for other screen sets (ub-fixtures.mjs: updates and backups)
+export { connected, serverBase, serverStatus, withApi, twoWans, peers as fxPeers };

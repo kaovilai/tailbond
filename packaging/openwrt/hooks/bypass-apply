@@ -1,0 +1,399 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# bypass-apply: LAN traffic that skips the tunnel by rule (CLIENT role;
+# docs/architecture.md "Bypass rules"). The agent renders every variant
+# next to $TB_BYPASS_FILE; this hook loads the one this router can run:
+#
+#   firewall4 (nft):  bypass.nft            + bypass-nftset.conf (dnsmasq-full)
+#   firewall3:        bypass.ipset + bypass.ip(6)tables + bypass-ipset.conf
+#
+# then the ip rules that send marked traffic past the tunnel:
+#   P-7 fwmark T|W<i> lookup main suppress_prefixlength 0   (LAN and local routes)
+#   P-6 fwmark T lookup $table                          (always tailbond)
+#   P-5 fwmark D lookup main                            (direct, best WAN)
+#   P-4 fwmark W<i> lookup <wan table>                  (only that WAN)
+# with P = client.rule_priority (1077), $table = client.route_table (77).
+#
+# TB_BYPASS_ACTION: apply (default) | counters | clear.
+# Writes {"domains","firewall","reason"} (apply) or {"counters"} to
+# $TB_BYPASS_STATUS. Idempotent: the nft table / iptables chain is rebuilt
+# from the files every run, ip rules are replaced, dnsmasq restarts only
+# when its drop-in changed.
+#
+# Replies carry their connection's mark too, and net.ipv4.conf.all.
+# src_valid_mark is turned on (as wg-quick does): the kernel's reverse-path
+# check for a reply to a LAN device looks up routes as if from the LAN,
+# which would otherwise end in the kill switch's blackhole (table $table)
+# and drop the reply wherever rp_filter is on.
+#
+# Test seams (env): TB_BYPASS_FIREWALL (nft | iptables | none),
+# TB_DNSMASQ (binary), TB_DNSMASQ_DIR (conf-dir), TB_DNSMASQ_RESTART
+# (command), TB_DNS_WARM (address to look the domains up at, default
+# 127.0.0.1; "-" = don't).
+. "${TB_LIB:-/usr/lib/tailbond/hook-lib.sh}"
+
+action="${TB_BYPASS_ACTION:-apply}"
+file="${TB_BYPASS_FILE:-/etc/tailbond/state/bypass.json}"
+dir="$(dirname "$file")"
+status="${TB_BYPASS_STATUS:-$dir/bypass-status.json}"
+prio="$(tbcfg_or client.rule_priority 1077)"
+table="$(tbcfg_or client.route_table 77)"
+lans="$(tbcfg client.lan_network)"
+[ -n "$lans" ] || lans=lan
+dnsdir="${TB_DNSMASQ_DIR:-$(uci -q get 'dhcp.@dnsmasq[0].confdir')}"
+dnsdir="${dnsdir:-/tmp/dnsmasq.d}"
+dnsconf="$dnsdir/tailbond-bypass.conf"
+
+lan_devs() {
+	local lan dev
+	for lan in $lans; do
+		dev="$(net_device "$lan")"
+		[ -n "$dev" ] && echo "$dev"
+	done
+}
+
+firewall() {
+	if [ -n "$TB_BYPASS_FIREWALL" ]; then
+		echo "$TB_BYPASS_FIREWALL"
+	elif [ -x /sbin/fw4 ] && command -v nft >/dev/null; then
+		echo nft
+	elif command -v iptables-restore >/dev/null; then
+		echo iptables
+	elif command -v nft >/dev/null; then
+		echo nft
+	else
+		echo none
+	fi
+}
+
+# dnsmasq_has nftset|ipset: compiled into this dnsmasq ("no-nftset" isn't)
+dnsmasq_has() {
+	"${TB_DNSMASQ:-dnsmasq}" --version 2>/dev/null | sed -n 's/^Compile time options: //p' | tr ' ' '\n' | grep -qx "$1"
+}
+
+restart_dnsmasq() {
+	if [ -n "$TB_DNSMASQ_RESTART" ]; then
+		sh -c "$TB_DNSMASQ_RESTART"
+	elif [ -x "$TB_INITD/dnsmasq" ]; then
+		"$TB_INITD/dnsmasq" restart
+	fi
+}
+
+# marks: "<mask> <direct> <tunnel>" from the agent, or the last applied one
+read_marks() {
+	local f="$dir/bypass-marks"
+	[ -s "$f" ] || f="$TB_STATE/bypass_marks"
+	[ -s "$f" ] || { mask=0x07000000 direct=0x01000000 tunnel=0x02000000; return; }
+	read -r mask direct tunnel <"$f"
+}
+
+has_rules() { grep -q '"id"' "$file" 2>/dev/null; }
+
+# --- firewall ----------------------------------------------------------
+
+fw_clear() {
+	fw_clear_nft
+	fw_clear_ipt
+}
+
+fw_clear_nft() {
+	if command -v nft >/dev/null; then
+		nft delete table inet tailbond 2>/dev/null
+	fi
+	rm -f "$TB_STATE/bypass.nft.applied"
+	return 0
+}
+
+fw_clear_ipt() {
+	local d fam s
+	for fam in iptables ip6tables; do
+		command -v "$fam" >/dev/null || continue
+		for d in $(lan_devs); do
+			while "$fam" -t mangle -D PREROUTING -i "$d" -j tailbond_bypass 2>/dev/null; do :; done
+		done
+		while "$fam" -t mangle -D PREROUTING -j tailbond_restore 2>/dev/null; do :; done
+		for c in tailbond_bypass tailbond_restore; do
+			"$fam" -t mangle -F "$c" 2>/dev/null
+			"$fam" -t mangle -X "$c" 2>/dev/null
+		done
+	done
+	if command -v ipset >/dev/null; then
+		for s in $(ipset list -n 2>/dev/null | grep '^tb_'); do ipset destroy "$s" 2>/dev/null; done
+	fi
+	return 0
+}
+
+fw_apply_nft() {
+	local d
+	# reload only when the rules changed or the table is gone (a firewall
+	# reload): reloading resets the per-rule counters
+	if ! cmp -s "$dir/bypass.nft" "$TB_STATE/bypass.nft.applied" || ! nft list table inet tailbond >/dev/null 2>&1; then
+		nft -f "$dir/bypass.nft" || return 1
+		cp "$dir/bypass.nft" "$TB_STATE/bypass.nft.applied"
+	fi
+	for d in $(lan_devs); do
+		nft add element inet tailbond lan_ifs "{ \"$d\" }"
+	done
+}
+
+fw_apply_ipt() {
+	local fam f d
+	if [ "$domains" = ipset ] && [ -s "$dir/bypass.ipset" ]; then
+		ipset restore -exist <"$dir/bypass.ipset" || return 1
+	fi
+	for fam in iptables ip6tables; do
+		command -v "$fam" >/dev/null || continue
+		f="$dir/bypass.$fam"
+		# without ipsets the domain rules can't load; the rest still does
+		if [ "$domains" = ipset ]; then
+			"$fam-restore" --noflush <"$f" || return 1
+		else
+			grep -v -- '--match-set' "$f" | "$fam-restore" --noflush || return 1
+		fi
+		for d in $(lan_devs); do
+			"$fam" -t mangle -C PREROUTING -i "$d" -j tailbond_bypass 2>/dev/null ||
+				"$fam" -t mangle -I PREROUTING -i "$d" -j tailbond_bypass
+		done
+		"$fam" -t mangle -C PREROUTING -j tailbond_restore 2>/dev/null ||
+			"$fam" -t mangle -I PREROUTING -j tailbond_restore
+	done
+}
+
+# src_valid_mark on (remembering what it was, for clear)
+valid_mark_on() {
+	local f=/proc/sys/net/ipv4/conf/all/src_valid_mark
+	[ -r "$f" ] || return 0
+	[ "$(cat "$f")" = 1 ] && return 0
+	[ -f "$TB_STATE/bypass_src_valid_mark" ] || cat "$f" >"$TB_STATE/bypass_src_valid_mark"
+	{ echo 1 >"$f"; } 2>/dev/null ||
+		log "bypass: couldn't turn on src_valid_mark; with rp_filter on, bypassed replies may be dropped while the kill switch blocks"
+}
+valid_mark_restore() {
+	local f=/proc/sys/net/ipv4/conf/all/src_valid_mark
+	[ -f "$TB_STATE/bypass_src_valid_mark" ] || return 0
+	{ cat "$TB_STATE/bypass_src_valid_mark" >"$f"; } 2>/dev/null
+	rm -f "$TB_STATE/bypass_src_valid_mark"
+}
+
+# --- ip rules ----------------------------------------------------------
+
+rules_clear() {
+	local fam name m t
+	for fam in -4 -6; do
+		rule_del_all "$fam" fwmark "$tunnel/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
+		rule_del_all "$fam" fwmark "$tunnel/$mask" lookup "$table" priority $((prio - 6))
+		rule_del_all "$fam" fwmark "$direct/$mask" lookup main priority $((prio - 5))
+	done
+	if [ -f "$TB_STATE/bypass_wans" ]; then
+		while read -r name m t; do
+			[ -n "$t" ] || continue
+			for fam in -4 -6; do
+				rule_del_all "$fam" fwmark "$m/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
+				rule_del_all "$fam" fwmark "$m/$mask" lookup "$t" priority $((prio - 4))
+				ip "$fam" route flush table "$t" 2>/dev/null
+			done
+		done <"$TB_STATE/bypass_wans"
+		rm -f "$TB_STATE/bypass_wans"
+	fi
+	return 0
+}
+
+# wan_table NETWORK TABLE: that WAN's default route, or unreachable while
+# it's down ("only this connection" never falls back to another one).
+wan_table() {
+	local dev gw gw6
+	dev="$(net_device "$1")"
+	gw="" gw6=""
+	if [ -n "$dev" ] && [ -e "$TB_SYSNET/$dev" ]; then
+		# (busybox ip has no "show default" selector)
+		gw="$(ip -4 route show dev "$dev" 2>/dev/null | awk '$1 == "default" && $2 == "via" {print $3; exit}')"
+		gw6="$(ip -6 route show dev "$dev" 2>/dev/null | awk '$1 == "default" && $2 == "via" {print $3; exit}')"
+		if [ -n "$gw" ]; then
+			ip -4 route replace default via "$gw" dev "$dev" table "$2"
+		else
+			ip -4 route replace default dev "$dev" table "$2"
+		fi
+		if [ -n "$gw6" ]; then
+			ip -6 route replace default via "$gw6" dev "$dev" table "$2" 2>/dev/null
+		else
+			ip -6 route replace unreachable default table "$2" 2>/dev/null
+		fi
+	else
+		ip -4 route replace unreachable default table "$2"
+		ip -6 route replace unreachable default table "$2" 2>/dev/null
+		log "bypass: $1 is down; its \"only this connection\" rules are blocked until it's back"
+	fi
+}
+
+rules_apply() {
+	local fam name m t
+	# WAN choices no longer used; the rest is replaced in place, so traffic
+	# keeps its route while the rules are re-asserted
+	if [ -f "$TB_STATE/bypass_wans" ]; then
+		while read -r name m t; do
+			[ -n "$t" ] || continue
+			grep -q "^$name $m $t\$" "$dir/bypass-wans" 2>/dev/null && continue
+			for fam in -4 -6; do
+				rule_del_all "$fam" fwmark "$m/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
+				rule_del_all "$fam" fwmark "$m/$mask" lookup "$t" priority $((prio - 4))
+				ip "$fam" route flush table "$t" 2>/dev/null
+			done
+		done <"$TB_STATE/bypass_wans"
+		rm -f "$TB_STATE/bypass_wans"
+	fi
+	for fam in -4 -6; do
+		rule_ensure "$fam" fwmark "$tunnel/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
+		rule_ensure "$fam" fwmark "$tunnel/$mask" lookup "$table" priority $((prio - 6))
+		rule_ensure "$fam" fwmark "$direct/$mask" lookup main priority $((prio - 5))
+	done
+	if [ -s "$dir/bypass-wans" ]; then
+		while read -r name m t; do
+			[ -n "$t" ] || continue
+			wan_table "$name" "$t"
+			for fam in -4 -6; do
+				# replies to the LAN (marked too) still find the LAN
+				rule_ensure "$fam" fwmark "$m/$mask" lookup main suppress_prefixlength 0 priority $((prio - 7))
+				rule_ensure "$fam" fwmark "$m/$mask" lookup "$t" priority $((prio - 4))
+			done
+		done <"$dir/bypass-wans"
+		cp "$dir/bypass-wans" "$TB_STATE/bypass_wans"
+	fi
+}
+
+# --- dnsmasq -------------------------------------------------------------
+
+dns_apply() {
+	local src=""
+	case "$domains" in
+	nftset) src="$dir/bypass-nftset.conf" ;;
+	ipset) src="$dir/bypass-ipset.conf" ;;
+	esac
+	if [ -n "$src" ] && grep -q '^nftset=\|^ipset=' "$src" 2>/dev/null; then
+		cmp -s "$src" "$dnsconf" && return 0
+		mkdir -p "$dnsdir"
+		cp "$src" "$dnsconf"
+	else
+		[ -e "$dnsconf" ] || return 0
+		rm -f "$dnsconf"
+	fi
+	restart_dnsmasq && log "bypass: dnsmasq restarted with $(grep -c '^nftset=\|^ipset=' "$dnsconf" 2>/dev/null || echo 0) website rule(s)"
+	# look each website up once so its set fills before a device asks
+	if [ "${TB_DNS_WARM:-127.0.0.1}" != - ] && [ -s "$dir/bypass-domains" ]; then
+		sleep 1
+		while read -r d; do
+			[ -n "$d" ] && nslookup "$d" "${TB_DNS_WARM:-127.0.0.1}" >/dev/null 2>&1
+		done <"$dir/bypass-domains" &
+	fi
+	return 0
+}
+
+dns_clear() {
+	[ -e "$dnsconf" ] || return 0
+	rm -f "$dnsconf"
+	restart_dnsmasq
+}
+
+write_status() {
+	printf '{"domains":"%s","firewall":"%s","reason":"%s"}\n' "$domains" "$fw" "$1" >"$status.tmp" && mv "$status.tmp" "$status"
+}
+
+# --- actions ---------------------------------------------------------------
+
+counters() {
+	local out
+	case "$(firewall)" in
+	nft)
+		out="$(nft list counters table inet tailbond 2>/dev/null | awk '
+			$1 == "counter" { id = $2; sub(/^c_/, "", id) }
+			$1 == "packets" && id != "" { printf "%s\"%s\":{\"connections\":%s}", sep, id, $2; sep = ","; id = "" }')"
+		;;
+	iptables)
+		out="$( (iptables -t mangle -nvxL tailbond_bypass 2>/dev/null; ip6tables -t mangle -nvxL tailbond_bypass 2>/dev/null) | awk '
+			{ for (i = 1; i <= NF; i++) if ($i ~ /^tb:/) { n[substr($i, 4)] += $1 } }
+			END { for (k in n) { printf "%s\"%s\":{\"connections\":%d}", sep, k, n[k]; sep = "," } }')"
+		;;
+	esac
+	printf '{"counters":{%s}}\n' "$out" >"$status.tmp" && mv "$status.tmp" "$status"
+}
+
+read_marks
+case "$action" in
+counters)
+	counters
+	exit 0
+	;;
+clear)
+	# the marks the rules were applied with
+	[ -s "$TB_STATE/bypass_marks" ] && read -r mask direct tunnel <"$TB_STATE/bypass_marks"
+	fw_clear
+	rules_clear
+	dns_clear
+	valid_mark_restore
+	rm -f "$TB_STATE/bypass_marks"
+	log "bypass: rules removed"
+	exit 0
+	;;
+esac
+
+fw="$(firewall)"
+domains=none reason=""
+case "$fw" in
+nft)
+	if dnsmasq_has nftset; then
+		domains=nftset
+	else
+		reason="This router's DNS server (dnsmasq) can't fill nftables sets, so website rules wait. Install dnsmasq-full; device, address and port rules work now."
+	fi
+	;;
+iptables)
+	if dnsmasq_has ipset && command -v ipset >/dev/null; then
+		domains=ipset
+	else
+		reason="This router's DNS server (dnsmasq) or firewall has no ipset support, so website rules wait. Install dnsmasq-full and ipset; device, address and port rules work now."
+	fi
+	;;
+*)
+	reason="No nftables or iptables on this router: bypass rules can't be applied."
+	;;
+esac
+
+if ! has_rules; then
+	fw_clear
+	rules_clear
+	dns_clear
+	valid_mark_restore
+	write_status "$reason"
+	exit 0
+fi
+if [ "$fw" = none ]; then
+	write_status "$reason"
+	log "bypass: $reason"
+	exit 1
+fi
+
+# a different mark mask than last time: the old rules go first
+if [ -s "$TB_STATE/bypass_marks" ] && [ "$(cat "$TB_STATE/bypass_marks")" != "$mask $direct $tunnel" ]; then
+	new="$mask $direct $tunnel"
+	read -r mask direct tunnel <"$TB_STATE/bypass_marks"
+	rules_clear
+	read -r mask direct tunnel <<EOF
+$new
+EOF
+fi
+# nft -f replaces the table in one transaction; only the other backend's
+# leftovers (after a firewall3 -> firewall4 upgrade, say) are removed
+if [ "$fw" = nft ]; then
+	fw_clear_ipt
+	fw_apply_nft || { reason="nft refused the rules (see the log)"; write_status "$reason"; log "bypass: $reason"; exit 1; }
+else
+	fw_clear_nft
+	fw_apply_ipt || { reason="iptables refused the rules (see the log)"; write_status "$reason"; log "bypass: $reason"; exit 1; }
+fi
+rules_apply
+valid_mark_on
+echo "$mask $direct $tunnel" >"$TB_STATE/bypass_marks"
+dns_apply
+write_status "$reason"
+log "bypass: $(grep -c '"id"' "$file") rule(s) applied ($fw, websites: $domains)"
+exit 0

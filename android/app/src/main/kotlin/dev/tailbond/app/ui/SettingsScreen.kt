@@ -42,37 +42,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Language
 import dev.tailbond.app.model.RouteMode
+import dev.tailbond.app.model.Words
 
 @Composable
 fun SettingsScreen(
     state: UiState,
     actions: UiActions,
     onApps: () -> Unit,
-    onRepair: () -> Unit,
+    onWebsites: () -> Unit,
+    onRepair: (String) -> Unit,
+    onAddServer: () -> Unit,
     modifier: Modifier = Modifier,
+    onUpdates: () -> Unit = {},
+    onBackup: () -> Unit = {},
 ) {
-    val profile = state.profile
-    var forgetOpen by remember { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-        SectionHeader("Home server")
-        if (profile != null) {
-            ListItem(
-                headlineContent = { Text(state.serverName) },
-                supportingContent = {
-                    Column {
-                        Text(profile.sni ?: profile.host)
-                        Text("Reached at ${profile.server} · this phone is \"${profile.name.ifBlank { profile.user }}\"", style = MaterialTheme.typography.bodySmall, color = muted)
-                    }
-                },
-                leadingContent = { Icon(Icons.Filled.Dns, null) },
-            )
-            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onRepair) { Text("Pair again") }
-                TextButton(onClick = { forgetOpen = true }) { Text("Remove from this phone", color = MaterialTheme.colorScheme.error) }
-            }
-        }
+        if (state.servers.isNotEmpty()) ServersSection(state, actions, onRepair, onAddServer)
 
         SectionHeader("Internet traffic")
         RouteMode.entries.forEach { r ->
@@ -84,8 +72,8 @@ fun SettingsScreen(
             ) {
                 RadioButton(selected = state.settings.routeMode == r, onClick = null, modifier = Modifier.padding(8.dp))
                 Column {
-                    Text(r.label)
-                    Text(r.explain, style = MaterialTheme.typography.bodySmall, color = muted)
+                    Text(Words.routeLabel(r, state.servers.size > 1))
+                    Text(Words.routeExplain(r, state.servers.map { it.name }), style = MaterialTheme.typography.bodySmall, color = muted)
                 }
             }
         }
@@ -112,13 +100,21 @@ fun SettingsScreen(
             modifier = Modifier.clickable(onClick = onApps),
         )
         ListItem(
-            headlineContent = { Text("Switch back to Tailscale") },
+            headlineContent = { Text("Websites that skip tailbond") },
+            supportingContent = { Text(Words.websitesSummary(state.settings, state.sdkInt)) },
+            leadingContent = { Icon(Icons.Filled.Language, null) },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+            modifier = Modifier.clickable(onClick = onWebsites),
+        )
+        ListItem(
+            headlineContent = { Text("Hand the VPN back to Tailscale") },
             supportingContent = { Text(if (state.tailscaleInstalled) "Turns tailbond off and opens the Tailscale app. Turn Tailscale on there if it says Disconnected" else "Turns tailbond off. Tailscale isn't installed: opens its store page") },
             leadingContent = { Icon(Icons.Filled.SwapHoriz, null) },
             modifier = Modifier.clickable(onClick = actions::switchToTailscale),
         )
 
-        SectionHeader("Keep tailbond on all the time (optional)")
+        val multi = state.servers.size > 1
+        SectionHeader(if (multi) "Keep tailbond on all the time (recommended)" else "Keep tailbond on all the time (optional)")
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 "To keep tailbond on all the time, turn on Always-on VPN for tailbond in Android's VPN settings. " +
@@ -126,27 +122,20 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "Leave \"Block connections without VPN\" off if you want to switch back to Tailscale easily.",
-                style = MaterialTheme.typography.bodySmall,
-                color = muted,
+                Words.blockAdvice(multi),
+                style = if (multi) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                color = if (multi) MaterialTheme.colorScheme.onSurface else muted,
             )
             OutlinedButton(onClick = actions::openVpnSettings) {
                 Icon(Icons.Filled.VpnKey, null)
-                Text("  Open VPN settings")
+                Text("  Open Android VPN settings")
             }
         }
 
+        UpdatesBackupRows(state, onUpdates, onBackup)
+
     }
 
-    if (forgetOpen) {
-        AlertDialog(
-            onDismissRequest = { forgetOpen = false },
-            title = { Text("Remove ${state.serverName} from this phone?") },
-            text = { Text("tailbond turns off and forgets this home server. To use it again, add this phone from the home server's page.") },
-            confirmButton = { TextButton(onClick = { forgetOpen = false; actions.forgetPairing() }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { forgetOpen = false }) { Text("Cancel") } },
-        )
-    }
 }
 
 /** Split tunnel: apps that bypass tailbond (VpnService addDisallowedApplication). */

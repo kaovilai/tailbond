@@ -175,6 +175,7 @@ function render(st) {
   renderPairRequests(st);
   if (st.role === 'client') renderClientPaths(st); else renderServerPaths(st);
   if (st.role === 'server' && state.tab === 'clients') renderClients(st);
+  renderMaint(st);
   $('#foot').textContent = `tailbond ${st.version || ''} · ${st.control_api ? 'live path stats' : 'basic stats (mqvpn control API unavailable)'}`;
   // forget sparkline history for series that disappeared
   for (const [k, s] of state.hist) if (Date.now() - s.seen > 120000) state.hist.delete(k);
@@ -672,6 +673,7 @@ function setupTabs() {
       if (state.tab === 'logs') pollLogs();
       if (state.tab === 'clients' && state.status) { loadSettings(); renderClients(state.status); renderHealth(); }
       if (state.tab === 'setup') loadSettings();
+      if (state.tab === 'maint') ubOpen();
     });
   }
 }
@@ -750,6 +752,7 @@ function setupAddPhone() {
     try { await navigator.clipboard.writeText($('#invite-link').value); } catch { $('#invite-link').select(); document.execCommand('copy'); }
     toast('Link copied');
   });
+  $('#ub-dialog').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDlg(); });
   $('#show-dashboard').addEventListener('click', () => {
     state.dashboardShown = true;
     document.body.classList.remove('phone-add');
@@ -821,6 +824,546 @@ function setupLogin() {
       connect();
     } catch (err) { $('#login-err').textContent = err.message; }
   });
+}
+
+// ---------- Updates & backup tab ----------
+// Updates (docs/architecture.md "Updates"): GET /api/update (+ the live
+// `update` object in every status), POST /api/update/check,
+// /api/update/install, /api/update/policy {"policy"}. Backups: POST
+// /api/backup → file, GET /api/backup/summary, POST /api/restore/preview,
+// POST /api/restore, GET /api/backups (+ /api/backups/{name}),
+// POST /api/backup/settings. Scheduled-backup settings are read from
+// GET /api/settings `backup` (never the passphrase, only `passphrase_set`).
+const KIND_NAME = { router: 'travel router', android: 'Android phone', phone: 'Android phone' };
+const ub = { upd: null, backups: null, sig: '', bsig: '', open: false, schedEdit: false };
+const DNF_CMD = 'sudo dnf upgrade tailbond-server';
+const DNF_AUTO_CMD = 'sudo systemctl enable --now dnf-automatic.timer';
+
+function fmtWhen(t) {
+  if (!t) return '';
+  return new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+}
+function fmtAgo(t) {
+  const s = (Date.now() - new Date(t).getTime()) / 1000;
+  if (!t || !Number.isFinite(s)) return '';
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 36 * 3600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+function updOf(st) { return Object.assign({}, ub.upd || {}, (st && st.update) || {}); }
+function homeName() {
+  const st = state.status || {};
+  return st.active_server || ((state.settings && state.settings.paired_with) || st.server || 'your home server').split(/[.:]/)[0];
+}
+// the GitHub releases page of update.repo ("owner/name" or a github.com URL)
+function releasesUrl(u) {
+  const r = String(u.repo || 'kaovilai/tailbond').replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
+  return `https://github.com/${r}/releases`;
+}
+// methods that install by themselves (one click, or Automatic)
+const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg';
+
+const isPhone = (c) => c.kind === 'android' || c.kind === 'phone';
+// semver order of "0.2.0" / "v0.2.1-beta.1": <0, 0, >0 (a pre-release sorts before its release)
+function verCmp(a, b) {
+  const p = (v) => String(v || '').replace(/^v/, '').split('-');
+  const [x, xp] = p(a), [y, yp] = p(b);
+  const xs = x.split('.').map(Number), ys = y.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((xs[i] || 0) !== (ys[i] || 0)) return (xs[i] || 0) - (ys[i] || 0);
+  return xp && !yp ? -1 : !xp && yp ? 1 : 0;
+}
+// the newest release known: what's available, else this server's version
+const latestOf = (u, cur) => u.available || cur || '';
+const behind = (c, latest) => !!(c.version && latest && verCmp(c.version, latest) < 0);
+// the one-line state of updates, for the chip, the tab badge and the banner
+function updState(u) {
+  const off = u.policy === 'off' || u.state === 'off';
+  const busy = ['checking', 'downloading', 'installing'].includes(u.state);
+  const retry = u.state === 'rolled_back' && u.available && u.available === u.last_result_version;
+  const noCheck = !!u.error && !u.available && !busy && !off && u.state !== 'failed' && u.state !== 'rolled_back';
+  return { off, busy, retry, noCheck };
+}
+
+function renderMaint(st) {
+  const u = st.update || {};
+  const latest = latestOf(u, u.current || st.version);
+  const outdated = st.role === 'server' ? (st.clients || []).filter((c) => c.registered !== false && behind(c, latest)).length : 0;
+  const badge = $('#maint-badge');
+  const bad = u.state === 'failed';
+  const n = (u.available && u.policy !== 'off' && u.state !== 'rolled_back' ? 1 : 0) + outdated;
+  badge.textContent = bad ? '!' : String(n);
+  badge.className = 'tab-badge' + (bad ? ' bad' : '') + (n || bad ? '' : ' hidden');
+  renderUpdBanner(st);
+  if (state.tab !== 'maint') return;
+  renderUpdates(st);
+}
+
+// the same news at the top of the page, under the main card
+function renderUpdBanner(st) {
+  const ban = $('#upd-banner');
+  if (!ban) return;
+  const u = st.update || {};
+  const s = updState(u);
+  const cur = u.current || st.version || '';
+  const show = h('a', { href: '#', text: 'Show', onclick: (e) => { e.preventDefault(); $('#tabs button[data-tab="maint"]').click(); $('#upd-card').scrollIntoView({ block: 'start' }); } });
+  let msg = null, cls = '';
+  if (u.state === 'installing') msg = `Installing tailbond ${u.available}; this page comes back by itself in about a minute.`;
+  else if (u.state === 'failed') { msg = `An update to ${u.last_result_version || u.available || 'a new version'} didn't install. Still on ${cur}, nothing changed.`; cls = 'bad'; }
+  else if (u.state === 'rolled_back') msg = `Everything works as before on ${cur}: ${u.last_result_version || 'the new version'} didn't start here, so tailbond went back by itself.`;
+  else if (u.available && !s.off) msg = `Update available: tailbond ${u.available} (this ${st.role === 'server' ? 'server' : 'machine'} runs ${cur}).`;
+  ban.replaceChildren(...(msg ? [msg, ' ', show] : []));
+  ban.className = 'banner upd-banner' + (cls ? ' ' + cls : '') + (msg ? '' : ' hidden');
+}
+
+async function ubOpen() {
+  const jobs = [api('GET', '/api/update').then((r) => { ub.upd = r; }).catch(() => {}), loadSettings()];
+  if (state.role === 'server') jobs.push(api('GET', '/api/backups').then((r) => { ub.backups = Array.isArray(r) ? r : (r.backups || []); }).catch(() => { ub.backups = null; }));
+  await Promise.all(jobs);
+  ub.sig = ''; ub.bsig = '';
+  if (state.status) renderUpdates(state.status);
+  renderBackups();
+}
+
+function seg(options, value, onPick, label) {
+  return h('div', { class: 'seg', role: 'radiogroup', 'aria-label': label },
+    options.map(([v, text]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(v === value), class: v === value ? 'on' : '', onclick: () => { if (v !== value) onPick(v); } }, text)));
+}
+
+async function updAction(path, body, okMsg) {
+  try {
+    const r = await api('POST', path, body);
+    if (okMsg) toast(okMsg);
+    await ubOpen();
+    return r;
+  } catch (e) { toast(e.message, true); return null; }
+}
+
+async function copyText(text, okMsg) {
+  try { await navigator.clipboard.writeText(text); } catch {
+    const t = h('textarea', { style: 'position:fixed;opacity:0' }); t.value = text; document.body.append(t); t.select();
+    try { document.execCommand('copy'); } catch { /* nothing more to try */ }
+    t.remove();
+  }
+  toast(okMsg || 'Copied');
+}
+// a command to type on this machine, with a Copy button
+function cmdRow(cmd) {
+  return h('div', { class: 'ub-cmd' }, h('code', { text: cmd }),
+    h('button', { class: 'btn', type: 'button', onclick: () => copyText(cmd, 'Command copied') }, icon('copy', 'ico sm'), 'Copy'));
+}
+
+function renderUpdates(st) {
+  const box = $('#upd-card');
+  const u = updOf(st);
+  const srv = st.role === 'server';
+  const sig = JSON.stringify([u, srv, st.clients || []]);
+  if (sig === ub.sig) return;
+  ub.sig = sig;
+  const cur = u.current || st.version || '';
+  const policy = u.policy || 'notify';
+  const { off, busy, retry, noCheck } = updState(u);
+  const win = (u.auto_window || '03:00-05:00').split('-');
+  const chip = u.state === 'rolled_back' ? ['s-standby', 'Went back to ' + (cur || 'the previous version')]
+    : u.state === 'failed' ? ['s-failed', 'Update failed']
+    : u.state === 'installing' ? ['s-pending', 'Installing']
+    : u.state === 'checking' ? ['s-pending', 'Checking']
+    : u.state === 'downloading' ? ['s-pending', 'Downloading']
+    : off ? ['s-off', 'Updates off']
+    : u.available ? ['s-pending', 'Update available']
+    : noCheck ? ['s-pending', "Couldn't check"] : ['s-active', 'Up to date'];
+  const kids = [h('div', { class: 'ub-head' },
+    h('div', { class: 'kind-ico' }, icon('update')),
+    h('div', { class: 'grow' }, h('h3', { text: 'Updates' }), h('div', { class: 'muted small', text: `This ${srv ? 'server' : 'machine'} runs tailbond ${cur}` })),
+    h('span', { class: 'chip ' + chip[0], text: chip[1] }))];
+
+  // what's going on now
+  const now = [];
+  const notes = u.notes_url ? h('a', { href: u.notes_url, target: '_blank', rel: 'noopener', text: "What's new" }) : null;
+  const tried = u.last_result_version || u.available || 'The new version';
+  if (u.state === 'rolled_back') {
+    now.push(h('div', { class: 'ub-note' }, h('b', { text: `Everything works as before on ${cur}. ` }),
+      `${tried} didn't start here, so tailbond went back by itself${u.detail ? ` (${u.detail})` : ''}. `,
+      `Automatic won't install ${tried} again; the next version installs as usual.`));
+  } else if (u.state === 'failed') {
+    now.push(h('div', { class: 'ub-note bad' }, h('b', { text: `Couldn't update to ${tried}. ` }),
+      u.error ? `${u.error}. ` : '', `Still on ${cur}, nothing changed.`));
+  }
+  if (u.state === 'checking') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), 'Checking for updates…'));
+  else if (u.state === 'downloading') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Downloading ${u.available}…`));
+  else if (u.state === 'installing') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Installing ${u.available}`),
+    h('p', { class: 'muted small', text: `tailbond restarts. Leave this ${srv ? 'server' : 'machine'} on; it comes back by itself, and this page with it, in about a minute.` }));
+  else if (off) now.push(h('p', { class: 'ub-big', text: 'Updates are off' }),
+    h('p', { class: 'muted small', text: "tailbond doesn't check for new versions. Choose Tell me below to hear about them." }));
+  else if (u.available && !retry) {
+    now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, notes ? ' · ' : '', notes));
+    if (u.method === 'dnf') {
+      now.push(h('p', { class: 'small', text: 'Updates for this server come from dnf. In a terminal on this server, run:' }), cmdRow(DNF_CMD));
+    } else if (selfUpdates(u)) {
+      now.push(h('p', { class: 'muted small', text: 'You can update now or later; everything keeps working meanwhile.' }));
+    } else {
+      now.push(h('p', { class: 'small' }, "This build can't update itself; install the new release from ",
+        h('a', { href: releasesUrl(u), target: '_blank', rel: 'noopener', text: 'the releases page' }), '.'));
+    }
+  } else if (noCheck) {
+    now.push(h('p', { class: 'ub-big', text: "Couldn't check for updates" }),
+      h('p', { class: 'small warn-text', text: `Couldn't reach GitHub (${u.error}). tailbond tries again tomorrow; Check now tries again now.` }));
+  } else if (!retry) now.push(h('p', { class: 'ub-big', text: 'Up to date' }));
+
+  const meta = [];
+  if (u.last_check && !off) meta.push(`Checked ${fmtAgo(u.last_check)}`);
+  const lv = u.last_result_version, la = u.last_result_at ? ', ' + fmtWhen(u.last_result_at) : '';
+  if (u.last_result === 'ok' && lv) meta.push(`last update: ${lv}${la}, worked`);
+  else if (u.last_result === 'rolled_back' && lv && u.state !== 'rolled_back') meta.push(`last update: ${lv}${la} didn't start, went back`);
+  else if (u.last_result === 'failed' && lv && u.state !== 'failed') meta.push(`last update to ${lv}${la} failed, nothing changed`);
+  const checkErr = u.error && !noCheck && u.state !== 'failed' && !busy && !off;
+  if (meta.length || checkErr) {
+    now.push(h('p', { class: 'muted small' }, meta.join(' · ').replace(/^./, (c) => c.toUpperCase()),
+      checkErr ? h('span', { class: 'warn-text', text: `${meta.length ? ' · ' : ''}Couldn't reach GitHub (${u.error})` }) : null));
+  }
+  const acts = [];
+  if (u.available && selfUpdates(u) && !busy && !off) {
+    acts.push(retry ? h('button', { class: 'btn', type: 'button', onclick: () => confirmInstall(u) }, `Try ${u.available} again`)
+      : h('button', { class: 'btn primary', type: 'button', onclick: () => confirmInstall(u) }, 'Update now'));
+  }
+  if (!off) acts.push(h('button', { class: 'btn', type: 'button', disabled: busy, onclick: () => updAction('/api/update/check', {}, 'Checking for updates…') }, 'Check now'));
+  kids.push(h('div', { class: 'ub-now' }, now, acts.length ? h('div', { class: 'row' }, acts) : null));
+
+  // server: every device, its version, the ones behind the newest release marked
+  if (srv) {
+    const latest = latestOf(u, cur);
+    // "up to date" only after a check that worked
+    const checked = !!u.last_check && !u.error && !off;
+    const devs = (st.clients || []).filter((c) => c.registered !== false);
+    const outs = devs.filter((c) => behind(c, latest));
+    const sec = [h('h4', { text: devs.length && outs.length ? `Your devices: ${outs.length} of ${devs.length} out of date` : 'Your devices' })];
+    if (devs.length) {
+      sec.push(h('ul', { class: 'ub-list' }, devs.map((c) => h('li', {}, icon(isPhone(c) ? 'device' : 'ethernet', 'ico sm'), h('b', { text: c.name }),
+        h('span', { class: 'muted', text: ` ${KIND_NAME[c.kind] || 'device'} · ${c.version ? c.version + (behind(c, latest) ? ` · behind the latest (${latest})` : '') : 'version not known yet'}` }),
+        behind(c, latest) ? h('span', { class: 'chip s-pending ub-mini', text: 'Out of date' })
+          : c.version && latest && checked ? h('span', { class: 'ub-ok small', text: '✓ up to date' }) : null))));
+      const how = [];
+      if (outs.some((c) => !isPhone(c))) how.push('Routers: Update now in its tailbond panel, or Automatic.');
+      if (outs.some(isPhone)) how.push('Phones: the app shows it; with Obtainium it installs by itself.');
+      if (devs.some((c) => !c.version)) how.push('A version shows once the device has connected with this version of tailbond.');
+      if (!checked && devs.some((c) => c.version && !behind(c, latest))) how.push(off ? "Updates are off, so newer versions aren't checked." : "Couldn't check for newer versions.");
+      if (how.length) sec.push(h('p', { class: 'muted small', text: how.join(' ') }));
+    } else sec.push(h('p', { class: 'muted small', text: 'No devices yet.' }));
+    kids.push(h('div', { class: 'ub-sec' }, sec));
+  }
+
+  // the policy, in plain words
+  const set = [h('h4', { text: 'When a new version is out' })];
+  if (u.method === 'dnf') {
+    // dnf installs; tailbond only checks, so the choice is just On / Off
+    set.push(h('div', { class: 'row ub-seg-row' }, h('span', { class: 'small', text: 'Check for new versions' }),
+      seg([['notify', 'On'], ['off', 'Off']], policy === 'off' ? 'off' : 'notify', (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Check for new versions')),
+      h('p', { class: 'muted small', text: policy === 'off' ? "Doesn't check; dnf still updates tailbond with the rest of the computer." : 'Checks GitHub once a day and shows new versions here.' }));
+    const da = u.dnf_automatic;
+    const auto = h('b', { text: 'Automatic updates: ' });
+    if (da === 'install') set.push(h('p', { class: 'small' }, auto, 'dnf-automatic installs updates for every package on this computer, tailbond included.'));
+    else if (da === 'download') set.push(h('p', { class: 'small' }, auto, "dnf-automatic only downloads updates (Fedora's default). To install them too: set ", h('code', { text: 'apply_updates = yes' }), ' in ', h('code', { text: '/etc/dnf/automatic.conf' }), '.'));
+    else if (da === 'off') set.push(h('p', { class: 'small' }, auto, 'off. To turn on dnf-automatic (it updates every package on this computer), run in a terminal on this server:'), cmdRow(DNF_AUTO_CMD));
+    else set.push(h('p', { class: 'small' }, auto, 'they come from dnf-automatic, which updates every package on this computer.'));
+    set.push(h('p', { class: 'muted small' }, 'These are done on the computer itself, by whoever looks after it. A new version reaches dnf shortly after the release. If an update misbehaves: ', h('code', { text: 'sudo dnf downgrade tailbond-server' })));
+  } else {
+    const opts = selfUpdates(u) ? [['notify', 'Tell me'], ['auto', 'Automatic'], ['off', 'Off']] : [['notify', 'Tell me'], ['off', 'Off']];
+    set.push(seg(opts, policy, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
+    set.push(h('p', { class: 'muted small', text: policy === 'off' ? "Doesn't check for new versions."
+      : policy === 'auto' ? `Installs new versions by itself between ${win[0]} and ${win[1] || '05:00'} (this machine's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself.`
+      : `Checks GitHub once a day and shows new versions here${selfUpdates(u) ? '; nothing installs until you click Update now' : ''}.` }));
+  }
+  kids.push(h('div', { class: 'ub-sec' }, set));
+  box.replaceChildren(...kids);
+}
+
+function confirmInstall(u) {
+  dlg(h('h3', { text: `Update to ${u.available} now?` }),
+    h('p', { text: "tailbond restarts; devices drop for a few seconds. If the new version doesn't start, it goes back by itself." }),
+    h('p', { class: 'muted small', text: 'Downloaded from the GitHub release and checked against its SHA-256 list before anything is installed.' }),
+    h('div', { class: 'row end' },
+      h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'),
+      h('button', { class: 'btn primary', type: 'button', onclick: async () => { closeDlg(); await updAction('/api/update/install', {}, `Installing ${u.available}…`); } }, 'Update now')));
+}
+
+// ---- generic dialog ----
+function dlg(...kids) {
+  $('#ub-dialog-body').replaceChildren(...kids);
+  const d = $('#ub-dialog');
+  if (!d.open) d.showModal();
+}
+function closeDlg() { $('#ub-dialog').close(); }
+
+// ---- backup & restore ----
+// a rough strength hint, not a gate (the gate is 10 characters)
+function strength(p) {
+  if (!p) return ['', ''];
+  if (p.length < 10) return ['weak', `Too short: ${10 - p.length} more character${p.length === 9 ? '' : 's'}`];
+  const kinds = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(p)).length;
+  const words = p.trim().split(/[\s\-_.]+/).length;
+  if (/^(.)\1+$/.test(p) || /^(?:0123456789|1234567890|password|qwerty)/i.test(p)) return ['weak', 'Easy to guess'];
+  if (p.length >= 20 || words >= 4 || (p.length >= 14 && kinds >= 3)) return ['strong', 'Strong'];
+  return ['ok', 'OK. Longer is better: four random words are strong and easy to type'];
+}
+function passFields() {
+  const a = h('input', { type: 'password', id: 'bk-pass', autocomplete: 'new-password', placeholder: 'At least 10 characters' });
+  const b = h('input', { type: 'password', id: 'bk-pass2', autocomplete: 'new-password', placeholder: 'Same again' });
+  const meter = h('div', { class: 'meter' }, h('i'));
+  const hint = h('span', { class: 'small muted' });
+  const upd = () => { const [lvl, txt] = strength(a.value); meter.className = 'meter ' + lvl; hint.textContent = txt; };
+  a.addEventListener('input', upd);
+  const el = h('div', { class: 'ub-pass' },
+    h('label', { class: 'field', for: 'bk-pass' }, h('span', { text: 'Passphrase' }), a), meter, hint,
+    h('label', { class: 'field', for: 'bk-pass2' }, h('span', { text: 'Type it again' }), b));
+  return { el, a, b, check() {
+    if (a.value.length < 10) return 'The passphrase needs at least 10 characters.';
+    if (a.value !== b.value) return "The two passphrases don't match.";
+    return '';
+  } };
+}
+function saveBlob(blob, name) {
+  const a = h('a', { href: URL.createObjectURL(blob), download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+function openBackup() {
+  const pf = passFields();
+  const err = h('div', { class: 'error small' });
+  const go = h('button', { class: 'btn primary', type: 'button' }, 'Download backup');
+  go.addEventListener('click', async () => {
+    err.textContent = pf.check();
+    if (err.textContent) return;
+    go.disabled = true; go.textContent = 'Locking…';
+    try {
+      const r = await fetch('/api/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase: pf.a.value }) });
+      if (r.status === 401) { showLogin(); throw new Error('sign in first'); }
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      const m = /filename="?([^";]+)"?/.exec(r.headers.get('Content-Disposition') || '');
+      const host = (state.status && state.status.tailscale && state.status.tailscale.self) || 'tailbond';
+      saveBlob(await r.blob(), m ? m[1] : `${host}-${new Date().toISOString().slice(0, 10)}.tbbackup`);
+      closeDlg();
+      toast('Backup downloaded. Keep the passphrase somewhere safe');
+    } catch (e) { err.textContent = e.message; go.disabled = false; go.textContent = 'Download backup'; }
+  });
+  dlg(h('h3', { text: 'Download a backup' }),
+    h('p', { class: 'small', text: `Everything this ${state.role === 'server' ? 'server' : 'machine'} needs to start over: settings, devices and their keys, ${state.role === 'server' ? 'the certificate devices check, ' : 'servers, '}rules. It's locked with a passphrase you choose now.` }),
+    pf.el,
+    h('div', { class: 'ub-note warn' }, h('b', { text: 'Write it down. ' }), "Without the passphrase the backup can't be opened, by anyone, tailbond included. A password manager or a note in a drawer both work."),
+    err,
+    h('div', { class: 'row end' }, h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'), go));
+}
+function fileB64(file) {
+  return new Promise((ok, no) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, ''));
+    r.onerror = () => no(new Error("Couldn't read that file"));
+    r.readAsDataURL(file);
+  });
+}
+const ROLE_WORDS = { server: 'home server', client: 'travel router' };
+function warnText(w) { return typeof w === 'string' ? w : (w && (w.text || w.message || w.code)) || ''; }
+// restore warnings: numbered steps ("1. …", in order) and plain notes; a
+// command inside a step gets its own code line with a Copy button
+const STOP_CMD = 'sudo systemctl disable --now tailbond';
+function stepBody(text) {
+  const i = text.indexOf(STOP_CMD);
+  if (i < 0) return [text];
+  // "Then turn tailbond off on X (CMD there) and give …" → "… on X (run this there):" CMD "Then give …"
+  const rest = text.slice(i + STOP_CMD.length).replace(/^\s*there\)\s*/, '').replace(/^and\s+/, 'Then ');
+  return [text.slice(0, i).replace(/\s*\($/, '') + ' (run this there):', cmdRow(STOP_CMD), rest === '.' ? '' : rest];
+}
+function restoreSteps(list, stepsTitle, notesTitle) {
+  const steps = list.map((w) => /^(\d+)\.\s+([\s\S]*)$/.exec(w)).filter(Boolean);
+  const notes = list.filter((w) => !/^\d+\.\s/.test(w));
+  const out = [];
+  if (steps.length) {
+    out.push(h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: stepsTitle }),
+      h('ol', { start: steps[0][1] }, steps.map((m) => h('li', { value: m[1] }, stepBody(m[2]))))));
+  }
+  if (notes.length) out.push(h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: notesTitle }), h('ul', {}, notes.map((w) => h('li', { text: w })))));
+  return out;
+}
+function openRestore() {
+  const file = h('input', { type: 'file', id: 'rs-file', accept: '.tbbackup' });
+  const pass = h('input', { type: 'password', id: 'rs-pass', autocomplete: 'off', placeholder: 'The passphrase of that backup' });
+  const err = h('div', { class: 'error small' });
+  const go = h('button', { class: 'btn primary', type: 'button' }, 'Check the backup');
+  go.addEventListener('click', async () => {
+    err.textContent = '';
+    if (!file.files[0]) { err.textContent = 'Pick the backup file first (it ends in .tbbackup).'; return; }
+    if (!pass.value) { err.textContent = 'Type the passphrase of that backup.'; return; }
+    go.disabled = true; go.textContent = 'Opening…';
+    try {
+      const body = { file: await fileB64(file.files[0]), passphrase: pass.value };
+      const p = await api('POST', '/api/restore/preview', body);
+      showPreview(body, p, file.files[0].name);
+    } catch (e) {
+      err.textContent = /passphrase|damaged|gcm|auth/i.test(e.message) ? "Wrong passphrase, or the file is damaged. Check the passphrase (it's case-sensitive) and try again."
+        : /role/i.test(e.message) ? `That backup is from a ${state.role === 'server' ? 'travel router' : 'home server'}; it can only be restored on one.` : e.message;
+      go.disabled = false; go.textContent = 'Check the backup';
+    }
+  });
+  dlg(h('h3', { text: 'Restore from a backup' }),
+    h('p', { class: 'small', text: "Pick a .tbbackup file and type its passphrase. Nothing changes yet: you see what it would replace first." }),
+    h('label', { class: 'field', for: 'rs-file' }, h('span', { text: 'Backup file' }), file),
+    h('label', { class: 'field', for: 'rs-pass' }, h('span', { text: 'Passphrase' }), pass),
+    err,
+    h('div', { class: 'row end' }, h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'), go));
+}
+function showPreview(body, p, fname) {
+  const err = h('div', { class: 'error small' });
+  const go = h('button', { class: 'btn primary', type: 'button' }, 'Restore');
+  go.addEventListener('click', async () => {
+    go.disabled = true; go.textContent = 'Restoring…';
+    try {
+      const r = await api('POST', '/api/restore', { ...body, confirm: true });
+      const host = p.host || 'the backup';
+      dlg(h('div', { class: 'ub-done' }, icon('backup'), h('h3', { text: 'Restored' })),
+        h('p', { text: `The settings from ${host} are in place. A copy of the previous settings was kept${r && r.rollback ? ` (${r.rollback})` : ''}, locked with the same passphrase, in case you want them back.` }),
+        ...(next.length ? restoreSteps(next, 'Next, in order:', "If you haven't already:")
+          : [h('p', { class: 'small', text: state.role === 'server' ? 'Devices reconnect by themselves within a few minutes.' : 'tailbond connects to its home server again by itself within a minute.' })]),
+        h('p', { class: 'muted small', text: `Automatic backups now follow the backup: if they were on on ${host}, they stay on here, with the same schedule and passphrase.` }),
+        h('p', { class: 'muted small', text: 'tailbond is restarting with them; this page reconnects by itself in a few seconds.' }),
+        h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: closeDlg }, 'Done')));
+    } catch (e) { err.textContent = e.message; go.disabled = false; go.textContent = 'Restore'; }
+  });
+  const changes = Array.isArray(p.changes) ? p.changes : [];
+  const warns = (Array.isArray(p.warnings) ? p.warnings : []).map(warnText).filter(Boolean);
+  // after restoring, "Restore here while … still runs" is done
+  const next = warns.filter((w) => !/^1\.\s+Restore here while /.test(w));
+  dlg(h('h3', { text: 'Restore this backup?' }),
+    h('div', { class: 'ub-file' }, icon('backup', 'ico sm'), h('div', {},
+      h('b', { text: fname }),
+      h('div', { class: 'muted small', text: `${p.host || '?'} (${ROLE_WORDS[p.role] || p.role}) · made ${fmtWhen(p.created)} · tailbond ${p.agent_version || '?'}` }))),
+    ...restoreSteps(warns, 'Do these in order', 'Before you restore'),
+    h('h4', { text: changes.length ? 'What it replaces' : 'Nothing differs from the current settings' }),
+    changes.length ? h('table', { class: 'ub-changes' }, h('tbody', {}, changes.map((c) => h('tr', {},
+      h('th', { text: c.what }), h('td', { class: 'muted', text: c.from || '—' }), h('td', { text: '→' }), h('td', { text: c.to || '—' }))))) : null,
+    h('p', { class: 'muted small', text: 'The current settings are saved first (same passphrase), so you can go back. tailbond restarts afterwards.' }),
+    err,
+    h('div', { class: 'row end' }, h('button', { class: 'btn', type: 'button', onclick: openRestore }, 'Back'), go));
+}
+// GET /api/backup/summary keys (backup.Summary), in reading order
+const SUMMARY_LABEL = { role: 'Role', mode: 'Mode', clients: 'Devices', servers: 'Servers', public_addr: 'Public address', port: 'Tunnel port', subnet: 'Tunnel addresses',
+  approvers: 'Allowed to approve', bypass_rules: 'Rules that skip tailbond', paths: 'Connection settings', password_set: 'Dashboard password', update_policy: 'Updates',
+  files: 'Key and certificate files', client_backups: "Your devices' backups", uci: 'Router settings (UCI)', host: 'Machine', platform: 'System', agent_version: 'tailbond version' };
+// a server's backup carries its devices' pushed backups (client-backups/<device>/<file>): one row, per device
+function splitSummary(s0) {
+  const s = { ...(s0 || {}) };
+  if (!Array.isArray(s.files)) return s;
+  const per = {};
+  for (const f of s.files) { const m = /^client-backups\/([^/]+)\//.exec(f); if (m) per[m[1]] = (per[m[1]] || 0) + 1; }
+  s.files = s.files.filter((f) => !f.startsWith('client-backups/'));
+  if (Object.keys(per).length) s.client_backups = Object.entries(per).map(([d, n]) => `${d} (${n})`);
+  return s;
+}
+function summaryRows(s) {
+  const order = Object.keys(SUMMARY_LABEL);
+  const rank = (k) => (order.includes(k) ? order.indexOf(k) : 99);
+  return Object.entries(s || {}).filter(([k]) => k !== 'ok').sort((a, b) => rank(a[0]) - rank(b[0])).map(([k, v]) => {
+    let val;
+    if (v == null || v === '') val = 'none';
+    else if (Array.isArray(v)) val = v.length ? `${v.length}: ${v.map((x) => (typeof x === 'object' ? x.name || JSON.stringify(x) : x)).join(', ')}` : 'none';
+    else if (v && typeof v === 'object') val = Object.entries(v).map(([a, b]) => `${a} ${b}`).join(', ');
+    else if (k === 'password_set') val = v ? 'set (in the backup, not shown)' : 'not set';
+    else if (typeof v === 'boolean') val = v ? 'included' : 'no';
+    else if (k === 'role') val = ROLE_WORDS[v] || v;
+    else val = String(v);
+    return h('tr', {}, h('th', { text: SUMMARY_LABEL[k] || k.replace(/_/g, ' ') }), h('td', { text: val }));
+  });
+}
+async function openSummary() {
+  let s;
+  try { s = splitSummary(await api('GET', '/api/backup/summary')); } catch (e) { return toast(e.message, true); }
+  dlg(h('h3', { text: "What's in a backup" }),
+    h('p', { class: 'small muted', text: 'What a backup made now would hold. Keys and passwords are in it too (locked), but never shown here.' }),
+    h('table', { class: 'ub-changes ub-summary' }, h('tbody', {}, summaryRows(s))),
+    state.role === 'server' ? h('p', { class: 'small', text: "Your devices' own backups are included (still locked with their passphrases), so they move with this server." }) : null,
+    h('p', { class: 'small' }, h('b', { text: 'Not included: ' }), 'the Tailscale login, the installed program, firewall settings. On a new machine: install tailbond, sign in to Tailscale, then restore.'),
+    h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: closeDlg }, 'Close')));
+}
+
+// <state_dir>/backups on Fedora and the Linux bundle (docs/backup-restore.md)
+const BACKUP_DIR = '/var/lib/tailbond/backups/';
+function bset() { return (state.settings && state.settings.backup) || (state.status && state.status.backup) || {}; }
+async function saveSched(body, msg) {
+  try { await api('POST', '/api/backup/settings', body); toast(msg); ub.schedEdit = false; await loadSettings(); ub.bsig = ''; renderBackups(); } catch (e) { toast(e.message, true); }
+}
+function renderBackups() {
+  const box = $('#bk-card');
+  const srv = state.role === 'server';
+  const b = bset();
+  const sig = JSON.stringify([b, ub.backups, srv, ub.schedEdit]);
+  if (sig === ub.bsig) return;
+  ub.bsig = sig;
+  const on = !!(b.passphrase_set && (b.every_hours || 24));
+  const kids = [h('div', { class: 'ub-head' },
+    h('div', { class: 'kind-ico' }, icon('backup')),
+    h('div', { class: 'grow' }, h('h3', { text: 'Backup & restore' }),
+      h('div', { class: 'muted small', text: srv ? 'Settings, devices and keys, locked with a passphrase. Move to a new machine: the restore preview says what each device needs.' : 'Settings, servers and rules, locked with a passphrase.' })),
+    h('span', { class: 'chip ' + (on ? 's-active' : 's-off'), text: on ? 'Automatic backups on' : 'Automatic backups off' }))];
+  kids.push(h('div', { class: 'row' },
+    h('button', { class: 'btn primary', type: 'button', onclick: openBackup }, 'Download a backup'),
+    h('button', { class: 'btn', type: 'button', onclick: openRestore }, 'Restore from a backup'),
+    h('button', { class: 'linkish small', type: 'button', onclick: openSummary }, "See what's inside")));
+
+  // scheduled backups
+  const sched = [h('h4', { text: 'Automatic backups' })];
+  const every = b.every_hours || 24, keep = b.keep || 7;
+  const everyWords = every % 24 === 0 ? (every === 24 ? 'every day' : `every ${every / 24} days`) : `every ${every} hours`;
+  if (!ub.schedEdit) {
+    sched.push(h('p', { class: 'small' }, on
+      ? [`On: ${everyWords}, keeps the last ${keep}`, srv ? ' on this server' : '', b.last ? ` · last one ${fmtAgo(b.last)}` : '', '.',
+        !srv && b.push ? ` A copy also goes to ${homeName()}${b.last_push ? ` (sent ${fmtAgo(b.last_push)})` : ''}, so you can get it back if this router is lost.` : '']
+      : ['Off. Set a passphrase to have tailbond save a backup by itself.']));
+    if (on) sched.push(h('p', { class: 'muted small' }, 'Saved in ', h('code', { text: BACKUP_DIR }), ' on this machine. Copy them somewhere else too.'));
+    if (b.last_error) sched.push(h('p', { class: 'small error', text: `The last automatic backup didn't work: ${b.last_error}` }));
+    sched.push(h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => { ub.schedEdit = true; ub.bsig = ''; renderBackups(); } }, on ? 'Change' : 'Turn on'),
+      on ? h('button', { class: 'btn', type: 'button', onclick: () => saveSched({ passphrase: '' }, 'Automatic backups off') }, 'Turn off') : null));
+  } else {
+    const pf = passFields();
+    const ev = h('input', { type: 'number', min: 1, max: 720, value: every, id: 'bk-every', class: 'num' });
+    const kp = h('input', { type: 'number', min: 1, max: 100, value: keep, id: 'bk-keep', class: 'num' });
+    const push = h('input', { type: 'checkbox', id: 'bk-push' });
+    push.checked = b.push !== false;
+    const err = h('div', { class: 'error small' });
+    sched.push(
+      b.passphrase_set ? h('p', { class: 'muted small', text: 'A passphrase is set. Leave the fields empty to keep it, or type a new one.' }) : h('p', { class: 'muted small', text: 'Choose a passphrase for the automatic backups (you need it to restore one).' }),
+      h('p', { class: 'muted small' }, 'The passphrase is kept on this machine, in its settings, so it can back up by itself. The files go to ', h('code', { text: BACKUP_DIR }), '.'),
+      pf.el,
+      h('div', { class: 'row' }, 'Every ', ev, ' hours, keep the last ', kp),
+      srv ? null : h('label', { class: 'check', for: 'bk-push' }, push, `Also send a copy to ${homeName()} (it keeps the last 3)`),
+      err,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', type: 'button', onclick: () => {
+          const body = { every_hours: Number(ev.value) || 24, keep: Number(kp.value) || 7 };
+          if (!srv) body.push = push.checked;
+          if (pf.a.value || !b.passphrase_set) { err.textContent = pf.check(); if (err.textContent) return; body.passphrase = pf.a.value; }
+          saveSched(body, 'Automatic backups saved');
+        } }, 'Save'),
+        h('button', { class: 'btn', type: 'button', onclick: () => { ub.schedEdit = false; ub.bsig = ''; renderBackups(); } }, 'Cancel')));
+  }
+  kids.push(h('div', { class: 'ub-sec' }, sched));
+
+  // server: every saved backup, this server's and the devices'
+  if (srv && Array.isArray(ub.backups)) {
+    const mine = ub.backups.filter((x) => !x.client);
+    const theirs = ub.backups.filter((x) => x.client);
+    const row = (x) => h('tr', {},
+      h('td', {}, h('b', { text: x.client || 'this server' })),
+      h('td', { text: fmtWhen(x.created) }), h('td', { class: 'muted', text: fmtBytes(x.size) }),
+      h('td', {}, h('a', { href: '/api/backups/' + encodeURIComponent(x.name) + (x.client ? '?client=' + encodeURIComponent(x.client) : ''), download: x.name, text: 'Download' })));
+    const sec = [h('h4', { text: 'Saved backups' })];
+    if (!ub.backups.length) sec.push(h('p', { class: 'muted small', text: 'None yet. Automatic backups land here, and travel routers that send theirs.' }));
+    else {
+      sec.push(h('table', { class: 'ub-backups' },
+        h('thead', {}, h('tr', {}, h('th', { text: 'From' }), h('th', { text: 'Made' }), h('th', { text: 'Size' }), h('th'))),
+        h('tbody', {}, mine.map(row), theirs.map(row))));
+      sec.push(h('p', { class: 'muted small', text: `Each is locked with the passphrase it was made with${theirs.length ? "; the devices' backups with their own" : ''}. Keep a copy somewhere other than this machine too.` }));
+    }
+    kids.push(h('div', { class: 'ub-sec' }, sec));
+  }
+  box.replaceChildren(...kids);
 }
 
 // ---------- data feed ----------

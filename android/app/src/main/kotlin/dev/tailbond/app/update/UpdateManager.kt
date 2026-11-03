@@ -1,0 +1,102 @@
+package dev.tailbond.app.update
+
+import android.annotation.SuppressLint
+import android.content.Context
+import androidx.core.content.edit
+import dev.tailbond.app.BuildConfig
+import dev.tailbond.app.data.Repository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+
+/**
+ * Process-wide: runs [UpdateChecker] on one background thread. The UI calls
+ * [onForeground] when the app comes to the front or Settings → Updates
+ * opens (a check runs when the last one is a day old), and [checkNow].
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class UpdateManager private constructor(ctx: Context) {
+    private val repo = Repository.get(ctx)
+    private val prefs = ctx.getSharedPreferences("tailbond_update", Context.MODE_PRIVATE)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+
+    private val checker = UpdateChecker(
+        object : UpdateEnv {
+            override val currentVersion: String = BuildConfig.VERSION_NAME
+            override val repo: String = UPDATE_REPO
+            override fun policy() = this@UpdateManager.repo.settings.value.updatePolicy
+            override fun now() = System.currentTimeMillis()
+            override fun load() = UpdateStatus.fromJson(prefs.getString(KEY_STATUS, null))
+            override fun save(s: UpdateStatus) = prefs.edit { putString(KEY_STATUS, s.toJson()) }
+        },
+        GitHubHttp,
+    )
+
+    val status: StateFlow<UpdateStatus> = checker.status
+
+    init {
+        // left over from the old self-updater (downloaded APKs)
+        scope.launch { File(ctx.cacheDir, "updates").deleteRecursively() }
+    }
+
+    fun onForeground() {
+        scope.launch { checker.checkIfDue() }
+    }
+
+    fun checkNow() {
+        scope.launch { checker.check() }
+    }
+
+    /** HTTPS GET with HttpURLConnection; at most 1 MiB of answer. */
+    private object GitHubHttp : HttpsGet {
+        override fun get(url: String, headers: Map<String, String>): Pair<Int, String> {
+            val u = URL(url)
+            if (u.protocol != "https") throw IOException("refusing $url: https only")
+            val c = u.openConnection() as HttpURLConnection
+            try {
+                c.connectTimeout = 10_000
+                c.readTimeout = 15_000
+                headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
+                val code = c.responseCode
+                if (code != 200) return code to ""
+                val out = ByteArrayOutputStream()
+                c.inputStream.use { input ->
+                    val buf = ByteArray(16 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        if (out.size() > MAX_ANSWER) throw IOException("GitHub's answer is too long")
+                    }
+                }
+                return code to out.toString("UTF-8")
+            } finally {
+                c.disconnect()
+            }
+        }
+    }
+
+    companion object {
+        /** BuildConfig.UPDATE_REPO (Gradle TB_UPDATE_REPO), already checked by Gradle. */
+        val UPDATE_REPO: String = UpdateRules.repo(BuildConfig.UPDATE_REPO) ?: "kaovilai/tailbond"
+        private const val KEY_STATUS = "status"
+        private const val MAX_ANSWER = 1 shl 20
+
+        // holds the application context only (see get)
+        @SuppressLint("StaticFieldLeak")
+        @Volatile private var instance: UpdateManager? = null
+
+        fun get(ctx: Context): UpdateManager =
+            instance ?: synchronized(this) {
+                instance ?: UpdateManager(ctx.applicationContext).also { instance = it }
+            }
+    }
+}

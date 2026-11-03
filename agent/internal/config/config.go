@@ -8,6 +8,9 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -102,6 +105,95 @@ type Client struct {
 	// captive.DefaultProbes).
 	CaptivePortalDetect *bool    `json:"captive_portal_detect,omitempty"`
 	CaptiveProbeURLs    []string `json:"captive_probe_urls,omitempty"`
+	// Additive: the ordered server list (first = primary) and how the
+	// client fails over between them (docs/architecture.md, "Multiple
+	// servers and failover"). PairingURI mirrors the primary's URI.
+	Servers  []ServerEntry `json:"servers,omitempty"`
+	Failover *Failover     `json:"failover,omitempty"`
+	// Additive: LAN traffic that skips the tunnel ("Bypass rules").
+	Bypass []BypassRule `json:"bypass,omitempty"`
+	// Additive: DHCP leases for GET /api/lan-clients (default /tmp/dhcp.leases).
+	LeasesFile string `json:"leases_file,omitempty"`
+	// Additive: fwmark bits the bypass rules use (default 0x07000000), and
+	// whether bypassed domains resolve through the WAN's DNS (default on).
+	BypassMarkMask string `json:"bypass_mark_mask,omitempty"`
+	BypassLocalDNS *bool  `json:"bypass_local_dns,omitempty"`
+}
+
+// ServerEntry is one paired server in the client's list.
+type ServerEntry struct {
+	Name       string `json:"name"`
+	PairingURI string `json:"pairing_uri"`
+	// nil = enabled
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+func (e ServerEntry) On() bool { return e.Enabled == nil || *e.Enabled }
+
+const (
+	PolicyPrefer = "prefer"
+	PolicyAlways = "always"
+
+	DefaultSwitchAfterSec   = 15
+	DefaultFailbackAfterSec = 120
+	DefaultProbeEverySec    = 10
+)
+
+// Failover is client.failover; zero values mean the defaults.
+type Failover struct {
+	Policy           string `json:"policy,omitempty"`
+	Server           string `json:"server,omitempty"` // policy "always"
+	SwitchAfterSec   int    `json:"switch_after_sec,omitempty"`
+	FailbackAfterSec int    `json:"failback_after_sec,omitempty"`
+	ProbeEverySec    int    `json:"probe_every_sec,omitempty"`
+}
+
+// FailoverOrDefault returns client.failover with defaults filled in.
+func (c *Client) FailoverOrDefault() Failover {
+	f := Failover{}
+	if c.Failover != nil {
+		f = *c.Failover
+	}
+	if f.Policy == "" {
+		f.Policy = PolicyPrefer
+	}
+	if f.SwitchAfterSec <= 0 {
+		f.SwitchAfterSec = DefaultSwitchAfterSec
+	}
+	if f.FailbackAfterSec <= 0 {
+		f.FailbackAfterSec = DefaultFailbackAfterSec
+	}
+	if f.ProbeEverySec <= 0 {
+		f.ProbeEverySec = DefaultProbeEverySec
+	}
+	return f
+}
+
+// MarkMask parses client.bypass_mark_mask (0 = the default). It must be
+// one run of at least 3 bits (direct, tunnel, one WAN).
+func (c *Client) MarkMask() (uint32, error) {
+	if c.BypassMarkMask == "" {
+		return 0, nil
+	}
+	v, err := strconv.ParseUint(strings.TrimPrefix(strings.ToLower(c.BypassMarkMask), "0x"), 16, 32)
+	m := uint32(v)
+	low := m & -m
+	if err != nil || m == 0 || (m+low)&m != 0 || m/low < 3 {
+		return 0, fmt.Errorf("client.bypass_mark_mask %q: one run of at least 2 bits, e.g. 0x07000000", c.BypassMarkMask)
+	}
+	return m, nil
+}
+
+func (c *Client) LocalDNSForBypass() bool { return c.BypassLocalDNS == nil || *c.BypassLocalDNS }
+
+// DefaultLeasesFile is OpenWrt dnsmasq's lease file.
+const DefaultLeasesFile = "/tmp/dhcp.leases"
+
+func (c *Client) LeasesPath() string {
+	if c.LeasesFile != "" {
+		return c.LeasesFile
+	}
+	return DefaultLeasesFile
 }
 
 // CaptiveDetect reports whether captive-portal detection is on (default).
@@ -140,6 +232,69 @@ type Config struct {
 	// the tailnet without a password, besides the server's owner.
 	Approvers         []string `json:"approvers,omitempty"`
 	LandingPublicPort int      `json:"landing_public_port,omitempty"`
+	// Additive: auto-updates and the server's update mirror, scheduled
+	// encrypted backups (docs/architecture.md, "Updates", "Backup and restore").
+	Update *UpdateSettings `json:"update,omitempty"`
+	Backup *BackupSettings `json:"backup,omitempty"`
+}
+
+// UpdateSettings: the update check (docs/architecture.md, "Updates").
+// Keys of older versions (channel, window, pin, source, mirror, …) are
+// ignored.
+type UpdateSettings struct {
+	Policy          string `json:"policy,omitempty"` // notify (default) | auto | off
+	Repo            string `json:"repo,omitempty"`   // owner/name or https://github.com/owner/name
+	CheckEveryHours int    `json:"check_every_hours,omitempty"`
+	APIURL          string `json:"api_url,omitempty"` // default https://api.github.com
+}
+
+const (
+	UpdateNotify = "notify"
+	UpdateAuto   = "auto"
+	UpdateOff    = "off"
+)
+
+type BackupSettings struct {
+	Passphrase string `json:"passphrase,omitempty"`
+	EveryHours int    `json:"every_hours,omitempty"`
+	Keep       int    `json:"keep,omitempty"`
+	Push       *bool  `json:"push,omitempty"`
+}
+
+var updateRepoRE = regexp.MustCompile(`^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?/?)$`)
+
+// UpdateOrDefault returns the update settings with defaults filled in.
+func (c *Config) UpdateOrDefault() UpdateSettings {
+	u := UpdateSettings{}
+	if c.Update != nil {
+		u = *c.Update
+	}
+	if u.Policy == "" {
+		u.Policy = UpdateNotify
+	}
+	if u.CheckEveryHours <= 0 {
+		u.CheckEveryHours = 24
+	}
+	return u
+}
+
+// BackupOrDefault returns the backup settings with defaults filled in.
+func (c *Config) BackupOrDefault() BackupSettings {
+	b := BackupSettings{}
+	if c.Backup != nil {
+		b = *c.Backup
+	}
+	if b.EveryHours <= 0 {
+		b.EveryHours = 24
+	}
+	if b.Keep <= 0 {
+		b.Keep = 7
+	}
+	if b.Push == nil {
+		on := true
+		b.Push = &on
+	}
+	return b
 }
 
 // DefaultLandingPort serves the landing page at http://<server>/.
@@ -240,6 +395,7 @@ func (c *Config) ApplyDefaults() {
 			c.Client.Paths[i].Priority = PriorityPrimary
 		}
 	}
+	c.Client.MigrateServers()
 }
 
 func (c *Config) Validate() error {
@@ -272,6 +428,43 @@ func (c *Config) Validate() error {
 		}
 		if !ValidPriority(p.Priority) {
 			return fmt.Errorf("client.paths[%s]: bad priority %q", p.Iface, p.Priority)
+		}
+	}
+	seen := map[string]bool{}
+	for _, e := range c.Client.Servers {
+		if e.Name == "" || e.PairingURI == "" {
+			return fmt.Errorf("client.servers: every server needs a name and a pairing_uri")
+		}
+		if seen[e.Name] {
+			return fmt.Errorf("client.servers: %q listed twice", e.Name)
+		}
+		seen[e.Name] = true
+	}
+	if f := c.Client.Failover; f != nil {
+		if f.Policy != "" && f.Policy != PolicyPrefer && f.Policy != PolicyAlways {
+			return fmt.Errorf("client.failover.policy must be %q or %q", PolicyPrefer, PolicyAlways)
+		}
+		if f.SwitchAfterSec < 0 || f.FailbackAfterSec < 0 || f.ProbeEverySec < 0 {
+			return fmt.Errorf("client.failover: negative timer")
+		}
+	}
+	if err := ValidateBypass(c.Client.Bypass); err != nil {
+		return err
+	}
+	if _, err := c.Client.MarkMask(); err != nil {
+		return err
+	}
+	if u := c.Update; u != nil {
+		switch u.Policy {
+		case "", UpdateNotify, UpdateAuto, UpdateOff:
+		default:
+			return fmt.Errorf("update.policy must be notify, auto or off, not %q", u.Policy)
+		}
+		if u.Repo != "" && !updateRepoRE.MatchString(u.Repo) {
+			return fmt.Errorf("update.repo must be owner/name or https://github.com/owner/name, not %q", u.Repo)
+		}
+		if u.APIURL != "" && !strings.HasPrefix(u.APIURL, "https://") && !strings.HasPrefix(u.APIURL, "http://") {
+			return fmt.Errorf("update.api_url must be an http(s) URL, not %q", u.APIURL)
 		}
 	}
 	return nil

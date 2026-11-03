@@ -3,7 +3,9 @@
 #
 # client-up: tunnel connected (travel router, CLIENT role).
 # Env: TB_TUN, TB_TUNNEL_IP, TB_SERVER_IP (resolved public server address),
-#      TB_TAILNET_ROUTES (comma separated).
+#      TB_TAILNET_ROUTES (comma separated), TB_SERVER_NAME, TB_SUBNET and
+#      TB_DNS_IP (the active server's tunnel subnet and DNS; several
+#      servers each have their own).
 #
 # - network 'tailbond' (proto none, device $TB_TUN) and firewall zone
 #   'tailbond' with masquerade; forwarding lan -> tailbond
@@ -63,8 +65,13 @@ fi
 
 # DNS through the tunnel while connected: dnsmasq forwards only to the
 # tunnel DNS (noresolv). client-down restores the previous noresolv.
-if is_true "$(tbcfg_or client.tunnel_dns 1)"; then
-	dns="$(tbcfg_or client.tunnel_dns_ip 10.77.0.1)"
+# The DNS IP: UCI client.tunnel_dns_ip if set, else the server's (TB_DNS_IP;
+# empty = this server has no DNS forwarder), else 10.77.0.1 (older agents).
+dns="$(tbcfg client.tunnel_dns_ip)"
+if [ -z "$dns" ]; then
+	if [ -n "${TB_DNS_IP+x}" ]; then dns="$TB_DNS_IP"; else dns=10.77.0.1; fi
+fi
+if is_true "$(tbcfg_or client.tunnel_dns 1)" && [ -n "$dns" ]; then
 	[ -f "$TB_STATE/dns_saved" ] || {
 		# shellcheck disable=SC2005 # echo: always one line, even when unset
 		echo "$(uci -q get 'dhcp.@dnsmasq[0].noresolv')" >"$TB_STATE/dns_saved"
@@ -75,5 +82,5 @@ if is_true "$(tbcfg_or client.tunnel_dns 1)"; then
 	commit_reload dhcp dnsmasq && log "dnsmasq: forwarding to $dns only"
 fi
 
-log "client-up: LAN ($lans) routed via $TB_TUN (table $table), server $TB_SERVER_IP"
+log "client-up: LAN ($lans) routed via $TB_TUN (table $table), server ${TB_SERVER_NAME:+$TB_SERVER_NAME }$TB_SERVER_IP"
 exit 0

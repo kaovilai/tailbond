@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
@@ -45,6 +46,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +66,7 @@ import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.Words
 import dev.tailbond.app.service.ConnState
+import dev.tailbond.app.update.Availability
 import java.time.Duration
 import java.time.Instant
 
@@ -79,6 +82,7 @@ fun HomeScreen(
     onMachine: (String) -> Unit,
     modifier: Modifier = Modifier,
     startSearch: String = "",
+    onUpdates: () -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf(startSearch) }
     val live = state.live
@@ -89,16 +93,14 @@ fun HomeScreen(
         item { StatusCard(state, actions) }
         if (live.state == ConnState.ERROR) item { ErrorCard(state, actions, onRepair) }
         if (state.wifiSignIn && state.settings.captivePrompts && state.settings.path(PathKind.WIFI).enabled) item { WifiSignInCard(state, actions) }
-        if (state.settings.handedToTailscale && live.state == ConnState.DISCONNECTED) {
-            item { HandedBackCard(state, actions) }
-        } else {
-            item {
-                OutlinedButton(onClick = actions::switchToTailscale, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                    Icon(Icons.Filled.SwapHoriz, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Switch back to Tailscale")
-                }
-            }
+        val handedBack = state.settings.handedToTailscale && live.state == ConnState.DISCONNECTED
+        if (handedBack) item { HandedBackCard(state, actions) }
+        // a debug build can't take the release APK, so it isn't told about one here
+        if (state.update.status.availability == Availability.AVAILABLE && !state.update.debugBuild) item { UpdateBanner(state, onUpdates) }
+
+        if (state.servers.size > 1) {
+            item { SectionHeader("Servers") }
+            item { ServersOverview(state, onSettings) }
         }
 
         item { SectionHeader("Connections") }
@@ -152,13 +154,21 @@ fun HomeScreen(
         item {
             ListItem(
                 headlineContent = { Text("Internet traffic") },
-                supportingContent = { Text(state.settings.routeMode.label) },
+                supportingContent = { Text(Words.routeLabel(state.settings.routeMode, state.servers.size > 1)) },
                 leadingContent = { Icon(Icons.Filled.Public, null) },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
                 modifier = Modifier.clickable(onClick = onSettings),
             )
         }
-
+        // turns tailbond off: kept away from the status and failover notes
+        if (!handedBack) item {
+            ListItem(
+                headlineContent = { Text("Hand the VPN back to Tailscale") },
+                supportingContent = { Text("Turns tailbond off and opens the Tailscale app") },
+                leadingContent = { Icon(Icons.Filled.SwapHoriz, null) },
+                modifier = Modifier.clickable(onClick = actions::switchToTailscale),
+            )
+        }
     }
 }
 
@@ -203,14 +213,37 @@ private fun StatusCard(state: UiState, actions: UiActions) {
             containerColor = if (connected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
     ) {
-        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(Words.stateTitle(live.state), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
-                Text(Words.stateLine(live, state.serverName, state.settings.handedToTailscale), style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(Words.stateTitle(live.state), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(Words.stateLine(live, state.serverName, state.settings.handedToTailscale), style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f))
             }
-            Spacer(Modifier.width(12.dp))
-            Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f))
+            // which server is in use and why, full width under the switch
+            val note = if (on) Words.serverNote(live.failover, state.serverNames) else null
+            if (note != null) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Filled.Dns, null, Modifier.size(18.dp).padding(top = 2.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(note.line, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        note.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        val cardInk = androidx.compose.material3.LocalContentColor.current
+                        note.action?.let { a ->
+                            val run = { if (a.vpnSettings) actions.openVpnSettings() else a.serverId?.let { actions.useServerNow(it) } ?: Unit }
+                            if (a.filled) Button(onClick = run, modifier = Modifier.padding(top = 8.dp)) { Text(a.label) }
+                            else TextButton(onClick = run, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                                Text(a.label, color = cardInk, fontWeight = FontWeight.SemiBold, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -218,7 +251,8 @@ private fun StatusCard(state: UiState, actions: UiActions) {
 @Composable
 private fun ErrorCard(state: UiState, actions: UiActions, onRepair: () -> Unit) {
     val p = state.profile ?: return
-    val e = Words.error(state.live.errorKind, state.serverName, p.server, state.live.message)
+    val all = if (state.servers.size > 1 && state.live.failover != null) state.servers.map { it.name } else emptyList()
+    val e = Words.error(state.live.errorKind, state.serverName, state.activeServer?.payload?.server ?: p.server, state.live.message, all)
     val run: (Words.Fix) -> Unit = { f ->
         when (f) {
             Words.Fix.RETRY -> actions.retry()
@@ -264,6 +298,25 @@ private fun WifiSignInCard(state: UiState, actions: UiActions) {
             )
             Button(onClick = actions::openWifiSignIn) { Text("Sign in to Wi-Fi") }
         }
+    }
+}
+
+/** "Update available: vX" on the main screen; opens Settings → Updates. */
+@Composable
+private fun UpdateBanner(state: UiState, onUpdates: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clickable(onClick = onUpdates),
+    ) {
+        ListItem(
+            headlineContent = {
+                Text("Update available: v${state.update.status.latest}", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            },
+            supportingContent = { Text("Tap to see what's new and download it") },
+            leadingContent = { Icon(Icons.Filled.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary) },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
     }
 }
 
@@ -393,7 +446,7 @@ private fun ThisDevice(state: UiState) {
                 )
                 Text(
                     if (ip != null) "Not a Tailscale address: your Tailscale machines see this phone as ${state.serverName} and allow it whatever they allow ${state.serverName}. " +
-                        "They can open connections to the phone at this address only if ${state.serverName}'s tailbond route is approved in the Tailscale admin console (your access rules apply)."
+                        "Optional: for them to open connections to this phone, approve ${state.serverName}'s tailbond route in the Tailscale admin console. Nothing else needs it."
                     else "This phone reaches your tailnet through ${state.serverName}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

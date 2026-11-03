@@ -75,6 +75,9 @@ type Client struct {
 	TxBytes      uint64 `json:"tx_bytes"`
 	RxBytes      uint64 `json:"rx_bytes"`
 	Paths        []Path `json:"paths"`
+	// Additive: what the client last reported (X-Tailbond-Version/Kind)
+	Version string `json:"version,omitempty"`
+	Kind    string `json:"kind,omitempty"`
 }
 
 type Tailscale struct {
@@ -106,6 +109,81 @@ type Status struct {
 	// pair (state of POST /api/join).
 	PairRequests any `json:"pair_requests,omitempty"`
 	Join         any `json:"join,omitempty"`
+	// Client role: the server list, the active one and the failover
+	// policy (docs/architecture.md, "Multiple servers and failover").
+	Servers      []ServerState `json:"servers,omitempty"`
+	ActiveServer string        `json:"active_server,omitempty"`
+	Failover     *Failover     `json:"failover,omitempty"`
+	// Updates (docs/architecture.md, "Updates")
+	Protocol int     `json:"protocol,omitempty"`
+	Update   *Update `json:"update,omitempty"`
+}
+
+// Update is the status of auto-updates on this machine.
+type Update struct {
+	Current   string `json:"current"`
+	Available string `json:"available,omitempty"`
+	NotesURL  string `json:"notes_url,omitempty"` // the release page (changelog)
+	Policy    string `json:"policy"`              // notify | auto | off
+	Repo      string `json:"repo,omitempty"`
+	// Method: static (install.sh bundle) | opkg (OpenWrt) | dnf (RPM: dnf
+	// upgrade) | none; one-click install for static and opkg
+	Method     string     `json:"method"`
+	State      string     `json:"state"` // idle | checking | downloading | installing | failed | rolled_back | off
+	LastCheck  *time.Time `json:"last_check,omitempty"`
+	LastResult string     `json:"last_result,omitempty"` // ok | rolled_back | failed
+	// the version the last result is about, when, and a detail (e.g.
+	// reinstalled_after_firmware_upgrade)
+	LastResultVersion string `json:"last_result_version,omitempty"`
+	LastResultAt      string `json:"last_result_at,omitempty"`
+	Detail            string `json:"detail,omitempty"`
+	Error             string `json:"error,omitempty"`
+	// AutoWindow: when policy auto installs (local time, "03:00-05:00")
+	AutoWindow string `json:"auto_window,omitempty"`
+	// DnfAutomatic (method dnf): install | download (Fedora's default: a
+	// dnf-automatic timer that only downloads) | off; for every package
+	DnfAutomatic string     `json:"dnf_automatic,omitempty"`
+	Outdated     []Outdated `json:"outdated,omitempty"`
+}
+
+// Outdated is a client running an older version than its server.
+type Outdated struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind,omitempty"`
+	Version string `json:"version"`
+}
+
+// ServerState is one entry of the client's server list.
+type ServerState struct {
+	Name   string     `json:"name"`
+	Role   string     `json:"role"`  // primary | backup
+	State  string     `json:"state"` // active | connecting | standby | unreachable | unknown | off
+	Active bool       `json:"active"`
+	LastOK *time.Time `json:"last_ok,omitempty"`
+	Subnet string     `json:"subnet"`
+	Server string     `json:"server"`
+}
+
+type Failover struct {
+	Policy           string     `json:"policy"`
+	Server           string     `json:"server"`
+	SwitchAfterSec   int        `json:"switch_after_sec"`
+	FailbackAfterSec int        `json:"failback_after_sec"`
+	Reason           string     `json:"reason"`
+	Since            *time.Time `json:"since,omitempty"`
+	FailbackInSec    *int       `json:"failback_in_sec,omitempty"`
+	// the last switches, newest first (in memory: since the agent started)
+	History []Switch `json:"history,omitempty"`
+}
+
+// Switch is one change of the active server.
+type Switch struct {
+	At     time.Time `json:"at"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Reason string    `json:"reason"` // failover | failback | manual | policy | list
+	// why the server left behind stopped working, for failovers
+	Detail string `json:"detail,omitempty"`
 }
 
 // MapPathState turns mqvpn path labels (control API state_label or the client

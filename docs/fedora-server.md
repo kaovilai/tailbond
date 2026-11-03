@@ -2,6 +2,8 @@
 
 This guide sets up the **home end** of tailbond on Fedora 43 or newer. Your phone or travel router bonds its Wi-Fi, 5G and Ethernet links to this server. Its traffic then leaves through your home internet connection, and your Tailscale tailnet is reachable through it.
 
+For a VPS as a second (backup) server, or another distribution (Debian, Ubuntu, AlmaLinux/RHEL), see [vps.md](vps.md).
+
 ## 1. Install
 
 ```sh
@@ -47,7 +49,7 @@ What the package changes in firewalld (the `server-up` hook, every start, both t
   sudo firewall-cmd --reload
   ```
 
-UDP 443 is also what HTTP/3 uses: if this machine runs a web server with HTTP/3, set another port (`"server": {"port": 8443}`) and forward that one instead. SELinux needs no changes: the service runs unconfined as root, like other VPN servers.
+UDP 443 is also what HTTP/3 uses: if this machine runs a web server with HTTP/3, set another port (`"server": {"port": 8443}`) and forward that one instead. ([vps.md](vps.md#2-ports-on-a-box-that-already-runs-a-web-server) has more on sharing a box with a web server.) SELinux needs no changes: the service runs unconfined as root, like other VPN servers.
 
 ## 2. Make the server reachable: forward UDP 443
 
@@ -197,6 +199,41 @@ Pick a mode in the dashboard. Changing it rewrites mqvpn's config and restarts i
 | Failover | one primary link, with the others on standby |
 
 The server's mode sets its default for downloads. Each device's own mode decides its connection.
+
+## Updates
+
+Updates come from `dnf`, like any other package, from the project's COPR
+repository:
+
+```sh
+sudo dnf copr enable kaovilai/tailbond
+sudo dnf install tailbond-server        # or, later: sudo dnf upgrade tailbond-server
+```
+
+For automatic updates, turn on `dnf-automatic` (`sudo dnf install
+dnf-automatic && sudo systemctl enable --now dnf-automatic.timer`, with
+`apply_updates = yes` in `/etc/dnf/automatic.conf`); an upgrade restarts
+tailbond (`%systemd_postun_with_restart`). The dashboard (**Settings → Updates**) checks
+GitHub's latest release about once a day and says when one is out, with the
+command; **Off** stops the check. More: [updates.md](updates.md).
+
+### COPR
+
+Maintainers, once: create the project on
+[copr.fedorainfracloud.org](https://copr.fedorainfracloud.org) (name
+`tailbond`, x86_64 Fedora chroots only: the SRPM carries prebuilt binaries),
+take the API token file from <https://copr.fedorainfracloud.org/api/> and
+store it in the repository:
+
+```sh
+gh secret set COPR_CONFIG < ~/.config/copr
+gh variable set COPR_PROJECT --body "kaovilai/tailbond"   # optional, default "tailbond"
+```
+
+On every `v*` tag CI then runs `copr-cli buildscm --method make_srpm` on the
+tag: COPR runs `.copr/Makefile` (builds mqvpn and tailbondd, then
+`packaging/fedora/build-rpm.sh` with `SRPM_OUT`) and builds the RPM from that
+SRPM. Without the secret CI skips the COPR step with a notice.
 
 ## Troubleshooting
 

@@ -1,6 +1,9 @@
 package dev.tailbond.app.model
 
 import com.mqvpn.sdk.network.PathType
+import dev.tailbond.app.failover.FailoverPolicy
+import dev.tailbond.app.failover.FailoverTiming
+import dev.tailbond.app.update.UpdatePolicy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -67,7 +70,27 @@ data class AppSettings(
     val handedToTailscale: Boolean = false,
     /** Tell the user when Wi-Fi needs a sign-in (hotel/airport portals). */
     val captivePrompts: Boolean = true,
+    /** Server failover (`client.failover`): prefer the first server, or always use [alwaysServerId]. */
+    val failoverPolicy: FailoverPolicy = FailoverPolicy.PREFER,
+    val alwaysServerId: String? = null,
+    /** Switch to the next server after this long without a working tunnel. */
+    val switchAfterSec: Int = 15,
+    /** Go back to an earlier server once it has answered every probe this long. */
+    val failbackAfterSec: Int = 120,
+    /** Websites that skip the tunnel (Android 13+, excludeRoute). */
+    val websites: List<WebsiteRule> = emptyList(),
+    /** `update.policy` (docs/architecture.md, "Updates"): tell me (check once a day) or off. */
+    val updatePolicy: UpdatePolicy = UpdatePolicy.NOTIFY,
 ) {
+    val failoverTiming: FailoverTiming
+        get() = FailoverTiming(
+            switchAfterMs = switchAfterSec.coerceIn(5, 600) * 1000L,
+            failbackAfterMs = failbackAfterSec.coerceIn(10, 3600) * 1000L,
+        )
+
+    /** Domains of the websites that are switched on. */
+    val activeWebsites: Set<String> get() = websites.filter { it.enabled }.map { it.domain }.toSet()
+
     fun path(kind: PathKind): PathSetting = paths[kind] ?: DEFAULT_PATHS.getValue(kind)
 
     fun withPath(kind: PathKind, s: PathSetting) = copy(paths = paths + (kind to s))

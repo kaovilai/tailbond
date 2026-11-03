@@ -5,6 +5,10 @@
 if [ -f /etc/uci-defaults/90-tailbond ]; then
 	sh /etc/uci-defaults/90-tailbond && rm -f /etc/uci-defaults/90-tailbond
 fi
+# Survive firmware upgrades: a kept copy of the reinstall script plus a
+# line in the kept /etc/rc.local (docs/glinet.md, "Firmware upgrades").
+/usr/lib/tailbond/pkg-cache install-reinstall
+/usr/lib/tailbond/pkg-cache rc-local-add
 # Running right away: the admin panel (VPN -> tailbond) talks to
 # the agent to pair. The tunnel starts once paired.
 /etc/init.d/tailbond enable

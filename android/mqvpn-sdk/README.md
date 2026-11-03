@@ -11,7 +11,7 @@ marked `tailbond:` in the source.
 
 ## Why a fork
 
-tailbond must not modify the submodule, and the stock SDK lacks three things
+tailbond must not modify the submodule, and the stock SDK lacks four things
 the tailbond contract needs:
 
 | Change | Files | Why |
@@ -19,6 +19,7 @@ the tailbond contract needs:
 | `NativeBridge.configSetReinjection` | `mqvpn_jni.c`, `NativeBridge.kt`, `MqvpnConfig.reinjection`, `MqvpnTunnel.create` | the mode table sets `Reinjection = deadline/idle/off`; libmqvpn has `mqvpn_config_set_reinjection` but the JNI never exposed it |
 | Leaf-certificate SHA-256 pin | `mqvpn_jni.c` (`setCertPin`, `jni_cert_verify`), `MqvpnConfig.certSha256`, `MqvpnTunnel.create` | the JNI always installs `PlatformTrust` (system CAs) as the verifier, and `insecure=1` disables verification. A self-signed server with `cert_sha256` in the pairing needs a verifier that checks the pin; it uses libmqvpn's real verifier hook, so the pin is enforced in the TLS handshake |
 | Path gate | `PathManager` (`wanted`, `reconcile`), `MqvpnVpnService` (`pathPolicy`, `isPathWanted`, `requestPathReconcile`, `availableNetworks`, `onMetrics`) | per-path enable/priority (primary/secondary/backup), failover standby and the cellular data cap attach and detach paths at run time; upstream only fixes the transport set when the tunnel starts |
+| TUN rebuild | `MqvpnVpnService.rebuildTun` | per-website bypass (Android 13+) changes the TUN's excluded routes while connected; this re-runs `onCreateTun` and swaps the fd the way a reconnect does, without a new QUIC connection |
 
 Build changes: the CMake project takes `MQVPN_ROOT` (passed by Gradle) for the
 sources and the prebuilt archives in the submodule, and adds BoringSSL's

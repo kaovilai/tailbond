@@ -19,3 +19,6 @@ Design ideas (no code) from smootify (https://github.com/Brazzo978/smootify,
 Apache-2.0).
 
 QR decoding uses ZXing core (Apache-2.0).
+
+scrypt (app/src/main/kotlin/dev/tailbond/app/backup/Scrypt.kt) is written
+from the specification in RFC 7914; no code was copied.

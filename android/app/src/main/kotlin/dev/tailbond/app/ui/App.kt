@@ -2,6 +2,7 @@ package dev.tailbond.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.tailbond.app.model.Words
 import kotlinx.coroutines.launch
 
 /** Copies a value and confirms it in a snackbar ("Copied nas.tail1234.ts.net"). */
@@ -45,6 +47,9 @@ object Routes {
     const val CONNECTIONS = "connections"
     const val SETTINGS = "settings"
     const val APPS = "apps"
+    const val WEBSITES = "websites"
+    const val UPDATES = "updates"
+    const val BACKUP = "backup"
     const val PAIR = "pair"
     const val MACHINE = "machine:" // + hostname
 }
@@ -63,16 +68,23 @@ fun TailbondApp(
     startRoute: String = Routes.HOME,
     startSearch: String = "",
     startSnackbar: String? = null,
+    /** Renders only: a dialog to show open ("add-website", "add-website:Banking", "export-backup"). */
+    startDialog: String? = null,
+    /** Go to this page now (a notification opened the app on it); [onRouteShown] clears it. */
+    requestRoute: String? = null,
+    onRouteShown: () -> Unit = {},
 ) {
     var route by rememberSaveable { mutableStateOf(startRoute) }
+    LaunchedEffect(requestRoute) { requestRoute?.let { route = it; onRouteShown() } }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
-    val copy: (String) -> Unit = { text ->
+    val copyAs: (String, String) -> Unit = { text, said ->
         clipboard.setText(AnnotatedString(text))
-        scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar("Copied $text") }
+        scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar(said) }
     }
+    val copy: (String) -> Unit = { text -> copyAs(text, "Copied $text") }
     LaunchedEffect(startSnackbar) { startSnackbar?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Indefinite) } }
 
     val p = state.profile
@@ -81,10 +93,19 @@ fun TailbondApp(
         p == null -> Routes.PAIR
         else -> route
     }
+    val toPair: (PairTarget?) -> Unit = { t ->
+        when (t) {
+            PairTarget.Add -> actions.startAddServer()
+            is PairTarget.Replace -> actions.startRepair(t.id)
+            null -> actions.startRepair(null)
+        }
+        route = Routes.PAIR
+    }
     val back: (() -> Unit)? = when {
-        page == Routes.APPS -> { { route = Routes.SETTINGS } }
+        page == Routes.APPS || page == Routes.WEBSITES || page == Routes.UPDATES || page == Routes.BACKUP -> { { route = Routes.SETTINGS } }
         page == "onboarding" || page == Routes.HOME -> null
         page == Routes.PAIR && p == null -> null
+        page == Routes.PAIR && state.pairTarget != null -> { { actions.cancelAsk(); actions.clearPairTarget(); route = Routes.SETTINGS } }
         else -> { { route = Routes.HOME } }
     }
     if (back != null) BackHandler(onBack = back)
@@ -99,7 +120,10 @@ fun TailbondApp(
                             Column {
                                 Text(state.serverName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
-                                    listOfNotNull("via home server", state.tailnet).joinToString(" · "),
+                                    listOfNotNull(
+                                        if (state.servers.size > 1 && state.activeServer?.id != state.servers.first().id) "via backup server" else "via home server",
+                                        state.tailnet,
+                                    ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -117,6 +141,11 @@ fun TailbondApp(
                                     page == Routes.CONNECTIONS -> "Connections"
                                     page == Routes.SETTINGS -> "Settings"
                                     page == Routes.APPS -> "Apps that skip tailbond"
+                                    page == Routes.WEBSITES -> "Websites that skip tailbond"
+                                    page == Routes.UPDATES -> "Updates"
+                                    page == Routes.BACKUP -> "Back up and restore"
+                                    page == Routes.PAIR && state.pairTarget == PairTarget.Add -> "Add another server"
+                                    page == Routes.PAIR && state.pairTarget is PairTarget.Replace -> "Pair again"
                                     page == Routes.PAIR -> "Add this phone"
                                     page.startsWith(Routes.MACHINE) -> page.removePrefix(Routes.MACHINE)
                                     else -> "tailbond"
@@ -137,27 +166,72 @@ fun TailbondApp(
                 page == "onboarding" -> OnboardingScreen(actions::finishOnboarding, m)
                 page == Routes.PAIR -> PairingScreen(state, actions, m, startText = startSearch)
                 page == Routes.CONNECTIONS -> ConnectionsScreen(state, actions, m)
-                page == Routes.SETTINGS -> SettingsScreen(state, actions, onApps = { route = Routes.APPS }, onRepair = { route = Routes.PAIR }, modifier = m)
+                page == Routes.SETTINGS -> SettingsScreen(
+                    state, actions,
+                    onApps = { route = Routes.APPS },
+                    onWebsites = { route = Routes.WEBSITES },
+                    onRepair = { id -> toPair(PairTarget.Replace(id)) },
+                    onAddServer = { toPair(PairTarget.Add) },
+                    onUpdates = { route = Routes.UPDATES },
+                    onBackup = { route = Routes.BACKUP },
+                    modifier = m,
+                )
+                page == Routes.UPDATES -> UpdatesScreen(state, actions, m)
+                page == Routes.BACKUP -> BackupScreen(state, actions, m, startDialog = startDialog)
                 page == Routes.APPS -> AppsScreen(state, actions, m)
+                page == Routes.WEBSITES -> WebsitesScreen(state, actions, onApps = { route = Routes.APPS }, modifier = m, startDialog = startDialog)
                 page.startsWith(Routes.MACHINE) -> MachineScreen(state, page.removePrefix(Routes.MACHINE), m)
                 else -> HomeScreen(
                     state, actions,
                     onConnections = { route = Routes.CONNECTIONS },
                     onSettings = { route = Routes.SETTINGS },
-                    onRepair = { route = Routes.PAIR },
+                    onRepair = { toPair(null) },
                     onMachine = { route = Routes.MACHINE + it },
                     startSearch = startSearch,
+                    onUpdates = { route = Routes.UPDATES },
                     modifier = m,
                 )
             }
         }
 
         state.pending?.let {
+            val target = state.pendingTarget
             ConfirmPairingDialog(
-                it, replacing = p != null,
-                onConfirm = { actions.confirmPairing(); route = Routes.HOME },
+                it, target = target, servers = state.servers,
+                onConfirm = { actions.confirmPairing(); route = if (target == PairTarget.Add) Routes.SETTINGS else Routes.HOME },
                 onDismiss = actions::dismissPairing,
             )
+        }
+        state.serverProblem?.let { (name, check) ->
+            Words.addProblem(name, check)?.let { (title, body) ->
+                val clash = check as? dev.tailbond.app.model.AddCheck.SubnetClash
+                val free = dev.tailbond.app.model.ServerList.freeSubnet(state.servers.map { it.subnet } + listOfNotNull(clash?.subnet))
+                AlertDialog(
+                    onDismissRequest = actions::dismissServerProblem,
+                    title = { Text(title) },
+                    text = {
+                        Column(
+                            Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(body)
+                            if (clash != null) {
+                                Text("If you run $name yourself", style = MaterialTheme.typography.titleSmall)
+                                Words.clashSelfSteps(name, free).forEachIndexed { i, step ->
+                                    Text("${i + 1}. $step", style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Text("Someone else runs $name? Copy a message to send them.", style = MaterialTheme.typography.titleSmall)
+                            }
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = actions::dismissServerProblem) { Text("OK") } },
+                    dismissButton = clash?.let { c ->
+                        {
+                            TextButton(onClick = { copyAs(Words.clashMessage(name, c.existing, c.subnet, free), "Message copied: paste it into a chat with whoever runs $name") }) { Text("Copy a message to send them") }
+                        }
+                    },
+                )
+            }
         }
         state.handoff?.let { HandoffDialog(it, state, actions) }
     }
@@ -186,7 +260,7 @@ fun HandoffDialog(kind: Handoff, state: UiState, actions: UiActions) {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "To go back later, tap Switch back to Tailscale on tailbond's main screen.",
+                    "To go back later, tap Hand the VPN back to Tailscale at the bottom of tailbond's main screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

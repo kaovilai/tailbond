@@ -3,8 +3,7 @@ package dev.tailbond.app.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.net.HttpURLConnection
-import java.net.URL
+import java.net.InetAddress
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -41,10 +40,10 @@ data class PeerList(
     }
 }
 
-/** Reads the machine list from the home server over the tunnel. */
+/** Reads the machine list from the server in use, over the tunnel. */
 object PeersClient {
-    /** The server's tunnel address (contract "Network layout") and agent port. */
-    const val URL = "http://10.77.0.1:8077/api/peers"
+    /** The default server's tunnel address (contract "Network layout"); each server has its own. */
+    const val DEFAULT_HOST = "10.77.0.1"
     private const val LABEL = "tailbond-api"
 
     /** Bearer token: lowercase hex HMAC-SHA256(key = pairing key, message "tailbond-api"). */
@@ -54,21 +53,21 @@ object PeersClient {
         return mac.doFinal(LABEL.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 
-    /** Blocking; call off the main thread. Throws on network/HTTP errors. */
-    fun fetch(pairingKey: String, url: String = URL): PeerList {
-        val c = URL(url).openConnection() as HttpURLConnection
-        try {
-            c.connectTimeout = 5_000
-            c.readTimeout = 5_000
-            c.setRequestProperty("Authorization", "Bearer " + token(pairingKey))
-            c.setRequestProperty("Accept", "application/json")
-            val code = c.responseCode
-            if (code != 200) throw java.io.IOException("home server answered $code")
-            val body = c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-            return PeerList.json.decodeFromString(PeerList.serializer(), body)
-                .copy(fetchedAtMs = System.currentTimeMillis())
-        } finally {
-            c.disconnect()
-        }
+    /**
+     * Blocking; call off the main thread. Throws on network/HTTP errors.
+     * [host] is the server's tunnel address (an IP literal); plain HTTP over
+     * a raw socket, since it only ever goes through the tunnel and each
+     * server has its own subnet (the network security config can't list them).
+     * [version]: this app's version, reported to the server (X-Tailbond-Version / -Kind).
+     */
+    fun fetch(pairingKey: String, host: String = DEFAULT_HOST, version: String = ""): PeerList {
+        val addr = InetAddress.getByName(host)
+        val (code, body) = PairRequestClient.socketExchange(
+            addr, PairRequestClient.PORT, "GET", "/api/peers", null, token(pairingKey),
+            headers = if (version.isEmpty()) emptyMap() else TunnelHttp.clientHeaders(version),
+        )
+        if (code != 200) throw java.io.IOException("server answered $code")
+        return PeerList.json.decodeFromString(PeerList.serializer(), body)
+            .copy(fetchedAtMs = System.currentTimeMillis())
     }
 }

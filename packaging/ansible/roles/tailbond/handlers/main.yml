@@ -1,0 +1,24 @@
+---
+# /usr/local/bin gets bin_t, so systemd runs tailbondd as
+# unconfined_service_t; files copied by Ansible already get their default
+# context, this is the belt and braces after an upgrade.
+- name: Restore SELinux contexts
+  ansible.builtin.command:
+    argv: [restorecon, -RF, "{{ tailbond_prefix }}/bin/mqvpn", "{{ tailbond_prefix }}/bin/tailbondd",
+           "{{ tailbond_prefix }}/lib/tailbond", /etc/tailbond, /var/lib/tailbond,
+           /etc/systemd/system/tailbond.service]
+  changed_when: false
+  when: ansible_selinux is defined and ansible_selinux.status | default('disabled') == 'enabled'
+
+- name: Reload firewalld
+  ansible.builtin.service:
+    name: firewalld
+    state: reloaded
+  when: _tailbond_firewalld_running | default(false)
+
+- name: Restart tailbond
+  ansible.builtin.systemd_service:
+    name: tailbond
+    state: restarted
+    daemon_reload: true
+  when: tailbond_start | bool

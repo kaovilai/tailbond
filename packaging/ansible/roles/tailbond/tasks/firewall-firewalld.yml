@@ -1,0 +1,75 @@
+---
+# Same firewalld setup as the Fedora RPM: the bundle's zone (tb0) and
+# policies (tailbond-out: forward + masquerade to the internet and
+# tailscale0; tailbond-in: tailnet -> bonded devices), the tunnel port as the
+# "tailbond" service, tcp 8077 and the phone page from tailnet addresses
+# only. The server-up hook adds the masquerade rules for the subnets at
+# every start. Works whether or not firewalld runs right now (offline).
+
+- name: Is firewalld running
+  ansible.builtin.command: firewall-cmd --state
+  register: _tailbond_fwstate
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Remember it for the reload handler
+  ansible.builtin.set_fact:
+    _tailbond_firewalld_running: "{{ _tailbond_fwstate.rc == 0 }}"
+
+# Created once: the hook adds its masquerade rules to the permanent
+# tailbond-out policy, so rewriting the files would undo them every run.
+- name: Zone and policies from the bundle
+  ansible.builtin.copy:
+    src: "{{ tailbond_src_dir }}/firewalld/{{ item.src }}"
+    dest: "/etc/firewalld/{{ item.dest }}"
+    remote_src: true
+    mode: "0644"
+    force: false
+  loop:
+    - {src: zone-tailbond.xml, dest: zones/tailbond.xml}
+    - {src: policy-tailbond-out.xml, dest: policies/tailbond-out.xml}
+    - {src: policy-tailbond-in.xml, dest: policies/tailbond-in.xml}
+  notify: Reload firewalld
+
+- name: The tailbond service with the tunnel port
+  ansible.builtin.template:
+    src: service-tailbond.xml.j2
+    dest: /etc/firewalld/services/tailbond.xml
+    mode: "0644"
+  notify: Reload firewalld
+
+# firewalld must know the service before it can be enabled in a zone.
+- name: Load them
+  ansible.builtin.meta: flush_handlers
+
+- name: Open the tunnel port
+  ansible.posix.firewalld:
+    zone: "{{ tailbond_firewalld_zone }}"
+    service: tailbond
+    permanent: true
+    immediate: true
+    offline: true
+    state: enabled
+
+- name: Dashboard and phone page from tailnet addresses only
+  ansible.posix.firewalld:
+    zone: "{{ tailbond_firewalld_tailscale_zone }}"
+    rich_rule: "rule family={{ item.0.family }} source address={{ item.0.src }} port port={{ item.1 }} protocol=tcp accept"
+    permanent: true
+    immediate: true
+    offline: true
+    state: enabled
+  loop: "{{ [{'family': 'ipv4', 'src': '100.64.0.0/10'}, {'family': 'ipv6', 'src': 'fd7a:115c:a1e0::/48'}]
+            | product([8077] + ([tailbond_landing_port | int] if tailbond_landing_port | int > 0 else [])) | list }}"
+  when: tailbond_tailscale | bool
+
+- name: Tailscale's own port (direct connections)
+  ansible.posix.firewalld:
+    zone: "{{ tailbond_firewalld_zone }}"
+    port: 41641/udp
+    permanent: true
+    immediate: true
+    offline: true
+    state: enabled
+  when: tailbond_tailscale | bool

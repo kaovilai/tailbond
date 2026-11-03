@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/tailbond/tailbond/agent/internal/failover"
 	"github.com/tailbond/tailbond/agent/internal/mqconf"
+	"github.com/tailbond/tailbond/agent/internal/mqctl"
 	"github.com/tailbond/tailbond/agent/internal/netif"
 	"github.com/tailbond/tailbond/agent/internal/pairing"
 	"github.com/tailbond/tailbond/agent/internal/status"
@@ -37,6 +39,23 @@ type clientState struct {
 	peers    []byte                 // server's GET /api/peers, cached
 	peersAt  time.Time
 	cap      *captiveState
+
+	// multiple servers (servers.go): payload is the active server's
+	servers       []serverRT
+	activeServer  string
+	fo            *failover.Machine
+	switchPending bool // the next client-down is a server switch
+	probing       map[string]bool
+	lastProbe     map[string]time.Time
+	probeOK       map[string]bool
+	silence       failover.Silence // control-API packet counters of the running tunnel
+	// last verdict of tunnelWorking, for logging changes
+	lastWorking       *bool
+	lastWorkingServer string
+	lastWhy           string          // why the tunnel last stopped working
+	history           []status.Switch // switches, newest first
+	// bypass rules (bypass.go)
+	bypass bypassState
 }
 
 type usageFile struct {
@@ -45,7 +64,9 @@ type usageFile struct {
 }
 
 func newClientState() *clientState {
-	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState()}
+	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState(),
+		probing: map[string]bool{}, lastProbe: map[string]time.Time{}, probeOK: map[string]bool{},
+		silence: failover.Silence{After: 5 * time.Second}}
 }
 
 func (a *Agent) usagePath() string { return filepath.Join(a.store.Get().StateDir, "usage.json") }
@@ -58,18 +79,14 @@ func (a *Agent) startClient(ctx context.Context) {
 			a.client.usage.Bytes = map[string]uint64{}
 		}
 	}
-	if cfg.Client.PairingURI != "" {
-		p, err := pairing.Decode(cfg.Client.PairingURI)
-		if err != nil {
-			a.Logf("stored pairing is invalid: %v", err)
-		} else {
-			a.mu.Lock()
-			a.client.payload = p
-			a.mu.Unlock()
-		}
+	a.loadServers("")
+	if n := len(cfg.Client.Servers); n > 1 {
+		a.Logf("%d servers, primary %s", n, cfg.Client.Servers[0].Name)
 	}
 	go a.pathWatcher(ctx)
 	go a.captiveWatcher(ctx)
+	go a.serverWatcher(ctx)
+	go a.bypassWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
 	} else if !a.paired() {
@@ -317,6 +334,9 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	if p == nil {
 		return errors.New("not paired")
 	}
+	a.mu.Lock()
+	a.client.silence.Reset()
+	a.mu.Unlock()
 	ifs, _ := a.listIfs()
 	a.mu.Lock()
 	a.client.remember(ifs)
@@ -412,6 +432,7 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	running := a.sup.Info().State == supervisor.Running
 	if running {
 		if mst, err := a.ctl.Status(ctx); err == nil {
+			a.observeSilence(now, mst)
 			st.ControlAPI = true
 			var connected bool
 			var up uint64
@@ -515,7 +536,52 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	if j := a.joinView(); j.State != joinIdle {
 		st.Join = j
 	}
+	a.serversView(st, a.workingFrom(st, now))
 	return st
+}
+
+// observeSilence feeds the control API's per-path packet counters to the
+// silence check (failover.Silence). Caller holds no lock.
+func (a *Agent) observeSilence(now time.Time, mst *mqctl.Status) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(mst.Clients) == 0 {
+		return
+	}
+	for _, p := range mst.Clients[0].Paths {
+		a.client.silence.Observe(now, p.PathID, p.PktSent, p.PktRecv)
+	}
+	a.client.silence.Forget(now)
+}
+
+// workingFrom: the active tunnel works when mqvpn reports it connected,
+// with the control API at least one path active, and the server still
+// answers on some path (failover.Silence).
+func (a *Agent) workingFrom(st *status.Status, now time.Time) bool {
+	ok, _ := a.workingWhy(st, now)
+	return ok
+}
+
+// workingWhy is workingFrom with the reason when it isn't working.
+func (a *Agent) workingWhy(st *status.Status, now time.Time) (bool, string) {
+	if st.State != status.StateConnected {
+		return false, "mqvpn " + st.State
+	}
+	if !st.ControlAPI {
+		return true, ""
+	}
+	a.mu.Lock()
+	silent := a.client.silence.Silent(now)
+	a.mu.Unlock()
+	if silent {
+		return false, "no answer on any path for 5 s"
+	}
+	for _, p := range st.Paths {
+		if p.State == status.PathActive {
+			return true, ""
+		}
+	}
+	return false, "no active path"
 }
 
 // importPairing stores a pairing URI and (re)connects.
@@ -526,6 +592,18 @@ func (a *Agent) importPairing(uri string) (*pairing.Payload, error) {
 	}
 	ifs, _ := a.listIfs()
 	if _, err := a.store.Update(func(c *config.Config) error {
+		primary := ""
+		if len(c.Client.Servers) > 0 {
+			primary = c.Client.Servers[0].Name
+		}
+		if n, sub := subnetClash(c, p, primary); n != "" {
+			return &addServerError{code: "subnet_in_use", conflict: n, subnet: sub.String()}
+		}
+		if len(c.Client.Servers) > 0 {
+			// keep the primary's place and name unless another entry has it
+			name := config.UniqueServerName(c.Client.Servers[1:], p.Label())
+			c.Client.Servers[0] = config.ServerEntry{Name: name, PairingURI: uri}
+		}
 		c.Client.PairingURI = uri
 		if p.Mode != "" && config.ValidMode(p.Mode) {
 			c.Mode = p.Mode
@@ -545,8 +623,8 @@ func (a *Agent) importPairing(uri string) (*pairing.Payload, error) {
 	}); err != nil {
 		return nil, err
 	}
+	a.loadServers(switchList)
 	a.mu.Lock()
-	a.client.payload = p
 	a.userStop = false
 	a.mu.Unlock()
 	a.Logf("paired with %s as %s", p.Server, p.User)
@@ -725,13 +803,14 @@ func (a *Agent) hUnpair(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := a.store.Update(func(c *config.Config) error {
 		c.Client.PairingURI, c.Client.Disconnected = "", false
+		c.Client.Servers = nil
 		return nil
 	}); err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	a.loadServers("")
 	a.mu.Lock()
-	a.client.payload = nil
 	a.userStop = true
 	if a.join.cancel != nil {
 		a.join.cancel()

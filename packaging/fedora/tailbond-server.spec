@@ -3,7 +3,7 @@
 
 Name:           tailbond-server
 Version:        %{?tb_version}%{!?tb_version:0.1.0}
-Release:        1%{?dist}
+Release:        %{?tb_release}%{!?tb_release:1}%{?dist}
 Summary:        Bond Wi-Fi, 5G and Ethernet to your own home server (mqvpn + tailbondd)
 License:        Apache-2.0
 URL:            https://github.com/mp0rta/mqvpn

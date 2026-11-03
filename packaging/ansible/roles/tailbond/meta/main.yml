@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  role_name: tailbond
+  author: tailbond
+  description: tailbond WAN bonding server (mqvpn + tailbondd) on a VPS
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: ["9", "10"]
+    - name: Fedora
+      versions: [all]
+    - name: Debian
+      versions: [bookworm]
+    - name: Ubuntu
+      versions: [jammy, noble]
+dependencies: []

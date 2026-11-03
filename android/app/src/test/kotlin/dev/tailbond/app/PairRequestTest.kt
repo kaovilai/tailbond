@@ -34,6 +34,7 @@ class PairRequestTest {
         }
 
     @After fun reset() {
+        PairRequestClient.probeTransport = PairRequestClient.Transport { _, _, _, _, _, _ -> throw IOException("no network in tests") }
         PairRequestClient.transport = PairRequestClient.Transport { _, _, _, _, _, _ -> throw IOException("no network in tests") }
         PairRequestClient.resolver = PairRequestClient.Resolver { listOf(InetAddress.getByName(it)) }
     }
@@ -74,6 +75,32 @@ class PairRequestTest {
         val next = AskState.Waiting("homebox", "pixel-8").next(p) { got = it }
         assertEquals(AskState.Idle, next)
         assertEquals("tailbond://pair?d=xyz", got)
+    }
+
+    @Test fun askSendsAvoidSubnets() {
+        PairRequestClient.transport = fakeServer()
+        PairRequestClient.ask(home, "pixel-8", listOf("10.77.0.0/24", "10.83.142.0/24"))
+        assertEquals(
+            "POST /api/pair-requests - {\"name\":\"pixel-8\",\"kind\":\"phone\",\"avoid_subnets\":[\"10.77.0.0/24\",\"10.83.142.0/24\"]}",
+            calls[1],
+        )
+    }
+
+    @Test fun serverSuggestionsOnlyForTailbondServers() {
+        PairRequestClient.probeTransport = PairRequestClient.Transport { addr, _, _, path, _, _ ->
+            assertEquals("/api/hello", path)
+            when (addr.address[3].toInt()) {
+                1 -> 200 to """{"tailbond":true,"name":"vps","role":"server"}"""
+                2 -> 200 to """{"tailbond":true,"name":"slate","role":"client"}"""
+                3 -> 404 to "not found"
+                else -> throw IOException("timeout")
+            }
+        }
+        fun ip(last: Int) = InetAddress.getByAddress(byteArrayOf(100, 101, 9, last.toByte()))
+        assertTrue(PairRequestClient.isServer(ip(1)))
+        assertFalse(PairRequestClient.isServer(ip(2))) // a travel router, not a server
+        assertFalse(PairRequestClient.isServer(ip(3))) // something else on :8077
+        assertFalse(PairRequestClient.isServer(ip(4))) // no answer
     }
 
     @Test fun askFailures() {

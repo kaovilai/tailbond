@@ -26,7 +26,7 @@ prio="$(tbcfg_or client.rule_priority 1077)"
 lans="$(tbcfg client.lan_network)"
 [ -n "$lans" ] || lans=lan
 
-gw="$(ip -4 route show default dev "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
+gw="$(ip -4 route show dev "$dev" 2>/dev/null | awk '$1 == "default" && $2 == "via" {print $3; exit}')"
 if [ -n "$gw" ]; then
 	ip -4 route replace default via "$gw" dev "$dev" table "$ptable"
 else
@@ -47,7 +47,9 @@ if [ ! -f "$TB_STATE/portal_dns_saved" ]; then
 		echo "servers=$(uci -q get 'dhcp.@dnsmasq[0].server')"
 	} >"$TB_STATE/portal_dns_saved"
 fi
-tunnel_dns="$(tbcfg_or client.tunnel_dns_ip 10.77.0.1)"
+# the tunnel DNS client-up added (dns_saved line 2), else the default
+tunnel_dns="$(sed -n 2p "$TB_STATE/dns_saved" 2>/dev/null)"
+[ -n "$tunnel_dns" ] || tunnel_dns="$(tbcfg_or client.tunnel_dns_ip "${TB_DNS_IP:-10.77.0.1}")"
 udel_list 'dhcp.@dnsmasq[0].server' "$tunnel_dns"
 for s in $(split_list "$TB_PORTAL_DNS"); do
 	ulist 'dhcp.@dnsmasq[0].server' "$s@$dev"

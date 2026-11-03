@@ -1,0 +1,64 @@
+# {{ ansible_managed }}
+# tailbond server (generic Linux). Keep in sync with
+# packaging/linux/tailbond.service.in (what install.sh renders).
+# Change the limits with the role variables (defaults/main.yml) or
+# `systemctl edit tailbond`.
+[Unit]
+Description=tailbond WAN bonding server (tailbondd + mqvpn)
+Documentation=file://{{ tailbond_prefix }}/share/doc/tailbond/README.md
+After=network-online.target firewalld.service ufw.service nftables.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ tailbond_prefix }}/bin/tailbondd -config /etc/tailbond/tailbond.json
+Restart=on-failure
+RestartSec=3
+# Exit 75: the agent restarts itself (after restoring a backup); restart
+# even if a drop-in changes Restart=.
+RestartForceExitStatus=75
+# tailbondd stops mqvpn itself and then runs the server-down hook.
+KillMode=mixed
+TimeoutStopSec=20
+StateDirectory=tailbond
+StateDirectoryMode=0700
+
+# Memory: one cgroup for tailbondd, mqvpn and the hooks. Measured (static
+# musl mqvpn, scripts/measure-server-mem.sh): idle ~32 MB mqvpn + ~13 MB
+# tailbondd; 2 clients x 2 paths at ~170 Mbit/s each: peak 48 + 17 MB;
+# unshaped 1 Gbit/s: peak 98 + 16 MB. MemoryHigh (reclaim/throttle, never a
+# kill) sits above the realistic peak; MemoryMax (OOM kill inside this unit
+# only) above the gigabit peak, so a leak can't take the rest of the box.
+MemoryAccounting=yes
+MemoryHigh={{ tailbond_memory_high }}
+MemoryMax={{ tailbond_memory_max }}
+# Go's GC aims below this (tailbondd peaks at ~17 MB), leaving MemoryHigh
+# for mqvpn.
+Environment=GOMEMLIMIT={{ tailbond_gomemlimit }}
+# Not the first thing the kernel's OOM killer picks (a few dozen MB, and
+# bonded clients lose their internet with it), but not exempt either: a
+# big process like n8n still scores far higher, and MemoryMax bounds us.
+OOMScoreAdjust={{ tailbond_oom_score_adjust }}
+
+# Root with a reduced capability set: TUN + routes + firewall hooks need
+# CAP_NET_ADMIN/NET_RAW, ports 443/80/53 need NET_BIND_SERVICE.
+# No NoNewPrivileges=: it would stop the hooks' iptables/nft/firewall-cmd
+# from entering their own SELinux domains (no_new_privs blocks transitions).
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+ProtectHome=true
+ProtectSystem=full
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ReadWritePaths=/etc/tailbond /var/lib/tailbond
+
+[Install]
+WantedBy=multi-user.target

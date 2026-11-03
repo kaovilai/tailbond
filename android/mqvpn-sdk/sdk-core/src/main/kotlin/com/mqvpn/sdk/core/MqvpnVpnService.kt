@@ -87,6 +87,8 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
     @Volatile private var networkMonitor: NetworkMonitor? = null
     private var currentConfig: MqvpnConfig? = null
     private var currentTunPfd: ParcelFileDescriptor? = null
+    /** tailbond: the session's tunnel parameters, for [rebuildTun]; executor thread only. */
+    private var currentTunnelInfo: TunnelInfo? = null
 
     // Close/reconnect bookkeeping, executor thread only. A close is reported
     // before the native client reveals whether it will retry, so the Error
@@ -243,6 +245,7 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
                 pathManager = null
                 networkMonitor = null
                 currentTunPfd = null
+                currentTunnelInfo = null
                 // keep a terminal Error on display: cleanup after an error
                 // emit (service stopping) must not downgrade it
                 if (synchronized(stateLock) { lastState } !is MqvpnState.Error) {
@@ -299,6 +302,7 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
         tunnelBridge = TunnelBridge(executor, tunnel!!)
         tunnelBridge?.startTunReader(tunPfd, mtu, scope)
         tunnelBridge?.startSender(scope)
+        currentTunnelInfo = info
 
         emitState(MqvpnState.Connected(info))
     }
@@ -421,6 +425,35 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
     protected fun requestPathReconcile() {
         val pm = pathManager ?: return
         scope.launch(Dispatchers.IO) { pm.reconcile() }
+    }
+
+    /**
+     * tailbond: build the TUN again ([onCreateTun] with this session's
+     * TunnelInfo, e.g. after its excluded routes changed) and hand the new fd
+     * to the running tunnel, the same swap a reconnect does, without a new
+     * QUIC connection. Android updates the VPN network in place when only
+     * routes change. No-op without a connected session.
+     */
+    protected fun rebuildTun() {
+        executor.enqueue {
+            val t = tunnel ?: return@enqueue
+            val info = currentTunnelInfo ?: return@enqueue
+            val config = currentConfig ?: return@enqueue
+            val pfd = try {
+                onCreateTun(info, config)
+            } catch (e: Exception) {
+                Log.e(TAG, "rebuildTun: onCreateTun failed, keeping the current TUN", e)
+                return@enqueue
+            }
+            t.setTunActive(true, pfd.fd)
+            tunnelBridge?.stop()
+            currentTunPfd?.close()
+            currentTunPfd = pfd
+            tunnelBridge = TunnelBridge(executor, t).also {
+                it.startTunReader(pfd, info.mtu, scope)
+                it.startSender(scope)
+            }
+        }
     }
 
     /** tailbond: once a second on the engine thread while a session exists. Keep it cheap. */

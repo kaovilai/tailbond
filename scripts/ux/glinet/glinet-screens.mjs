@@ -1,13 +1,15 @@
 // Renders the tailbond GL admin panel in a mock GL 4.x shell, every state
 // in fixtures.mjs, desktop (1280x800) and phone (390x844), full page.
-// Usage (inside the Playwright image): node glinet-screens.mjs <repo> <outdir>
+// Usage (inside the Playwright image): node glinet-screens.mjs <repo> <outdir> [set]
+// set "bypass-failover": only the bypass rules / more servers screens
+// (bfStates, bfActions; desktop, plus phone for bfPhone).
 import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync } from 'node:fs';
-import { states, actions, landing, fedoraStatus, fedoraStatusApproved, fedoraStatusFresh, fedoraStatusPhone, fedoraStatusPhoneDone, fedoraHealth, fedoraHealthGood, fedoraHealthRoute } from './fixtures.mjs';
+import { states, actions, bfStates, bfActions, bfPhone, landing, fedoraStatus, fedoraStatusApproved, fedoraStatusFresh, fedoraStatusPhone, fedoraStatusPhoneDone, fedoraHealth, fedoraHealthGood, fedoraHealthRoute } from './fixtures.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
-const [repo, out] = process.argv.slice(2);
+const [repo, out, set] = process.argv.slice(2);
 mkdirSync(out, { recursive: true });
 const files = {
   '/shell.html': [readFileSync(`${repo}/scripts/ux/glinet/shell.html`), 'text/html'],
@@ -23,6 +25,7 @@ const viewports = {
 
 const browser = await chromium.launch();
 async function shot(name, fixture, vp, act, page0) {
+  if (process.env.TB_UX_DEBUG) console.log('shot', name, vp);
   const ctx = await browser.newContext({ ...viewports[vp], locale: 'en-US', timezoneId: 'UTC' });
   const page = await ctx.newPage();
   await page.route('http://gl.test/**', (route) => {
@@ -32,14 +35,27 @@ async function shot(name, fixture, vp, act, page0) {
     return route.fulfill({ status: 200, body: f[0], contentType: f[1] });
   });
   await page.addInitScript((fx) => { window.__TB = fx; }, fixture);
+  // a fixture's story time: Date is fixed there, timers keep running
+  if (fixture.clock) await page.clock.setFixedTime(new Date(fixture.clock));
   await page.goto(`http://gl.test/${page0 || 'shell.html'}`);
   if (!page0) {
     await page.waitForFunction(() => window.__mounted === true);
     await page.waitForTimeout(700);
+    if (fixture.settle) await page.waitForTimeout(fixture.settle); // let a status sequence play
     if (act && act.click) { await page.click(act.click); await page.waitForTimeout(300); }
     if (act && act.clickText) { await page.getByText(act.clickText).first().click(); await page.waitForTimeout(300); }
+    for (const s of (act && act.steps) || []) {
+      if (s.text) await page.getByText(s.text).first().click();
+      if (s.click) await page.click(s.click);
+      if (s.button) await page.getByRole('button', { name: s.button, exact: true }).first().click();
+      if (s.fill) await page.fill(s.fill[0], s.fill[1]);
+      if (s.wait) await page.waitForTimeout(s.wait);
+      await page.waitForTimeout(300);
+    }
   }
-  await page.screenshot({ path: `${out}/${name}-${vp}.png`, fullPage: !(act && act.click) });
+  // a dialog (modal) is shot at window size, a page or open panel whole
+  const full = act && act.full !== undefined ? act.full : !(act && (act.click || act.steps));
+  await page.screenshot({ path: `${out}/${name}-${vp}.png`, fullPage: full });
   await ctx.close();
 }
 
@@ -93,6 +109,17 @@ async function fedoraAll(vp) {
   await fedora(vp, '15c-fedora-fresh-install', { status: fedoraStatusFresh, settings: { public_addr: '', effective_public_addr: '192.168.1.2:443', public_addr_guessed: true, tls: 'self-signed' },
     ts: { routes_approved: false, approved_routes: [] }, health: fedoraHealthRoute, tab: 'clients', full: true });
   await fedora(vp, '15d-fedora-health-all-good', { status: fedoraStatusApproved, health: fedoraHealthGood, tab: 'clients', full: true });
+}
+
+const withActApi = (fx, act) => ({ ...fx, api: { ...fx.api, ...(act.api || {}) }, ...(act.after ? { after: act.after } : {}) });
+if (set === 'bypass-failover') {
+  for (const vp of Object.keys(viewports)) {
+    for (const [name, fx] of Object.entries(bfStates)) if (vp === 'desktop' || bfPhone.includes(name)) await shot(name, fx, vp);
+    for (const [name, act] of Object.entries(bfActions)) if (vp === 'desktop' || bfPhone.includes(name)) await shot(name, withActApi(bfStates[act.base], act), vp, act);
+  }
+  await browser.close();
+  console.log('rendered to', out);
+  process.exit(0);
 }
 
 for (const vp of Object.keys(viewports)) {

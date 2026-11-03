@@ -139,6 +139,41 @@
     ".tb-steps-n{margin:6px 0 0;padding-left:22px;line-height:1.7;color:#606266;}",
     ".tb-qr{width:150px;height:150px;flex:none;background:#fff;border:1px solid #ebeef5;border-radius:8px;padding:4px;box-sizing:border-box;}.tb-qr svg{width:100%;height:100%;display:block;}",
     ".tb-foot{text-align:center;color:#c0c4cc;font-size:12px;margin:8px 0 24px;}",
+    // servers and failover
+    ".tb-srv{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #ebeef5;flex-wrap:wrap;}",
+    ".tb-srv:last-child{border-bottom:0;}",
+    ".tb-srv-ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}",
+    ".tb-btn.icon{width:28px;padding:0;}",
+    ".tb-role{font-size:12px;color:#909399;font-weight:400;margin-left:8px;}",
+    ".tb-role.first{color:#409eff;}",
+    ".tb-sec{border-top:1px solid #ebeef5;margin-top:14px;padding-top:14px;}",
+    ".tb-sec-t{font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}",
+    ".tb-label{font-size:13px;color:#606266;margin:14px 0 6px;font-weight:600;}",
+    // bypass rules
+    ".tb-rule{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #ebeef5;}",
+    ".tb-rule:last-child{border-bottom:0;}",
+    ".tb-rule.off .tb-wan-icon,.tb-rule.off .tb-grow{opacity:.5;}",
+    ".tb-tgt{font-weight:600;}",
+    ".tb-tgt.direct{color:#13a35a;}",
+    ".tb-tgt.wan{color:#b07a12;}",
+    ".tb-tgt.tunnel{color:#409eff;}",
+    ".tb-presets{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}",
+    ".tb-preset{display:inline-flex;align-items:center;gap:6px;border:1px dashed #b3d8ff;background:#f5faff;color:#409eff;border-radius:14px;height:28px;padding:0 12px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;}",
+    ".tb-preset:hover,.tb-preset.on{border-style:solid;background:#ecf5ff;}",
+    ".tb-pick{max-height:232px;overflow:auto;border:1px solid #ebeef5;border-radius:6px;}",
+    ".tb-pick-i{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f2f3f5;}",
+    ".tb-pick-i:last-child{border-bottom:0;}",
+    ".tb-pick-i:hover{background:#f5f7fa;}",
+    ".tb-pick-i.on{background:#ecf5ff;box-shadow:inset 3px 0 0 #409eff;}",
+    ".tb-dialog.wide{max-width:560px;max-height:calc(100vh - 32px);overflow:auto;}",
+    "select.tb-input{background:#fff;padding:0 8px;}",
+    ".tb-help{font-size:12px;color:#909399;margin-top:6px;line-height:1.5;}",
+    ".tb code{font-family:Menlo,Consolas,monospace;font-size:12px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px;}",
+    ".tb-empty{display:flex;gap:16px;align-items:flex-start;}",
+    // updates and backups
+    ".tb-chg{grid-template-columns:minmax(120px,40%) 1fr;border-top:1px solid #ebeef5;padding-top:8px;}",
+    ".tb-chg>div{word-break:break-word;}",
+    "input.tb-file{height:auto;padding:6px 8px;}",
     "@media (max-width:760px){",
     " .tb-grid{grid-template-columns:1fr;}",
     " .tb-modes,.tb-modes.three{grid-template-columns:1fr;}",
@@ -154,6 +189,9 @@
     " .tb-kv{grid-template-columns:1fr;gap:2px;}",
     " .tb-kv>div:nth-child(even){margin-bottom:8px;}",
     " .tb-hide-sm{display:none;}",
+    " .tb-srv-ctl{width:100%;padding-left:52px;}",
+    " .tb-empty .tb-wan-icon{display:none;}",
+    " .tb-dialog{padding:16px;}",
     "}"
   ].join("\n");
 
@@ -170,8 +208,21 @@
     router: "M3 13h18v6H3zM7 16h.01M11 16h.01M8 13l-2-6M16 13l2-6",
     check: "M5 12l5 5L20 7",
     warn: "M12 3l10 18H2zM12 10v5M12 18h.01",
-    off: "M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"
+    off: "M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0",
+    globe: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9M12 3c-2.4 2.6-3.6 5.6-3.6 9s1.2 6.4 3.6 9",
+    device: "M5 5h14v10H5zM2 19h20",
+    pin: "M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 10h.01",
+    port: "M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4",
+    call: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z",
+    up: "M12 19V5M6 11l6-6 6 6",
+    down: "M12 5v14M6 13l6 6 6-6",
+    trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+    skip: "M3 17h5l8-10h5M17 3l4 4-4 4M3 7h5l2.5 3M14 14l2 3h5M17 13l4 4-4 4"
   };
+
+  // "Bypass tailbond" presets (kept short; the dialog lets you edit them).
+  var STREAMING = ["netflix.com", "nflxvideo.net", "disneyplus.com", "primevideo.com", "max.com"];
+  var BP_KIND_ICON = { domain: "globe", device: "device", ip: "pin", port: "port" };
 
   function icon(h, name, size) {
     return h("svg", { attrs: { width: size || 22, height: size || 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" } },
@@ -198,6 +249,27 @@
     var d = Math.round(s / 86400);
     return d + (d === 1 ? " day ago" : " days ago");
   }
+  // "answered 5 s ago" (server checks run every 10 s, so seconds matter)
+  function fmtAgoS(t) {
+    var s = Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 1000));
+    if (s < 60) return s + " s ago";
+    return fmtAgo(t);
+  }
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2);
+  }
+  // "14:02" on this computer's clock
+  function fmtHM(t) {
+    var d = new Date(t);
+    return isNaN(d) ? "" : ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+  }
+  function fmtDur(sec) {
+    if (sec < 60) return sec + " s";
+    var m = Math.round(sec / 60);
+    return m + " min";
+  }
+  function words(s) { return (s || "").split(/[\s,;]+/).filter(Boolean); }
   function fmtUptime(s) {
     if (!s) return "";
     if (s < 60) return "just now";
@@ -277,6 +349,485 @@
     });
   }
 
+  // ---- updates and backups ----
+  // JSON calls go through api() like everything else. Binary ones (the
+  // backup file) and the restore calls (bodies up to
+  // 2 MiB, more than /rpc should carry) use the same-origin proxy
+  // /tailbond-api/ directly; it checks the same GL admin session.
+  function proxy(method, path, body, type) {
+    var opt = { method: method, credentials: "same-origin", headers: {} };
+    if (body !== undefined) {
+      opt.headers["Content-Type"] = type || "application/json";
+      opt.body = type ? body : JSON.stringify(body);
+    }
+    return fetch("/tailbond-api/" + path.replace(/^\/api\//, ""), opt).then(function (r) {
+      if (r.status === 502 || r.status === 504) throw { code: 0, error: "agent_down" };
+      if (r.status === 401) throw { code: 401, error: "session" };
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          var d = {};
+          try { d = JSON.parse(t); } catch (e) { /* not JSON */ }
+          throw { code: r.status, error: d.error || (r.status === 413 ? "file too large" : r.statusText || "failed"), data: d };
+        });
+      }
+      return r;
+    });
+  }
+  function proxyJSON(method, path, body) {
+    return proxy(method, path, body).then(function (r) { return r.json().catch(function () { return {}; }); });
+  }
+  function saveBlob(blob, name) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+  }
+  function fileB64(file) {
+    return new Promise(function (ok, no) {
+      var r = new FileReader();
+      r.onload = function () { ok(String(r.result).replace(/^data:[^,]*,/, "")); };
+      r.onerror = function () { no({ error: "Couldn't read that file" }); };
+      r.readAsDataURL(file);
+    });
+  }
+  function fmtWhen(t) {
+    var d = new Date(t);
+    if (!t || isNaN(d)) return "";
+    var mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()];
+    return mon + " " + d.getDate() + ", " + fmtHM(d);
+  }
+  // a rough strength hint; the rule is 10 characters
+  function strength(p) {
+    if (!p) return ["", ""];
+    if (p.length < 10) return ["weak", "Too short: " + (10 - p.length) + " more character" + (p.length === 9 ? "" : "s")];
+    var kinds = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter(function (r) { return r.test(p); }).length;
+    var nw = p.trim().split(/[\s\-_.]+/).length;
+    if (/^(.)\1+$/.test(p) || /^(?:0123456789|1234567890|password|qwerty)/i.test(p)) return ["weak", "Easy to guess"];
+    if (p.length >= 20 || nw >= 4 || (p.length >= 14 && kinds >= 3)) return ["strong", "Strong"];
+    return ["ok", "OK. Longer is better: four random words are strong and easy to type"];
+  }
+  // semver order of "0.2.0" / "v0.2.1-beta.1": <0, 0, >0 (a pre-release sorts before its release)
+  function verCmp(a, b) {
+    var p = function (v) { return String(v || "").replace(/^v/, "").split("-"); };
+    var x = p(a), y = p(b), xs = x[0].split(".").map(Number), ys = y[0].split(".").map(Number);
+    for (var i = 0; i < 3; i++) if ((xs[i] || 0) !== (ys[i] || 0)) return (xs[i] || 0) - (ys[i] || 0);
+    return x[1] && !y[1] ? -1 : !x[1] && y[1] ? 1 : 0;
+  }
+  var KIND_NAME = { router: "travel router", android: "Android phone", phone: "Android phone" };
+  var ROLE_WORDS = { server: "home server", client: "travel router" };
+  // GET /api/backup/summary keys, in reading order
+  var SUMMARY_LABEL = { role: "Role", mode: "Mode", clients: "Devices", servers: "Servers", public_addr: "Public address", port: "Tunnel port", subnet: "Tunnel addresses",
+    approvers: "Allowed to approve", bypass_rules: "Rules that skip tailbond", paths: "Connection settings", password_set: "Page password (tailbond's own)", update_policy: "Updates",
+    files: "Key and certificate files", client_backups: "Your devices' backups", uci: "Router settings (UCI)" };
+  // <state_dir>/backups on GL routers (docs/backup-restore.md)
+  var BACKUP_DIR = "/etc/tailbond/state/backups/";
+
+  var UB = {
+    methods: {
+      // the live update object (status) over GET /api/update
+      upd: function () { return Object.assign({}, this.updX || {}, (this.st && this.st.update) || {}); },
+      loadUb: function () {
+        var self = this, jobs = [api("GET", "/api/update").then(function (u) { self.updX = u; }).catch(function () {})];
+        if (this.role === "server") jobs.push(api("GET", "/api/backups").then(function (b) { self.bks = Array.isArray(b) ? b : A(b && b.backups); }).catch(function () { self.bks = null; }));
+        return Promise.all(jobs);
+      },
+      updPost: function (path, body, msg) {
+        var self = this;
+        return this.run("upd", api("POST", path, body || {}), msg).then(function () { return self.loadUb(); }).catch(function () {});
+      },
+      confirmInstall: function (u) {
+        var self = this;
+        this.confirm = {
+          title: "Update to " + u.available + " now?",
+          body: "tailbond restarts; devices drop for a few seconds. If the new version doesn't start, it goes back by itself.",
+          note: "Downloaded from the GitHub release and checked against its SHA-256 list before anything is installed.",
+          ok: "Update now",
+          run: function () { self.restartUntil = Date.now() + 180000; return self.updPost("/api/update/install", {}, "Installing " + u.available + "…"); }
+        };
+      },
+      // the one-line state of updates (chip, top card)
+      updState: function (u) {
+        var off = u.policy === "off" || u.state === "off";
+        var busy = ["checking", "downloading", "installing"].indexOf(u.state) >= 0;
+        return {
+          off: off, busy: busy,
+          retry: u.state === "rolled_back" && !!u.available && u.available === u.last_result_version,
+          noCheck: !!u.error && !u.available && !busy && !off && u.state !== "failed" && u.state !== "rolled_back",
+          reinstalled: u.detail === "reinstalled_after_firmware_upgrade"
+        };
+      },
+      toUpdates: function () { var c = document.querySelector(".tb-upd"); if (c) c.scrollIntoView({ behavior: "smooth", block: "start" }); },
+      // update news inside the top status card
+      updTop: function (h) {
+        var st = this.st || {};
+        if (!st.update && !this.updX) return null;
+        var u = this.upd(), s = this.updState(u), cur = u.current || st.version || "";
+        var msg = null, ico = "up", color = "#303133";
+        if (u.state === "installing") msg = "Installing tailbond " + u.available + "; this page comes back by itself in about a minute.";
+        else if (u.state === "failed") { msg = "An update to " + (u.last_result_version || u.available || "a new version") + " didn't install. Still on " + cur + ", nothing changed."; color = "#c45656"; ico = "warn"; }
+        else if (u.state === "rolled_back") { msg = "Everything works as before on " + cur + ": " + (u.last_result_version || "the new version") + " didn't start here, so tailbond went back by itself."; ico = "check"; }
+        else if (s.reinstalled) { msg = "tailbond is back after the firmware update, with your settings."; ico = "check"; color = "#137a46"; }
+        else if (u.available && !s.off) msg = "Update available: tailbond " + u.available + " (this router runs " + cur + ").";
+        if (!msg) return null;
+        return h("div", { class: "tb-row", style: { borderTop: "1px solid #ebeef5", padding: "12px 20px 14px 88px", gap: "10px", color: color, fontSize: "14px" } }, [
+          icon(h, ico, 18), h("div", { class: "tb-grow" }, msg), h("a", { class: "tb-link", on: { click: this.toUpdates } }, "Show")
+        ]);
+      },
+      bset: function () { return (this.settings && this.settings.backup) || (this.st && this.st.backup) || {}; },
+      openUb: function (kind) {
+        this.ubFiles = [];
+        this.ub = { kind: kind, pass: "", pass2: "", err: "", busy: false, step: "pick", file: "", preview: null, summary: null, rollback: "" };
+        if (kind === "summary") {
+          var self = this;
+          api("GET", "/api/backup/summary").then(function (s) { if (self.ub) self.ub.summary = s; }).catch(function (e) { if (self.ub) self.ub.err = self.humanError(e); });
+        }
+      },
+      passCheck: function (u) {
+        if (u.pass.length < 10) return "The passphrase needs at least 10 characters.";
+        if (u.pass !== u.pass2) return "The two passphrases don't match.";
+        return "";
+      },
+      doBackup: function () {
+        var self = this, u = this.ub;
+        u.err = this.passCheck(u);
+        if (u.err) return;
+        u.busy = true;
+        var host = (this.settings && this.settings.paired_as) || (this.st.tailscale && this.st.tailscale.self) || "tailbond";
+        return proxy("POST", "/api/backup", { passphrase: u.pass }).then(function (r) {
+          var m = /filename="?([^";]+)"?/.exec(r.headers.get("Content-Disposition") || "");
+          return r.blob().then(function (b) { saveBlob(b, m ? m[1] : host + "-" + new Date().toISOString().slice(0, 10) + ".tbbackup"); });
+        }).then(function () { self.ub = null; self.say("Backup downloaded. Keep the passphrase somewhere safe."); },
+          function (e) { u.busy = false; u.err = self.humanError(e); });
+      },
+      doPreview: function () {
+        var self = this, u = this.ub, f = this.ubFiles[0];
+        u.err = "";
+        if (!f) { u.err = "Pick the backup file first (it ends in .tbbackup)."; return; }
+        if (!u.pass) { u.err = "Type the passphrase of that backup."; return; }
+        u.busy = true;
+        return fileB64(f).then(function (b64) {
+          self.ubBody = { file: b64, passphrase: u.pass };
+          return proxyJSON("POST", "/api/restore/preview", self.ubBody);
+        }).then(function (p) { u.busy = false; u.preview = p; u.step = "preview"; }, function (e) {
+          u.busy = false;
+          var msg = (e && e.error) || "";
+          u.err = /passphrase|damaged|gcm|auth/i.test(msg) ? "Wrong passphrase, or the file is damaged. Check the passphrase (it's case-sensitive) and try again."
+            : /role/i.test(msg) ? "That backup is from a " + (self.role === "server" ? "travel router" : "home server") + "; it can only be restored on one." : self.humanError(e);
+        });
+      },
+      doRestore: function () {
+        var self = this, u = this.ub;
+        u.busy = true;
+        this.restartUntil = Date.now() + 120000;
+        return proxyJSON("POST", "/api/restore", Object.assign({}, this.ubBody, { confirm: true })).then(function (r) {
+          u.busy = false; u.step = "done"; u.rollback = (r && r.rollback) || ""; self.ubBody = null;
+        }, function (e) { u.busy = false; u.err = self.humanError(e); });
+      },
+      saveSched: function (body, msg) {
+        var self = this;
+        return this.runE("sched", api("POST", "/api/backup/settings", body), msg).then(function () { self.ubSched = null; }, function (e) { if (self.ubSched) self.ubSched.err = self.humanError(e); });
+      },
+
+      // ---- render ----
+      rUpdates: function (h) {
+        var self = this, st = this.st, u = this.upd(), srv = this.role === "server";
+        if (!st.update && !this.updX) return null; // an agent without updates
+        var cur = u.current || (this.info && this.info.version) || st.version || "";
+        var policy = u.policy || "notify", S = this.updState(u), off = S.off;
+        var selfUp = u.method === "opkg" || u.method === "static";
+        var busyState = S.busy;
+        var win = (u.auto_window || "03:00-05:00").split("-");
+        var chip = u.state === "rolled_back" ? ["warn", "Went back to " + (cur || "the previous version")]
+          : u.state === "failed" ? ["err", "Update failed"]
+          : u.state === "installing" ? ["blue", "Installing"]
+          : u.state === "checking" ? ["blue", "Checking"]
+          : u.state === "downloading" ? ["blue", "Downloading"]
+          : off ? ["", "Updates off"]
+          : u.available ? ["warn", "Update available"]
+          : S.noCheck ? ["warn", "Couldn't check"] : ["ok", "Up to date"];
+        var notes = u.notes_url ? h("a", { class: "tb-link", attrs: { href: u.notes_url, target: "_blank", rel: "noopener" } }, "What's new") : null;
+        var body = [h("div", { class: "tb-muted tb-small", style: { marginBottom: "10px" } }, "This router runs tailbond " + cur)];
+        var tried = u.last_result_version || u.available || "The new version";
+        if (S.reinstalled) {
+          body.push(this.alert(h, "ok", "tailbond is back after the firmware update, with your settings",
+            "The GL firmware update removed it; it reinstalled itself from the copy kept on this router (or, if that was gone, from the GitHub release)" + (u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "") + ". Nothing to do. If you upgrade the firmware without Keep Settings: install tailbond again, then restore the router's backup (" + (this.serverShort || "your home server") + " keeps the last 3: Backup & restore there), or pair again."));
+        }
+        if (u.state === "rolled_back") {
+          body.push(this.alert(h, "info", "Everything works as before on " + cur,
+            tried + " didn't start here, so tailbond went back by itself" + (u.detail && !S.reinstalled ? " (" + u.detail + ")" : "") + ". Automatic won't install " + tried + " again; the next version installs as usual.", null, "check"));
+        } else if (u.state === "failed") {
+          body.push(this.alert(h, "err", "Couldn't update to " + tried, (u.error ? u.error + ". " : "") + "Still on " + cur + ", nothing changed."));
+        }
+        var big = function (kids) { return h("div", { class: "tb-row", style: { fontSize: "17px", fontWeight: 600, gap: "10px", flexWrap: "wrap" } }, kids); };
+        var line = function (kids, extra) { return h("div", { class: "tb-small", style: Object.assign({ marginTop: "4px", lineHeight: 1.55 }, extra || {}) }, kids); };
+        var cmdRow = function (cmd) { return h("div", { class: "tb-row", style: { marginTop: "6px" } }, [h("code", { style: { padding: "6px 8px" } }, cmd), self.btn(h, "Copy", function () { self.copy(cmd); }, "small")]); };
+        if (u.state === "checking") body.push(big([h("div", { class: "tb-spin" }), "Checking for updates…"]));
+        else if (u.state === "downloading") body.push(big([h("div", { class: "tb-spin" }), "Downloading " + u.available + "…"]));
+        else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts. Leave the router on; it comes back by itself, and this page with it, in about a minute."));
+        else if (off) body.push(big(["Updates are off"]), line("tailbond doesn't check for new versions. Choose Tell me below to hear about them.", { color: "#909399" }));
+        else if (u.available && !S.retry) {
+          body.push(big(["Update available: " + u.available, notes]));
+          if (u.method === "dnf") body.push(line("Updates for this server come from dnf. In a terminal on this server, run:"), cmdRow("sudo dnf upgrade tailbond-server"));
+          else if (selfUp) body.push(line("You can update now or later; everything keeps working meanwhile.", { color: "#909399" }));
+          else {
+            var repo = String(u.repo || "kaovilai/tailbond").replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
+            body.push(line(["This build can't update itself; install the new release from ", h("a", { class: "tb-link", attrs: { href: "https://github.com/" + repo + "/releases", target: "_blank", rel: "noopener" } }, "the releases page"), "."]));
+          }
+        } else if (S.noCheck) {
+          body.push(big(["Couldn't check for updates"]), line("Couldn't reach GitHub (" + u.error + "). tailbond tries again tomorrow; Check now tries again now.", { color: "#b07a12" }));
+        } else if (!S.retry) body.push(big(["Up to date"]));
+        var meta = [], lv = u.last_result_version, la = u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "";
+        if (u.last_check && !off) meta.push("Checked " + fmtAgo(u.last_check));
+        if (!S.reinstalled && lv) {
+          if (u.last_result === "ok") meta.push("last update: " + lv + la + ", worked");
+          else if (u.last_result === "rolled_back" && u.state !== "rolled_back") meta.push("last update: " + lv + la + " didn't start, went back");
+          else if (u.last_result === "failed" && u.state !== "failed") meta.push("last update to " + lv + la + " failed, nothing changed");
+        }
+        var checkErr = u.error && !S.noCheck && u.state !== "failed" && !busyState && !off;
+        if (meta.length || checkErr) body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, [meta.join(" · ").replace(/^./, function (c) { return c.toUpperCase(); }),
+          checkErr ? h("span", { style: { color: "#b07a12" } }, (meta.length ? " · " : "") + "Couldn't reach GitHub (" + u.error + ")") : null]));
+        var acts = [];
+        if (u.available && selfUp && !busyState && !off) acts.push(S.retry ? this.btn(h, "Try " + u.available + " again", function () { self.confirmInstall(u); }, "", this.busy.upd)
+          : this.btn(h, "Update now", function () { self.confirmInstall(u); }, "primary", this.busy.upd));
+        if (!off) acts.push(this.btn(h, "Check now", function () { self.updPost("/api/update/check", {}, "Checking for updates…"); }, "", busyState || this.busy.upd));
+        if (acts.length) body.push(h("div", { class: "tb-actions" }, acts));
+
+        if (srv) {
+          // out of date = behind the newest release known (what's available, else this router's version)
+          var latest = u.available || cur, isPhone = function (c) { return c.kind === "android" || c.kind === "phone"; };
+          var behind = function (c) { return !!(c.version && latest && verCmp(c.version, latest) < 0); };
+          // "up to date" only after a check that worked
+          var checked = !!u.last_check && !u.error && !off;
+          var devs = A(st.clients).filter(function (c) { return c.registered !== false; });
+          var outs = devs.filter(behind);
+          var sec = [h("div", { class: "tb-sec-t" }, devs.length && outs.length ? "Your devices: " + outs.length + " of " + devs.length + " out of date" : "Your devices")];
+          if (devs.length) {
+            sec.push(h("div", { class: "tb-list" }, devs.map(function (c) {
+              return h("div", { class: "tb-li", style: { padding: "8px 0" } }, [
+                h("div", { class: "tb-wan-icon", style: { width: "32px", height: "32px" } }, [icon(h, isPhone(c) ? "phone" : "router", 18)]),
+                h("div", { class: "tb-grow" }, [h("b", c.name), h("span", { class: "tb-muted" }, " · " + (KIND_NAME[c.kind] || "device") + " · " + (c.version ? c.version + (behind(c) ? " · behind the latest (" + latest + ")" : "") : "version not known yet"))]),
+                behind(c) ? h("span", { class: "tb-chip warn" }, "Out of date") : c.version && latest && checked ? h("span", { class: "tb-small", style: { color: "#13a35a" } }, "✓ up to date") : null
+              ]);
+            })));
+            var how = [];
+            if (outs.some(function (c) { return !isPhone(c); })) how.push("Routers: Update now in its tailbond panel, or Automatic.");
+            if (outs.some(isPhone)) how.push("Phones: the app shows it; with Obtainium it installs by itself.");
+            if (devs.some(function (c) { return !c.version; })) how.push("A version shows once the device has connected with this version of tailbond.");
+            if (!checked && devs.some(function (c) { return c.version && !behind(c); })) how.push(off ? "Updates are off, so newer versions aren't checked." : "Couldn't check for newer versions.");
+            if (how.length) sec.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, how.join(" ")));
+          } else sec.push(h("div", { class: "tb-muted tb-small" }, "No devices yet."));
+          body.push(h("div", { class: "tb-sec" }, sec));
+        }
+
+        var segOf = function (opts, val, label) {
+          return h("div", { class: "tb-seg", attrs: { "aria-label": label } }, opts.map(function (o) {
+            return h("button", { class: o[0] === val ? "on" : "", attrs: { type: "button", disabled: !!self.busy.upd }, on: { click: function () { if (o[0] !== val) self.updPost("/api/update/policy", { policy: o[0] }, "Saved"); } } }, o[1]);
+          }));
+        };
+        var set = [h("div", { class: "tb-sec-t" }, "When a new version is out")];
+        if (u.method === "dnf") {
+          // dnf installs; tailbond only checks, so the choice is just On / Off
+          var da = u.dnf_automatic, auto = h("b", "Automatic updates: ");
+          set.push(h("div", { class: "tb-row", style: { gap: "10px" } }, ["Check for new versions", segOf([["notify", "On"], ["off", "Off"]], policy === "off" ? "off" : "notify", "Check for new versions")]),
+            h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check; dnf still updates tailbond with the rest of the computer." : "Checks GitHub once a day and shows new versions here."));
+          if (da === "install") set.push(line([auto, "dnf-automatic installs updates for every package on this computer, tailbond included."]));
+          else if (da === "download") set.push(line([auto, "dnf-automatic only downloads updates (Fedora's default). To install them too: set ", h("code", "apply_updates = yes"), " in ", h("code", "/etc/dnf/automatic.conf"), "."]));
+          else if (da === "off") set.push(line([auto, "off. To turn on dnf-automatic (it updates every package on this computer), run in a terminal on this server:"]), cmdRow("sudo systemctl enable --now dnf-automatic.timer"));
+          else set.push(line([auto, "they come from dnf-automatic, which updates every package on this computer."]));
+          set.push(h("div", { class: "tb-help" }, ["These are done on the computer itself, by whoever looks after it. A new version reaches dnf shortly after the release. If an update misbehaves: ", h("code", "sudo dnf downgrade tailbond-server")]));
+        } else {
+          set.push(segOf(selfUp ? [["notify", "Tell me"], ["auto", "Automatic"], ["off", "Off"]] : [["notify", "Tell me"], ["off", "Off"]], policy, "Update policy"),
+            h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check for new versions."
+              : policy === "auto" ? "Installs new versions by itself between " + win[0] + " and " + (win[1] || "05:00") + " (this router's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
+              : "Checks GitHub once a day and shows new versions here" + (selfUp ? "; nothing installs until you click Update now." : ".")));
+        }
+        body.push(h("div", { class: "tb-sec" }, set));
+        return this.card(h, "Updates", body, h("span", { class: "tb-chip " + chip[0] }, chip[1]), "tb-upd");
+      },
+      rBackup: function (h) {
+        var self = this, srv = this.role === "server", b = this.bset();
+        if (!this.st.update && !this.updX) return null; // an agent from before updates and backups
+        var on = !!(b.passphrase_set && (b.every_hours || 24));
+        var every = b.every_hours || 24, keep = b.keep || 7;
+        var everyWords = every % 24 === 0 ? (every === 24 ? "every day" : "every " + (every / 24) + " days") : "every " + every + " hours";
+        var body = [
+          h("div", { class: "tb-muted", style: { lineHeight: 1.55 } }, srv
+            ? "Settings, devices and their keys, locked with a passphrase. Move to a new router: the restore preview says what each device needs."
+            : "Settings, servers and rules, locked with a passphrase. With it a new or reset router is back in a minute."),
+          h("div", { class: "tb-actions", style: { marginTop: "12px" } }, [
+            this.btn(h, "Download a backup", function () { self.openUb("backup"); }, "primary"),
+            this.btn(h, "Restore from a backup", function () { self.openUb("restore"); }),
+            this.btn(h, "See what's inside", function () { self.openUb("summary"); }, "text")
+          ])
+        ];
+        var sched = [h("div", { class: "tb-sec-t" }, ["Automatic backups", h("span", { class: "tb-chip " + (on ? "ok" : "") }, on ? "On" : "Off")])];
+        var s = this.ubSched;
+        if (!s) {
+          sched.push(h("div", { style: { lineHeight: 1.6 } }, on
+            ? ["On: " + everyWords + ", keeps the last " + keep + (b.last ? " · last one " + fmtAgo(b.last) : "") + ".",
+              !srv && b.push ? " A copy also goes to " + (this.serverShort || "your home server") + (b.last_push ? " (sent " + fmtAgo(b.last_push) + ")" : "") + ", so you can get it back if this router is lost or reset." : ""]
+            : ["Off. Set a passphrase to have tailbond save a backup by itself" + (srv ? "." : ", and send a copy to " + (this.serverShort || "your home server") + ".")]));
+          if (on) sched.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, ["Saved in ", h("code", BACKUP_DIR), " on this router (kept through firmware upgrades with Keep Settings). Copy them somewhere else too."]));
+          if (b.last_error) sched.push(h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "4px" } }, "The last automatic backup didn't work: " + b.last_error));
+          sched.push(h("div", { class: "tb-actions" }, [
+            this.btn(h, on ? "Change" : "Turn on", function () { self.ubSched = { pass: "", pass2: "", every: String(every), keep: String(keep), push: b.push !== false, err: "" }; }, "small"),
+            on ? this.btn(h, "Turn off", function () { self.saveSched({ passphrase: "" }, "Automatic backups off"); }, "small") : null
+          ]));
+        } else {
+          sched.push(h("div", { class: "tb-muted tb-small" }, b.passphrase_set ? "A passphrase is set. Leave the fields empty to keep it, or type a new one." : "Choose a passphrase for the automatic backups (you need it to restore one)."),
+            h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, ["The passphrase is kept on this router, in its settings, so it can back up by itself. The files go to ", h("code", BACKUP_DIR), "."]));
+          sched = sched.concat(this.rPass(h, s));
+          var num = function (k) { return h("input", { class: "tb-input", style: { width: "72px" }, attrs: { type: "number", min: 1 }, domProps: { value: s[k] }, on: { input: function (e) { s[k] = e.target.value; } } }); };
+          sched.push(h("div", { class: "tb-row", style: { marginTop: "10px", flexWrap: "wrap", gap: "8px" } }, ["Every", num("every"), "hours, keep the last", num("keep")]));
+          if (!srv) sched.push(h("div", { style: { marginTop: "10px" } }, [h("span", { class: "tb-check" + (s.push ? " on" : ""), on: { click: function () { s.push = !s.push; } } }, [h("i"), "Also send a copy to " + (this.serverShort || "your home server") + " (it keeps the last 3)"])]));
+          if (s.err) sched.push(h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "6px" } }, s.err));
+          sched.push(h("div", { class: "tb-actions" }, [
+            this.btn(h, this.busy.sched ? "Saving…" : "Save", function () {
+              var body2 = { every_hours: Number(s.every) || 24, keep: Number(s.keep) || 7 };
+              if (!srv) body2.push = s.push;
+              if (s.pass || !b.passphrase_set) { s.err = self.passCheck(s); if (s.err) return; body2.passphrase = s.pass; }
+              self.saveSched(body2, "Automatic backups saved");
+            }, "small primary", this.busy.sched),
+            this.btn(h, "Cancel", function () { self.ubSched = null; }, "small")
+          ]));
+        }
+        body.push(h("div", { class: "tb-sec" }, sched));
+        if (srv && this.bks) {
+          var mine = this.bks.filter(function (x) { return !x.client; }), theirs = this.bks.filter(function (x) { return x.client; });
+          var row = function (x) {
+            return h("div", { class: "tb-li", style: { padding: "8px 0" } }, [
+              h("div", { class: "tb-grow" }, [h("b", x.client || "this router"), h("span", { class: "tb-muted" }, " · " + fmtWhen(x.created) + " · " + fmtBytes(x.size))]),
+              h("a", { class: "tb-btn small", attrs: { href: "/tailbond-api/backups/" + encodeURIComponent(x.name) + (x.client ? "?client=" + encodeURIComponent(x.client) : ""), download: x.name } }, "Download")
+            ]);
+          };
+          body.push(h("div", { class: "tb-sec" }, [h("div", { class: "tb-sec-t" }, "Saved backups")].concat(this.bks.length
+            ? [h("div", { class: "tb-list" }, mine.map(row).concat(theirs.map(row))),
+              h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, "Each is locked with the passphrase it was made with" + (theirs.length ? "; the travel routers' with their own" : "") + ". Keep a copy somewhere other than this router too.")]
+            : [h("div", { class: "tb-muted" }, "None yet. Automatic backups land here, and travel routers that send theirs.")])));
+        }
+        return this.card(h, "Backup & restore", body, null, "tb-bk");
+      },
+
+      ubWarns: function (pv) {
+        return A(pv.warnings).map(function (w) { return typeof w === "string" ? w : (w && (w.text || w.message || w.code)) || ""; }).filter(Boolean);
+      },
+      // restore warnings: numbered steps ("1. …", in order) and plain notes; the
+      // stop command inside a step gets its own code line with a Copy button
+      restoreSteps: function (h, list, stepsTitle, notesTitle) {
+        var self = this, cmd = "sudo systemctl disable --now tailbond";
+        var steps = list.map(function (w) { return /^(\d+)\.\s+([\s\S]*)$/.exec(w); }).filter(Boolean);
+        var notes = list.filter(function (w) { return !/^\d+\.\s/.test(w); });
+        var body = function (t) {
+          var i = t.indexOf(cmd);
+          if (i < 0) return t;
+          var rest = t.slice(i + cmd.length).replace(/^\s*there\)\s*/, "").replace(/^and\s+/, "Then ");
+          return [t.slice(0, i).replace(/\s*\($/, "") + " (run this there):",
+            h("div", { class: "tb-row", style: { margin: "6px 0", gap: "8px" } }, [h("code", { style: { padding: "4px 8px", whiteSpace: "nowrap", background: "#fff", borderRadius: "4px" } }, cmd), self.btn(h, "Copy", function () { self.copy(cmd); }, "small")]),
+            rest === "." ? "" : rest];
+        };
+        var box = function (title, kids) {
+          return h("div", { class: "tb-alert", style: { marginTop: "4px", marginBottom: "4px", fontSize: "14px", border: "2px solid #f3d19e" } }, [h("div", { class: "tb-grow" }, [h("div", { class: "tb-alert-t" }, title), kids])]);
+        };
+        var out = [];
+        if (steps.length) out.push(box(stepsTitle, h("ol", { attrs: { start: steps[0][1] }, style: { margin: "6px 0 0", paddingLeft: "20px" } }, steps.map(function (m) { return h("li", { attrs: { value: m[1] }, style: { margin: "6px 0" } }, body(m[2])); }))));
+        if (notes.length) out.push(box(notesTitle, h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } }, notes.map(function (w) { return h("li", { style: { margin: "6px 0" } }, w); }))));
+        return out.length ? out : null;
+      },
+
+      rPass: function (h, s) {
+        var lv = strength(s.pass);
+        var color = { weak: "#f56c6c", ok: "#e6a23c", strong: "#13a35a" }[lv[0]] || "#ebeef5";
+        var width = { weak: "25%", ok: "60%", strong: "100%" }[lv[0]] || "0";
+        return [
+          h("div", { class: "tb-label" }, "Passphrase"),
+          h("input", { class: "tb-input", attrs: { type: "password", autocomplete: "new-password", placeholder: "At least 10 characters" }, domProps: { value: s.pass }, on: { input: function (e) { s.pass = e.target.value; } } }),
+          h("div", { class: "tb-bar", style: { marginTop: "6px" } }, [h("i", { style: { width: width, background: color } })]),
+          lv[1] ? h("div", { class: "tb-help", style: { marginTop: "4px" } }, lv[1]) : null,
+          h("div", { class: "tb-label" }, "Type it again"),
+          h("input", { class: "tb-input", attrs: { type: "password", autocomplete: "new-password", placeholder: "Same again" }, domProps: { value: s.pass2 }, on: { input: function (e) { s.pass2 = e.target.value; } } })
+        ];
+      },
+
+      rUbDialog: function (h) {
+        var self = this, u = this.ub, k = u.kind, kids = [], foot = [];
+        var close = function () { self.ub = null; self.ubFiles = []; self.ubBody = null; };
+        var err = u.err ? h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "10px" } }, u.err) : null;
+        var p = function (t, extra) { return h("div", { class: "tb-muted", style: Object.assign({ lineHeight: 1.55, marginBottom: "8px" }, extra || {}) }, t); };
+        if (k === "backup") {
+          kids.push(h("div", { class: "tb-dialog-t" }, "Download a backup"),
+            p("Everything this router needs to start over: " + (this.role === "server" ? "settings, devices and their keys, the certificate devices check" : "settings, servers, connection settings and rules") + ". It's locked with a passphrase you choose now."));
+          kids = kids.concat(this.rPass(h, u));
+          kids.push(h("div", { class: "tb-alert", style: { marginTop: "14px", marginBottom: 0 } }, [h("div", [h("b", "Write it down. "), "Without the passphrase the backup can't be opened, by anyone, tailbond included. A password manager or a note in a drawer both work."])]), err);
+          foot = [this.btn(h, "Cancel", close), this.btn(h, u.busy ? "Locking…" : "Download backup", function () { self.doBackup(); }, "primary", u.busy)];
+        } else if (k === "restore" && u.step === "pick") {
+          kids.push(h("div", { class: "tb-dialog-t" }, "Restore from a backup"),
+            p("Pick a .tbbackup file and type its passphrase. Nothing changes yet: you see what it would replace first."),
+            h("div", { class: "tb-label" }, "Backup file"),
+            h("input", { class: "tb-input tb-file", attrs: { type: "file", accept: ".tbbackup" }, on: { change: function (e) { self.ubFiles = Array.prototype.slice.call(e.target.files || []); u.file = self.ubFiles[0] ? self.ubFiles[0].name : ""; } } }),
+            h("div", { class: "tb-label" }, "Passphrase"),
+            h("input", { class: "tb-input", attrs: { type: "password", autocomplete: "off", placeholder: "The passphrase of that backup" }, domProps: { value: u.pass }, on: { input: function (e) { u.pass = e.target.value; } } }),
+            err);
+          foot = [this.btn(h, "Cancel", close), this.btn(h, u.busy ? "Opening…" : "Check the backup", function () { self.doPreview(); }, "primary", u.busy)];
+        } else if (k === "restore" && u.step === "preview") {
+          var pv = u.preview || {}, ch = A(pv.changes), warns = this.ubWarns(pv);
+          kids.push(h("div", { class: "tb-dialog-t" }, "Restore this backup?"),
+            h("div", { class: "tb-found", style: { marginBottom: "12px", padding: "12px" } }, [
+              h("div", { class: "tb-wan-icon" }, [icon(h, pv.role === "server" ? "server" : "router")]),
+              h("div", { class: "tb-grow" }, [h("div", { style: { fontWeight: 600, wordBreak: "break-all" } }, u.file), h("div", { class: "tb-muted tb-small" }, (pv.host || "?") + " (" + (ROLE_WORDS[pv.role] || pv.role) + ") · made " + fmtWhen(pv.created) + " · tailbond " + (pv.agent_version || "?"))])
+            ]),
+            this.restoreSteps(h, warns, "Do these in order", "Before you restore"),
+            h("div", { style: { fontWeight: 600, margin: "12px 0 6px" } }, ch.length ? "What it replaces" : "Nothing differs from the current settings"),
+            ch.length ? h("div", { class: "tb-kv tb-small tb-chg" }, [].concat.apply([], ch.map(function (c) { return [h("div", c.what), h("div", [h("span", { class: "tb-muted" }, c.from || "—"), " → ", h("b", c.to || "—")])]; }))) : null,
+            p("The current settings are saved first (same passphrase), so you can go back. tailbond restarts afterwards; devices here are offline for a few seconds.", { marginTop: "12px", fontSize: "12px" }),
+            err);
+          foot = [this.btn(h, "Back", function () { u.step = "pick"; u.err = ""; }), this.btn(h, u.busy ? "Restoring…" : "Restore", function () { self.doRestore(); }, "primary", u.busy)];
+        } else if (k === "restore") {
+          // after restoring, "Restore here while … still runs" is done
+          var dw = this.ubWarns(u.preview || {}).filter(function (w) { return !/^1\.\s+Restore here while /.test(w); }), dhost = (u.preview && u.preview.host) || "the backup";
+          kids.push(h("div", { class: "tb-dialog-t", style: { color: "#13a35a", display: "flex", alignItems: "center", gap: "8px" } }, [icon(h, "check", 22), "Restored"]),
+            p("The settings from " + dhost + " are in place. A copy of the previous settings was kept" + (u.rollback ? " (" + u.rollback + ")" : "") + ", locked with the same passphrase, in case you want them back.", { color: "#303133" }),
+            dw.length ? this.restoreSteps(h, dw, "Next, in order:", "If you haven't already:")
+              : p(this.role === "server" ? "Devices reconnect by themselves within a few minutes." : "tailbond connects to its home server again by itself within a minute.", { color: "#303133" }),
+            p("Automatic backups now follow the backup: if they were on on " + dhost + ", they stay on here, with the same schedule and passphrase.", { fontSize: "12px" }),
+            p("tailbond is restarting with them; this page comes back by itself in a few seconds.", { fontSize: "12px" }));
+          foot = [this.btn(h, "Done", function () { close(); self.refreshAll(); }, "primary")];
+        } else if (k === "summary") {
+          var sm = u.summary ? Object.assign({}, u.summary) : null;
+          if (sm && Array.isArray(sm.files)) {
+            // a server's backup carries its devices' pushed backups: one row, per device
+            var per = {};
+            sm.files.forEach(function (f) { var m = /^client-backups\/([^/]+)\//.exec(f); if (m) per[m[1]] = (per[m[1]] || 0) + 1; });
+            sm.files = sm.files.filter(function (f) { return f.indexOf("client-backups/") !== 0; });
+            if (Object.keys(per).length) sm.client_backups = Object.keys(per).map(function (d) { return d + " (" + per[d] + ")"; });
+          }
+          var order = Object.keys(SUMMARY_LABEL);
+          var rows = sm ? Object.keys(sm).filter(function (key) { return key !== "ok"; }).sort(function (a, b) { return (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)); }).map(function (key) {
+            var v = sm[key], val;
+            if (v == null || v === "") val = "none";
+            else if (Array.isArray(v)) val = v.length ? v.length + ": " + v.join(", ") : "none";
+            else if (typeof v === "object") val = Object.keys(v).map(function (x) { return x + " " + v[x]; }).join(", ");
+            else if (key === "password_set") val = v ? "set (in the backup, not shown)" : "not set";
+            else if (typeof v === "boolean") val = v ? "included" : "no";
+            else if (key === "role") val = ROLE_WORDS[v] || v;
+            else val = String(v);
+            return [h("div", SUMMARY_LABEL[key] || key.replace(/_/g, " ")), h("div", val)];
+          }) : [];
+          kids.push(h("div", { class: "tb-dialog-t" }, "What's in a backup"),
+            p("What a backup made now would hold. Keys and passwords are in it too (locked), but never shown here.", { fontSize: "12px" }),
+            sm ? h("div", { class: "tb-kv tb-small tb-chg" }, [].concat.apply([], rows)) : (u.err ? null : h("div", { class: "tb-row tb-muted" }, [h("div", { class: "tb-spin" }), "Loading…"])),
+            this.role === "server" ? p("Your devices' own backups are included (still locked with their passphrases), so they move with this router.", { color: "#303133", marginTop: "12px" }) : null,
+            p([h("b", "Not included: "), "the Tailscale login, the installed program, firewall settings. On a new router: install tailbond, sign in to Tailscale, then restore."], { color: "#303133", marginTop: this.role === "server" ? 0 : "12px" }),
+            err);
+          foot = [this.btn(h, "Close", close, "primary")];
+        }
+        return h("div", { class: "tb-modal", on: { click: function (e) { if (e.target === e.currentTarget && !u.busy) close(); } } }, [
+          h("div", { class: "tb-dialog wide", attrs: { role: "dialog" } }, kids.concat([h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, foot)]))
+        ]);
+      }
+    }
+  };
+
   // ---- component ----
   return {
     name: "tailbond",
@@ -288,14 +839,21 @@
         disc: null, discovering: false, typed: "", showOther: false, pasteUri: "", pasteErr: "",
         busy: {}, toast: "", confirm: null, capEdit: null, capValue: "",
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
-        wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false
+        wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false,
+        // client: more servers (failover) and bypass rules
+        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", histAll: false,
+        bp: null, lan: null, bpEdit: null,
+        // updates and backups
+        updX: null, bks: null, ub: null, ubSched: null, restartUntil: 0, restarting: false
       };
     },
     computed: {
       role: function () { return (this.st && this.st.role) || (this.info && this.info.role) || "client"; },
       paired: function () { return !!(this.st && this.st.paired); },
       join: function () { return (this.st && this.st.join) || null; },
+      servers: function () { return A(this.st && this.st.servers); },
       serverShort: function () {
+        if (this.st && this.st.active_server) return this.st.active_server;
         var s = this.settings && this.settings.paired_with;
         var n = (this.st && this.st.server) || s || "";
         return shortName(n);
@@ -326,21 +884,33 @@
       tick: function () {
         var self = this;
         return api("GET", "/api/status").then(function (st) {
+          // "Back on homebox" for a minute after an automatic failback
+          var was = self.st && self.st.failover && self.st.failover.reason;
+          if (was && st.failover && !st.failover.reason && st.state === "connected") self.backOnUntil = Date.now() + 600000;
           self.st = st; self.down = false; self.loaded = true;
           if (self.wantOn !== null && self.isOn() === self.wantOn) self.wantOn = null;
           if (st.role === "client" && !st.paired && !self.disc && !self.discovering) self.discover(false);
+          // asking a backup server: its full Tailscale name comes from discovery
+          if (st.role === "client" && st.paired && st.join && st.join.add && !self.disc && !self.discovering) self.discover(false);
         }).catch(function (e) {
           self.loaded = true;
           if (e && e.error === "agent_down") self.down = true;
+          self.restarting = self.down && Date.now() < self.restartUntil;
         });
       },
       refreshSlow: function () {
         var self = this;
         if (this.down || !this.st) return Promise.resolve();
         var jobs = [api("GET", "/api/settings").then(function (s) { self.settings = s; }).catch(function () {})];
+        jobs.push(this.loadUb());
         if (this.st.role === "client") {
           jobs.push(api("GET", "/api/paths").then(function (p) { self.paths = A(p); }).catch(function () {}));
           if (this.st.paired && this.st.state === "connected") jobs.push(this.loadPeers());
+          if (this.st.paired) {
+            // older agents answer 404: the card stays hidden
+            jobs.push(api("GET", "/api/bypass").then(function (b) { self.bp = b; }).catch(function () { self.bp = null; }));
+            jobs.push(this.loadLan());
+          }
         } else {
           jobs.push(api("GET", "/api/tailscale").then(function (t) { self.ts = t; }).catch(function () {}));
           jobs.push(api("GET", "/api/health").then(function (hh) { self.health = hh; }).catch(function () {}));
@@ -352,6 +922,10 @@
         var self = this;
         return api("GET", "/api/peers").then(function (p) { self.peers = p; self.peersErr = null; })
           .catch(function (e) { self.peersErr = e; });
+      },
+      loadLan: function () {
+        var self = this;
+        return api("GET", "/api/lan-clients").then(function (l) { self.lan = A(l); }).catch(function () {});
       },
       discover: function (refresh) {
         var self = this;
@@ -372,6 +946,17 @@
           throw e;
         }).then(function (r) { self.$set(self.busy, key, false); return r; }, function () { self.$set(self.busy, key, false); });
       },
+      // Like run(), but rejects on error (the caller shows it in place)
+      // and says okMsg only on success.
+      runE: function (key, p, okMsg) {
+        var self = this;
+        this.$set(this.busy, key, true);
+        return p.then(function (r) {
+          self.$set(self.busy, key, false);
+          if (okMsg) self.say(okMsg);
+          return self.tick().then(function () { return self.refreshSlow(); }).then(function () { return r; });
+        }, function (e) { self.$set(self.busy, key, false); throw e; });
+      },
       exampleName: function () {
         var p = this.peers || {}, first = A(p.peers)[0];
         var suffix = p.magic_dns_suffix || ((this.st && this.st.server) || "").split(".").slice(1).join(".");
@@ -390,6 +975,8 @@
         if (/already exists/.test(msg)) return "That name is taken. Pick another one.";
         if (/name must be/.test(msg)) return "Use letters, numbers and - only, up to 63 characters.";
         if (/pairing|base64|tailbond:\/\/pair|JSON/i.test(msg)) return "That doesn't look like a tailbond pairing link. Copy the whole link from your home server and try again.";
+        if (msg === "subnet_in_use") return "That server uses the same tunnel addresses as one you already have.";
+        if (msg === "exists") return "That server is already in your list.";
         if (/public_addr/.test(msg)) return "Enter a host name or IP address, like home.example.com.";
         return msg ? "That didn't work: " + msg : "That didn't work. Try again.";
       },
@@ -488,7 +1075,38 @@
         else if (portal.length) line += " · " + portal.join(", ") + " needs sign-in";
         if (broken.length) line += " · " + broken.join(", ") + " not working right now";
         else if (saving.length) line += " · " + saving.join(", ") + " on standby";
-        return line;
+        var fo = this.foInfo();
+        return (fo && fo.line ? fo.line + " · " : "") + line;
+      },
+      onBackup: function () {
+        var ss = this.servers;
+        return ss.length > 1 && !!this.st.active_server && this.st.active_server !== ss[0].name;
+      },
+      // Failover in words for the top card, or null (one server, or on the first choice).
+      // act: [link text, handler] shown after the line.
+      foInfo: function () {
+        var self = this, st = this.st || {}, ss = this.servers, fo = st.failover || {};
+        if (ss.length < 2 || !this.isOn()) return null;
+        var act = st.active_server || this.serverShort, first = ss[0].name;
+        var back = fo.failback_in_sec !== undefined && fo.failback_in_sec !== null;
+        var since = fo.since ? fmtHM(fo.since) : "";
+        var stay = function () { self.useServer({ name: act }); };
+        var goFirst = function () { self.useServer({ name: first }); };
+        if (st.state === "connecting" && fo.reason === "primary_down") return { title: first + " is unreachable · switching to " + act + "…" };
+        if (st.state !== "connected") return null;
+        // what changes while a backup carries the tunnel
+        var note = "On " + act + ": websites see " + act + "'s internet address, connections that were open restart once, and your Tailscale machines see devices here as coming from " + act + ".";
+        if (fo.reason === "primary_down") {
+          return back ? { title: "Using " + act + " (" + first + " is answering again)", line: "Back to " + first + " in " + fmtClock(fo.failback_in_sec) + ". Calls may pause for a few seconds then", act: ["Stay on " + act + " (until you pick " + first + " or " + act + " stops working)", stay], note: note }
+            : { title: "Using " + act + (since ? " since " + since : "") + " (" + first + " is unreachable)", line: "You're still online; nothing to do. It goes back to " + first + " by itself once it answers again", note: note };
+        }
+        if (fo.reason === "manual") {
+          var firstOk = ss[0].state === "standby";
+          return { title: "Using " + act + (since ? " since " + since : "") + " (picked by hand)", line: "Stays on " + act + " until you pick " + first + " or " + act + " stops working", act: firstOk ? ["Go back to " + first, goFirst] : null, note: note };
+        }
+        if (fo.reason === "policy") return { title: "Always using " + act, note: act === first ? null : note };
+        if (!fo.reason && this.backOnUntil > Date.now()) return { title: "Connected to " + act, line: "Back on " + act + (since ? " since " + since : "") };
+        return null;
       },
       setPath: function (w, patch, msg) {
         var body = Object.assign({ name: w.key }, patch);
@@ -515,11 +1133,13 @@
           .catch(function () { self.pasteErr = self.actErr; self.actErr = ""; });
       },
       unpair: function () {
-        var self = this;
+        var self = this, many = this.servers.length > 1;
         this.confirm = {
-          title: "Unpair from " + (this.serverShort || "the home server") + "?",
-          body: "This router stops using tailbond and forgets the home server. Devices here use the internet directly. To connect again, ask the home server again (it will need to approve).",
-          ok: "Unpair", danger: true,
+          title: many ? "Forget all servers?" : "Unpair from " + (this.serverShort || "the home server") + "?",
+          body: many
+            ? "This router stops using tailbond and forgets " + this.servers.map(function (s) { return s.name; }).join(" and ") + ". Devices here use the internet directly. To connect again, ask a server again (it will need to approve)."
+            : "This router stops using tailbond and forgets the home server. Devices here use the internet directly. To connect again, ask the home server again (it will need to approve).",
+          ok: many ? "Forget all" : "Unpair", danger: true,
           run: function () { return self.run("unpair", api("DELETE", "/api/pair"), "Unpaired").then(function () { self.disc = null; }); }
         };
       },
@@ -534,6 +1154,194 @@
             return self.run("unpair", api("DELETE", "/api/pair")).then(function () { self.disc = null; if (server) return self.ask(server); });
           }
         };
+      },
+
+      // ---- more servers (client) ----
+      openAddServer: function () {
+        this.srvAdd = true; this.srvErr = null; this.srvPaste = ""; this.srvShowPaste = false;
+        if (!this.disc && !this.discovering) this.discover(false);
+      },
+      closeAddServer: function () {
+        var j = this.join;
+        this.srvAdd = false; this.srvErr = null;
+        if (j && j.add && j.state !== "asking" && j.state !== "waiting") this.run("srv-ask", api("DELETE", "/api/join")).catch(function () {});
+      },
+      askAdd: function (server) {
+        var self = this;
+        this.srvErr = null;
+        return this.runE("srv-ask", api("POST", "/api/join", { server: server, add: true })).then(function () { self.srvTyped = ""; })
+          .catch(function (e) { self.srvErr = e; });
+      },
+      pasteAdd: function () {
+        var self = this, uri = (this.srvPaste || "").trim();
+        this.srvErr = null;
+        if (uri.indexOf("tailbond://pair") !== 0) { this.srvErr = { error: "paste" }; return; }
+        return this.runE("srv-paste", api("POST", "/api/servers", { uri: uri })).then(function (r) {
+          self.say(((r && r.name) || "The server") + " added as a backup");
+          self.srvPaste = ""; self.srvAdd = false;
+        }, function (e) { self.srvErr = e; });
+      },
+      // [title, body] for a server that can't be added (409 or the join error).
+      // [title, body] for a server that can't be added (409 or the join error).
+      addSrvErr: function (h, code, conflict, newName, subnet) {
+        var ss = this.servers, self0 = this;
+        if (!conflict && ss.length === 1) conflict = ss[0].name;
+        var nn = newName || "This server", other = newName || "the new server";
+        if (code === "exists") return [nn + " is already in your list", (conflict ? "It's listed as " + conflict + ". " : "") + "Nothing to add; " + (conflict || "it") + " keeps working as before."];
+        if (code === "subnet_in_use") {
+          // suggest a range that isn't the clashing one
+          var n = /^10\.(\d+)\./.exec(subnet || "");
+          var free = "10." + (n && +n[1] >= 78 && +n[1] < 99 ? +n[1] + 1 : 78) + ".0.0/24";
+          var asked = !!newName, me = (this.settings && this.settings.paired_as) || "my travel router";
+          var msg = "Hi! I'd like to add " + (newName || "your tailbond server") + " as a backup server for " + me + ", but it uses the tunnel addresses " + (subnet || "") + ", like " + (conflict || "my other server") +
+            ". Could you move it to another range, for example " + free + "? With tailbond's Linux installer: sudo ./install.sh --subnet " + free +
+            ". On a GL router: uci set tailbond.server.subnet=" + free + "; uci commit tailbond; /etc/init.d/tailbond restart. Otherwise set \"server\": {\"subnet\": \"" + free + "\"} in /etc/tailbond/tailbond.json and restart tailbond. Devices already connected to it reconnect by themselves. Thanks!";
+          return [nn + " can't be added yet: it uses the same tunnel addresses as " + (conflict || "one of your servers"), [
+            h("div", (conflict || "Your server") + " keeps working; nothing was changed. Each server needs its own range of tunnel addresses" + (subnet ? " (" + subnet + " is taken)" : "") + "."),
+            h("div", { style: { marginTop: "6px" } }, asked
+              ? "A new server with no devices yet moves to a free range by itself when you ask it over Tailscale. " + other + " already has devices, so whoever runs it changes its range, then you ask again."
+              : "A new server with no devices yet moves to a free range by itself when you ask it over Tailscale (a pasted link can't do that): try “Its name in Tailscale” above. If it already has devices, whoever runs it changes its range."),
+            h("div", { style: { marginTop: "8px", fontWeight: 600 } }, "If you run " + other + " yourself:"),
+            h("ul", { class: "tb-steps", style: { color: "inherit", marginTop: "2px" } }, [
+              h("li", ["Set up with tailbond's Linux installer (most VPSs): on it, run the installer again with ", h("code", "sudo ./install.sh --subnet " + free), " (" + free + " is free here)"]),
+              h("li", ["A GL router as server (over SSH): ", h("code", "uci set tailbond.server.subnet=" + free + "; uci commit tailbond; /etc/init.d/tailbond restart")]),
+              h("li", ["Another Linux server: in ", h("code", "/etc/tailbond/tailbond.json"), " set ", h("code", "\"server\": {\"subnet\": \"" + free + "\"}"), " and restart tailbond"])
+            ]),
+            h("div", { class: "tb-small" }, "Devices already connected to " + other + " reconnect by themselves after the change. Then ask again here."),
+            h("div", { style: { marginTop: "8px" } }, ["Someone else runs it? ", this.btn(h, "Copy a message to send them", function () { self0.copyMsg(msg); }, "small")])
+          ]];
+        }
+        if (code === "paste") return [null, "Paste the whole link. It starts with tailbond://pair"];
+        return [null, this.humanError({ error: code })];
+      },
+      // client.kill_switch in UCI; the hooks read it the next time the tunnel comes up
+      setKillSwitch: function (on) {
+        var self = this;
+        return this.runE("ks", rpc("set_kill_switch", { on: on }).then(function (r) {
+          if (r && r.ok === false) throw { error: r.error || "failed" };
+          if (self.info) self.$set(self.info, "kill_switch", on); else self.info = { kill_switch: on };
+        }), on ? "Kill switch on. Takes effect the next time the tunnel reconnects." : "Kill switch off. Takes effect the next time the tunnel reconnects.")
+          .catch(function (e) { self.actErr = self.humanError(e); });
+      },
+      copyMsg: function (text) {
+        var self = this;
+        var done = function () { self.say("Message copied. Paste it in a chat or email to whoever runs that server."); };
+        if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, done);
+        else {
+          var ta = document.createElement("textarea");
+          ta.value = text; document.body.appendChild(ta); ta.select();
+          try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+          document.body.removeChild(ta); done();
+        }
+      },
+      moveServer: function (i, d) {
+        var names = this.servers.map(function (s) { return s.name; }), j = i + d;
+        if (j < 0 || j >= names.length) return;
+        var t = names[i]; names[i] = names[j]; names[j] = t;
+        return this.run("srv", api("POST", "/api/servers/order", { names: names }), names[0] + " is the first choice");
+      },
+      useServer: function (s) {
+        return this.run("srv", api("POST", "/api/servers/active", { name: s.name }), "Switching to " + s.name + "…");
+      },
+      removeServer: function (s) {
+        var self = this, rest = this.servers.filter(function (x) { return x.name !== s.name; });
+        this.confirm = {
+          title: "Remove " + s.name + "?",
+          body: "This router forgets " + s.name + (s.active && rest.length ? " and switches to " + rest[0].name + " now" : "") + ". To add it back later, ask " + s.name + " again (someone approves it there).",
+          ok: "Remove", danger: true,
+          run: function () { return self.run("srv", api("DELETE", "/api/servers/" + encodeURIComponent(s.name)), s.name + " removed"); }
+        };
+      },
+      setPolicy: function (policy, server) {
+        var first = (this.servers[0] || {}).name;
+        return this.run("srv-policy", api("POST", "/api/servers/policy", policy === "always" ? { policy: "always", server: server } : { policy: "prefer" }),
+          policy === "always" ? "Always using " + server : "Prefers " + first + " again");
+      },
+
+      // ---- bypass rules (client) ----
+      lanByMac: function (mac) {
+        mac = (mac || "").toLowerCase();
+        return A(this.lan).filter(function (c) { return (c.mac || "").toLowerCase() === mac; })[0] || null;
+      },
+      wanLabel: function (name) {
+        var w = A(this.bp && this.bp.wans).filter(function (x) { return x.name === name; })[0];
+        return (w && w.label) || name;
+      },
+      // What a rule does, in words: "Uses the internet directly" etc.
+      targetWords: function (r) {
+        if (r.target === "tunnel") return "Always uses tailbond";
+        if (r.target === "wan") return "Uses only " + this.wanLabel(r.wan);
+        var d = this.defaultWan();
+        return "Uses the internet directly" + (d ? " (now: " + d + ")" : "");
+      },
+      // the WAN carrying the router's default route (GL's pick)
+      defaultWan: function () {
+        var w = A(this.bp && this.bp.wans).filter(function (x) { return x.default; })[0];
+        return w ? w.label || w.name : "";
+      },
+      openBypass: function (preset) {
+        var e = { kind: "domain", text: "", multi: false, mac: "", ip: "", name: "", macTyped: "", addr: "", target: "direct", touched: false, note: "", preset: preset || "", err: "", more: false };
+        if (preset === "bank") e.note = "Bank";
+        if (preset === "streaming") { e.multi = true; e.text = STREAMING.join("\n"); e.note = "Streaming location"; }
+        if (preset === "wificall") { e.kind = "addr"; e.more = true; e.addr = "udp/4500, udp/500"; e.note = "Wi-Fi calling"; }
+        if (preset === "laptop") { e.kind = "device"; e.target = "tunnel"; e.note = ""; }
+        this.bpEdit = e;
+        this.loadLan();
+      },
+      bpKind: function (k) {
+        var e = this.bpEdit;
+        e.kind = k; e.err = ""; e.preset = ""; e.note = ""; e.multi = false;
+        if (k === "addr") e.more = true;
+        if (!e.touched) e.target = k === "device" ? "tunnel" : "direct";
+      },
+      bpRules: function () {
+        var e = this.bpEdit, out = [], bad = "";
+        var t = e.target.indexOf("wan:") === 0 ? { target: "wan", wan: e.target.slice(4) } : { target: e.target };
+        if (e.kind === "domain") {
+          words(e.text).forEach(function (d) {
+            d = d.toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/[\/?#].*$/, "").replace(/^\*\./, "").replace(/^www\./, "").replace(/\.$/, "");
+            if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) bad = bad || d;
+            else out.push({ kind: "domain", match: d });
+          });
+          if (bad) return "“" + bad + "” isn't a website name. Type it like mybank.com.";
+          if (!out.length) return "Type a website, like mybank.com.";
+        } else if (e.kind === "device") {
+          var mac = e.mac || (e.macTyped || "").trim().toLowerCase().replace(/-/g, ":");
+          if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return e.macTyped ? "That isn't a MAC address. It looks like aa:bb:cc:dd:ee:ff." : "Pick a device from the list.";
+          // host: the device's DHCP name; the agent also follows new (private) Wi-Fi addresses under it
+          out.push({ kind: "device", match: mac, ip: e.ip || undefined, host: e.mac && e.name ? e.name : undefined, note: e.name || undefined });
+        } else {
+          words(e.addr).forEach(function (a) {
+            a = a.toLowerCase();
+            if (/^(tcp|udp)\/\d{1,5}(-\d{1,5})?$/.test(a)) out.push({ kind: "port", match: a });
+            else if (/^[0-9a-f:.]+(\/\d{1,3})?$/.test(a) && /[.:]/.test(a)) out.push({ kind: "ip", match: a });
+            else bad = bad || a;
+          });
+          if (bad) return "“" + bad + "” isn't an address or port. Use 203.0.113.9, 203.0.113.0/24 or udp/4500.";
+          if (!out.length) return "Type an address or a port.";
+        }
+        return out.map(function (r) {
+          var x = Object.assign({ enabled: true }, r, t);
+          if (e.note && !x.note) x.note = e.note.slice(0, 64);
+          return x;
+        });
+      },
+      saveBypass: function () {
+        var self = this, e = this.bpEdit, rules = this.bpRules();
+        if (typeof rules === "string") { e.err = rules; return; }
+        e.err = "";
+        var p = rules.reduce(function (acc, r) { return acc.then(function () { return api("POST", "/api/bypass", r); }); }, Promise.resolve());
+        var what = rules.length > 1 ? (e.note ? e.note + ": " + this.targetWords(rules[0]).toLowerCase() : rules.length + " rules added") : (e.kind === "device" ? (e.name || rules[0].match) : rules[0].match) + ": " + this.targetWords(rules[0]).toLowerCase();
+        return this.runE("bp-save", p, what).then(function () { self.bpEdit = null; },
+          function (err) { if (self.bpEdit) self.bpEdit.err = self.humanError(err); });
+      },
+      toggleRules: function (rules, on) {
+        var p = Promise.all(rules.map(function (r) { return api("POST", "/api/bypass", Object.assign({}, r, { enabled: on })); }));
+        return this.run("bp-" + rules[0].id, p, on ? "Rule on" : "Rule off").catch(function () {});
+      },
+      deleteRules: function (rules, label) {
+        var p = Promise.all(rules.map(function (r) { return api("DELETE", "/api/bypass/" + encodeURIComponent(r.id)); }));
+        return this.run("bp-" + rules[0].id, p, label + " removed").catch(function () {});
       },
 
       // ---- server ----
@@ -615,13 +1423,15 @@
           this.info && this.info.lan_dashboard ? h("span", [" · ", h("a", { class: "tb-link", attrs: { href: "http://" + location.hostname + ":8077/", target: "_blank", rel: "noopener" } }, "Advanced page (:8077)")]) : null
         ]));
       }
+      if (this.bpEdit) kids.push(this.rBypassDialog(h));
+      if (this.ub) kids.push(this.rUbDialog(h));
       if (this.confirm) kids.push(this.rConfirm(h));
       if (this.toast) kids.push(h("div", { class: "tb-toast" }, this.toast));
       return h("div", { class: "tb" }, kids);
     },
 
     // Render helpers (a mixin keeps render() short; Vue binds `this`).
-    mixins: [{
+    mixins: [UB, {
       methods: {
         card: function (h, title, body, extra, cls) {
           return h("div", { class: "tb-card" + (cls ? " " + cls : "") }, [
@@ -635,9 +1445,9 @@
         sw: function (h, on, onClick, big, disabled, label) {
           return h("button", { class: "tb-switch" + (on ? " on" : "") + (big ? " tb-switch-big" : ""), attrs: { type: "button", role: "switch", "aria-checked": String(!!on), "aria-label": label || "", disabled: !!disabled }, on: { click: onClick } });
         },
-        alert: function (h, cls, title, body, actions) {
+        alert: function (h, cls, title, body, actions, ico) {
           return h("div", { class: "tb-alert " + (cls || "") }, [
-            h("div", { style: { flex: "none", marginTop: "1px" } }, [icon(h, cls === "ok" ? "check" : "warn", 20)]),
+            h("div", { style: { flex: "none", marginTop: "1px" } }, [icon(h, ico || (cls === "ok" ? "check" : "warn"), 20)]),
             h("div", { class: "tb-grow" }, [
               title ? h("div", { class: "tb-alert-t" }, title) : null,
               body ? h("div", body) : null,
@@ -645,19 +1455,21 @@
             ])
           ]);
         },
-        hero: function (h, iconCls, title, line, sw, rates) {
+        hero: function (h, iconCls, title, line, sw, rates, extra) {
           return h("div", { class: "tb-card" }, [
             h("div", { class: "tb-hero" }, [
               h("div", { class: "tb-hero-icon " + iconCls }, [icon(h, "bond", 28)]),
               h("div", { class: "tb-grow" }, [h("div", { class: "tb-hero-t" }, title), h("div", { class: "tb-hero-s" }, line)]),
               sw
             ]),
-            rates || null
+            rates || null,
+            extra || null
           ]);
         },
 
         rDown: function (h) {
           var self = this;
+          if (this.restarting) return this.card(h, null, [h("div", { class: "tb-row" }, [h("div", { class: "tb-spin" }), "tailbond is restarting (update or restore). This page comes back by itself in a minute."])]);
           return this.card(h, null, [this.alert(h, "err", "tailbond isn't running on this router",
             "It may have been turned off or stopped after an error. Starting it is safe: devices here keep their internet while you set it up.",
             [this.btn(h, this.busy.svc ? "Starting…" : "Start tailbond", function () { self.startService(); }, "primary", this.busy.svc)])]);
@@ -669,6 +1481,7 @@
             h("div", { class: "tb-dialog", attrs: { role: "dialog" } }, [
               h("div", { class: "tb-dialog-t" }, c.title),
               h("div", { style: { color: "#606266", lineHeight: 1.55 } }, c.body),
+              c.note ? h("div", { class: "tb-muted tb-small", style: { marginTop: "8px", lineHeight: 1.5 } }, c.note) : null,
               h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, [
                 this.btn(h, "Cancel", function () { self.confirm = null; }),
                 this.btn(h, c.ok, function () { var r = c.run; self.confirm = null; r(); }, c.danger ? "danger" : "primary")
@@ -687,12 +1500,17 @@
           var title = !this.paired ? "Not connected to a home server" : !on ? "tailbond is off" :
             signingIn && st.state === "connected" ? "Router connected to " + this.serverShort + " · devices signing in" : err ? "Can't reach " + (this.serverShort || "home server") :
             st.state === "connected" ? "Connected to " + this.serverShort : "Connecting…";
+          var fo = this.paired && on && !err && !signingIn ? this.foInfo() : null;
+          if (fo) title = fo.title;
           var rates = this.paired && on && st.state === "connected" ? h("div", { class: "tb-rates" }, [
             h("span", ["↓ ", h("b", fmtRate(st.totals.rx_bps))]), h("span", ["↑ ", h("b", fmtRate(st.totals.tx_bps))]),
             h("span", { class: "tb-hide-sm" }, ["Up ", h("b", fmtUptime(st.uptime_sec))])
           ]) : null;
-          out.push(this.hero(h, iconCls, title, this.summary(),
-            this.paired ? this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "tailbond on/off") : null, rates));
+          var line = this.summary();
+          if (fo && fo.act) line = [line, " · ", h("a", { class: "tb-link", on: { click: fo.act[1] } }, fo.act[0])];
+          if (fo && fo.note) line = [h("div", line), h("div", { class: "tb-small tb-muted", style: { marginTop: "4px" } }, fo.note)];
+          out.push(this.hero(h, iconCls, title, line,
+            this.paired ? this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "tailbond on/off") : null, rates, this.updTop(h)));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
 
           if (!this.paired) return out.concat(this.rSignin(h), this.rPairing(h));
@@ -707,7 +1525,9 @@
           out.push(this.rWans(h));
           out.push(this.rModes(h));
           out.push(this.rHome(h));
+          if (this.bp) out.push(this.rBypass(h));
           out.push(this.rMachines(h));
+          out.push(this.rUpdates(h), this.rBackup(h));
           return out;
         },
 
@@ -869,6 +1689,7 @@
 
         rHome: function (h) {
           var self = this, st = this.st, s = this.settings || {};
+          if (this.servers.length > 1) return this.rServers(h);
           var stateChip = st.state === "connected" ? ["ok", "Connected"] : !this.isOn() ? ["", "Off"] : st.state === "connecting" && !st.error ? ["blue", "Connecting…"] : ["err", "Can't reach"];
           return this.card(h, "Home server", [
             h("div", { class: "tb-row", style: { marginBottom: "14px" } }, [
@@ -879,14 +1700,403 @@
               ]),
               h("span", { class: "tb-chip " + stateChip[0] }, stateChip[1])
             ]),
-            h("div", { class: "tb-kv tb-small" }, [
-              h("div", "Connects to"), h("div", [h("span", { class: "tb-mono" }, hostOf(s.paired_with || st.server || "—")), " over the internet (UDP port " + (portOf(s.paired_with) || "443") + ")"]),
-              h("div", "Tailnet names"), h("div", "Work on every device connected to this router while tailbond is on. Use the full name, like " + this.exampleName() + "."),
-              h("div", "This router's tunnel address"), h("div", { class: "tb-mono" }, st.tunnel_ip || "—")
-            ]),
+            this.rHomeKv(h, true),
+            this.rKillSwitch(h),
             h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
               this.btn(h, "Ask to connect again", function () { self.repair(); }, "small"),
-              this.btn(h, "Unpair", function () { self.unpair(); }, "small danger")
+              this.btn(h, "Unpair", function () { self.unpair(); }, "small danger"),
+              this.srvAdd || this.addInFlight() ? null : this.btn(h, "Add a backup server", function () { self.openAddServer(); }, "small")
+            ]),
+            this.rAddServer(h)
+          ]);
+        },
+        rHomeKv: function (h, withAddr) {
+          var st = this.st, s = this.settings || {};
+          return h("div", { class: "tb-kv tb-small" }, [
+            withAddr ? h("div", "Connects to") : null,
+            withAddr ? h("div", [h("span", { class: "tb-mono" }, hostOf(s.paired_with || st.server || "—")), " over the internet (UDP port " + (portOf(s.paired_with) || "443") + ")"]) : null,
+            h("div", "Tailnet names"), h("div", "Work on every device connected to this router while tailbond is on. Use the full name, like " + this.exampleName() + "."),
+            h("div", "This router's tunnel address"), this.servers.length > 1
+              ? h("div", [h("span", { class: "tb-mono" }, st.tunnel_ip || "—"), " on " + (st.active_server || "") + ". It changes with the server. Optional: to reach devices behind this router from your Tailscale machines, approve each server's route in Tailscale."])
+              : h("div", { class: "tb-mono" }, st.tunnel_ip || "—")
+          ]);
+        },
+        // http://vps.tail1234.ts.net:8077 for the server being asked
+        joinLink: function (j) {
+          var srv = j.server_name || shortName(j.server), host = hostOf(j.server);
+          var hit = A(this.disc && this.disc.servers).filter(function (s) { return s.name === srv || s.ip === host || s.dns_name === host; })[0];
+          var suffix = this.peers && this.peers.magic_dns_suffix;
+          var name = (hit && hit.dns_name) || (/\./.test(host) && !/^[\d.]+$/.test(host) ? host : suffix ? srv + "." + suffix : host);
+          return "http://" + name + ":8077/";
+        },
+        // The kill switch: everything "nothing goes out unprotected" and "always tailbond" rest on.
+        rKillSwitch: function (h) {
+          var self = this, ks = !(this.info && this.info.kill_switch === false);
+          return h("div", { class: "tb-row", style: { marginTop: "14px", borderTop: "1px solid #ebeef5", paddingTop: "12px" } }, [
+            h("div", { class: "tb-grow" }, [
+              h("div", ["Kill switch: block devices here while tailbond can't connect ", h("span", { class: "tb-chip " + (ks ? "ok" : "warn"), style: { marginLeft: "4px" } }, ks ? "On (recommended)" : "Off")]),
+              h("div", { class: "tb-muted tb-small", style: { lineHeight: 1.5 } }, (ks
+                ? "If no server can be reached (or while it switches), devices here wait instead of using this internet unprotected. Rules that skip tailbond still work."
+                : "If no server can be reached, devices here use this internet directly, without tailbond.") + " A change takes effect the next time the tunnel reconnects.")
+            ]),
+            this.sw(h, ks, function () { self.setKillSwitch(!ks); }, false, this.busy.ks, "Kill switch")
+          ]);
+        },
+        addInFlight: function () {
+          var j = this.join;
+          return !!(j && j.add && (j.state === "asking" || j.state === "waiting" || j.state === "error"));
+        },
+
+        // Two or more servers: the ordered list, the switching choice, add/remove.
+        rServers: function (h) {
+          var self = this, st = this.st, ss = this.servers, fo = st.failover || {}, busy = this.busy.srv;
+          var first = ss[0].name;
+          var CHIP = { active: ["ok", "Connected"], connecting: ["blue", "Connecting…"], standby: ["", "Standby"], unreachable: ["err", "Can't reach"], unknown: ["", "Checking…"], off: ["", "Off"] };
+          var rows = ss.map(function (sv, i) {
+            var chip = !self.isOn() ? ["", "Off"] : CHIP[sv.state] || CHIP.unknown;
+            var addr = hostOf(sv.server || "");
+            var detail = sv.active && sv.state === "active" ? "Connected for " + fmtUptime(st.uptime_sec) + (addr ? " · " + addr : "")
+              : (addr ? addr + " · " : "") + (sv.last_ok ? (sv.state === "unreachable" ? "last answered " : "answered ") + fmtAgoS(sv.last_ok) : sv.state === "unknown" ? "not checked yet" : "hasn't answered yet");
+            return h("div", { class: "tb-srv" }, [
+              h("div", { class: "tb-wan-icon" }, [icon(h, "server")]),
+              h("div", { class: "tb-grow" }, [
+                h("div", { class: "tb-wan-t" }, [sv.name, h("span", { class: "tb-role" + (i === 0 ? " first" : "") }, i === 0 ? "First choice" : "Backup")]),
+                h("div", { class: "tb-muted tb-small" }, detail)
+              ]),
+              h("span", { class: "tb-chip " + chip[0] }, chip[1]),
+              h("div", { class: "tb-srv-ctl" }, [
+                h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move up", "aria-label": "Move " + sv.name + " up", disabled: i === 0 || !!busy }, on: { click: function () { self.moveServer(i, -1); } } }, [icon(h, "up", 16)]),
+                h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move down", "aria-label": "Move " + sv.name + " down", disabled: i === ss.length - 1 || !!busy }, on: { click: function () { self.moveServer(i, 1); } } }, [icon(h, "down", 16)]),
+                sv.active || sv.state === "unreachable" || sv.state === "off" ? h("span", { class: "tb-btn small", style: { visibility: "hidden" }, attrs: { "aria-hidden": "true" } }, "Use now")
+                  : self.btn(h, "Use now", function () { self.useServer(sv); }, "small", busy || !self.isOn()),
+                self.srvMore === sv.name
+                  ? self.btn(h, "Remove " + sv.name, function () { self.srvMore = ""; self.removeServer(sv); }, "small danger", busy)
+                  : self.btn(h, "More", function () { self.srvMore = sv.name; }, "small text", busy)
+              ])
+            ]);
+          });
+          // the switching choice, in the servers' own names
+          var cur = fo.policy === "always" ? "always:" + fo.server : "prefer";
+          var paused = cur === "prefer" && fo.reason === "manual";
+          var preferLabel = ss.length === 2 ? "Prefer " + first + ", use " + ss[1].name + " if " + first + " is down" : "Prefer " + first + ", then the next one in the list that works";
+          var opts = [{ key: "prefer", t: preferLabel, b: "Switches by itself when " + first + " is down, and back when it's up again." }]
+            .concat(ss.map(function (sv) { return { key: "always:" + sv.name, t: "Always use " + sv.name, b: "Never switches by itself, even if " + sv.name + " is down." }; }));
+          var me = this.settings && this.settings.paired_as;
+          var ks = !(this.info && this.info.kill_switch === false);
+          return this.card(h, "Servers", [
+            h("div", { class: "tb-muted", style: { marginBottom: "4px", lineHeight: 1.5 } }, "tailbond uses one server at a time. If it stops answering, the next one in the list takes over. " +
+              (ks ? "While it switches, devices here wait a few seconds; with the kill switch on (the default), nothing goes out unprotected." : "While it switches, devices here use the internet directly for a few seconds.")),
+            h("div", rows),
+            h("div", { class: "tb-sec" }, [
+              h("div", { class: "tb-sec-t" }, "When to switch"),
+              h("div", { class: "tb-modes" + (opts.length === 3 ? " three" : ""), attrs: { role: "radiogroup", "aria-label": "When to switch" } }, opts.map(function (o) {
+                var on = cur === o.key;
+                return h("button", { class: "tb-mode" + (on ? " on" : ""), attrs: { type: "button", role: "radio", "aria-checked": String(on), disabled: !!self.busy["srv-policy"] }, on: { click: function () {
+                  if (on) return;
+                  if (o.key === "prefer") self.setPolicy("prefer"); else self.setPolicy("always", o.key.slice(7));
+                } } }, [h("div", { class: "tb-mode-t" }, o.t), h("div", { class: "tb-mode-b" }, o.b)]);
+              })),
+              paused ? h("div", { class: "tb-alert info", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [
+                h("b", "Paused: " + st.active_server + " was picked by hand" + (fo.since ? " at " + fmtHM(fo.since) : "") + ". "),
+                ss[0].state === "standby" ? h("a", { class: "tb-link", on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
+                  : "Automatic switching comes back if " + st.active_server + " stops working, or when you pick " + first + "."])]) : null,
+              h("div", { class: "tb-help" }, "How it decides: tailbond checks the standby servers every 10 s with one small packet. It switches when " + first + " hasn't worked for " + fmtDur(fo.switch_after_sec || 15) +
+                ", and comes back once " + first + " has answered for " + fmtDur(fo.failback_after_sec || 120) + ". It watches only whether " + first + " answers tailbond: a slow connection or a website that doesn't load doesn't make it switch.")
+            ]),
+            this.rHistory(h),
+            h("div", { class: "tb-sec" }, [this.rHomeKv(h, false)]),
+            this.rKillSwitch(h),
+            h("div", { class: "tb-actions", style: { marginTop: "14px" } }, [
+              this.srvAdd || this.addInFlight() ? null : this.btn(h, "Add another server", function () { self.openAddServer(); }, "small")
+            ]),
+            this.rAddServer(h),
+            h("div", { class: "tb-sec tb-small tb-muted", style: { textAlign: "right" } }, ["Stop using tailbond on this router: ",
+              h("a", { class: "tb-link", style: { color: "#f56c6c" }, on: { click: function () { self.unpair(); } } }, "Forget all servers")])
+          ], me ? h("span", { class: "tb-muted tb-small", style: { fontWeight: 400 } }, "This router is " + me) : null);
+        },
+
+        // "Recent switches" from failover.history (newest first).
+        rHistory: function (h) {
+          var self = this, hist = A(this.st.failover && this.st.failover.history);
+          if (!hist.length) return null;
+          var today = new Date().toDateString();
+          var when = function (t) {
+            var d = new Date(t);
+            return (d.toDateString() === today ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " ") + fmtHM(t);
+          };
+          var why = function (x) {
+            if (x.reason === "failover") return x.detail || x.from + " stopped answering";
+            if (x.reason === "failback") return x.from === "" ? "back to " + x.to : x.to + " answered again";
+            if (x.reason === "manual") return x.to + " picked by hand";
+            if (x.reason === "policy") return "“Always use " + x.to + "”";
+            if (x.reason === "list") return "server list changed";
+            return x.detail || "";
+          };
+          var shown = this.histAll ? hist : hist.slice(0, 3);
+          return h("div", { class: "tb-sec" }, [
+            h("div", { class: "tb-sec-t" }, "Recent switches"),
+            h("div", { class: "tb-kv tb-small", style: { gridTemplateColumns: "110px 1fr" } }, [].concat.apply([], shown.map(function (x) {
+              return [h("div", when(x.at)), h("div", [h("b", (x.from || "—") + " → " + x.to), h("span", { class: "tb-muted" }, " · " + why(x))])];
+            }))),
+            hist.length > 3 ? h("div", { class: "tb-small", style: { marginTop: "6px" } }, [h("a", { class: "tb-link", on: { click: function () { self.histAll = !self.histAll; } } }, this.histAll ? "Show fewer" : "Show all (" + hist.length + ")")]) : null
+          ]);
+        },
+
+        // "Add another server": ask over Tailscale (join with add) or paste a link.
+        rAddServer: function (h) {
+          var self = this, j = this.join, d = this.disc, body = [];
+          var jAdd = j && j.add ? j : null;
+          if (!this.srvAdd && !this.addInFlight()) return null;
+          var firstName = (this.servers[0] || {}).name || this.serverShort || "your home server";
+          var have = {};
+          this.servers.forEach(function (s) { have[s.name.toLowerCase()] = true; have[hostOf(s.server || "").toLowerCase()] = true; });
+          if (this.serverShort) have[this.serverShort.toLowerCase()] = true;
+          if (jAdd && (jAdd.state === "asking" || jAdd.state === "waiting")) {
+            var srv = jAdd.server_name || shortName(jAdd.server);
+            body.push(h("div", { class: "tb-found" }, [
+              h("div", { class: "tb-spin", style: { width: "28px", height: "28px", borderWidth: "3px" } }),
+              h("div", { class: "tb-grow" }, [
+                h("div", { class: "tb-wan-t" }, jAdd.state === "asking" ? "Asking " + srv + "…" : "Waiting for approval on " + srv + "…"),
+                h("div", { class: "tb-muted", style: { marginTop: "4px", lineHeight: 1.6 } }, [
+                  "On " + srv + ", click ", h("b", "Approve"), " next to ", h("b", jAdd.name || "this router"), " (its page: ",
+                  h("a", { class: "tb-link", attrs: { href: this.joinLink(jAdd), target: "_blank", rel: "noopener" } }, this.joinLink(jAdd).replace(/\/$/, "")),
+                  " from any device on your Tailscale). It's added as a backup by itself; " + (this.serverShort || firstName) + " stays in use meanwhile."])
+              ]),
+              h("div", { class: "tb-actions" }, [this.btn(h, "Cancel", function () { self.run("srv-ask", api("DELETE", "/api/join")).catch(function () {}); })])
+            ]));
+          } else {
+            if (jAdd && jAdd.state === "error") {
+              // the join state carries only the code: name the clash from our list
+              var em = this.addSrvErr(h, jAdd.error, jAdd.conflict, jAdd.server_name, jAdd.subnet);
+              var calm = jAdd.error === "subnet_in_use" || jAdd.error === "exists";
+              body.push(this.alert(h, calm ? "" : "err", em[0] || this.joinErrTitle(jAdd), em[0] ? em[1] : this.joinErrBody(jAdd), [this.btn(h, "OK", function () { self.closeAddServer(); }, "small")]));
+            } else if (jAdd && jAdd.state === "approved") {
+              body.push(this.alert(h, "ok", (jAdd.added || jAdd.server_name || "The server") + " added as a backup", "It takes over if " + firstName + " stops answering."));
+            } else if (jAdd && jAdd.state === "declined") {
+              body.push(this.alert(h, "err", (jAdd.server_name || "The server") + " declined", "Ask whoever runs it to approve this router, then ask again."));
+            } else if (jAdd && jAdd.state === "expired") {
+              body.push(this.alert(h, "", "Nobody approved it in time", "The request expired after 10 minutes. Ask again when someone can approve it."));
+            }
+            // a server that just failed to be added isn't offered again right below its error
+            var failed = jAdd && jAdd.state === "error" ? (jAdd.server_name || "").toLowerCase() : "";
+            var found = A(d && d.servers).filter(function (s) {
+              return (s.name || "").toLowerCase() !== failed && !have[(s.name || "").toLowerCase()] && !have[shortName(s.dns_name).toLowerCase()] && !have[(s.ip || "").toLowerCase()];
+            });
+            if (this.discovering && !d) body.push(h("div", { class: "tb-row tb-muted", style: { padding: "4px 0 12px" } }, [h("div", { class: "tb-spin" }), "Looking for other tailbond servers on your tailnet…"]));
+            found.forEach(function (s) {
+              body.push(h("div", { class: "tb-found" }, [
+                h("div", { class: "tb-wan-icon" }, [icon(h, "server")]),
+                h("div", { class: "tb-grow" }, [h("div", { class: "tb-wan-t" }, "Found on your tailnet: " + s.name), h("div", { class: "tb-muted tb-small" }, (s.dns_name || "") + (s.ip ? " · " + s.ip : ""))]),
+                h("div", { class: "tb-actions" }, [self.btn(h, self.busy["srv-ask"] ? "Asking…" : "Ask to add", function () { self.askAdd(s.dns_name || s.ip); }, "primary", self.busy["srv-ask"])])
+              ]));
+            });
+            body.push(h("div", { class: "tb-label", style: { marginTop: found.length ? "4px" : "0" } }, found.length ? "Or type its name in Tailscale" : "Its name in Tailscale"));
+            body.push(h("div", { class: "tb-row" }, [
+              h("input", { class: "tb-input", attrs: { placeholder: "e.g. vps" }, domProps: { value: this.srvTyped }, on: { input: function (e) { self.srvTyped = e.target.value; }, keyup: function (e) { if (e.key === "Enter" && self.srvTyped.trim()) self.askAdd(self.srvTyped.trim()); } } }),
+              this.btn(h, "Ask to add", function () { if (self.srvTyped.trim()) self.askAdd(self.srvTyped.trim()); }, "", !this.srvTyped.trim() || this.busy["srv-ask"])
+            ]));
+            body.push(h("div", { class: "tb-small", style: { marginTop: "10px" } }, [h("a", { class: "tb-link", on: { click: function () { self.srvShowPaste = !self.srvShowPaste; } } }, this.srvShowPaste ? "Hide the link box" : "No Tailscale there? Paste a pairing link from it")]));
+            if (this.srvShowPaste) {
+              body.push(h("div", { style: { marginTop: "8px" } }, [
+                h("textarea", { class: "tb-input", attrs: { placeholder: "tailbond://pair?d=…" }, domProps: { value: this.srvPaste }, on: { input: function (e) { self.srvPaste = e.target.value; } } }),
+                h("div", { class: "tb-actions" }, [this.btn(h, this.busy["srv-paste"] ? "Adding…" : "Add", function () { self.pasteAdd(); }, "primary", this.busy["srv-paste"])])
+              ]));
+            }
+            if (this.srvErr) {
+              var e = this.srvErr, ed = e.data || {};
+              var pm = this.addSrvErr(h, e.error, ed.conflict, null, ed.subnet);
+              body.push(h("div", { style: { marginTop: "12px" } }, [this.alert(h, e.error === "subnet_in_use" || e.error === "exists" ? "" : "err", pm[0], pm[1])]));
+            }
+          }
+          return h("div", { class: "tb-sec" }, [
+            h("div", { class: "tb-sec-t" }, ["Add another server", this.srvAdd ? h("a", { class: "tb-link tb-small", style: { fontWeight: 400 }, on: { click: function () { self.closeAddServer(); } } }, "Close") : null]),
+            h("div", { class: "tb-muted", style: { marginBottom: "12px", lineHeight: 1.55 } }, "A second tailbond server, for example a VPS, takes over when " + firstName + " can't be reached. It needs tailbond running and the same Tailscale account."),
+            h("div", body)
+          ]);
+        },
+
+        // ---- Bypass tailbond (rules by website, device, address, port) ----
+        rBypass: function (h) {
+          var self = this, b = this.bp || {}, rules = A(b.rules), sup = b.support || {}, counters = b.counters || {};
+          var ks = !(this.info && this.info.kill_switch === false);
+          var waiting = sup.domains === "none";
+          var hasDomain = rules.some(function (r) { return r.kind === "domain"; });
+          var addBtn = rules.length ? this.btn(h, "Add a rule", function () { self.openBypass(); }, "small primary") : null;
+          var presets = function (cls) {
+            return h("div", { class: "tb-presets" + (cls || "") }, [
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("bank"); } } }, [icon(h, "globe", 14), "Banking"]),
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("streaming"); } } }, [icon(h, "globe", 14), "Streaming location"]),
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("wificall"); } } }, [icon(h, "call", 14), "Wi-Fi calling"]),
+              h("button", { class: "tb-preset", attrs: { type: "button" }, on: { click: function () { self.openBypass("laptop"); } } }, [icon(h, "device", 14), "Work laptop"])
+            ]);
+          };
+          if (!rules.length) {
+            return this.card(h, "Bypass tailbond", [
+              h("div", { class: "tb-empty" }, [
+                h("div", { class: "tb-wan-icon" }, [icon(h, "skip")]),
+                h("div", { class: "tb-grow" }, [
+                  h("div", { style: { lineHeight: 1.6, color: "#606266" } }, "Some things work better without tailbond: bank websites that block VPNs, streaming that should see where you really are, Wi-Fi calling on your phone. Others must never skip it, like a work laptop. Add a rule and they skip tailbond (or always use it), while everything else keeps going through " + (this.serverShort || "your home server") + "."),
+                  h("div", { class: "tb-actions", style: { marginTop: "12px", alignItems: "center" } }, [
+                    this.btn(h, "Add a rule", function () { self.openBypass(); }, "primary small"),
+                    h("span", { class: "tb-muted tb-small" }, "or start from:"),
+                    presets()
+                  ])
+                ])
+              ])
+            ]);
+          }
+          // Wi-Fi calling is two port rules; show such a pair as one row
+          var rows = [];
+          rules.forEach(function (r) {
+            var last = rows[rows.length - 1];
+            if (last && r.kind === "port" && last.kind === "port" && r.note && r.note === last.note && r.target === last.target && (r.wan || "") === (last.wan || "") && (r.enabled !== false) === last.on) last.rules.push(r);
+            else rows.push({ kind: r.kind, note: r.note, target: r.target, wan: r.wan, on: r.enabled !== false, rules: [r] });
+          });
+          var list = rows.map(function (row) {
+            var r = row.rules[0], main, sub = [];
+            if (r.kind === "domain") { main = r.match; if (r.note) sub.push(r.note); }
+            else if (r.kind === "device") {
+              var c = self.lanByMac(r.match) || (r.host ? A(self.lan).filter(function (x) { return x.name === r.host; })[0] : null);
+              main = (c && c.name) || r.note || r.match || r.ip;
+              sub.push(c && c.name ? (r.match || r.ip) : (r.match ? "device " + r.match : "device"));
+              sub.push(!c ? "not seen on this router yet" : c.online ? "connected now" : "not connected now");
+              sub.push(r.host ? "follows it by name, even with a new private Wi-Fi address" : "follows this address only");
+            } else if (r.kind === "ip") { main = r.match; sub.push(r.note || "address"); }
+            else {
+              var ports = row.rules.map(function (x) { return x.match.split("/")[1]; });
+              var proto = r.match.split("/")[0].toUpperCase();
+              var pw = proto + " port" + (ports.length > 1 || /-/.test(ports[0]) ? "s " : " ") + ports.join(" and ");
+              main = r.note || pw;
+              if (r.note) sub.push(pw);
+            }
+            var n = row.rules.reduce(function (t, x) { return t + ((counters[x.id] && counters[x.id].connections) || 0); }, 0);
+            if (n > 0) sub.push(n + (n === 1 ? " connection" : " connections"));
+            var label = main;
+            return h("div", { class: "tb-rule" + (row.on ? "" : " off") }, [
+              h("div", { class: "tb-wan-icon" }, [icon(h, row.note === "Wi-Fi calling" ? "call" : BP_KIND_ICON[r.kind] || "unknown")]),
+              h("div", { class: "tb-grow" }, [
+                h("div", { class: "tb-wan-t", style: { overflowWrap: "anywhere" } }, main),
+                h("div", { class: "tb-small", style: { marginTop: "2px" } }, [
+                  r.kind === "domain" && waiting && row.on ? h("span", { class: "tb-tgt wan" }, "Waiting: goes through tailbond until website rules work")
+                    : h("span", { class: "tb-tgt " + (r.target || "direct") }, row.on ? self.targetWords(r) : "Off"),
+                  sub.length ? h("span", { class: "tb-muted" }, " · " + sub.join(" · ")) : null
+                ])
+              ]),
+              self.sw(h, row.on, function () { self.toggleRules(row.rules, !row.on); }, false, self.busy["bp-" + r.id], (row.on ? "Turn off: " : "Turn on: ") + label),
+              h("button", { class: "tb-btn small text icon", style: { color: "#909399" }, attrs: { type: "button", title: "Delete", "aria-label": "Delete " + label, disabled: !!self.busy["bp-" + r.id] }, on: { click: function () { self.deleteRules(row.rules, label); } } }, [icon(h, "trash", 18)])
+            ]);
+          });
+          var body = [];
+          if (waiting && sup.reason && (hasDomain || !sup.firewall)) {
+            body.push(this.alert(h, "", hasDomain ? "Website rules are waiting" : "Rules can't be applied on this router", this.rDnsFix(h, sup)));
+          }
+          body.push(h("div", { class: "tb-muted", style: { marginBottom: "4px" } }, "Everything else goes through " + (this.serverShort || "your home server") + ". " + (ks ? "Rules that skip tailbond keep working while it's down." : "")));
+          body.push(h("div", list));
+          body.push(h("div", { class: "tb-sec tb-row", style: { flexWrap: "wrap" } }, [h("span", { class: "tb-muted tb-small" }, "Quick add:"), presets()]));
+          if (hasDomain) body.push(h("div", { class: "tb-help" }, "Website rules match the addresses the router looks up for each name (sites sharing those addresses skip too). A device with its own secure DNS (Private DNS on Android, Secure DNS in Chrome) isn't matched: turn that off for this Wi-Fi on the device, or add the site's addresses as an address rule."));
+          body.push(h("div", { class: "tb-help" }, "Skipped websites are looked up through the connection they use; everything else, IPv6 included, follows the same rules."));
+          return this.card(h, "Bypass tailbond", body, addBtn);
+        },
+
+        // Website rules wait for dnsmasq-full: what it means and how to get it.
+        rDnsFix: function (h, sup, short) {
+          var self = this, r = sup.reason || "";
+          if (!/dnsmasq-full/.test(r)) return [h("div", r)];
+          var pk = /ipset/.test(r) ? " ipset" : "";
+          // download first, then swap; put dnsmasq back if the install fails
+          var cmd = "cd /tmp && opkg update && opkg download dnsmasq-full dnsmasq && opkg remove dnsmasq && { opkg install ./dnsmasq-full_*.ipk || opkg install ./dnsmasq_*.ipk; }";
+          return [
+            h("div", "This router's DNS part (dnsmasq) can't do website rules yet. Until it can, these websites keep going through tailbond as before, so a bank that blocks VPNs may stay blocked. Device, address and port rules work now."),
+            short ? null : h("div", { style: { marginTop: "6px" } }, ["To turn website rules on, install ", h("b", "dnsmasq-full" + (pk ? " and ipset" : "")), ": in GL's ", h("b", "APPLICATIONS → Plug-ins"), ", search for it and click Install, then turn tailbond off and on here. Do it on a working connection, or leave it to whoever set the router up. If the Plug-ins page refuses, run this over SSH (it downloads both first, so the old one can go back if the install fails)" + (pk ? ", then install ipset the same way" : "") + ", then turn tailbond off and on:"]),
+            short ? null : h("div", { class: "tb-row", style: { marginTop: "6px", alignItems: "flex-start" } }, [
+              h("code", { class: "tb-grow", style: { display: "block", padding: "6px 8px", wordBreak: "break-all" } }, cmd),
+              self.btn(h, "Copy", function () { self.copy(cmd); }, "small")
+            ])
+          ];
+        },
+        rBypassDialog: function (h) {
+          var self = this, e = this.bpEdit, b = this.bp || {}, sup = b.support || {}, rules = A(b.rules);
+          var ks = !(this.info && this.info.kill_switch === false), home = this.serverShort || "your home server";
+          var close = function () { self.bpEdit = null; };
+          var seg = [["domain", "A website"], ["device", "A device"]].concat(e.more ? [["addr", "An address or port"]] : []);
+          var titles = { bank: "Your bank skips tailbond", streaming: "Streaming sees where you are", wificall: "Wi-Fi calling skips tailbond", laptop: "A work laptop always uses tailbond" };
+          var body = [];
+          body.push(h("div", { class: "tb-presets", style: { marginBottom: "4px" } }, [
+            h("span", { class: "tb-muted tb-small" }, "Quick picks:"),
+            [["bank", "Banking", "globe"], ["streaming", "Streaming location", "globe"], ["wificall", "Wi-Fi calling", "call"], ["laptop", "Work laptop", "device"]].map(function (p) {
+              return h("button", { class: "tb-preset" + (e.preset === p[0] ? " on" : ""), attrs: { type: "button", "aria-pressed": String(e.preset === p[0]) }, on: { click: function () { self.openBypass(p[0]); } } }, [icon(h, p[2], 14), p[1]]);
+            })
+          ]));
+          body.push(h("div", { class: "tb-label" }, "What"));
+          body.push(h("div", { class: "tb-row", style: { flexWrap: "wrap" } }, [
+            h("div", { class: "tb-seg", attrs: { role: "radiogroup", "aria-label": "What" } }, seg.map(function (o) {
+              return h("button", { class: e.kind === o[0] ? "on" : "", attrs: { type: "button", role: "radio", "aria-checked": String(e.kind === o[0]) }, on: { click: function () { self.bpKind(o[0]); } } }, o[1]);
+            })),
+            e.more ? null : h("a", { class: "tb-link tb-small", on: { click: function () { self.bpKind("addr"); } } }, "More: an address or port")
+          ]));
+          if (e.kind === "domain") {
+            body.push(h("div", { class: "tb-label" }, e.multi ? "Websites, one per line (remove any you don't use)" : e.preset === "bank" ? "Your bank's website" : "Website"));
+            body.push(h(e.multi ? "textarea" : "input", { class: "tb-input", style: e.multi ? { height: "118px" } : {}, attrs: { placeholder: e.preset === "bank" ? "e.g. mybank.com" : "e.g. mybank.com", autofocus: true }, domProps: { value: e.text }, on: { input: function (ev) { e.text = ev.target.value; } } }));
+            body.push(h("div", { class: "tb-help" }, e.multi
+              ? "Each one includes all its pages and parts (www.netflix.com, api.netflix.com…)."
+              : "Includes all its pages and parts, like www.mybank.com and login.mybank.com." + (e.preset === "bank" ? " The bank then sees this router's internet, not a VPN. It covers the bank's app too on phones and tablets connected to this router, when the app uses the same website." : "")));
+            if (sup.domains === "none" && sup.reason) body.push(h("div", { class: "tb-alert", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [h("b", "Saved, but waits for now. ")].concat(this.rDnsFix(h, sup, true)))]));
+            body.push(h("div", { class: "tb-help" }, "It matches the addresses the router looks up for that name, so other sites on the same addresses (big hosting providers) may skip tailbond too. A device with its own secure DNS (Private DNS on Android, Secure DNS in Chrome) isn't matched: turn that off for this Wi-Fi on the device, or add the site's addresses as an address rule."));
+            body.push(h("div", { class: "tb-help" }, "On this router a website rule covers every name under it; the tailbond phone app covers only the usual ones (www, login, …)."));
+          } else if (e.kind === "device") {
+            var taken = {};
+            rules.forEach(function (r) { if (r.kind === "device" && r.match) taken[r.match.toLowerCase()] = true; });
+            var lan = A(this.lan);
+            body.push(h("div", { class: "tb-label" }, "Which device"));
+            if (this.lan === null) body.push(h("div", { class: "tb-row tb-muted" }, [h("div", { class: "tb-spin" }), "Loading devices…"]));
+            else if (!lan.length) body.push(h("div", { class: "tb-muted" }, "No devices found on this router yet. Type the device's MAC address below."));
+            else body.push(h("div", { class: "tb-pick", attrs: { role: "radiogroup", "aria-label": "Devices" } }, lan.map(function (c) {
+              var on = e.mac === (c.mac || "").toLowerCase();
+              return h("div", { class: "tb-pick-i" + (on ? " on" : ""), attrs: { role: "radio", tabindex: 0, "aria-checked": String(on) }, on: { click: function () { e.mac = (c.mac || "").toLowerCase(); e.ip = c.ip || ""; e.name = c.name || ""; e.macTyped = ""; e.err = ""; } } }, [
+                h("span", { class: "tb-dot" + (c.online ? " ok" : ""), attrs: { title: c.online ? "Connected" : "Not connected now" } }),
+                h("div", { class: "tb-grow" }, [
+                  h("div", { style: { fontWeight: 600 } }, c.name || "Unnamed device"),
+                  h("div", { class: "tb-mono" }, (c.mac || "") + (c.ip ? " · " + c.ip : ""))
+                ]),
+                taken[(c.mac || "").toLowerCase()] ? h("span", { class: "tb-muted tb-small" }, "has a rule") : c.online ? null : h("span", { class: "tb-muted tb-small" }, "not connected")
+              ]);
+            })));
+            body.push(h("div", { class: "tb-label" }, "Not listed? Its MAC address"));
+            body.push(h("input", { class: "tb-input", attrs: { placeholder: "aa:bb:cc:dd:ee:ff" }, domProps: { value: e.macTyped }, on: { input: function (ev) { e.macTyped = ev.target.value; e.mac = ""; e.ip = ""; e.name = ""; } } }));
+            body.push(h("div", { class: "tb-help" }, e.mac && e.name
+              ? "tailbond follows " + e.name + " by its name too, so the rule keeps working if it gets a new private Wi-Fi address."
+              : "A typed address is followed as it is: if the device switches to a new private Wi-Fi address, the rule stops matching it (and website rules then apply to it). Picking it from the list while it's connected also follows it by name."));
+          } else {
+            body.push(h("div", { class: "tb-label" }, "Addresses or ports"));
+            body.push(h("input", { class: "tb-input", attrs: { placeholder: "e.g. 203.0.113.9, 203.0.113.0/24, udp/4500, tcp/5060-5061" }, domProps: { value: e.addr }, on: { input: function (ev) { e.addr = ev.target.value; } } }));
+            body.push(h("div", { class: "tb-help" }, e.preset === "wificall"
+              ? "Phones place Wi-Fi calls over UDP ports 500 and 4500. Many carriers refuse them through a VPN, so these skip tailbond. This also lets IPsec VPNs (some work VPNs) skip tailbond; for a work laptop, add a device rule set to “Always use tailbond”."
+              : "Separate several with commas. A port looks like udp/4500 or tcp/5060-5061."));
+          }
+          // where it goes
+          var wans = A(b.wans);
+          var dw = this.defaultWan();
+          var opts = [["direct", "Use the internet directly" + (dw ? " (now: " + dw + ")" : "")]].concat(wans.map(function (w) { return ["wan:" + w.name, "Use only " + (w.label || w.name) + (w.up ? "" : " (not connected now)")]; }), [["tunnel", "Always use tailbond"]]);
+          var tgt = e.target.indexOf("wan:") === 0 ? "wan" : e.target;
+          var wl = tgt === "wan" ? this.wanLabel(e.target.slice(4)) : "";
+          var help = {
+            direct: "Skips tailbond and uses the router's main internet connection" + (dw ? " (now " + dw + ")" : "") + ", as without tailbond." + (ks ? " Keeps working while tailbond can't reach your servers." : ""),
+            wan: "Skips tailbond and goes out " + wl + " only.",
+            tunnel: (e.kind === "device" ? "Everything from this device goes through the server in use (" + home + " now), even websites or ports set to skip tailbond." : "Goes through the server in use (" + home + " now) even if another rule says to skip tailbond.") + (ks ? " With the kill switch on (the default), " + (e.kind === "device" ? "it has" : "these have") + " no internet while tailbond can't connect." : "")
+          }[tgt];
+          body.push(h("div", { class: "tb-label" }, e.kind === "device" ? "This device should" : "It should"));
+          body.push(h("select", { class: "tb-input", attrs: { "aria-label": "Where it goes" }, domProps: { value: e.target }, on: { change: function (ev) { e.target = ev.target.value; e.touched = true; } } },
+            opts.map(function (o) { return h("option", { attrs: { value: o[0] }, domProps: { selected: e.target === o[0] } }, o[1]); })));
+          body.push(h("div", { class: "tb-help" }, help));
+          if (e.err) body.push(h("div", { style: { color: "#f56c6c", marginTop: "10px" } }, e.err));
+          return h("div", { class: "tb-modal", on: { click: function (ev) { if (ev.target === ev.currentTarget) close(); } } }, [
+            h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-label": "Add a rule" } }, [
+              h("div", { class: "tb-dialog-t" }, titles[e.preset] || "Add a rule"),
+              h("div", body),
+              h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, [
+                this.btn(h, "Cancel", close),
+                this.btn(h, this.busy["bp-save"] ? "Adding…" : "Add", function () { self.saveBypass(); }, "primary", this.busy["bp-save"])
+              ])
             ])
           ]);
         },
@@ -909,7 +2119,8 @@
               h("div", { class: "tb-muted", style: { marginBottom: "10px" } }, serverSide
                 ? "Devices connected through tailbond reach these machines by name or 100.x address. “Direct” / “via relay” is how this router reaches each one."
                 : "Laptops and phones on this router's Wi-Fi or LAN reach these through the bond to " + (this.serverShort || "your home server") + " (not this router's own Tailscale), by their full name, e.g. " + this.exampleName() + ", or by their 100.x address. “Direct” / “via relay” is how " + (this.serverShort || "your home server") + " reaches each machine." +
-                  (this.wans.some(function (w) { return w.captive === "portal" && w.signinUntil; }) ? " While devices are signing in to a hotel page they go out directly, so they don't reach these until that's done." : "")),
+                  (this.wans.some(function (w) { return w.captive === "portal" && w.signinUntil; }) ? " While devices are signing in to a hotel page they go out directly, so they don't reach these until that's done." : "") +
+                  (this.onBackup() ? " You're on " + this.st.active_server + " now: if " + this.servers[0].name + "'s home is down, machines there may not answer even if this list shows them online." : "")),
               A(p.peers).length > 6 ? h("input", { class: "tb-input", style: { marginBottom: "8px" }, attrs: { placeholder: "Search machines" }, domProps: { value: this.peerFilter }, on: { input: function (e) { self.peerFilter = e.target.value; } } }) : null,
               h("div", { class: "tb-list" }, list.map(function (m) {
                 var ip = A(m.tailscale_ips)[0] || "";
@@ -1040,7 +2251,7 @@
           var title = !on ? "Home server is off" : err ? "Home server has a problem" : todo ? "Home server is on · " + todo + " setup step" + (todo === 1 ? "" : "s") + " left" : "Home server is on";
           out.push(this.hero(h, !on ? "" : err ? "err" : todo ? "warn" : "on", title, line,
             this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "Home server on/off"),
-            on && conn.length ? h("div", { class: "tb-rates" }, [h("span", ["Sending to devices ", h("b", fmtRate(st.totals.tx_bps))]), h("span", ["Receiving ", h("b", fmtRate(st.totals.rx_bps))])]) : null));
+            on && conn.length ? h("div", { class: "tb-rates" }, [h("span", ["Sending to devices ", h("b", fmtRate(st.totals.tx_bps))]), h("span", ["Receiving ", h("b", fmtRate(st.totals.rx_bps))])]) : null, this.updTop(h)));
           if (this.actErr) out.push(this.alert(h, "err", null, this.actErr));
 
           if (this.pending.length) {
@@ -1073,6 +2284,7 @@
           out.push(this.rPhoneGuide(h));
           out.push(this.rRouterGuide(h));
           out.push(this.rMachines(h, true));
+          out.push(this.rUpdates(h), this.rBackup(h));
           out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
             "Is this a travel router? ", h("a", { class: "tb-link", on: { click: function () { self.setRole("client"); } } }, "Use it as a travel router instead"), " (you can switch back here)"
           ]));

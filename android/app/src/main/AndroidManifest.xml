@@ -80,5 +80,13 @@
                 android:name="android.service.quicksettings.ACTIVE_TILE"
                 android:value="false" />
         </service>
+        <!-- after an app update: reconnect the tunnel if it was on (service/PackageReplacedReceiver.kt) -->
+        <receiver
+            android:name=".service.PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

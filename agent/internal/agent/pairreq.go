@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"github.com/tailbond/tailbond/agent/internal/update"
 	"net/http"
 	"net/netip"
 	"os"
@@ -52,6 +53,7 @@ type pairRequest struct {
 	nodeID    string
 	token     string
 	delivered bool
+	avoid     []netip.Prefix // the asker's other servers' subnets
 }
 
 const (
@@ -155,7 +157,7 @@ func (a *Agent) serverName() string {
 // hHello lets routers and phones on the tailnet find tailbond servers.
 // Unauthenticated and minimal on purpose.
 func (a *Agent) hHello(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"tailbond": true, "name": a.serverName(), "version": a.opts.Version, "role": a.role})
+	writeJSON(w, http.StatusOK, map[string]any{"tailbond": true, "name": a.serverName(), "version": a.opts.Version, "role": a.role, "protocol": update.Protocol})
 }
 
 // hPairRequestCreate: POST /api/pair-requests from a tailnet device.
@@ -170,8 +172,9 @@ func (a *Agent) hPairRequestCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
-		Kind string `json:"kind"`
+		Name  string   `json:"name"`
+		Kind  string   `json:"kind"`
+		Avoid []string `json:"avoid_subnets"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -197,6 +200,7 @@ func (a *Agent) hPairRequestCreate(w http.ResponseWriter, r *http.Request) {
 	for _, x := range p.byID {
 		if x.nodeID == who.NodeID && (x.Status == reqPending || (x.Status == reqApproved && !x.delivered)) {
 			x.IP = ip.String()
+			x.avoid = parseAvoid(body.Avoid)
 			writeJSON(w, http.StatusAccepted, a.pairReqReply(x, true))
 			return
 		}
@@ -216,6 +220,7 @@ func (a *Agent) hPairRequestCreate(w http.ResponseWriter, r *http.Request) {
 		Device: who.Node, DNSName: who.DNSName, Hostname: who.Hostname, OS: who.OS,
 		User: who.User, UserName: who.UserName, IP: ip.String(), nodeID: who.NodeID,
 		Status: reqPending, Created: now, Expires: now.Add(pairReqTTL),
+		avoid: parseAvoid(body.Avoid),
 	}
 	for _, u := range a.store.Get().Server.Users {
 		if u.TSNode != "" && u.TSNode == who.NodeID {
@@ -226,6 +231,17 @@ func (a *Agent) hPairRequestCreate(w http.ResponseWriter, r *http.Request) {
 	p.created[who.NodeID] = append(p.created[who.NodeID], now)
 	a.logs.Add("agent", fmt.Sprintf("pair request %s from %s (%s, %s)", req.ID, req.Device, req.User, req.IP))
 	writeJSON(w, http.StatusAccepted, a.pairReqReply(req, true))
+}
+
+// parseAvoid reads avoid_subnets: up to 16 IPv4 prefixes.
+func parseAvoid(in []string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range in {
+		if p, err := netip.ParsePrefix(strings.TrimSpace(s)); err == nil && p.Addr().Is4() && len(out) < 16 {
+			out = append(out, p.Masked())
+		}
+	}
+	return out
 }
 
 // pairReqReply is what the requesting device sees. Caller holds a.mu.
@@ -345,11 +361,19 @@ func (a *Agent) hPairRequestDecide(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": reqDeclined})
 		return
 	}
-	name, nodeID := x.Name, x.nodeID
+	name, nodeID, avoid := x.Name, x.nodeID, x.avoid
 	if body.Name != "" {
 		name = clientName(body.Name)
 	}
 	a.mu.Unlock()
+
+	// a client that already uses this server's subnet for another server:
+	// a server without clients moves to a free one
+	if len(avoid) > 0 && len(a.store.Get().Server.Users) == 0 {
+		if _, err := a.renumberSubnet(avoid); err != nil && !errors.Is(err, errHasClients) {
+			a.Logf("pair request %s: can't move the tunnel subnet: %v", x.ID, err)
+		}
+	}
 
 	client, err := a.clientForRequest(r.Context(), name, nodeID)
 	if err != nil {

@@ -56,10 +56,16 @@ needs it) and the tunnel connects once paired. The LAN keeps its internet
 until then (the kill switch arms only when paired and on). One command, if
 you do have SSH: `opkg install /tmp/tailbond_*_neon-vfpv4.ipk`.
 
-A firmware upgrade that doesn't keep packages removes tailbond (Speedify
-documents the same for its GL package); `/etc/tailbond/` (keys, pairing,
-users) is kept (`/lib/upgrade/keep.d/tailbond`), so reinstalling picks up
-where it left off.
+The tailbond panel shows when a new release is out; **Update now** (or
+**Automatic**) installs it with `opkg`, checked against the release's
+`SHA256SUMS`, and puts the previous package back if the new one doesn't come
+up ([updates.md](updates.md)).
+
+A firmware upgrade removes every package you installed, tailbond too
+(Speedify documents the same for its GL package). With **Keep Settings**
+ticked, tailbond reinstalls itself on the first boot and keeps your pairing
+and settings ([Firmware upgrades](#firmware-upgrades)). Without it, install
+the package again and pair again.
 
 A Flint 3 serves the package without having the file: `GET
 /tailbond-glinet.ipk` rebuilds it from opkg's records
@@ -140,6 +146,64 @@ on. Speedify's GL package turns it off; tailbond doesn't need to, because its
 LAN rules (priority 1074–1077) come before mwan3-style policy rules (1001+
 per-interface, 2001+ by fwmark, assumed the same for kmwan, **unverified**)
 only for LAN input, and mqvpn binds each path to its device.
+
+### Servers and failover
+
+The travel router can keep more than one server, for example `homebox` at
+home and a `vps` as a backup. One tunnel runs at a time; if the server in
+use stops answering for 15 s, the next one in the list takes over, and the
+first one is used again once it has answered for 2 minutes.
+
+In the panel (**Home server** card, which becomes **Servers** with two or more):
+- **Add a backup server**: ask a server found on your tailnet (it approves you,
+  like the first one), or paste a pairing link from it. It's added as a backup.
+- The list: first choice and backups, each with its state (Connected,
+  Standby, Can't reach, Connecting…, Checking…, Off) and when it last
+  answered. Arrows change the order, **Use now** switches at once (it stays
+  there while that server works), **Remove** forgets one server.
+- **When to switch**: "Prefer homebox, use vps if homebox is down" (default)
+  or "Always use vps" (never switches by itself).
+- The top card says what's happening: "Using vps (homebox is unreachable)",
+  then "Back to homebox in 1:20" while it counts down; **Recent switches**
+  lists the last ones.
+- **Kill switch** (UCI `client.kill_switch`, on by default): while no server
+  can be reached, or during a switch, devices here wait instead of using the
+  WAN unprotected. The switch in the card takes effect the next time the
+  tunnel reconnects.
+
+Each server needs its own tunnel addresses. A VPS set up with
+`packaging/linux/install.sh` picks a free range by itself; a new server with
+no devices yet moves out of the way when it approves the request. Otherwise
+the panel says which server clashes: change `server.subnet` on the new one
+(for example `10.78.0.0/24`), restart tailbond there and add it again.
+Contract: [architecture.md](architecture.md#multiple-servers-and-failover).
+
+### Bypass tailbond
+
+Rules that let some traffic skip the tunnel (or never skip it):
+- **A website** (and everything under it): a bank that blocks VPNs, streaming
+  that should see where you are;
+- **A device** on the router's LAN, picked from the list (by MAC, and by its
+  DHCP name, so a new private Wi-Fi address keeps the rule): a TV stick
+  that should use the hotel internet, or a work laptop that must **always use
+  tailbond** (that beats website rules);
+- **An address or port** (under *More*): Wi-Fi calling is UDP 500 and 4500.
+
+Each rule either uses the internet directly (GL's own multi-WAN picks the
+connection), uses only one connection (Repeater, Tethering…), or always uses
+tailbond. Quick picks: Banking, Streaming location, Wi-Fi calling, Work
+laptop. Each rule shows how many connections it has matched. Rules that
+skip tailbond keep working while the tunnel is down (kill switch or not).
+
+Website rules need **dnsmasq-full** (dnsmasq fills an nftables or ipset set
+with each address it looks up for the website). GL 4.10 on the Flint 3 and
+Slate 7 ships dnsmasq-full with nftset support and firewall4 (verified from
+the firmware images), so website rules work out of the box there. Other
+firmwares may need `opkg install dnsmasq-full`; until then the panel shows
+website rules as waiting and device, address and port rules still work.
+Devices with their own secure DNS (Private DNS on Android, Secure DNS in
+Chrome) aren't matched by website rules; use a device rule for those.
+Contract: [architecture.md](architecture.md#bypass-rules-client-role).
 
 ## Captive portals and GL's Login Mode
 
@@ -255,10 +319,35 @@ UDP 443 to it on the upstream router. Who can approve: anyone logged in to
 GL's admin, and anyone on the tailnet who opens `http://homebox:8077` unless
 the panel sets a password for that page.
 
+## Firmware upgrades
+
+What GL.iNet 4.x keeps on a firmware upgrade with **Keep Settings**, read
+from the GL-BE3600 (Slate 7) 4.10.1 image: `/etc/config/`, every path in
+`/lib/upgrade/keep.d/*` (tailbond's keeps `/etc/tailbond/`), changed
+conffiles of every package, and `/etc/rc.local`, which runs at every boot.
+Not kept: the packages themselves. GL's "Keep Installed Packages" (sent
+together with Keep Settings) only reinstalls packages from GL's own feeds,
+which don't have tailbond.
+
+So the package leaves itself a way back:
+
+| File (kept) | What it does |
+|---|---|
+| `/etc/tailbond/pkg/tailbond_<version>_<arch>.ipk`, `current` | the installed package (and the previous one, for rollbacks) |
+| `/etc/tailbond/pkg/reinstall` | installs that package if tailbond is missing; else downloads that version from the GitHub release (checked against `SHA256SUMS`); retries for 20 minutes; at most once per boot |
+| one line in `/etc/rc.local` (`# tailbond-reinstall`) | runs it in the background at boot |
+| `/lib/upgrade/tailbond.sh` (not kept, runs before the flash) | saves the running package if the cache is empty and adds these files to the keep list |
+
+After the upgrade, `logread -e tailbond-reinstall` shows what happened, and
+the panel says "reinstalled after a firmware upgrade". Removing the package
+(`opkg remove tailbond`) removes the rc.local line and the cached packages;
+`/etc/tailbond/` stays. See also [updates.md](updates.md#glinet-firmware-upgrades).
+
 ## Logs and troubleshooting
 
 ```sh
-logread -e tailbond          # agent + hook output
+logread -e tailbond          # agent + hook output (tailbond-update: updates)
+cat /etc/tailbond/state/update-result.json   # the last update or reinstall
 /etc/init.d/tailbond status
 curl -s http://127.0.0.1:8077/api/status
 lua -e 'print(require("cjson").encode(dofile("/usr/lib/oui-httpd/rpc/tailbond").status()))'
