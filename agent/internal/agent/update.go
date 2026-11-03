@@ -217,8 +217,12 @@ func (a *Agent) clientHeaders() http.Header {
 // updateLoop runs for the agent's lifetime: a check a minute after start,
 // then every check_every_hours (default 24); Check now / Update now at once.
 func (a *Agent) updateLoop(ctx context.Context) {
-	a.setUpdate(func(v *status.Update) { v.State = "idle" })
 	a.loadUpdateResult()
+	a.setUpdate(func(v *status.Update) {
+		if v.State == "" {
+			v.State = "idle"
+		}
+	})
 	first := time.NewTimer(time.Minute)
 	t := time.NewTicker(10 * time.Minute)
 	defer first.Stop()
