@@ -13,7 +13,8 @@
 // One clock for every screen: today 22:00 (UTC). On Tell me, slate7 and
 // homebox were updated to 0.2.0 by hand at 14:20; on Automatic it installs
 // at 03:06. Scheduled backups run at 03:00, slate7 pushes its backup at
-// 17:00, pixel-8 at 08:12.
+// 17:00; pixel-8's are sent by hand from the app (Nov 3 08:12, Oct 31
+// 11:36, Oct 26 20:54).
 import { connected, serverBase, serverStatus, withApi, twoWans, landing } from './fixtures.mjs';
 
 const T = Math.floor(Date.now() / 864e5) * 864e5 + 22 * 3600e3;
@@ -87,7 +88,8 @@ const outdated = [{ name: 'slate7', kind: 'router', version: '0.1.0' }, { name: 
 // beryl pushed (the last 3 each)
 const devBackups = [
   pushed('slate7', 5, 6100), pushed('slate7', 29, 6100), pushed('slate7', 53, 6050),
-  pushed('pixel-8', 13.8, 3900), pushed('pixel-8', 37.8, 3900), pushed('pixel-8', 61.8, 3850),
+  // the phone's are sent by hand from the app, whenever
+  pushed('pixel-8', 13.8, 3900), pushed('pixel-8', 82.4, 3880), pushed('pixel-8', 193.1, 3790),
   pushed('beryl', 77.2, 5900),
 ];
 const flintBackups = [own('homebox', 19, 11200), own('homebox', 43, 11150), ...devBackups];
@@ -135,8 +137,8 @@ const webSettings = (over = {}) => ({ role: 'server', mode: 'speed', public_addr
 const webBackups = [own('homebox', 19, 11200), own('homebox', 43, 11150), own('homebox', 67, 11150), ...devBackups];
 const webSummary = { role: 'server', mode: 'speed', clients: ['slate7', 'pixel-8', 'beryl'], public_addr: 'home.example.net', port: 443, subnet: '10.77.0.0/24', approvers: ['sam@example.com'], password_set: false, update_policy: 'Tell me', files: serverFiles, uci: false };
 // a new VPS "vps2" (198.51.100.20, port 443) getting the old one's backup
-// (vps, 203.0.113.9, port 8443, tailscale cert): restoreWarnings' three
-// texts; the restore keeps this machine's public address and port
+// (vps, 203.0.113.9, port 8443, tailscale cert): restoreWarnings' four
+// numbered steps; the restore keeps this machine's public address and port
 // (backup.KeepOnRestore), so the change list doesn't show them
 const vpsFile = `vps-${stamp(hAgo(43))}.tbbackup`;
 const vpsPreview = {
@@ -149,9 +151,10 @@ const vpsPreview = {
     { what: 'Update policy', from: 'Tell me', to: 'Automatic' },
   ],
   warnings: [
-    'Before restoring, turn tailbond off on vps (sudo systemctl disable --now tailbond there): both machines would have the same devices and keys, and devices would switch back and forth.',
-    'Devices reached the old machine at 203.0.113.9:8443; this one is reached at 198.51.100.20:443 (kept). A device with Tailscale on (a router signed in to Tailscale, a phone with the Tailscale app) learns the new address by itself within a few minutes, once this machine has the old one\'s Tailscale name "vps": in the Tailscale admin console remove the old machine (or rename it), then rename this one to vps. A device without Tailscale needs its link again (Devices tab, the QR button next to it): check slate7, pixel-8, beryl. A travel router with the kill switch on has no internet until it reconnects, so send it its new link before you switch over.',
-    "The tunnel addresses become 10.83.142.0/24 (the backup's): if you approved this machine's route in the Tailscale admin console, approve 10.83.142.0/24 instead.",
+    '1. Restore here while vps still runs: slate7, pixel-8, beryl keep using it meanwhile.',
+    "2. Devices reached the old machine at 203.0.113.9:8443; this one is reached at 198.51.100.20:443 (kept). Devices that have only a link (no Tailscale on them): give each its new link from this machine's Devices tab. A GL router: paste it in its tailbond panel (Add another server, Paste a link; it replaces the old one). A phone: scan the new QR code in the tailbond app. A travel router with the kill switch on needs this before step 3.",
+    '3. Then turn tailbond off on vps (sudo systemctl disable --now tailbond there) and give this machine its Tailscale name vps: in the Tailscale admin console remove (or rename) the old machine, then rename this one. Devices with Tailscale on follow by themselves within a few minutes.',
+    "4. If you approved this machine's route in the Tailscale admin console, approve 10.83.142.0/24 instead (the backup's tunnel addresses).",
   ],
 };
 const webApi = (u, extra = {}) => ({

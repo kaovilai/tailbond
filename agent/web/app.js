@@ -992,14 +992,16 @@ function renderUpdates(st) {
   if (u.state === 'checking') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), 'Checking for updates…'));
   else if (u.state === 'downloading') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Downloading ${u.available}…`));
   else if (u.state === 'installing') now.push(h('p', { class: 'ub-big' }, h('span', { class: 'spin' }), `Installing ${u.available}`),
-    h('p', { class: 'muted small', text: 'tailbond restarts; this page comes back by itself in about a minute.' }));
+    h('p', { class: 'muted small', text: `tailbond restarts. Leave this ${srv ? 'server' : 'machine'} on; it comes back by itself, and this page with it, in about a minute.` }));
   else if (off) now.push(h('p', { class: 'ub-big', text: 'Updates are off' }),
     h('p', { class: 'muted small', text: "tailbond doesn't check for new versions. Choose Tell me below to hear about them." }));
   else if (u.available && !retry) {
     now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, notes ? ' · ' : '', notes));
     if (u.method === 'dnf') {
       now.push(h('p', { class: 'small', text: 'Updates for this server come from dnf. In a terminal on this server, run:' }), cmdRow(DNF_CMD));
-    } else if (!selfUpdates(u)) {
+    } else if (selfUpdates(u)) {
+      now.push(h('p', { class: 'muted small', text: 'You can update now or later; everything keeps working meanwhile.' }));
+    } else {
       now.push(h('p', { class: 'small' }, "This build can't update itself; install the new release from ",
         h('a', { href: releasesUrl(u), target: '_blank', rel: 'noopener', text: 'the releases page' }), '.'));
     }
@@ -1030,6 +1032,8 @@ function renderUpdates(st) {
   // server: every device, its version, the ones behind the newest release marked
   if (srv) {
     const latest = latestOf(u, cur);
+    // "up to date" only after a check that worked
+    const checked = !!u.last_check && !u.error && !off;
     const devs = (st.clients || []).filter((c) => c.registered !== false);
     const outs = devs.filter((c) => behind(c, latest));
     const sec = [h('h4', { text: devs.length && outs.length ? `Your devices: ${outs.length} of ${devs.length} out of date` : 'Your devices' })];
@@ -1037,11 +1041,12 @@ function renderUpdates(st) {
       sec.push(h('ul', { class: 'ub-list' }, devs.map((c) => h('li', {}, icon(isPhone(c) ? 'device' : 'ethernet', 'ico sm'), h('b', { text: c.name }),
         h('span', { class: 'muted', text: ` ${KIND_NAME[c.kind] || 'device'} · ${c.version ? c.version + (behind(c, latest) ? ` · behind the latest (${latest})` : '') : 'version not known yet'}` }),
         behind(c, latest) ? h('span', { class: 'chip s-pending ub-mini', text: 'Out of date' })
-          : c.version && latest ? h('span', { class: 'ub-ok small', text: '✓ up to date' }) : null))));
+          : c.version && latest && checked ? h('span', { class: 'ub-ok small', text: '✓ up to date' }) : null))));
       const how = [];
       if (outs.some((c) => !isPhone(c))) how.push('Routers: Update now in its tailbond panel, or Automatic.');
       if (outs.some(isPhone)) how.push('Phones: the app shows it; with Obtainium it installs by itself.');
       if (devs.some((c) => !c.version)) how.push('A version shows once the device has connected with this version of tailbond.');
+      if (!checked && devs.some((c) => c.version && !behind(c, latest))) how.push(off ? "Updates are off, so newer versions aren't checked." : "Couldn't check for newer versions.");
       if (how.length) sec.push(h('p', { class: 'muted small', text: how.join(' ') }));
     } else sec.push(h('p', { class: 'muted small', text: 'No devices yet.' }));
     kids.push(h('div', { class: 'ub-sec' }, sec));
@@ -1157,6 +1162,27 @@ function fileB64(file) {
 }
 const ROLE_WORDS = { server: 'home server', client: 'travel router' };
 function warnText(w) { return typeof w === 'string' ? w : (w && (w.text || w.message || w.code)) || ''; }
+// restore warnings: numbered steps ("1. …", in order) and plain notes; a
+// command inside a step gets its own code line with a Copy button
+const STOP_CMD = 'sudo systemctl disable --now tailbond';
+function stepBody(text) {
+  const i = text.indexOf(STOP_CMD);
+  if (i < 0) return [text];
+  // "Then turn tailbond off on X (CMD there) and give …" → "… on X (run this there):" CMD "Then give …"
+  const rest = text.slice(i + STOP_CMD.length).replace(/^\s*there\)\s*/, '').replace(/^and\s+/, 'Then ');
+  return [text.slice(0, i).replace(/\s*\($/, '') + ' (run this there):', cmdRow(STOP_CMD), rest === '.' ? '' : rest];
+}
+function restoreSteps(list, stepsTitle, notesTitle) {
+  const steps = list.map((w) => /^(\d+)\.\s+([\s\S]*)$/.exec(w)).filter(Boolean);
+  const notes = list.filter((w) => !/^\d+\.\s/.test(w));
+  const out = [];
+  if (steps.length) {
+    out.push(h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: stepsTitle }),
+      h('ol', { start: steps[0][1] }, steps.map((m) => h('li', { value: m[1] }, stepBody(m[2]))))));
+  }
+  if (notes.length) out.push(h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: notesTitle }), h('ul', {}, notes.map((w) => h('li', { text: w })))));
+  return out;
+}
 function openRestore() {
   const file = h('input', { type: 'file', id: 'rs-file', accept: '.tbbackup' });
   const pass = h('input', { type: 'password', id: 'rs-pass', autocomplete: 'off', placeholder: 'The passphrase of that backup' });
@@ -1186,7 +1212,7 @@ function openRestore() {
 }
 function showPreview(body, p, fname) {
   const err = h('div', { class: 'error small' });
-  const go = h('button', { class: 'btn primary danger-fill', type: 'button' }, 'Restore');
+  const go = h('button', { class: 'btn primary', type: 'button' }, 'Restore');
   go.addEventListener('click', async () => {
     go.disabled = true; go.textContent = 'Restoring…';
     try {
@@ -1194,9 +1220,8 @@ function showPreview(body, p, fname) {
       const host = p.host || 'the backup';
       dlg(h('div', { class: 'ub-done' }, icon('backup'), h('h3', { text: 'Restored' })),
         h('p', { text: `The settings from ${host} are in place. A copy of the previous settings was kept${r && r.rollback ? ` (${r.rollback})` : ''}, locked with the same passphrase, in case you want them back.` }),
-        warns.length
-          ? h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: "If you haven't already:" }), h('ol', {}, warns.map((w) => h('li', { text: w }))))
-          : h('p', { class: 'small', text: state.role === 'server' ? 'Devices reconnect by themselves within a few minutes.' : 'tailbond connects to its home server again by itself within a minute.' }),
+        ...(next.length ? restoreSteps(next, 'Next, in order:', "If you haven't already:")
+          : [h('p', { class: 'small', text: state.role === 'server' ? 'Devices reconnect by themselves within a few minutes.' : 'tailbond connects to its home server again by itself within a minute.' })]),
         h('p', { class: 'muted small', text: `Automatic backups now follow the backup: if they were on on ${host}, they stay on here, with the same schedule and passphrase.` }),
         h('p', { class: 'muted small', text: 'tailbond is restarting with them; this page reconnects by itself in a few seconds.' }),
         h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: closeDlg }, 'Done')));
@@ -1204,11 +1229,13 @@ function showPreview(body, p, fname) {
   });
   const changes = Array.isArray(p.changes) ? p.changes : [];
   const warns = (Array.isArray(p.warnings) ? p.warnings : []).map(warnText).filter(Boolean);
+  // after restoring, "Restore here while … still runs" is done
+  const next = warns.filter((w) => !/^1\.\s+Restore here while /.test(w));
   dlg(h('h3', { text: 'Restore this backup?' }),
     h('div', { class: 'ub-file' }, icon('backup', 'ico sm'), h('div', {},
       h('b', { text: fname }),
       h('div', { class: 'muted small', text: `${p.host || '?'} (${ROLE_WORDS[p.role] || p.role}) · made ${fmtWhen(p.created)} · tailbond ${p.agent_version || '?'}` }))),
-    warns.length ? h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: 'Before you restore' }), h('ol', {}, warns.map((w) => h('li', { text: w })))) : null,
+    ...restoreSteps(warns, 'Do these in order', 'Before you restore'),
     h('h4', { text: changes.length ? 'What it replaces' : 'Nothing differs from the current settings' }),
     changes.length ? h('table', { class: 'ub-changes' }, h('tbody', {}, changes.map((c) => h('tr', {},
       h('th', { text: c.what }), h('td', { class: 'muted', text: c.from || '—' }), h('td', { text: '→' }), h('td', { text: c.to || '—' }))))) : null,

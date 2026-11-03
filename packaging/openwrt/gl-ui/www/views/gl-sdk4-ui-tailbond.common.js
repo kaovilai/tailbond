@@ -564,12 +564,13 @@
         var cmdRow = function (cmd) { return h("div", { class: "tb-row", style: { marginTop: "6px" } }, [h("code", { style: { padding: "6px 8px" } }, cmd), self.btn(h, "Copy", function () { self.copy(cmd); }, "small")]); };
         if (u.state === "checking") body.push(big([h("div", { class: "tb-spin" }), "Checking for updates…"]));
         else if (u.state === "downloading") body.push(big([h("div", { class: "tb-spin" }), "Downloading " + u.available + "…"]));
-        else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts; this page comes back by itself in about a minute."));
+        else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts. Leave the router on; it comes back by itself, and this page with it, in about a minute."));
         else if (off) body.push(big(["Updates are off"]), line("tailbond doesn't check for new versions. Choose Tell me below to hear about them.", { color: "#909399" }));
         else if (u.available && !S.retry) {
           body.push(big(["Update available: " + u.available, notes]));
           if (u.method === "dnf") body.push(line("Updates for this server come from dnf. In a terminal on this server, run:"), cmdRow("sudo dnf upgrade tailbond-server"));
-          else if (!selfUp) {
+          else if (selfUp) body.push(line("You can update now or later; everything keeps working meanwhile.", { color: "#909399" }));
+          else {
             var repo = String(u.repo || "kaovilai/tailbond").replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
             body.push(line(["This build can't update itself; install the new release from ", h("a", { class: "tb-link", attrs: { href: "https://github.com/" + repo + "/releases", target: "_blank", rel: "noopener" } }, "the releases page"), "."]));
           }
@@ -596,6 +597,8 @@
           // out of date = behind the newest release known (what's available, else this router's version)
           var latest = u.available || cur, isPhone = function (c) { return c.kind === "android" || c.kind === "phone"; };
           var behind = function (c) { return !!(c.version && latest && verCmp(c.version, latest) < 0); };
+          // "up to date" only after a check that worked
+          var checked = !!u.last_check && !u.error && !off;
           var devs = A(st.clients).filter(function (c) { return c.registered !== false; });
           var outs = devs.filter(behind);
           var sec = [h("div", { class: "tb-sec-t" }, devs.length && outs.length ? "Your devices: " + outs.length + " of " + devs.length + " out of date" : "Your devices")];
@@ -604,13 +607,14 @@
               return h("div", { class: "tb-li", style: { padding: "8px 0" } }, [
                 h("div", { class: "tb-wan-icon", style: { width: "32px", height: "32px" } }, [icon(h, isPhone(c) ? "phone" : "router", 18)]),
                 h("div", { class: "tb-grow" }, [h("b", c.name), h("span", { class: "tb-muted" }, " · " + (KIND_NAME[c.kind] || "device") + " · " + (c.version ? c.version + (behind(c) ? " · behind the latest (" + latest + ")" : "") : "version not known yet"))]),
-                behind(c) ? h("span", { class: "tb-chip warn" }, "Out of date") : c.version && latest ? h("span", { class: "tb-small", style: { color: "#13a35a" } }, "✓ up to date") : null
+                behind(c) ? h("span", { class: "tb-chip warn" }, "Out of date") : c.version && latest && checked ? h("span", { class: "tb-small", style: { color: "#13a35a" } }, "✓ up to date") : null
               ]);
             })));
             var how = [];
             if (outs.some(function (c) { return !isPhone(c); })) how.push("Routers: Update now in its tailbond panel, or Automatic.");
             if (outs.some(isPhone)) how.push("Phones: the app shows it; with Obtainium it installs by itself.");
             if (devs.some(function (c) { return !c.version; })) how.push("A version shows once the device has connected with this version of tailbond.");
+            if (!checked && devs.some(function (c) { return c.version && !behind(c); })) how.push(off ? "Updates are off, so newer versions aren't checked." : "Couldn't check for newer versions.");
             if (how.length) sec.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, how.join(" ")));
           } else sec.push(h("div", { class: "tb-muted tb-small" }, "No devices yet."));
           body.push(h("div", { class: "tb-sec" }, sec));
@@ -708,9 +712,27 @@
       ubWarns: function (pv) {
         return A(pv.warnings).map(function (w) { return typeof w === "string" ? w : (w && (w.text || w.message || w.code)) || ""; }).filter(Boolean);
       },
-      warnBox: function (h, title, list) {
-        return h("div", { class: "tb-alert", style: { marginTop: "4px", marginBottom: "4px", fontSize: "14px", border: "2px solid #f3d19e" } }, [h("div", [h("div", { class: "tb-alert-t" }, title),
-          h("ol", { style: { margin: "6px 0 0", paddingLeft: "20px" } }, list.map(function (w) { return h("li", { style: { margin: "6px 0" } }, w); }))])]);
+      // restore warnings: numbered steps ("1. …", in order) and plain notes; the
+      // stop command inside a step gets its own code line with a Copy button
+      restoreSteps: function (h, list, stepsTitle, notesTitle) {
+        var self = this, cmd = "sudo systemctl disable --now tailbond";
+        var steps = list.map(function (w) { return /^(\d+)\.\s+([\s\S]*)$/.exec(w); }).filter(Boolean);
+        var notes = list.filter(function (w) { return !/^\d+\.\s/.test(w); });
+        var body = function (t) {
+          var i = t.indexOf(cmd);
+          if (i < 0) return t;
+          var rest = t.slice(i + cmd.length).replace(/^\s*there\)\s*/, "").replace(/^and\s+/, "Then ");
+          return [t.slice(0, i).replace(/\s*\($/, "") + " (run this there):",
+            h("div", { class: "tb-row", style: { margin: "6px 0", gap: "8px" } }, [h("code", { style: { padding: "4px 8px", whiteSpace: "nowrap", background: "#fff", borderRadius: "4px" } }, cmd), self.btn(h, "Copy", function () { self.copy(cmd); }, "small")]),
+            rest === "." ? "" : rest];
+        };
+        var box = function (title, kids) {
+          return h("div", { class: "tb-alert", style: { marginTop: "4px", marginBottom: "4px", fontSize: "14px", border: "2px solid #f3d19e" } }, [h("div", { class: "tb-grow" }, [h("div", { class: "tb-alert-t" }, title), kids])]);
+        };
+        var out = [];
+        if (steps.length) out.push(box(stepsTitle, h("ol", { attrs: { start: steps[0][1] }, style: { margin: "6px 0 0", paddingLeft: "20px" } }, steps.map(function (m) { return h("li", { attrs: { value: m[1] }, style: { margin: "6px 0" } }, body(m[2])); }))));
+        if (notes.length) out.push(box(notesTitle, h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } }, notes.map(function (w) { return h("li", { style: { margin: "6px 0" } }, w); }))));
+        return out.length ? out : null;
       },
 
       rPass: function (h, s) {
@@ -754,17 +776,18 @@
               h("div", { class: "tb-wan-icon" }, [icon(h, pv.role === "server" ? "server" : "router")]),
               h("div", { class: "tb-grow" }, [h("div", { style: { fontWeight: 600, wordBreak: "break-all" } }, u.file), h("div", { class: "tb-muted tb-small" }, (pv.host || "?") + " (" + (ROLE_WORDS[pv.role] || pv.role) + ") · made " + fmtWhen(pv.created) + " · tailbond " + (pv.agent_version || "?"))])
             ]),
-            warns.length ? this.warnBox(h, "Before you restore", warns) : null,
+            this.restoreSteps(h, warns, "Do these in order", "Before you restore"),
             h("div", { style: { fontWeight: 600, margin: "12px 0 6px" } }, ch.length ? "What it replaces" : "Nothing differs from the current settings"),
             ch.length ? h("div", { class: "tb-kv tb-small tb-chg" }, [].concat.apply([], ch.map(function (c) { return [h("div", c.what), h("div", [h("span", { class: "tb-muted" }, c.from || "—"), " → ", h("b", c.to || "—")])]; }))) : null,
             p("The current settings are saved first (same passphrase), so you can go back. tailbond restarts afterwards; devices here are offline for a few seconds.", { marginTop: "12px", fontSize: "12px" }),
             err);
-          foot = [this.btn(h, "Back", function () { u.step = "pick"; u.err = ""; }), this.btn(h, u.busy ? "Restoring…" : "Restore", function () { self.doRestore(); }, "danger", u.busy)];
+          foot = [this.btn(h, "Back", function () { u.step = "pick"; u.err = ""; }), this.btn(h, u.busy ? "Restoring…" : "Restore", function () { self.doRestore(); }, "primary", u.busy)];
         } else if (k === "restore") {
-          var dw = this.ubWarns(u.preview || {}), dhost = (u.preview && u.preview.host) || "the backup";
+          // after restoring, "Restore here while … still runs" is done
+          var dw = this.ubWarns(u.preview || {}).filter(function (w) { return !/^1\.\s+Restore here while /.test(w); }), dhost = (u.preview && u.preview.host) || "the backup";
           kids.push(h("div", { class: "tb-dialog-t", style: { color: "#13a35a", display: "flex", alignItems: "center", gap: "8px" } }, [icon(h, "check", 22), "Restored"]),
             p("The settings from " + dhost + " are in place. A copy of the previous settings was kept" + (u.rollback ? " (" + u.rollback + ")" : "") + ", locked with the same passphrase, in case you want them back.", { color: "#303133" }),
-            dw.length ? this.warnBox(h, "If you haven't already:", dw)
+            dw.length ? this.restoreSteps(h, dw, "Next, in order:", "If you haven't already:")
               : p(this.role === "server" ? "Devices reconnect by themselves within a few minutes." : "tailbond connects to its home server again by itself within a minute.", { color: "#303133" }),
             p("Automatic backups now follow the backup: if they were on on " + dhost + ", they stay on here, with the same schedule and passphrase.", { fontSize: "12px" }),
             p("tailbond is restarting with them; this page comes back by itself in a few seconds.", { fontSize: "12px" }));
