@@ -56,9 +56,10 @@ type Agent struct {
 	tlsInfo  tlsInfo
 	sessions map[string]time.Time
 	client   *clientState
-	pairReqs *pairRequests // server role
-	join     *joinState    // client role: asking a server to pair
-	userStop bool          // client: the user turned tailbond off or unpaired
+	pairReqs *pairRequests  // server role
+	shareReg *shareRegistry // server role: Pair & Share sharers
+	join     *joinState     // client role: asking a server to pair
+	userStop bool           // client: the user turned tailbond off or unpaired
 
 	// whois identifies tailnet peers (tests stub it).
 	whois func(ctx context.Context, ip string) (*tailscale.Whois, error)
@@ -138,6 +139,7 @@ func New(store *config.Store, opts Options) *Agent {
 		hookq:       make(chan func(), 32),
 		sessions:    map[string]time.Time{},
 		pairReqs:    newPairRequests(),
+		shareReg:    &shareRegistry{m: map[string]regSharer{}},
 		join:        &joinState{State: joinIdle},
 		apiPort:     "8077",
 		rescan:      make(chan struct{}, 1),

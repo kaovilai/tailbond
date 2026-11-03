@@ -374,7 +374,7 @@ func (a *Agent) pairingFor(u config.User) (*pairResult, error) {
 	p := &pairing.Payload{
 		V: pairing.Version, Name: u.Name, Server: server, User: u.Name, Key: u.Key,
 		Mode: cfg.Mode, TailnetRoutes: config.TailnetRoutes, SNI: tls.sni,
-		ServerName: a.serverName(), Subnet: cfg.Server.Subnet,
+		ServerName: a.serverName(), Subnet: cfg.Server.Subnet, ShareKey: a.serverShareKey(),
 	}
 	if tls.insecure {
 		p.Insecure, p.CertSHA256 = true, tls.sha256

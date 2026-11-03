@@ -15,6 +15,8 @@ const (
 	KindEthernet = "ethernet"
 	KindUSB      = "usb"
 	KindUnknown  = "unknown"
+	// KindShared is a nearby device's mobile data, shared over the LAN (Pair & Share).
+	KindShared = "shared-cellular"
 )
 
 // SysfsRoot is /sys/class/net, overridable in tests.

@@ -124,7 +124,29 @@ type Client struct {
 	// whether bypassed domains resolve through the WAN's DNS (default on).
 	BypassMarkMask string `json:"bypass_mark_mask,omitempty"`
 	BypassLocalDNS *bool  `json:"bypass_local_dns,omitempty"`
+	// Additive: Pair & Share (docs/pair-and-share.md). UseShares: bond the
+	// mobile data nearby devices share (default on). Share: this machine
+	// shares one of its own uplinks (an LTE dongle). ShareKey caches the
+	// server's share key for pairings made before it existed.
+	UseShares *bool        `json:"use_shares,omitempty"`
+	Share     *ShareConfig `json:"share,omitempty"`
+	ShareKey  string       `json:"share_key,omitempty"`
 }
+
+// ShareConfig: this machine lends Iface's data to hubs on its LAN.
+type ShareConfig struct {
+	Enabled bool   `json:"enabled"`
+	Iface   string `json:"iface"`
+	Port    int    `json:"port,omitempty"`  // UDP, default 47077
+	Label   string `json:"label,omitempty"` // default "<hostname>'s <iface>"
+	CapMB   int64  `json:"cap_mb,omitempty"`
+	// Hub names (their pairing's client name) that may use it; empty = any
+	// device paired with the same server.
+	AllowedHubs []string `json:"allowed_hubs,omitempty"`
+}
+
+// SharesUsed reports whether nearby devices' shared data is bonded (default on).
+func (c *Client) SharesUsed() bool { return c.UseShares == nil || *c.UseShares }
 
 // ServerEntry is one paired server in the client's list.
 type ServerEntry struct {

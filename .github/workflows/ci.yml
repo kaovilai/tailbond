@@ -103,6 +103,8 @@ jobs:
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
       - name: e2e-backup (backup, wipe, restore, the client reconnects)
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-backup.sh
+      - name: e2e-share (Pair & Share - a sharer's relay path bonded by a hub)
+        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-share.sh
       - name: Server memory and CPU under load (informational)
         continue-on-error: true
         run: MB=100 MQVPN="$PWD/out/native/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/measure-server-mem.sh

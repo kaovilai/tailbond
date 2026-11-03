@@ -117,6 +117,49 @@ type Status struct {
 	// Updates (docs/architecture.md, "Updates")
 	Protocol int     `json:"protocol,omitempty"`
 	Update   *Update `json:"update,omitempty"`
+	// Client role, Pair & Share (docs/pair-and-share.md): mobile data that
+	// nearby devices share with this hub, why sharing can't work here
+	// (ShareNote, e.g. client isolation), and this machine's own share.
+	Shares    []Share  `json:"shares,omitempty"`
+	ShareNote string   `json:"share_note,omitempty"`
+	Sharing   *Sharing `json:"sharing,omitempty"`
+}
+
+// Share is a nearby device's shared mobile data, as the hub sees it.
+type Share struct {
+	ID       string  `json:"id"`
+	Label    string  `json:"label"`            // "Pixel's 5G (shared)"
+	Path     string  `json:"path"`             // the path's name in paths[] (iface)
+	Addr     string  `json:"addr"`             // the sharer's LAN address
+	Via      string  `json:"via"`              // "mdns" or "server"
+	State    string  `json:"state"`            // connecting, ready, refused, unreachable, lost
+	Reason   string  `json:"reason,omitempty"` // why not ready, in plain words
+	UpBytes  uint64  `json:"up_bytes"`
+	DnBytes  uint64  `json:"down_bytes"`
+	CapLeft  *uint64 `json:"cap_left_bytes,omitempty"` // the sharer's own cap
+	Battery  int     `json:"battery"`                  // -1 unknown
+	Charging bool    `json:"charging"`
+}
+
+// Sharing is this machine sharing one of its uplinks.
+type Sharing struct {
+	Enabled bool         `json:"enabled"`
+	Iface   string       `json:"iface"`
+	Label   string       `json:"label"`
+	Port    int          `json:"port"`
+	State   string       `json:"state"` // sharing, off, no_key, error
+	Error   string       `json:"error,omitempty"`
+	Used    uint64       `json:"used_bytes"`
+	CapMB   int64        `json:"cap_mb,omitempty"`
+	Hubs    []SharingHub `json:"hubs"`
+}
+
+// SharingHub is a hub using this machine's share.
+type SharingHub struct {
+	Hub     string `json:"hub"`
+	Addr    string `json:"addr"`
+	UpBytes uint64 `json:"up_bytes"`
+	DnBytes uint64 `json:"down_bytes"`
 }
 
 // Update is the status of auto-updates on this machine.
