@@ -8,6 +8,7 @@ import dev.tailbond.app.data.Repository
 import dev.tailbond.app.pairing.Pairing
 import dev.tailbond.app.pairing.PairingResult
 import dev.tailbond.app.service.LiveState
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -61,7 +62,7 @@ class E2eReceiver : BroadcastReceiver() {
                     put("servers", repo.servers.value.size)
                     put("server_names", buildJsonArray { repo.servers.value.forEach { add(JsonPrimitive(it.name)) } })
                     put("mode", repo.settings.value.mode?.name)
-                    put("peers", if (peers == null) null else buildJsonObject {
+                    put("peers", if (peers == null) JsonNull else buildJsonObject {
                         put("server", peers.server)
                         put("count", peers.peers.size)
                         put("fetched_at_ms", peers.fetchedAtMs)
