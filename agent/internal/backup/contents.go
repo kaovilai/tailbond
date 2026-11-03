@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
 )
 
 // StateFiles are the state_dir files a backup carries: the self-signed TLS

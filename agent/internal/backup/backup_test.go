@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/config"
 )
 
 const pass = "correct horse battery"

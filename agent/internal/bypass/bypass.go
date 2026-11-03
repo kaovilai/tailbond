@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/config"
 )
 
 const (

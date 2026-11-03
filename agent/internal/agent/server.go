@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/dnsfwd"
-	"github.com/tailbond/tailbond/agent/internal/mqconf"
-	"github.com/tailbond/tailbond/agent/internal/mqctl"
-	"github.com/tailbond/tailbond/agent/internal/pairing"
-	"github.com/tailbond/tailbond/agent/internal/status"
-	"github.com/tailbond/tailbond/agent/internal/supervisor"
-	"github.com/tailbond/tailbond/agent/internal/tlsutil"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/dnsfwd"
+	"github.com/kaovilai/tailbond/agent/internal/mqconf"
+	"github.com/kaovilai/tailbond/agent/internal/mqctl"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/supervisor"
+	"github.com/kaovilai/tailbond/agent/internal/tlsutil"
 )
 
 func (a *Agent) startServer(ctx context.Context) {

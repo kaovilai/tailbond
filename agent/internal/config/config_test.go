@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
 )
 
 func uri(t *testing.T, p pairing.Payload) string {

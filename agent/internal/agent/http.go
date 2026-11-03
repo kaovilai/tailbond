@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/pairing"
-	"github.com/tailbond/tailbond/agent/web"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/web"
 )
 
 const sessionCookie = "tb_session"

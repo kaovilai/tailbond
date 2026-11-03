@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 func landingServer(t *testing.T, edit func(*config.Config)) *Agent {

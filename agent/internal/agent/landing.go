@@ -16,9 +16,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/pairing"
-	"github.com/tailbond/tailbond/agent/web"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/web"
 )
 
 // The phone landing page (server role): http://<server>/ on the Tailscale

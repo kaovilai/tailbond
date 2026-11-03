@@ -6,7 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"github.com/tailbond/tailbond/agent/internal/update"
+	"github.com/kaovilai/tailbond/agent/internal/update"
 	"net/http"
 	"net/netip"
 	"os"
@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/mqconf"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/mqconf"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 // Pair requests: a device on the tailnet asks the server to pair; the admin

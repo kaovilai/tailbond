@@ -29,7 +29,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/config"
 )
 
 func TestWriteFixture(t *testing.T) {

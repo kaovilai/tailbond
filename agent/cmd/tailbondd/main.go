@@ -19,9 +19,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tailbond/tailbond/agent/internal/agent"
-	"github.com/tailbond/tailbond/agent/internal/backup"
-	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/agent"
+	"github.com/kaovilai/tailbond/agent/internal/backup"
+	"github.com/kaovilai/tailbond/agent/internal/config"
 )
 
 var version = "dev"

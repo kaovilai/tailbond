@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/backup"
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/status"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/backup"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 // Encrypted backups and restore (docs/architecture.md, "Backup and restore").

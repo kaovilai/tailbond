@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/bypass"
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/hooks"
+	"github.com/kaovilai/tailbond/agent/internal/bypass"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/hooks"
 )
 
 // Bypass rules (client role): LAN traffic that skips the tunnel. The agent

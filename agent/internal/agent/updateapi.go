@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/pairing"
-	"github.com/tailbond/tailbond/agent/internal/status"
-	"github.com/tailbond/tailbond/agent/internal/update"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/update"
 )
 
 // HTTP for updates (docs/architecture.md, "Updates" → HTTP).

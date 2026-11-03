@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/status"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 // Setup health (GET /api/health, docs/architecture.md): a few checks that

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/pairing"
-	"github.com/tailbond/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/status"
 )
 
 func clientAgent(t *testing.T, edit func(*config.Config)) *Agent {

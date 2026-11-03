@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/mqctl"
+	"github.com/kaovilai/tailbond/agent/internal/mqctl"
 )
 
 const (

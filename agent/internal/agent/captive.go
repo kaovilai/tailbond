@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/captive"
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/glrepeater"
-	"github.com/tailbond/tailbond/agent/internal/hooks"
-	"github.com/tailbond/tailbond/agent/internal/netif"
-	"github.com/tailbond/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/captive"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/glrepeater"
+	"github.com/kaovilai/tailbond/agent/internal/hooks"
+	"github.com/kaovilai/tailbond/agent/internal/netif"
+	"github.com/kaovilai/tailbond/agent/internal/status"
 )
 
 // Captive portals (client role; docs/architecture.md, "Captive portals").

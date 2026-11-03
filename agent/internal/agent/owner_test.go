@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 // Without a password, only the server owner's devices (alex) use the admin

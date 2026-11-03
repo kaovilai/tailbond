@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/netif"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/netif"
 )
 
 // OpenWrt: WANs are used without configuration; settings keyed by network

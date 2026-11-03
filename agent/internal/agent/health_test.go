@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/status"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 func check(t *testing.T, v healthView, id string) healthCheck {

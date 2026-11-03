@@ -19,15 +19,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/glrepeater"
-	"github.com/tailbond/tailbond/agent/internal/hooks"
-	"github.com/tailbond/tailbond/agent/internal/mqctl"
-	"github.com/tailbond/tailbond/agent/internal/netif"
-	"github.com/tailbond/tailbond/agent/internal/status"
-	"github.com/tailbond/tailbond/agent/internal/supervisor"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
-	"github.com/tailbond/tailbond/agent/internal/update"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/glrepeater"
+	"github.com/kaovilai/tailbond/agent/internal/hooks"
+	"github.com/kaovilai/tailbond/agent/internal/mqctl"
+	"github.com/kaovilai/tailbond/agent/internal/netif"
+	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/supervisor"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/update"
 )
 
 type Options struct {

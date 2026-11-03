@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 // Without a dashboard password, a home server's admin API answers tailnet

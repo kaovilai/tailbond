@@ -21,6 +21,6 @@ tb_ldflags() {
         echo "tb_ldflags: TB_UPDATE_REPO must be owner/name" >&2
         return 1 ;;
     esac
-    [ -n "${TB_UPDATE_REPO:-}" ] && f="$f -X github.com/tailbond/tailbond/agent/internal/update.BuildRepo=$TB_UPDATE_REPO"
+    [ -n "${TB_UPDATE_REPO:-}" ] && f="$f -X github.com/kaovilai/tailbond/agent/internal/update.BuildRepo=$TB_UPDATE_REPO"
     printf '%s\n' "$f"
 }

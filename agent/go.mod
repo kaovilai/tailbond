@@ -1,4 +1,4 @@
-module github.com/tailbond/tailbond/agent
+module github.com/kaovilai/tailbond/agent
 
 go 1.26.0
 

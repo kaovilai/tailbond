@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tailbond/tailbond/agent/internal/backup"
-	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/pairing"
-	"github.com/tailbond/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/backup"
+	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/status"
 )
 
 // fakeGitHub is GitHub's latest-release API plus the release's files.

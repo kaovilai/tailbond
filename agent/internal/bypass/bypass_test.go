@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tailbond/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/config"
 )
 
 func rules(t *testing.T) []config.BypassRule {

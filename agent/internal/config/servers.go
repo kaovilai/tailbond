@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/tailbond/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
 )
 
 // MigrateServers keeps client.servers and client.pairing_uri in step
