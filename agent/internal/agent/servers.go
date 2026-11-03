@@ -141,6 +141,9 @@ func (a *Agent) switchServer(name, why string) {
 	}
 	cs.activeServer, cs.payload = name, s.payload
 	cs.peers, cs.peersAt = nil, time.Time{}
+	if prev != name {
+		a.rt.tunnelIP = "" // the new server's mqvpn reports its own
+	}
 	running := a.sup.Active()
 	if running {
 		cs.switchPending = true

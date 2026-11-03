@@ -796,6 +796,7 @@ else
 fi
 ST="$(cstatus)"
 wait_for 10 "homebox probed" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.servers[0].state == \"unreachable\"'" || true
+wait_for 10 "the vps's tunnel address" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.tunnel_ip == \"10.78.0.2\"'" || true
 ST="$(cstatus)"
 jq -e '.failover.reason == "primary_down" and .servers[0].state == "unreachable" and .servers[1].state == "active" and .tunnel_ip == "10.78.0.2"' <<<"$ST" >/dev/null \
   && ok "status: reason primary_down, homebox unreachable, vps active, tunnel 10.78.0.2" || bad "status: $(jq -c '{failover, servers, tunnel_ip}' <<<"$ST")"
@@ -827,6 +828,7 @@ if wait_for 60 "failed back" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$A
 else
   bad "no failback: $(cstatus | jq -c '{active_server, state, failover, servers}')"
 fi
+wait_for 10 "homebox's tunnel address" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.tunnel_ip | startswith(\"10.77.0.\")'" || true
 cstatus | jq -e '.failover.reason == "" and .servers[1].state != "active" and (.tunnel_ip | startswith("10.77.0."))' >/dev/null \
   && ok "back on homebox (10.77.0.x), vps on standby" || bad "status: $(cstatus | jq -c '{failover, servers, tunnel_ip}')"
 wait_for 10 "ping home" ip netns exec "$NS_C" ping -c1 -W2 10.77.0.1 && ok "ping homebox through the tunnel" || bad "no ping to 10.77.0.1"
