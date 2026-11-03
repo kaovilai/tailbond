@@ -18,6 +18,7 @@ func TestClassify(t *testing.T) {
 		{Facts{Name: "eth2", Driver: "cdc_mbim"}, KindCellular},
 		{Facts{Name: "eth1", DevType: "wwan"}, KindCellular},
 		{Facts{Name: "usb0", Driver: "rndis_host"}, KindUSB},
+		{Facts{Name: "eth1", Driver: "ipheth"}, KindUSB}, // iPhone USB tethering
 		{Facts{Name: "enx001122334455", USB: true}, KindUSB},
 		{Facts{Name: "eth0"}, KindEthernet},
 		{Facts{Name: "enp1s0"}, KindEthernet},
@@ -41,5 +42,15 @@ func TestExcluded(t *testing.T) {
 		if excluded(n) {
 			t.Errorf("%s excluded", n)
 		}
+	}
+}
+
+func TestIPhoneTetheringLabel(t *testing.T) {
+	if TetherLabel("ipheth") != "iPhone (USB)" || TetherLabel("rndis_host") != "" {
+		t.Fatal("tether label")
+	}
+	ifs := annotate([]Iface{{Name: "eth1", Driver: "ipheth", Kind: KindUSB}}, []WAN{{Network: "tethering", Device: "eth1", Kind: KindUSB, Label: "Tethering"}})
+	if ifs[0].Label != "iPhone (USB)" || ifs[0].Network != "tethering" || !ifs[0].WAN {
+		t.Fatalf("annotate: %+v", ifs[0])
 	}
 }

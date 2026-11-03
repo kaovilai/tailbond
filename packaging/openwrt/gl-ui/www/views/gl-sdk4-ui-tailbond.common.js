@@ -23,15 +23,16 @@
   ];
 
   // GL's own names for its WAN types (Internet page).
-  var KIND_LABEL = { ethernet: "Ethernet", wifi: "Repeater", usb: "Tethering", cellular: "Cellular", unknown: "Connection" };
+  var KIND_LABEL = { ethernet: "Ethernet", wifi: "Repeater", usb: "Tethering", cellular: "Cellular", "shared-cellular": "Shared by a phone", unknown: "Connection" };
   // Short nouns for the one-line status.
-  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "Tethering (phone)", cellular: "Cellular", unknown: "a connection" };
-  var KIND_ORDER = { ethernet: 0, wifi: 1, usb: 2, cellular: 3, unknown: 4 };
+  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "Tethering (phone)", cellular: "Cellular", "shared-cellular": "a phone's shared data", unknown: "a connection" };
+  var KIND_ORDER = { ethernet: 0, wifi: 1, usb: 2, cellular: 3, "shared-cellular": 4, unknown: 5 };
   var NOT_CONNECTED_FIX = {
     ethernet: "Plug a cable from the hotel or modem into the WAN port. It's used automatically once connected.",
     wifi: "Join a Wi-Fi network in INTERNET → Repeater. It's used automatically once connected.",
     usb: "Plug in your phone with a USB cable and turn on USB tethering on the phone. It's used automatically once connected.",
     cellular: "Insert a SIM card or plug in the modem, then check INTERNET → Cellular. It's used automatically once connected.",
+    "shared-cellular": "The phone stopped sharing, left this Wi-Fi, or its battery or data limit stopped it. Turn sharing on again on the phone.",
     unknown: "Set it up on the INTERNET page. It's used automatically once connected."
   };
 
@@ -202,6 +203,7 @@
     wifi: "M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01",
     usb: "M8 3h8v6H8zM10 5v2M14 5v2M9 9v6a3 3 0 0 0 6 0V9M12 18v3",
     cellular: "M4 20v-3M9 20v-7M14 20v-11M19 20V4",
+    "shared-cellular": "M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM10 17v-2M12 17v-4M14 17v-6",
     unknown: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v5M12 16h.01",
     server: "M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01",
     phone: "M8 2h8a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM11 18h2",
@@ -1029,7 +1031,7 @@
         var on = this.st && this.st.state === "connected";
         var off = !this.isOn();
         var mode = this.st && this.st.mode;
-        var mobile = w.kind === "usb" || w.kind === "cellular";
+        var mobile = w.kind === "usb" || w.kind === "cellular" || w.kind === "shared-cellular";
         if (!w.enabled) return ["", "Not used", "tailbond leaves this connection alone."];
         if (!w.usable) return ["", "Not connected", NOT_CONNECTED_FIX[w.kind] || NOT_CONNECTED_FIX.unknown];
         if (w.capReached) return ["err", "Paused · monthly limit reached", "Used again next month, or raise the limit."];
@@ -1523,6 +1525,7 @@
           out = out.concat(this.rSignin(h));
           if (on && err) out.push(this.rConnError(h));
           out.push(this.rWans(h));
+          out.push(this.rShares(h));
           out.push(this.rModes(h));
           out.push(this.rHome(h));
           if (this.bp) out.push(this.rBypass(h));
@@ -1578,9 +1581,40 @@
           ]);
         },
 
+        // Pair & Share: phones on this router's Wi-Fi lending their mobile data
+        rShares: function (h) {
+          var self = this, st = this.st || {}, shares = A(st.shares), useOn = st.use_shares !== false;
+          var STATE = { ready: ["ok", "Sharing"], connecting: ["", "Connecting…"], refused: ["warn", "Stopped"], unreachable: ["err", "Can't reach it"], lost: ["err", "Stopped answering"] };
+          var rows = shares.map(function (s) {
+            var chip = STATE[s.state] || ["", s.state];
+            var bits = [];
+            if (s.battery >= 0) bits.push("Battery " + s.battery + "%" + (s.charging ? " · charging" : ""));
+            if (s.state === "ready") bits.push("↓ " + fmtBytes(s.down_bytes) + " ↑ " + fmtBytes(s.up_bytes));
+            if (s.reason && s.state !== "ready") bits.push(s.reason);
+            bits.push(s.via === "server" ? "listed by your home server" : "found on this Wi-Fi");
+            return h("div", { class: "tb-row", style: { padding: "8px 0", borderTop: "1px solid #ebeef5" } }, [
+              h("div", { class: "tb-wan-icon" }, [icon(h, "shared-cellular")]),
+              h("div", { class: "tb-grow" }, [h("div", { class: "tb-wan-t" }, s.label), h("div", { class: "tb-muted tb-small" }, bits.join(" · "))]),
+              h("span", { class: "tb-chip " + chip[0] }, chip[1])
+            ]);
+          });
+          var body = [
+            h("div", { class: "tb-muted", style: { marginBottom: "10px", lineHeight: 1.5 } },
+              "A phone on this router's Wi-Fi can lend its mobile data, and tailbond adds it to the bond like another SIM. On Android: tailbond → Settings → Share my mobile data. On iPhone: the tailbond Share app → Share mobile data (keep it open). Each phone shows up above as a connection with the same Use it / Backup only / Off choice and data limit.")
+          ];
+          if (st.share_note) body.push(this.alert(h, "warn", st.share_note, "Devices here can't reach each other, so phones can't share. Use USB tethering instead: plug the phone into the router."));
+          body = body.concat(rows.length ? rows : [h("div", { class: "tb-muted tb-small" }, useOn ? "No phone is sharing right now." : "Off: phones' shared data isn't used.")]);
+          body.push(h("div", { class: "tb-row", style: { marginTop: "12px", borderTop: "1px solid #ebeef5", paddingTop: "12px" } }, [
+            h("div", { class: "tb-grow" }, [h("div", "Use mobile data that nearby phones share"),
+              h("div", { class: "tb-muted tb-small" }, "Only phones paired with your home server can share with this router.")]),
+            this.sw(h, useOn, function () { self.run("use-shares", api("POST", "/api/share", { use_shares: !useOn }), useOn ? "Phones' shared data not used" : "Using phones' shared data"); }, false, this.busy["use-shares"], "Use nearby phones' shared data")
+          ]));
+          return this.card(h, "Shared by nearby phones", body);
+        },
+
         rWan: function (h, w) {
           var self = this, s = this.wanStatus(w), busy = this.busy["path-" + w.key];
-          var mobile = w.kind === "usb" || w.kind === "cellular";
+          var mobile = w.kind === "usb" || w.kind === "cellular" || w.kind === "shared-cellular";
           var live = s[1].indexOf("In use") === 0;
           var usage = [];
           var capTxt = w.cap ? fmtBytes(w.used) + " of " + fmtCap(w.cap) + " this month" : fmtBytes(w.used) + " this month";

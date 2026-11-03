@@ -423,3 +423,7 @@ input.num { width: 5.5em; flex: none !important; min-width: 0 !important; }
   .ub-backups td:nth-child(3), .ub-backups th:nth-child(3) { display: none; }
 }
 .ub-head .chip { text-transform: none; white-space: nowrap; }
+
+.shares { margin-top: 12px; }
+.shares h3 { margin: 0 0 8px; font-size: 15px; }
+.share-row { padding: 6px 0; border-top: 1px solid var(--line); }

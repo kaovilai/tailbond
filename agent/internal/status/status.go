@@ -121,6 +121,7 @@ type Status struct {
 	// nearby devices share with this hub, why sharing can't work here
 	// (ShareNote, e.g. client isolation), and this machine's own share.
 	Shares    []Share  `json:"shares,omitempty"`
+	UseShares *bool    `json:"use_shares,omitempty"`
 	ShareNote string   `json:"share_note,omitempty"`
 	Sharing   *Sharing `json:"sharing,omitempty"`
 }

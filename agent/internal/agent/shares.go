@@ -584,6 +584,8 @@ func (a *Agent) shareStatus(st *status.Status) {
 		st.Shares = append(st.Shares, s)
 	}
 	st.ShareNote = ss.note
+	use := cfg.Client.SharesUsed()
+	st.UseShares = &use
 	if sc := cfg.Client.Share; sc != nil {
 		sh := &status.Sharing{Enabled: sc.Enabled, Iface: sc.Iface, Label: ss.sharerLabel, Port: sharePort(sc), CapMB: sc.CapMB, Hubs: []status.SharingHub{}, State: "off"}
 		switch {
