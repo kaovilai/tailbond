@@ -65,7 +65,7 @@ app_two_paths() { app_is '[.paths[] | select(.status == 1) | .kind] | (index("WI
 fetch_token() {
   sh_ "printf 'GET $TOKEN_URL_PATH HTTP/1.0\\r\\nHost: 10.77.0.1\\r\\n\\r\\n' | nc -w 5 10.77.0.1 8099" 2>/dev/null
 }
-token_ok() { fetch_token | grep -q "$TOKEN"; }
+token_ok() { fetch_token | grep "$TOKEN" >/dev/null; }
 shot() { adb exec-out screencap -p >"$OUT/$1.png" 2>/dev/null && echo "  screenshot $OUT/$1.png"; }
 # Tap the first view whose text is $1 (uiautomator dump; Compose exposes its texts).
 tap_text() {
@@ -150,7 +150,9 @@ fi
 
 say "VPN on the device"
 # the app says connected a moment before Android lists the VPN network
-vpn_listed() { sh_ dumpsys connectivity | grep -qE 'ni\{VPN CONNECTED|Transports: VPN'; }
+# (grep reads everything: grep -q would end the pipe early, and pipefail
+# would count dumpsys's SIGPIPE as a failure)
+vpn_listed() { sh_ dumpsys connectivity | grep -E 'ni\{VPN CONNECTED|Transports: VPN' >/dev/null; }
 wait_for 20 vpn_listed && ok "dumpsys connectivity: a VPN network is up" || bad "no VPN network in dumpsys connectivity"
 dump_net connected
 TUN="$(sh_ ip -o -4 addr show | awk '$4 ~ /^10\.77\.0\./ {print $2; exit}')"
