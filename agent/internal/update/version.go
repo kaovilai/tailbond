@@ -1,7 +1,6 @@
-// Package update implements tailbond's auto-updates (docs/architecture.md,
-// "Updates"): version ordering, the channel manifest and its GitHub
-// attestation, the install decision, the server's mirror cache and the Linux
-// self-update with trial boots and rollback.
+// Package update implements tailbond's update check (docs/architecture.md,
+// "Updates"): version ordering, the GitHub "latest release" API, and
+// downloads checked against the release's SHA256SUMS.
 package update
 
 import (
@@ -10,20 +9,14 @@ import (
 	"strings"
 )
 
-// Protocol is the agent protocol this build speaks. Bump it when a client
-// needs a newer server to work (manifest requires_server_protocol).
+// Protocol is the agent protocol this build speaks (GET /api/hello).
 const Protocol = 1
 
-// Build-time settings (-ldflags -X, scripts/release/ldflags.sh):
-//   - BuildRepo: the GitHub repository ("owner/name") whose release workflow
-//     must have attested the manifests (CI: github.repository);
-//   - BuildWorkflow: that workflow's path (default DefaultWorkflow);
-//   - DefaultSource: the update source base URL when the config has none.
-var (
-	BuildRepo     string
-	BuildWorkflow string
-	DefaultSource string
-)
+// DefaultRepo is where releases come from; BuildRepo (-ldflags -X, CI:
+// github.repository) overrides it, update.repo in the config overrides both.
+const DefaultRepo = "kaovilai/tailbond"
+
+var BuildRepo string
 
 // Version is a parsed semver: MAJOR.MINOR.PATCH[-pre]. A leading "v" and an
 // OpenWrt package revision ("-r96") are ignored.

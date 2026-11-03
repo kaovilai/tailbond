@@ -157,9 +157,6 @@ func New(store *config.Store, opts Options) *Agent {
 	a.listIfs = netif.Discover
 	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
 	mqvpnBin := cfg.MqvpnBin
-	if o := MqvpnOverride(); o != "" {
-		mqvpnBin = o // this version came with its own mqvpn (self-update)
-	}
 	a.sup = supervisor.New(supervisor.Spec{
 		Bin:      mqvpnBin,
 		Args:     []string{"--config", a.confPath()},

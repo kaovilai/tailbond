@@ -51,7 +51,7 @@ func (a *Agent) clientBackupDir() string {
 }
 
 func (a *Agent) uciExport() string {
-	if a.platform() != platformOpenWrt {
+	if !isOpenWrt() {
 		return ""
 	}
 	out, err := exec.Command("uci", "export", "tailbond").Output()
@@ -66,8 +66,10 @@ func (a *Agent) backupHeader() backup.Header {
 	if n := a.serverName(); a.role == config.RoleServer && n != "" {
 		host = n
 	}
-	plat := a.platform()
-	if plat == platformLinux {
+	plat := "linux"
+	if isOpenWrt() {
+		plat = "openwrt"
+	} else {
 		if _, err := os.Stat("/etc/fedora-release"); err == nil {
 			plat = "fedora"
 		}
@@ -207,7 +209,7 @@ func (a *Agent) hRestore(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	rollback, err := RestoreBackup(a.store, p, cfg, b.Passphrase, a.uciExport(), a.backupHeader(), a.platform() == platformOpenWrt)
+	rollback, err := RestoreBackup(a.store, p, cfg, b.Passphrase, a.uciExport(), a.backupHeader(), isOpenWrt())
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
@@ -473,11 +475,11 @@ func (a *Agent) scheduledBackup(ctx context.Context) {
 }
 
 func (a *Agent) pushBackup(ctx context.Context, data []byte) error {
-	bases := a.mirrorBases(ctx)
-	if len(bases) == 0 {
+	base := a.serverAPIBase()
+	if base == "" {
 		return errors.New("not connected")
 	}
-	url := strings.TrimSuffix(bases[0], "/updates") + "/api/backups/push"
+	url := base + "/api/backups/push"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return err

@@ -1,40 +1,79 @@
 package agent
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tailbond/tailbond/agent/internal/backup"
 	"github.com/tailbond/tailbond/agent/internal/config"
 	"github.com/tailbond/tailbond/agent/internal/pairing"
-	"github.com/tailbond/tailbond/agent/internal/update"
+	"github.com/tailbond/tailbond/agent/internal/status"
 )
 
-type fakeRelease struct {
-	raw   []byte
-	files map[string][]byte
-	srv   *httptest.Server
+// fakeGitHub is GitHub's latest-release API plus the release's files.
+type fakeGitHub struct {
+	mu      sync.Mutex
+	version string
+	files   map[string][]byte
+	sums    map[string]string // name -> sha256 (override = tampered)
+	calls   int
+	srv     *httptest.Server
 }
 
-func newFakeRelease(t *testing.T, version string) *fakeRelease {
+func targz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
-	fr := &fakeRelease{files: map[string][]byte{}}
-	fr.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var b bytes.Buffer
+	gz := gzip.NewWriter(&b)
+	tw := tar.NewWriter(gz)
+	for name, body := range files {
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(body))
+	}
+	tw.Close()
+	gz.Close()
+	return b.Bytes()
+}
+
+func newFakeGitHub(t *testing.T, version string) *fakeGitHub {
+	t.Helper()
+	g := &fakeGitHub{}
+	g.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		defer g.mu.Unlock()
 		switch {
-		case r.URL.Path == "/channels/stable.json":
-			w.Write(fr.raw)
+		case r.URL.Path == "/repos/kaovilai/tailbond/releases/latest":
+			g.calls++
+			var as []map[string]any
+			for n := range g.files {
+				as = append(as, map[string]any{"name": n, "browser_download_url": g.srv.URL + "/dl/" + n, "size": len(g.files[n])})
+			}
+			as = append(as, map[string]any{"name": "SHA256SUMS", "browser_download_url": g.srv.URL + "/dl/SHA256SUMS"})
+			json.NewEncoder(w).Encode(map[string]any{"tag_name": "v" + g.version, "html_url": "https://github.com/kaovilai/tailbond/releases/tag/v" + g.version, "assets": as})
+		case r.URL.Path == "/dl/SHA256SUMS":
+			for n, b := range g.files {
+				s := sha256.Sum256(b)
+				h := hex.EncodeToString(s[:])
+				if o, ok := g.sums[n]; ok {
+					h = o
+				}
+				fmt.Fprintf(w, "%s  %s\n", h, n)
+			}
 		case strings.HasPrefix(r.URL.Path, "/dl/"):
-			if b, ok := fr.files[strings.TrimPrefix(r.URL.Path, "/dl/")]; ok {
+			if b, ok := g.files[strings.TrimPrefix(r.URL.Path, "/dl/")]; ok {
 				w.Write(b)
 				return
 			}
@@ -43,172 +82,206 @@ func newFakeRelease(t *testing.T, version string) *fakeRelease {
 			http.NotFound(w, r)
 		}
 	}))
-	t.Cleanup(fr.srv.Close)
-	fr.publish(t, version)
-	return fr
+	t.Cleanup(g.srv.Close)
+	g.publish(t, version)
+	return g
 }
 
-func (fr *fakeRelease) publish(t *testing.T, version string) {
-	m := update.Manifest{Format: 1, Channel: "stable", Version: version, Protocol: 1, RequiresServerProtocol: 1}
-	for _, name := range []string{"tailbond-linux-x86_64.tar.gz", "tailbond_" + version + "-r1_aarch64_cortex-a53.ipk"} {
-		body := []byte("artifact " + name)
-		fr.files[name] = body
-		h := sha256.Sum256(body)
-		kind, arch := "linux", "x86_64"
-		if strings.HasSuffix(name, ".ipk") {
-			kind, arch = "ipk", "aarch64_cortex-a53"
-		}
-		m.Artifacts = append(m.Artifacts, update.Artifact{Name: name, Kind: kind, Arch: arch, URL: fr.srv.URL + "/dl/" + name, SHA256: hex.EncodeToString(h[:]), Size: int64(len(body))})
+func (g *fakeGitHub) publish(t *testing.T, version string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.version, g.sums = version, map[string]string{}
+	arch := bundleArch()
+	g.files = map[string][]byte{
+		"tailbond-linux-" + arch + ".tar.gz": targz(t, map[string]string{
+			"tailbond-linux-" + arch + "/install.sh":   "#!/bin/sh\n",
+			"tailbond-linux-" + arch + "/VERSION":      version + "\n",
+			"tailbond-linux-" + arch + "/../../escape": "x",
+		}),
+		"tailbond_" + version + "-r1_aarch64_cortex-a53.ipk":            []byte("ipk a53"),
+		"tailbond_" + version + "-r1_aarch64_cortex-a53_neon-vfpv4.ipk": []byte("ipk neon"),
 	}
-	fr.raw, _ = json.Marshal(m)
 }
 
-// noAttestations is a GitHub API that has no attestation for anything.
-func noAttestations(t *testing.T) string {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL
+type runCall struct {
+	name      string
+	args, env []string
 }
 
-func TestServerMirrorAndClientVersions(t *testing.T) {
-	fr := newFakeRelease(t, "0.2.0")
+// updAgent: a server agent on 0.1.0 checking g, with a recording runner.
+func updAgent(t *testing.T, g *fakeGitHub, method string) (*Agent, *[]runCall) {
 	a := pairServer(t)
 	a.opts.Version = "0.1.0"
+	a.upd.method = method
+	var calls []runCall
+	a.upd.runner = func(name string, args, env []string) error {
+		calls = append(calls, runCall{name, args, env})
+		return nil
+	}
 	a.store.Update(func(c *config.Config) error {
-		c.Update = &config.UpdateSettings{Source: fr.srv.URL + "/channels", Repo: "tailbond/tailbond", Policy: "notify", Verify: "attestation"}
+		c.Update = &config.UpdateSettings{APIURL: g.srv.URL}
 		return nil
 	})
-	a.upd.githubAPI = noAttestations(t)
-	if _, err := a.addClient(context.Background(), "slate7"); err != nil {
-		t.Fatal(err)
-	}
-	// attestation: the fake release has none (or this build can't check
-	// them, -tags noattest): nothing is offered or mirrored
-	a.checkManifest(context.Background())
-	if v := a.updateView(); v.Available != "" || !strings.Contains(v.Error, "attestation") || v.Verify != "attestation" || v.Repo != "tailbond/tailbond" || v.Mirror.Version != "" {
-		t.Fatalf("unattested manifest: %+v %+v", v, v.Mirror)
-	}
-	// sha256-only (setups without GitHub): offered and mirrored
-	a.store.Update(func(c *config.Config) error { c.Update.Verify = "sha256-only"; return nil })
-	a.checkManifest(context.Background())
+	return a, &calls
+}
+
+func TestUpdateCheckNotifyAndInstall(t *testing.T) {
+	ctx := context.Background()
+	g := newFakeGitHub(t, "0.2.0")
+	a, calls := updAgent(t, g, methodStatic)
+	// notify (default): shown, not installed
+	a.updateTick(ctx, false)
 	v := a.updateView()
-	if v.Available != "0.2.0" || v.Source != "public" || v.Error != "" || v.Verified != "sha256" || v.Mirror == nil || v.Mirror.Version != "0.2.0" || v.Mirror.Files != 2 {
-		t.Fatalf("view %+v mirror %+v", v, v.Mirror)
+	if v.Available != "0.2.0" || v.Policy != "notify" || v.Method != "static" || v.Repo != "kaovilai/tailbond" || !strings.HasSuffix(v.NotesURL, "/v0.2.0") || v.Error != "" || len(*calls) != 0 {
+		t.Fatalf("notify: %+v calls %v", v, *calls)
 	}
-	// served byte-identical, to tailnet sources and token holders only
-	w := req(t, a, "GET", "/updates/stable.json", "100.101.9.9:4000", "", nil)
-	if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), fr.raw) {
-		t.Fatalf("mirror manifest: %d", w.Code)
+	// Update now: downloads, checks, unpacks, runs the new bundle's install.sh --update
+	if w := req(t, a, "POST", "/api/update/install", "127.0.0.1:1", "", map[string]any{}); w.Code != http.StatusAccepted {
+		t.Fatalf("install: %d %s", w.Code, w.Body)
 	}
-	// with a dashboard password, a non-tailnet source needs a token
-	a.store.Update(func(c *config.Config) error { c.UIPassword = "pw"; return nil })
-	if w := req(t, a, "GET", "/updates/stable.json", "192.168.1.50:4000", "", nil); w.Code != http.StatusUnauthorized {
-		t.Fatalf("LAN source without token: %d", w.Code)
+	a.updateTick(ctx, true)
+	if len(*calls) != 1 {
+		t.Fatalf("runner calls %v (%+v)", *calls, a.updateView())
 	}
-	key := ""
-	for _, u := range a.store.Get().Server.Users {
-		key = u.Key
+	c := (*calls)[0]
+	bundle := filepath.Join(a.store.Get().StateDir, "update", "0.2.0", "tailbond-linux-"+bundleArch())
+	if c.name != filepath.Join(bundle, "install.sh") || strings.Join(c.args, " ") != "--update --bundle-dir "+bundle {
+		t.Fatalf("ran %+v", c)
 	}
-	r := httptest.NewRequest("GET", "/updates/files/tailbond-linux-x86_64.tar.gz", nil)
-	r.RemoteAddr = "192.168.1.50:4000"
-	r.Header.Set("Authorization", "Bearer "+APIToken(key))
-	r.Header.Set("X-Tailbond-Version", "0.1.0")
-	r.Header.Set("X-Tailbond-Kind", "router")
-	rw := httptest.NewRecorder()
-	a.Handler().ServeHTTP(rw, r)
-	if rw.Code != 200 || rw.Body.String() != "artifact tailbond-linux-x86_64.tar.gz" {
-		t.Fatalf("artifact with token: %d %q", rw.Code, rw.Body)
+	if b, _ := os.ReadFile(filepath.Join(bundle, "VERSION")); strings.TrimSpace(string(b)) != "0.2.0" {
+		t.Fatal("bundle not unpacked")
 	}
-	if w := req(t, a, "GET", "/updates/files/..%2Fstate.json", "100.101.9.9:4000", "", nil); w.Code != 404 {
-		t.Fatalf("path escape: %d", w.Code)
+	if _, err := os.Stat(filepath.Join(a.store.Get().StateDir, "escape")); err == nil {
+		t.Fatal("tar path escaped the update directory")
 	}
-	// a client is reported out of date (this server runs 0.2.0 now)
-	a.opts.Version = "0.2.0"
-	v = a.updateView()
-	if len(v.Outdated) != 1 || v.Outdated[0].Name != "slate7" || v.Outdated[0].Version != "0.1.0" || v.Outdated[0].Kind != "router" {
-		t.Fatalf("outdated %+v", v.Outdated)
+	if v := a.updateView(); v.State != "installing" {
+		t.Fatalf("state %s", v.State)
 	}
-	// a newer release: the old version's files are kept (keep-last-2)
-	fr.publish(t, "0.2.1")
-	a.checkManifest(context.Background())
-	if _, err := os.Stat(a.mirror().FilePath("tailbond_0.2.0-r1_aarch64_cortex-a53.ipk")); err != nil {
-		t.Fatal("previous version's files pruned")
-	}
-	// a broken manifest is refused and the mirror keeps the good one
-	fr.raw = bytes.Replace(fr.raw, []byte(`"format":1`), []byte(`"format":7`), 1)
-	a.checkManifest(context.Background())
-	if v := a.updateView(); v.Error == "" || v.Mirror.Version != "0.2.1" {
-		t.Fatalf("broken: %+v %+v", v, v.Mirror)
-	}
-	// switching back to attestations: the cached sha256-only manifest isn't
-	// offered (or installable) any more
-	a.store.Update(func(c *config.Config) error { c.Update.Verify = "attestation"; return nil })
-	a.checkManifest(context.Background())
-	if v := a.updateView(); v.Available != "" || v.Verified != "" || a.upd.manifest != nil {
-		t.Fatalf("sha256-only cache offered under attestation: %+v", v)
+	// a tampered bundle (SHA256SUMS disagrees): failed, nothing run
+	g.publish(t, "0.3.0")
+	g.mu.Lock()
+	g.sums["tailbond-linux-"+bundleArch()+".tar.gz"] = strings.Repeat("0", 64)
+	g.mu.Unlock()
+	a.updateTick(ctx, true)
+	if v := a.updateView(); v.State != "failed" || !strings.Contains(v.Error, "SHA-256") || len(*calls) != 1 {
+		t.Fatalf("tampered: %+v calls %d", v, len(*calls))
 	}
 }
 
-func TestUpdateUploadAndPolicy(t *testing.T) {
-	fr := newFakeRelease(t, "0.3.0")
-	a := pairServer(t)
-	a.opts.Version = "0.1.0"
-	a.store.Update(func(c *config.Config) error {
-		c.Update = &config.UpdateSettings{Repo: "tailbond/tailbond", Policy: "notify", Verify: "attestation"}
-		return nil
-	})
-	a.upd.githubAPI = noAttestations(t)
-	up := func(name string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/api/update/upload?name="+name, bytes.NewReader(body))
-		r.RemoteAddr = "127.0.0.1:1"
-		r.Header.Set("Content-Type", "application/octet-stream")
-		w := httptest.NewRecorder()
-		a.Handler().ServeHTTP(w, r)
-		return w
-	}
-	if update.AttestSupported {
-		// attestation mode, offline: the manifest waits for its .sigstore.json
-		if w := up("stable.json", fr.raw); w.Code != 200 || !strings.Contains(w.Body.String(), `"waiting_for":"stable.json.sigstore.json"`) {
-			t.Fatalf("manifest: %d %s", w.Code, w.Body)
-		}
-		if w := up("stable.json.sigstore.json", []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`)); w.Code != 400 {
-			t.Fatalf("bad attestation accepted: %d %s", w.Code, w.Body)
-		}
-	} else if w := up("stable.json", fr.raw); w.Code != 400 || !strings.Contains(w.Body.String(), "can't check GitHub attestations") {
-		// -tags noattest with verify attestation: refused, says why
-		t.Fatalf("noattest: %d %s", w.Code, w.Body)
-	}
-	if _, err := os.Stat(filepath.Join(a.mirror().Dir, "upload", "stable.json")); err == nil {
-		t.Fatal("refused upload kept")
-	}
-	// sha256-only: the manifest is taken as uploaded
-	a.store.Update(func(c *config.Config) error { c.Update.Verify = "sha256-only"; return nil })
-	if w := up("stable.json", fr.raw); w.Code != 200 || !strings.Contains(w.Body.String(), `"manifest":"0.3.0"`) || !strings.Contains(w.Body.String(), `"verified":"sha256"`) {
-		t.Fatalf("sha256-only upload: %d %s", w.Code, w.Body)
-	}
-	if w := up("tailbond-linux-x86_64.tar.gz", []byte("corrupted")); w.Code != 400 {
-		t.Fatalf("bad artifact: %d", w.Code)
-	}
-	if w := up("tailbond-linux-x86_64.tar.gz", fr.files["tailbond-linux-x86_64.tar.gz"]); w.Code != 200 || !strings.Contains(w.Body.String(), `"checksum_ok":true`) {
-		t.Fatalf("artifact: %d %s", w.Code, w.Body)
-	}
-	a.checkManifest(context.Background())
-	if v := a.updateView(); v.Available != "0.3.0" || v.Source != "upload" {
-		t.Fatalf("after upload %+v", v)
-	}
-	if w := req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "off", "window": "25:00-01:00"}); w.Code != 400 {
-		t.Fatalf("bad window: %d", w.Code)
-	}
-	if w := req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "auto", "channel": "beta", "window": "02:00-04:00", "pin": "0.3.0"}); w.Code != 200 {
-		t.Fatalf("policy: %d %s", w.Code, w.Body)
-	}
-	if u := a.store.Get().UpdateOrDefault(); u.Policy != "auto" || u.Channel != "beta" || u.Window != "02:00-04:00" || u.Pin != "0.3.0" {
-		t.Fatalf("%+v", u)
-	}
+func TestUpdateAutoOffDevAndMethods(t *testing.T) {
+	ctx := context.Background()
+	g := newFakeGitHub(t, "0.2.0")
+	a, calls := updAgent(t, g, methodStatic)
 	if w := req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "sometimes"}); w.Code != 400 {
 		t.Fatalf("bad policy: %d", w.Code)
+	}
+	if w := req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"repo": "https://gitlab.com/a/b"}); w.Code != 400 {
+		t.Fatalf("bad repo: %d", w.Code)
+	}
+	// auto: installs by itself
+	if w := req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "auto"}); w.Code != 200 {
+		t.Fatalf("policy: %d %s", w.Code, w.Body)
+	}
+	a.updateTick(ctx, false)
+	if len(*calls) != 1 {
+		t.Fatalf("auto didn't install: %+v", a.updateView())
+	}
+	// a dev build shows releases but never installs by itself
+	a.opts.Version = "v0.1.0-12-gabcdef"
+	*calls = nil
+	a.updateTick(ctx, false)
+	if len(*calls) != 0 || a.updateView().Available != "0.2.0" {
+		t.Fatalf("dev build: %+v %v", a.updateView(), *calls)
+	}
+	a.opts.Version = "0.1.0"
+	// off: no checks at all
+	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "off"})
+	g.mu.Lock()
+	before := g.calls
+	g.mu.Unlock()
+	a.updateTick(ctx, false)
+	g.mu.Lock()
+	after := g.calls
+	g.mu.Unlock()
+	if after != before || a.updateView().State != "off" {
+		t.Fatalf("off checked anyway: %d -> %d, %+v", before, after, a.updateView())
+	}
+	// dnf / none: no one-click install, the reason says what to do
+	for m, want := range map[string]string{methodDnf: "dnf upgrade", methodNone: "by hand"} {
+		a.upd.method = m
+		if w := req(t, a, "POST", "/api/update/install", "127.0.0.1:1", "", map[string]any{}); w.Code != 400 || !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("%s: %d %s", m, w.Code, w.Body)
+		}
+	}
+	// up to date: nothing available
+	a.upd.method = methodStatic
+	a.opts.Version = "0.2.0"
+	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "notify"})
+	a.updateTick(ctx, false)
+	if v := a.updateView(); v.Available != "" {
+		t.Fatalf("up to date: %+v", v)
+	}
+	if w := req(t, a, "POST", "/api/update/install", "127.0.0.1:1", "", map[string]any{}); w.Code != http.StatusConflict {
+		t.Fatalf("install when up to date: %d", w.Code)
+	}
+	// GitHub unreachable: the error is shown
+	g.srv.Close()
+	a.updateTick(ctx, false)
+	if v := a.updateView(); !strings.Contains(v.Error, "couldn't check") {
+		t.Fatalf("unreachable: %+v", v)
+	}
+}
+
+func TestUpdateIPKAndResult(t *testing.T) {
+	ctx := context.Background()
+	g := newFakeGitHub(t, "0.2.0")
+	a, calls := updAgent(t, g, methodOpkg)
+	a.upd.pkgDir = t.TempDir()
+	a.upd.ipkCmd = "/usr/lib/tailbond/update-ipk"
+	os.WriteFile(filepath.Join(a.upd.pkgDir, "tailbond_0.1.0-r1_aarch64_cortex-a53.ipk"), []byte("old"), 0o644)
+	os.WriteFile(filepath.Join(a.upd.pkgDir, "current"), []byte("tailbond_0.1.0-r1_aarch64_cortex-a53.ipk\n"), 0o644)
+	a.updateTick(ctx, true)
+	if len(*calls) != 1 {
+		t.Fatalf("no install: %+v", a.updateView())
+	}
+	c := (*calls)[0]
+	want := []string{filepath.Join(a.upd.pkgDir, "tailbond_0.2.0-r1_aarch64_cortex-a53.ipk"), filepath.Join(a.upd.pkgDir, "tailbond_0.1.0-r1_aarch64_cortex-a53.ipk")}
+	if c.name != a.upd.ipkCmd || strings.Join(c.args, " ") != strings.Join(want, " ") || !strings.Contains(strings.Join(c.env, " "), "TB_ROLE=server") {
+		t.Fatalf("ran %+v", c)
+	}
+	if b, _ := os.ReadFile(want[0]); string(b) != "ipk a53" {
+		t.Fatal("ipk content")
+	}
+	// the installers' result file
+	res := `{"result":"rolled_back","version":"0.2.0","from":"0.1.0","at":"2026-11-03T03:00:00Z","detail":"the agent didn't answer within 90s"}`
+	os.WriteFile(filepath.Join(a.store.Get().StateDir, resultFileName), []byte(res), 0o644)
+	a.loadUpdateResult()
+	if v := a.updateView(); v.State != "rolled_back" || v.LastResult != "rolled_back" || v.LastResultVersion != "0.2.0" || !strings.Contains(v.Detail, "90s") {
+		t.Fatalf("result: %+v", v)
+	}
+}
+
+func TestOutdatedClients(t *testing.T) {
+	a := pairServer(t)
+	a.opts.Version = "0.2.0"
+	res, err := a.addClient(context.Background(), "slate7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := pairing.Decode(res.URI)
+	r := httptest.NewRequest("GET", "/api/pairing", nil)
+	r.RemoteAddr = "100.101.9.9:4000"
+	r.Header.Set("Authorization", "Bearer "+APIToken(p.Key))
+	r.Header.Set("X-Tailbond-Version", "0.1.0")
+	r.Header.Set("X-Tailbond-Kind", "router")
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("pairing: %d", w.Code)
+	}
+	v := a.updateView()
+	if len(v.Outdated) != 1 || v.Outdated[0] != (status.Outdated{Name: "slate7", Kind: "router", Version: "0.1.0"}) {
+		t.Fatalf("outdated %+v", v.Outdated)
 	}
 }
 

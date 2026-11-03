@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -24,18 +27,26 @@ import (
 	"github.com/tailbond/tailbond/agent/internal/update"
 )
 
-// Auto-updates (docs/architecture.md, "Updates"). A server checks the
-// public source and mirrors the channel for its clients; a client checks
-// its server's mirror first. Linux installs are self-updates under
-// state_dir (the packaged binary re-execs them, update.Store.Boot); OpenWrt
-// installs go through opkg (/usr/lib/tailbond/update-ipk).
+// Updates (docs/architecture.md, "Updates"): check GitHub's latest release
+// about daily, show it, and install it with the platform's normal mechanism:
+// the static bundle's install.sh --update, opkg on OpenWrt; RPM installs
+// update through dnf.
 
-// ErrRestart asks main to exit with update.ExitRestart (systemd restarts us).
-var ErrRestart = errors.New("restarting for an update")
+// ErrRestart asks main to exit with ExitRestart (systemd restarts us):
+// after a restore.
+var ErrRestart = errors.New("restarting")
+
+// ExitRestart is the exit status that asks systemd for a restart
+// (RestartForceExitStatus=75 in the units).
+const ExitRestart = 75
 
 const (
-	platformLinux   = "linux"
-	platformOpenWrt = "openwrt"
+	methodStatic = "static"
+	methodOpkg   = "opkg"
+	methodDnf    = "dnf"
+	methodNone   = "none"
+
+	defaultInstallEnv = "/etc/tailbond/install.env"
 	// OpenWrt: kept across firmware upgrades (keep.d), see docs/updates.md
 	defaultPkgDir    = "/etc/tailbond/pkg"
 	defaultIPKScript = "/usr/lib/tailbond/update-ipk"
@@ -49,110 +60,93 @@ type clientVersion struct {
 
 // updater is the update state (its own lock: checks run long).
 type updater struct {
-	mu         sync.Mutex
-	view       status.Update
-	manifest   *update.Manifest
-	lastCheck  time.Time
-	failed     []string
-	busy       bool
-	traffic    []int64 // client: tunnel bps samples, newest last
-	srvProto   int     // client: the active server's protocol
-	clients    map[string]clientVersion
-	backup     backupStatus
-	checkNow   chan struct{}
-	installNw  chan string
-	attest     *update.Attestor
-	attestErr  error
-	attestOpts update.AttestOptions
+	mu        sync.Mutex
+	view      status.Update
+	rel       *update.Release
+	lastCheck time.Time
+	busy      bool
+	clients   map[string]clientVersion
+	backup    backupStatus
+	checkNow  chan struct{}
+	installNw chan struct{}
 	// tests and the e2e
-	githubAPI string
-	platform  string
-	pkgDir    string
-	ipkCmd    string
-	now       func() time.Time
+	method     string
+	installEnv string
+	pkgDir     string
+	ipkCmd     string
+	runner     func(name string, args, env []string) error // detached installer
 }
 
 func newUpdater() *updater {
-	return &updater{clients: map[string]clientVersion{}, checkNow: make(chan struct{}, 1), installNw: make(chan string, 1), now: time.Now}
+	return &updater{clients: map[string]clientVersion{}, checkNow: make(chan struct{}, 1), installNw: make(chan struct{}, 1)}
 }
 
-func (a *Agent) updateStore() update.Store {
-	return update.Store{Dir: filepath.Join(a.store.Get().StateDir, "update")}
-}
-
-func (a *Agent) mirror() update.Mirror {
-	u := a.store.Get().UpdateOrDefault()
-	return update.Mirror{Dir: filepath.Join(a.store.Get().StateDir, "update", "mirror"), MaxBytes: int64(u.MirrorMaxMB) << 20}
-}
-
-// trust is the manifest policy: a GitHub attestation of the release
-// workflow (default) or SHA-256s only (update.verify). The attestor is kept
-// while its options don't change (it caches Sigstore's trusted root).
-func (a *Agent) trust() update.Trust {
-	u := a.store.Get().UpdateOrDefault()
-	t := update.Trust{Mode: a.verifyMode()}
-	if t.Mode == update.VerifySHA256 {
-		return t
-	}
-	o := update.AttestOptions{
-		Repo: u.Repo, Workflow: u.Workflow, TrustedRoot: u.TrustedRoot,
-		CacheDir: filepath.Join(a.store.Get().StateDir, "update", "sigstore"),
-		API:      a.upd.githubAPI,
-	}
-	if o.Repo == "" {
-		o.Repo = update.BuildRepo
-	}
-	if o.Workflow == "" {
-		o.Workflow = update.BuildWorkflow
-	}
+func (a *Agent) setUpdate(fn func(v *status.Update)) {
 	a.upd.mu.Lock()
-	defer a.upd.mu.Unlock()
-	if a.upd.attest == nil || a.upd.attestOpts != o {
-		a.upd.attest, a.upd.attestErr = update.NewAttestor(o)
-		a.upd.attestOpts = o
-	}
-	t.Attest, t.AttestErr = a.upd.attest, a.upd.attestErr
-	return t
+	fn(&a.upd.view)
+	a.upd.mu.Unlock()
 }
 
-// verifyMode is update.verify with its default: attestation, except a
-// server built without the verifier (-tags noattest: a GL router as the home
-// server), which can't check them and uses sha256-only (HTTPS + checksums).
-func (a *Agent) verifyMode() string {
-	if v := a.store.Get().UpdateOrDefault().Verify; v != "" {
-		return v
-	}
-	if !update.AttestSupported && a.role == config.RoleServer {
-		return update.VerifySHA256
-	}
-	return update.VerifyAttestation
+func (a *Agent) updateClient() update.Client {
+	u := a.store.Get().UpdateOrDefault()
+	return update.Client{API: u.APIURL, Token: os.Getenv("TB_GITHUB_TOKEN")}
 }
 
-// updateRepo is the repository the attestations must come from.
 func (a *Agent) updateRepo() string {
-	u := a.store.Get().UpdateOrDefault()
-	if u.Repo != "" {
-		return u.Repo
+	r, err := update.RepoPath(a.store.Get().UpdateOrDefault().Repo)
+	if err != nil {
+		return a.store.Get().UpdateOrDefault().Repo
 	}
-	return update.BuildRepo
+	return r
 }
 
-func (a *Agent) updatePolicy() update.Policy {
-	u := a.store.Get().UpdateOrDefault()
-	return update.Policy{Mode: u.Policy, Pin: u.Pin, Window: u.Window, DeferKbps: u.DeferKbps}
-}
-
-func (a *Agent) platform() string {
-	if a.upd.platform != "" {
-		return a.upd.platform
+// method: how this install updates (docs/architecture.md, "Install methods").
+func (a *Agent) method() string {
+	if a.upd.method != "" {
+		return a.upd.method
 	}
 	if _, err := os.Stat("/etc/openwrt_release"); err == nil {
 		if _, err := exec.LookPath("opkg"); err == nil {
-			return platformOpenWrt
+			return methodOpkg
 		}
 	}
-	return platformLinux
+	env := a.upd.installEnv
+	if env == "" {
+		env = defaultInstallEnv
+	}
+	if _, err := os.Stat(env); err == nil {
+		return methodStatic
+	}
+	if exe, err := os.Executable(); err == nil && strings.HasPrefix(exe, "/usr/bin/") {
+		if exec.Command("rpm", "-qf", exe).Run() == nil {
+			return methodDnf
+		}
+	}
+	return methodNone
 }
+
+func isOpenWrt() bool {
+	_, err := os.Stat("/etc/openwrt_release")
+	return err == nil
+}
+
+// serverAPIBase (client): the active server's API through the tunnel, ""
+// while it isn't up.
+func (a *Agent) serverAPIBase() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.client == nil || a.client.payload == nil || !a.rt.ready {
+		return ""
+	}
+	p := a.client.payload
+	host := p.TunnelSubnet().Addr().Next().String()
+	if len(p.DNS) > 0 {
+		host = p.DNS[0]
+	}
+	return "http://" + net.JoinHostPort(host, a.apiPort)
+}
+
+func installable(m string) bool { return m == methodStatic || m == methodOpkg }
 
 // updateView is the status object (copied).
 func (a *Agent) updateView() *status.Update {
@@ -164,41 +158,18 @@ func (a *Agent) updateView() *status.Update {
 		clients[k] = c
 	}
 	a.upd.mu.Unlock()
-	v.Current, v.Policy, v.Channel, v.Pin = a.opts.Version, u.Policy, u.Channel, u.Pin
-	v.Verify = a.verifyMode()
-	if v.Verify == update.VerifyAttestation {
-		v.Repo = a.updateRepo()
-	}
+	v.Current, v.Policy, v.Repo, v.Method = a.opts.Version, u.Policy, a.updateRepo(), a.method()
 	if a.role == config.RoleServer {
-		v.Window = u.Window
 		for _, usr := range a.store.Get().Server.Users {
 			if c, ok := clients[usr.Name]; ok && update.Newer(a.opts.Version, c.Version) {
 				v.Outdated = append(v.Outdated, status.Outdated{Name: usr.Name, Kind: c.Kind, Version: c.Version})
 			}
 		}
-		if *u.Mirror {
-			ms := &status.MirrorStatus{Bytes: a.mirror().Size()}
-			ents, _ := os.ReadDir(a.mirror().FilesDir())
-			ms.Files = len(ents)
-			if raw, _, ok := a.mirror().Manifest(u.Channel); ok {
-				var m update.Manifest
-				if json.Unmarshal(raw, &m) == nil {
-					ms.Version = m.Version
-				}
-			}
-			v.Mirror = ms
-		}
 	}
-	if u.Policy == update.PolicyOff && v.State == "idle" {
+	if u.Policy == config.UpdateOff && (v.State == "idle" || v.State == "") {
 		v.State = "off"
 	}
 	return &v
-}
-
-func (a *Agent) setUpdate(fn func(v *status.Update)) {
-	a.upd.mu.Lock()
-	fn(&a.upd.view)
-	a.upd.mu.Unlock()
 }
 
 // noteClientVersion records what a paired client reported (server role).
@@ -227,167 +198,7 @@ func (a *Agent) clientVersions() map[string]clientVersion {
 	return out
 }
 
-// updateLoop runs for the agent's lifetime.
-func (a *Agent) updateLoop(ctx context.Context) {
-	a.setUpdate(func(v *status.Update) { v.State = "idle" })
-	a.loadUpdateResult()
-	if st := a.updateStore().Load(); st.Trial != nil && update.Same(st.Trial.Version, a.opts.Version) {
-		go a.trialWatch(ctx, *st.Trial)
-	}
-	first := time.NewTimer(20 * time.Second)
-	t := time.NewTicker(time.Minute)
-	sample := time.NewTicker(10 * time.Second)
-	defer first.Stop()
-	defer t.Stop()
-	defer sample.Stop()
-	for {
-		requested := ""
-		select {
-		case <-ctx.Done():
-			return
-		case <-sample.C:
-			a.sampleTraffic()
-			continue
-		case <-first.C:
-		case <-t.C:
-		case <-a.upd.checkNow:
-			a.upd.mu.Lock()
-			a.upd.lastCheck = time.Time{}
-			a.upd.mu.Unlock()
-		case requested = <-a.upd.installNw:
-		}
-		a.updateTick(ctx, requested)
-	}
-}
-
-func (a *Agent) sampleTraffic() {
-	if a.role != config.RoleClient {
-		return
-	}
-	st := a.Snapshot()
-	a.upd.mu.Lock()
-	a.upd.traffic = append(a.upd.traffic, st.Totals.TxBps+st.Totals.RxBps)
-	if len(a.upd.traffic) > 6 {
-		a.upd.traffic = a.upd.traffic[len(a.upd.traffic)-6:]
-	}
-	a.upd.mu.Unlock()
-}
-
-func (a *Agent) trafficKbps() int {
-	a.upd.mu.Lock()
-	defer a.upd.mu.Unlock()
-	if len(a.upd.traffic) == 0 {
-		return 0
-	}
-	var sum int64
-	for _, x := range a.upd.traffic {
-		sum += x
-	}
-	return int(sum / int64(len(a.upd.traffic)) / 1000)
-}
-
-// updateTick checks when due and installs what the policy allows.
-// requested: "Install now" ("latest" or a version).
-func (a *Agent) updateTick(ctx context.Context, requested string) {
-	u := a.store.Get().UpdateOrDefault()
-	if u.Policy == update.PolicyOff && requested == "" {
-		a.setUpdate(func(v *status.Update) { v.State = "off" })
-		return
-	}
-	a.upd.mu.Lock()
-	if a.upd.busy {
-		a.upd.mu.Unlock()
-		return
-	}
-	due := a.upd.lastCheck.IsZero() || time.Since(a.upd.lastCheck) >= time.Duration(u.CheckEveryHours)*time.Hour
-	a.upd.busy = true
-	a.upd.mu.Unlock()
-	defer func() {
-		a.upd.mu.Lock()
-		a.upd.busy = false
-		a.upd.mu.Unlock()
-	}()
-	if due || requested != "" {
-		a.checkManifest(ctx)
-	}
-	a.upd.mu.Lock()
-	m := a.upd.manifest
-	a.upd.mu.Unlock()
-	if m == nil {
-		return
-	}
-	st := a.updateStore().Load()
-	d := update.Decide(a.updatePolicy(), update.Situation{
-		Now: time.Now(), Server: a.role == config.RoleServer, Current: a.opts.Version, Manifest: m,
-		Failed: st.Failed, ServerProtocol: a.serverProtocol(ctx), TrafficKbps: a.trafficKbps(), Requested: requested != "",
-	})
-	a.setUpdate(func(v *status.Update) {
-		v.Deferred, v.DeferredCode = "", ""
-		switch d.Action {
-		case update.ActionWait, update.ActionBlocked:
-			v.State, v.Deferred, v.DeferredCode = "waiting", d.Reason, d.Code
-		case update.ActionNone:
-			if v.State != "failed" && v.State != "rolled_back" {
-				v.State = "idle"
-			}
-		}
-	})
-	if d.Action != update.ActionInstall {
-		return
-	}
-	if err := a.install(ctx, m); err != nil {
-		a.Logf("update to %s: %v", m.Version, err)
-		a.setUpdate(func(v *status.Update) {
-			v.State, v.LastResult, v.Error = "failed", "failed", err.Error()
-			v.LastResultVersion, v.LastResultAt = m.Version, time.Now().UTC().Format(time.RFC3339)
-		})
-	}
-}
-
-// sources: the server's own mirror (offline uploads), the home server's
-// mirror (clients), then the public source.
-func (a *Agent) updateSources(ctx context.Context) []update.Source {
-	u := a.store.Get().UpdateOrDefault()
-	var out []update.Source
-	if a.role == config.RoleClient {
-		for _, base := range a.mirrorBases(ctx) {
-			out = append(out, update.Source{Base: base, Mirror: true, Header: a.clientHeaders()})
-		}
-	}
-	src := u.Source
-	if src == "" {
-		src = update.DefaultSource
-	}
-	if src != "" {
-		out = append(out, update.Source{Base: src})
-	}
-	return out
-}
-
-// mirrorBases: the active server's mirror through the tunnel, then over
-// Tailscale (its MagicDNS name) when the tunnel is down.
-func (a *Agent) mirrorBases(ctx context.Context) []string {
-	a.mu.Lock()
-	p := a.client.payload
-	ready := a.rt.ready
-	a.mu.Unlock()
-	if p == nil {
-		return nil
-	}
-	var out []string
-	if ready {
-		host := p.TunnelSubnet().Addr().Next().String()
-		if len(p.DNS) > 0 {
-			host = p.DNS[0]
-		}
-		out = append(out, "http://"+net.JoinHostPort(host, a.apiPort)+"/updates")
-	}
-	if p.SNI != "" && strings.Contains(p.SNI, ".ts.net") && a.ts.Get(ctx).Running {
-		out = append(out, "http://"+net.JoinHostPort(p.SNI, a.apiPort)+"/updates")
-	}
-	return out
-}
-
+// clientHeaders: what a client sends its server (version reporting).
 func (a *Agent) clientHeaders() http.Header {
 	h := http.Header{}
 	a.mu.Lock()
@@ -400,94 +211,111 @@ func (a *Agent) clientHeaders() http.Header {
 	return h
 }
 
-// serverProtocol: the active server's protocol from GET /api/hello through
-// the tunnel (clients only; 0 = unknown).
-func (a *Agent) serverProtocol(ctx context.Context) int {
-	if a.role != config.RoleClient {
-		return 0
-	}
-	for _, base := range a.mirrorBases(ctx) {
-		h, err := a.fetchHello(ctx, strings.TrimSuffix(strings.TrimPrefix(base, "http://"), "/updates"))
-		if err == nil {
+// updateLoop runs for the agent's lifetime: a check a minute after start,
+// then every check_every_hours (default 24); Check now / Update now at once.
+func (a *Agent) updateLoop(ctx context.Context) {
+	a.setUpdate(func(v *status.Update) { v.State = "idle" })
+	a.loadUpdateResult()
+	first := time.NewTimer(time.Minute)
+	t := time.NewTicker(10 * time.Minute)
+	defer first.Stop()
+	defer t.Stop()
+	for {
+		install := false
+		select {
+		case <-ctx.Done():
+			return
+		case <-first.C:
+		case <-t.C:
 			a.upd.mu.Lock()
-			a.upd.srvProto = h.Protocol
+			due := time.Since(a.upd.lastCheck) >= time.Duration(a.store.Get().UpdateOrDefault().CheckEveryHours)*time.Hour
 			a.upd.mu.Unlock()
-			return h.Protocol
+			if !due {
+				continue
+			}
+		case <-a.upd.checkNow:
+		case <-a.upd.installNw:
+			install = true
 		}
+		a.updateTick(ctx, install)
 	}
-	a.upd.mu.Lock()
-	defer a.upd.mu.Unlock()
-	return a.upd.srvProto
 }
 
-// checkManifest fetches and verifies the channel manifest; servers also
-// mirror it and its artifacts.
-func (a *Agent) checkManifest(ctx context.Context) {
-	u := a.store.Get().UpdateOrDefault()
-	t := a.trust()
-	a.setUpdate(func(v *status.Update) { v.State, v.Error = "checking", "" })
-	now := time.Now().UTC()
+// updateTick checks (unless off) and installs when asked or automatic.
+func (a *Agent) updateTick(ctx context.Context, install bool) {
 	a.upd.mu.Lock()
-	a.upd.lastCheck = now
-	a.upd.mu.Unlock()
-	f := &update.Fetcher{}
-	got, err := f.Manifest(ctx, a.updateSources(ctx), u.Channel, t)
-	fetchErr := ""
-	if err != nil {
-		fetchErr = err.Error()
-	}
-	src := "public"
-	if got != nil && got.From.Mirror {
-		src = "mirror"
-	}
-	if a.role == config.RoleServer {
-		// the server's own cache: an offline upload newer than what the
-		// public source has, or the last good manifest when it's unreachable
-		if raw, bundle, ok := a.mirror().Manifest(u.Channel); ok {
-			if m, how, b, verr := t.Check(ctx, raw, bundle); verr == nil {
-				switch {
-				case got == nil:
-					got, src = &update.Fetched{Manifest: m, Raw: raw, Bundle: b, Verified: how}, "cache"
-					if a.mirror().Origin(u.Channel) == "upload" {
-						src = "upload"
-					}
-					if u.Source == "" && update.DefaultSource == "" {
-						fetchErr = "" // offline on purpose: uploads only
-					}
-				case update.Newer(m.Version, got.Manifest.Version):
-					got, src = &update.Fetched{Manifest: m, Raw: raw, Bundle: b, Verified: how}, "upload"
-				}
-			}
-		}
-	}
-	if got == nil {
-		// nothing verifies now (policy changed, source gone): an update
-		// that can't be verified isn't offered or installed any more
-		a.upd.mu.Lock()
-		a.upd.manifest = nil
+	if a.upd.busy {
 		a.upd.mu.Unlock()
-		a.setUpdate(func(v *status.Update) {
-			v.State, v.Error, v.LastCheck = "idle", fetchErr, &now
-			v.Available, v.Verified, v.NotesURL, v.Security = "", "", "", false
-		})
 		return
 	}
-	a.upd.mu.Lock()
-	a.upd.manifest = got.Manifest
+	a.upd.busy = true
 	a.upd.mu.Unlock()
+	defer func() {
+		a.upd.mu.Lock()
+		a.upd.busy = false
+		a.upd.mu.Unlock()
+	}()
+	u := a.store.Get().UpdateOrDefault()
+	if u.Policy == config.UpdateOff && !install {
+		a.setUpdate(func(v *status.Update) { v.State = "off" })
+		return
+	}
+	rel := a.check(ctx)
+	if rel == nil || !update.Newer(rel.Version, a.opts.Version) {
+		return
+	}
+	auto := u.Policy == config.UpdateAuto && isRelease(a.opts.Version)
+	if !install && !auto {
+		return
+	}
+	m := a.method()
+	if !installable(m) {
+		return
+	}
+	if err := a.install(ctx, rel, m); err != nil {
+		a.Logf("update to %s: %v", rel.Version, err)
+		a.setUpdate(func(v *status.Update) {
+			v.State, v.LastResult, v.Error = "failed", "failed", err.Error()
+			v.LastResultVersion, v.LastResultAt = rel.Version, time.Now().UTC().Format(time.RFC3339)
+		})
+	}
+}
+
+// check asks GitHub for the latest release.
+func (a *Agent) check(ctx context.Context) *update.Release {
 	a.setUpdate(func(v *status.Update) {
-		v.State, v.LastCheck, v.Source, v.NotesURL, v.Security, v.Error = "idle", &now, src, got.Manifest.NotesURL, got.Manifest.Security, fetchErr
-		v.Verified = got.Verified
-		v.Available = ""
-		if update.Newer(got.Manifest.Version, a.opts.Version) || !isRelease(a.opts.Version) {
-			v.Available = got.Manifest.Version
+		if v.State != "failed" && v.State != "rolled_back" {
+			v.State = "checking"
 		}
 	})
-	if a.role == config.RoleServer && *u.Mirror && (src == "public" || src == "mirror") {
-		if err := a.syncMirror(ctx, u.Channel, got); err != nil {
-			a.Logf("update mirror: %v", err)
-		}
+	now := time.Now().UTC()
+	rel, err := a.updateClient().Latest(ctx, a.store.Get().UpdateOrDefault().Repo)
+	a.upd.mu.Lock()
+	a.upd.lastCheck = now
+	if err == nil {
+		a.upd.rel = rel
 	}
+	a.upd.mu.Unlock()
+	a.setUpdate(func(v *status.Update) {
+		v.LastCheck = &now
+		if v.State == "checking" {
+			v.State = "idle"
+		}
+		if err != nil {
+			v.Error = "couldn't check for updates: " + err.Error()
+			return
+		}
+		v.Error, v.Available, v.NotesURL = "", "", rel.NotesURL
+		// a dev build (not semver) shows the latest release, never installs it
+		if update.Newer(rel.Version, a.opts.Version) || !isRelease(a.opts.Version) {
+			v.Available = rel.Version
+		}
+	})
+	if err != nil {
+		a.Logf("update check: %v", err)
+		return nil
+	}
+	return rel
 }
 
 func isRelease(v string) bool {
@@ -495,93 +323,135 @@ func isRelease(v string) bool {
 	return ok
 }
 
-// syncMirror stores the manifest and downloads its artifacts (skipping
-// ones already cached), keeping the previous version's (keep-last-2).
-func (a *Agent) syncMirror(ctx context.Context, channel string, got *update.Fetched) error {
-	mir := a.mirror()
-	var prev *update.Manifest
-	if raw, _, ok := mir.Manifest(channel); ok {
-		var m update.Manifest
-		if json.Unmarshal(raw, &m) == nil && m.Version != got.Manifest.Version {
-			prev = &m
-		}
+func (a *Agent) install(ctx context.Context, rel *update.Release, m string) error {
+	a.setUpdate(func(v *status.Update) { v.State, v.Error = "downloading", "" })
+	switch m {
+	case methodStatic:
+		return a.installStatic(ctx, rel)
+	case methodOpkg:
+		return a.installIPK(ctx, rel)
 	}
-	if err := mir.Store(channel, got.Raw, got.Bundle); err != nil {
-		return err
-	}
-	mir.SetOrigin(channel, "public")
-	f := &update.Fetcher{}
-	src := []update.Source{got.From}
-	var total int64
-	for _, art := range got.Manifest.Artifacts {
-		total += art.Size
-		if mir.MaxBytes > 0 && total > mir.MaxBytes {
-			a.Logf("update mirror: %s skipped (over mirror_max_mb)", art.Name)
-			continue
-		}
-		dst := mir.FilePath(art.Name)
-		if dst == "" || update.CheckFile(dst, art) == nil {
-			continue
-		}
-		if _, err := f.Download(ctx, src, art, dst); err != nil {
-			a.Logf("update mirror: %v", err)
-		}
-	}
-	mir.Prune([]*update.Manifest{got.Manifest}, []*update.Manifest{prev})
-	return nil
+	return fmt.Errorf("this install updates with %s", m)
 }
 
-// install applies a release on this platform.
-func (a *Agent) install(ctx context.Context, m *update.Manifest) error {
-	a.setUpdate(func(v *status.Update) { v.State = "downloading" })
-	if a.platform() == platformOpenWrt {
-		return a.installIPK(ctx, m)
-	}
-	return a.installLinux(ctx, m)
-}
-
-func linuxArch() string {
-	switch goruntime.GOARCH {
-	case "amd64":
-		return "x86_64"
-	case "arm64":
+func bundleArch() string {
+	if goruntime.GOARCH == "arm64" {
 		return "aarch64"
 	}
-	return goruntime.GOARCH
+	return "x86_64"
 }
 
-func (a *Agent) installLinux(ctx context.Context, m *update.Manifest) error {
-	art, ok := m.Find("linux", linuxArch())
-	if !ok {
-		return fmt.Errorf("the release has no linux/%s build", linuxArch())
-	}
-	s := a.updateStore()
-	dst := filepath.Join(s.DownloadDir(), art.Name)
-	if _, err := (&update.Fetcher{}).Download(ctx, a.updateSources(ctx), art, dst); err != nil {
+// installStatic: download the bundle (checked against SHA256SUMS), unpack it
+// under state_dir/update/<version>/ and run its install.sh --update outside
+// our own service (systemd-run), since it restarts tailbond.
+func (a *Agent) installStatic(ctx context.Context, rel *update.Release) error {
+	name := "tailbond-linux-" + bundleArch() + ".tar.gz"
+	root := filepath.Join(a.store.Get().StateDir, "update")
+	dir := filepath.Join(root, rel.Version)
+	os.RemoveAll(dir)
+	tgz := dir + ".tar.gz"
+	defer os.Remove(tgz)
+	if err := a.updateClient().Download(ctx, rel, name, tgz); err != nil {
 		return err
 	}
-	defer os.Remove(dst)
-	if err := s.Unpack(dst, m.Version); err != nil {
+	if err := untar(tgz, dir); err != nil {
+		return fmt.Errorf("unpack %s: %w", name, err)
+	}
+	bundle := filepath.Join(dir, "tailbond-linux-"+bundleArch())
+	script := filepath.Join(bundle, "install.sh")
+	if _, err := os.Stat(script); err != nil {
+		return fmt.Errorf("%s has no install.sh", name)
+	}
+	pruneUpdates(root, rel.Version)
+	a.Logf("update %s -> %s: %s --update (restarts tailbond; goes back to %s if it doesn't come up)", a.opts.Version, rel.Version, script, a.opts.Version)
+	a.setUpdate(func(v *status.Update) { v.State = "installing" })
+	return a.runDetached(script, []string{"--update", "--bundle-dir", bundle}, nil)
+}
+
+// runDetached starts an installer that outlives a restart of tailbond:
+// under systemd its own transient unit (systemd-run), else a new session.
+func (a *Agent) runDetached(name string, args, env []string) error {
+	if a.upd.runner != nil {
+		return a.upd.runner(name, args, env)
+	}
+	if p, err := exec.LookPath("systemd-run"); err == nil && os.Getenv("INVOCATION_ID") != "" {
+		sargs := []string{"--unit", "tailbond-update-" + strconv.FormatInt(time.Now().Unix(), 10), "--collect", "--quiet"}
+		for _, e := range env {
+			sargs = append(sargs, "--setenv", e)
+		}
+		sargs = append(sargs, "--", name)
+		out, err := exec.Command(p, append(sargs, args...)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("systemd-run: %v: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
 		return err
 	}
-	tr := update.Trial{}
-	st := a.Snapshot()
-	if a.role == config.RoleServer {
-		for _, c := range st.Clients {
-			if c.Connected {
-				tr.ClientsBefore++
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// untar unpacks a .tar.gz into dir (regular files and directories only,
+// nothing outside dir).
+func untar(tgz, dir string) error {
+	f, err := os.Open(tgz)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		p := filepath.Join(dir, filepath.Clean("/"+h.Name))
+		switch h.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(p, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				return err
+			}
+			w, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(h.Mode)&0o755|0o600)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(w, io.LimitReader(tr, 512<<20))
+			if cerr := w.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				return err
 			}
 		}
-	} else {
-		tr.WasConnected = st.State == status.StateConnected
 	}
-	if err := s.Install(m.Version, tr); err != nil {
-		return err
+}
+
+// pruneUpdates keeps only the unpacked bundle being installed.
+func pruneUpdates(dir, keep string) {
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if e.IsDir() && e.Name() != keep {
+			if _, ok := update.Parse(e.Name()); ok {
+				os.RemoveAll(filepath.Join(dir, e.Name()))
+			}
+		}
 	}
-	a.Logf("update %s -> %s installed; restarting into it (health check within %s, else rollback)", a.opts.Version, m.Version, update.TrialTimeout)
-	a.setUpdate(func(v *status.Update) { v.State = "installing" })
-	a.requestRestart()
-	return nil
 }
 
 // opkgArchs lists the package architectures, best first.
@@ -611,8 +481,27 @@ func opkgArchs() []string {
 	return names
 }
 
-func (a *Agent) installIPK(ctx context.Context, m *update.Manifest) error {
-	art, ok := m.Find("ipk", opkgArchs()...)
+// ipkFor picks the release's ipk for one of the archs (best first).
+func ipkFor(rel *update.Release, archs []string) (update.Asset, bool) {
+	for _, arch := range archs {
+		if a, ok := rel.FindAsset(func(n string) bool {
+			return strings.HasPrefix(n, "tailbond_") && strings.HasSuffix(n, "_"+arch+".ipk")
+		}); ok {
+			return a, true
+		}
+	}
+	return update.Asset{}, false
+}
+
+// installIPK: download the ipk (checked against SHA256SUMS) into the
+// package cache and run update-ipk detached (opkg install, health check,
+// the previous package back on failure).
+func (a *Agent) installIPK(ctx context.Context, rel *update.Release) error {
+	archs := opkgArchs()
+	if len(archs) == 0 && a.upd.method == methodOpkg { // tests: no opkg here
+		archs = []string{"aarch64_cortex-a53"}
+	}
+	art, ok := ipkFor(rel, archs)
 	if !ok {
 		return errors.New("the release has no package for this router's architecture")
 	}
@@ -631,7 +520,7 @@ func (a *Agent) installIPK(ctx context.Context, m *update.Manifest) error {
 		}
 	}
 	dst := filepath.Join(dir, art.Name)
-	if _, err := (&update.Fetcher{}).Download(ctx, a.updateSources(ctx), art, dst); err != nil {
+	if err := a.updateClient().Download(ctx, rel, art.Name, dst); err != nil {
 		return err
 	}
 	script := a.upd.ipkCmd
@@ -642,40 +531,27 @@ func (a *Agent) installIPK(ctx context.Context, m *update.Manifest) error {
 	if a.Snapshot().State == status.StateConnected {
 		was = "1"
 	}
-	cmd := exec.Command(script, dst, prev)
-	cmd.Env = append(os.Environ(), "TB_WAS_CONNECTED="+was, "TB_ROLE="+a.role)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() { _ = cmd.Wait() }()
-	a.Logf("update %s -> %s: %s %s started (it restarts tailbond; rollback to the previous package if unhealthy)", a.opts.Version, m.Version, script, art.Name)
+	a.Logf("update %s -> %s: %s %s (restarts tailbond; the previous package goes back if it doesn't come up)", a.opts.Version, rel.Version, script, art.Name)
 	a.setUpdate(func(v *status.Update) { v.State = "installing" })
-	return nil
+	return a.runDetached(script, []string{dst, prev}, []string{"TB_WAS_CONNECTED=" + was, "TB_ROLE=" + a.role})
 }
 
-// loadUpdateResult shows the last result: the Linux store's or the OpenWrt
-// updater's result file.
+// loadUpdateResult shows the installers' last result
+// (<state_dir>/update-result.json).
 func (a *Agent) loadUpdateResult() {
-	var r *update.Result
-	if st := a.updateStore().Load(); st.Last != nil {
-		r = st.Last
-		a.upd.mu.Lock()
-		a.upd.failed = st.Failed
-		a.upd.mu.Unlock()
+	b, err := os.ReadFile(filepath.Join(a.store.Get().StateDir, resultFileName))
+	if err != nil {
+		return
 	}
-	if b, err := os.ReadFile(filepath.Join(a.store.Get().StateDir, resultFileName)); err == nil {
-		var x update.Result
-		if json.Unmarshal(b, &x) == nil && (r == nil || x.At > r.At) {
-			r = &x
-		}
+	var r struct {
+		Result, Version, From, At, Detail string
 	}
-	if r == nil {
+	if json.Unmarshal(b, &r) != nil || r.Result == "" {
 		return
 	}
 	a.setUpdate(func(v *status.Update) {
 		v.LastResult, v.Detail, v.LastResultVersion, v.LastResultAt = r.Result, r.Detail, r.Version, r.At
-		if r.Result == "rolled_back" {
+		if r.Result == "rolled_back" && update.Newer(r.Version, a.opts.Version) {
 			v.State = "rolled_back"
 		}
 	})
@@ -684,86 +560,10 @@ func (a *Agent) loadUpdateResult() {
 	}
 }
 
-// trialWatch: this version is on trial; commit once healthy, else roll
-// back and restart into the previous one.
-func (a *Agent) trialWatch(ctx context.Context, tr update.Trial) {
-	a.setUpdate(func(v *status.Update) { v.State = "trial" })
-	a.Logf("update %s on trial until %s", tr.Version, tr.Deadline.Local().Format("15:04:05"))
-	t := time.NewTicker(3 * time.Second)
-	defer t.Stop()
-	for {
-		ok, why := a.healthy(tr)
-		if ok {
-			_ = a.updateStore().Commit("healthy")
-			a.Logf("update %s is healthy; keeping it", tr.Version)
-			a.setUpdate(func(v *status.Update) {
-				v.State, v.LastResult, v.Detail = "idle", "ok", ""
-				v.LastResultVersion, v.LastResultAt = tr.Version, time.Now().UTC().Format(time.RFC3339)
-			})
-			return
-		}
-		if time.Now().After(tr.Deadline) {
-			_ = a.updateStore().Rollback(why)
-			a.Logf("update %s failed its health check (%s); rolling back", tr.Version, why)
-			a.requestRestart()
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
-}
-
-// healthy: the API serves (we're answering), mqvpn runs, and the tunnel or
-// the clients are back as they were before the update.
-func (a *Agent) healthy(tr update.Trial) (bool, string) {
-	st := a.Snapshot()
-	if a.role == config.RoleServer {
-		if st.State != status.StateConnected {
-			return false, "mqvpn isn't running"
-		}
-		if tr.ClientsBefore > 0 {
-			for _, c := range st.Clients {
-				if c.Connected {
-					return true, ""
-				}
-			}
-			return false, "no client reconnected"
-		}
-		return true, ""
-	}
-	if tr.WasConnected && st.State != status.StateConnected {
-		return false, "the tunnel didn't come back"
-	}
-	if !tr.WasConnected && st.State == status.StateError {
-		return false, "mqvpn fails to start"
-	}
-	return true, ""
-}
-
 // requestRestart ends Run with ErrRestart.
 func (a *Agent) requestRestart() {
 	select {
 	case a.restart <- struct{}{}:
 	default:
 	}
-}
-
-// MqvpnOverride: when this binary was exec'd from an update directory, use
-// that version's mqvpn.
-func MqvpnOverride() string {
-	if os.Getenv(update.EnvExeced) == "" {
-		return ""
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	p := filepath.Join(filepath.Dir(exe), "mqvpn")
-	if fi, err := os.Stat(p); err == nil && fi.Mode()&0o111 != 0 {
-		return p
-	}
-	return ""
 }

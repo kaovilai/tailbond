@@ -18,12 +18,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/tailbond/tailbond/agent/internal/agent"
 	"github.com/tailbond/tailbond/agent/internal/backup"
 	"github.com/tailbond/tailbond/agent/internal/config"
-	"github.com/tailbond/tailbond/agent/internal/update"
 )
 
 var version = "dev"
@@ -75,7 +73,6 @@ func main() {
 	if err := store.SetOverrides(*role, *listen); err != nil {
 		fatal(err)
 	}
-	execUpdate(store)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -89,28 +86,9 @@ func main() {
 	}()
 	if err := a.Run(ctx); err != nil {
 		if errors.Is(err, agent.ErrRestart) {
-			os.Exit(update.ExitRestart)
+			os.Exit(agent.ExitRestart)
 		}
 		fatal(err)
-	}
-}
-
-// execUpdate: in the packaged binary (the base), run the installed update
-// instead when it's newer, rolling back a version whose trial ran out
-// (docs/architecture.md, "Applying an update").
-func execUpdate(store *config.Store) {
-	if os.Getenv(update.EnvExeced) != "" {
-		return
-	}
-	s := update.Store{Dir: store.Get().StateDir + "/update"}
-	bin := s.Boot(version, time.Now())
-	if bin == "" {
-		return
-	}
-	env := append(os.Environ(), update.EnvExeced+"=1")
-	if err := syscall.Exec(bin, append([]string{bin}, os.Args[1:]...), env); err != nil {
-		fmt.Fprintf(os.Stderr, "tailbondd: running the update %s failed (%v); rolling back\n", bin, err)
-		_ = s.Rollback("couldn't start: " + err.Error())
 	}
 }
 

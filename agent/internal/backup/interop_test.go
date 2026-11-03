@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"os"
 	"testing"
-
-	"github.com/tailbond/tailbond/agent/internal/update"
 )
 
 // The Android app's interop vectors (android/app/src/test/resources/interop):
-// the Go side must read the app's backup (and parse its manifest vector, if
-// it has one).
+// the Go side must read the app's backup.
 const interop = "../../../android/app/src/test/resources/interop/"
 
 func TestAndroidInterop(t *testing.T) {
@@ -25,10 +22,5 @@ func TestAndroidInterop(t *testing.T) {
 	want, _ := os.ReadFile(interop + "android-backup-plaintext.json")
 	if h.Platform != "android" || !bytes.Equal(bytes.TrimSpace(pt), bytes.TrimSpace(want)) {
 		t.Fatalf("header %+v, plaintext differs", h)
-	}
-	if raw, err := os.ReadFile(interop + "stable.json"); err == nil {
-		if _, err := update.ParseManifest(raw); err != nil {
-			t.Fatalf("the app's manifest vector: %v", err)
-		}
 	}
 }

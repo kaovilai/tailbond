@@ -238,31 +238,21 @@ type Config struct {
 	Backup *BackupSettings `json:"backup,omitempty"`
 }
 
+// UpdateSettings: the update check (docs/architecture.md, "Updates").
+// Keys of older versions (channel, window, pin, source, mirror, …) are
+// ignored.
 type UpdateSettings struct {
-	Policy          string `json:"policy,omitempty"` // auto | notify | off
-	Channel         string `json:"channel,omitempty"`
-	Source          string `json:"source,omitempty"`
-	Window          string `json:"window,omitempty"`
+	Policy          string `json:"policy,omitempty"` // notify (default) | auto | off
+	Repo            string `json:"repo,omitempty"`   // owner/name or https://github.com/owner/name
 	CheckEveryHours int    `json:"check_every_hours,omitempty"`
-	Pin             string `json:"pin,omitempty"`
-	DeferKbps       int    `json:"defer_kbps,omitempty"`
-	Mirror          *bool  `json:"mirror,omitempty"`
-	MirrorMaxMB     int    `json:"mirror_max_mb,omitempty"`
-	// Verify: "attestation" (a GitHub artifact attestation for the
-	// manifest) or "sha256-only" (trust the source / uploads; check SHA-256s
-	// only). Clients always trust their server's mirror. Empty: attestation,
-	// except a server built without the verifier (a GL router as the home
-	// server): sha256-only (docs/updates.md).
-	Verify string `json:"verify,omitempty"`
-	// Repo ("owner/name") and Workflow (".github/workflows/ci.yml") the
-	// attestation must name; default: the ones this build was made by.
-	Repo     string `json:"repo,omitempty"`
-	Workflow string `json:"workflow,omitempty"`
-	// TrustedRoot: a Sigstore trusted_root.json (private repos: GitHub's
-	// own instance, `gh attestation trusted-root`); default: Sigstore's
-	// public-good instance.
-	TrustedRoot string `json:"trusted_root,omitempty"`
+	APIURL          string `json:"api_url,omitempty"` // default https://api.github.com
 }
+
+const (
+	UpdateNotify = "notify"
+	UpdateAuto   = "auto"
+	UpdateOff    = "off"
+)
 
 type BackupSettings struct {
 	Passphrase string `json:"passphrase,omitempty"`
@@ -271,10 +261,7 @@ type BackupSettings struct {
 	Push       *bool  `json:"push,omitempty"`
 }
 
-var (
-	updateRepoRE     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	updateWorkflowRE = regexp.MustCompile(`^\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$`)
-)
+var updateRepoRE = regexp.MustCompile(`^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?/?)$`)
 
 // UpdateOrDefault returns the update settings with defaults filled in.
 func (c *Config) UpdateOrDefault() UpdateSettings {
@@ -283,26 +270,10 @@ func (c *Config) UpdateOrDefault() UpdateSettings {
 		u = *c.Update
 	}
 	if u.Policy == "" {
-		u.Policy = "auto"
-	}
-	if u.Channel == "" {
-		u.Channel = "stable"
-	}
-	if u.Window == "" {
-		u.Window = "03:00-05:00"
+		u.Policy = UpdateNotify
 	}
 	if u.CheckEveryHours <= 0 {
-		u.CheckEveryHours = 6
-	}
-	if u.DeferKbps == 0 {
-		u.DeferKbps = 300
-	}
-	if u.MirrorMaxMB <= 0 {
-		u.MirrorMaxMB = 600
-	}
-	if u.Mirror == nil {
-		on := true
-		u.Mirror = &on
+		u.CheckEveryHours = 24
 	}
 	return u
 }
@@ -485,25 +456,15 @@ func (c *Config) Validate() error {
 	}
 	if u := c.Update; u != nil {
 		switch u.Policy {
-		case "", "auto", "notify", "off":
+		case "", UpdateNotify, UpdateAuto, UpdateOff:
 		default:
-			return fmt.Errorf("update.policy must be auto, notify or off, not %q", u.Policy)
-		}
-		switch u.Channel {
-		case "", "stable", "beta":
-		default:
-			return fmt.Errorf("update.channel must be stable or beta, not %q", u.Channel)
-		}
-		switch u.Verify {
-		case "", "attestation", "sha256-only":
-		default:
-			return fmt.Errorf("update.verify must be attestation or sha256-only, not %q", u.Verify)
+			return fmt.Errorf("update.policy must be notify, auto or off, not %q", u.Policy)
 		}
 		if u.Repo != "" && !updateRepoRE.MatchString(u.Repo) {
-			return fmt.Errorf("update.repo must be owner/name, not %q", u.Repo)
+			return fmt.Errorf("update.repo must be owner/name or https://github.com/owner/name, not %q", u.Repo)
 		}
-		if u.Workflow != "" && !updateWorkflowRE.MatchString(u.Workflow) {
-			return fmt.Errorf("update.workflow must be .github/workflows/<file>.yml, not %q", u.Workflow)
+		if u.APIURL != "" && !strings.HasPrefix(u.APIURL, "https://") && !strings.HasPrefix(u.APIURL, "http://") {
+			return fmt.Errorf("update.api_url must be an http(s) URL, not %q", u.APIURL)
 		}
 	}
 	return nil

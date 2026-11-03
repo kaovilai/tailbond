@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func untar(t *testing.T, b []byte) map[string]string {
+func untarMap(t *testing.T, b []byte) map[string]string {
 	t.Helper()
 	gz, err := gzip.NewReader(bytes.NewReader(b))
 	if err != nil {
@@ -61,18 +61,18 @@ func TestInstalledIPK(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
-	outer := untar(t, b)
+	outer := untarMap(t, b)
 	if outer["./debian-binary"] != "2.0\n" {
 		t.Fatalf("outer = %v", outer)
 	}
-	ctl := untar(t, []byte(outer["./control.tar.gz"]))
+	ctl := untarMap(t, []byte(outer["./control.tar.gz"]))
 	if c := ctl["./control"]; !strings.Contains(c, "Version: 0.1.0-r42") || strings.Contains(c, "Status:") || strings.Contains(c, "Installed-Time") {
 		t.Fatalf("control = %q", c)
 	}
 	if ctl["./postinst"] == "" {
 		t.Fatal("postinst missing")
 	}
-	data := untar(t, []byte(outer["./data.tar.gz"]))
+	data := untarMap(t, []byte(outer["./data.tar.gz"]))
 	if data["./usr/bin/tailbondd"] != "BINARY" {
 		t.Fatal("binary missing")
 	}
