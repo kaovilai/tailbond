@@ -107,28 +107,28 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
         val bad = s.error != null && a != Availability.AVAILABLE && !s.checking
         Card(
             colors = CardDefaults.cardColors(
-                containerColor = when {
-                    a == Availability.AVAILABLE -> MaterialTheme.colorScheme.primaryContainer
-                    bad -> MaterialTheme.colorScheme.errorContainer
-                    else -> MaterialTheme.colorScheme.surfaceContainerHigh
-                },
+                containerColor = if (bad) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
             ),
             modifier = Modifier.fillMaxWidth().padding(16.dp),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("tailbond ${s.current}", style = MaterialTheme.typography.labelLarge, color = muted)
-                Text(UpdateWords.headline(s, policy), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    UpdateWords.headline(s, policy),
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                    color = if (a == Availability.AVAILABLE) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                )
                 UpdateWords.detail(s, policy)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                 if (s.checking) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(UpdateWords.lastChecked(s, state.now()), style = MaterialTheme.typography.bodySmall, color = muted)
                 val apk = s.apkUrl
                 if (a == Availability.AVAILABLE && apk != null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Button(onClick = { actions.openUrl(apk) }) {
                             Icon(Icons.Filled.Download, null)
                             Text("  Download update")
                         }
-                        s.notesUrl?.let { url -> OutlinedButton(onClick = { actions.openUrl(url) }) { Text("What's new") } }
+                        s.notesUrl?.let { url -> TextButton(onClick = { actions.openUrl(url) }) { Text("What's new", maxLines = 1) } }
                     }
                     if (!u.debugBuild) Text(UpdateWords.howToInstall(s.latest), style = MaterialTheme.typography.bodySmall, color = muted)
                 } else if (a == Availability.DEV_BUILD || a == Availability.NO_APK) {
