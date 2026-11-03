@@ -254,6 +254,8 @@ printf "config interface 'lan'\n\toption device 'lan0'\n" >"$WORK/fakeroot/etc/c
 printf "config client 'client'\n\tlist lan_network 'lan'\n\toption rule_priority '1077'\n\toption portal_table '78'\n" >"$WORK/fakeroot/etc/config/tailbond"
 printf "config dnsmasq\n\tlist server '10.77.0.1'\n\toption noresolv '1'\n\toption rebind_protection '1'\n" >"$WORK/fakeroot/etc/config/dhcp"
 fuci() { FAKE_ROOT="$WORK/fakeroot" "$WORK/stubs/uci" "$@"; }
+# the client hooks caught up: the last one was client-up, and it finished
+hooks_settled() { grep -E ' client-(up|down) ' "$WORK/hook-history.log" | tail -1 | grep -q ' client-up ' && [ -e "$WORK/hook-client-up.done" ]; }
 ok "fake portal, GL repeater mock (auto_portal on, no portal), lan0"
 
 say "hooks"
@@ -577,8 +579,14 @@ else
 fi
 wait_for 10 "portal-close hook" test -e "$WORK/hook-portal-close.done" && ok "portal-close ran" || bad "portal-close missing"
 ! ip -n "$NS_C" rule | grep -q 'lookup 78' && ok "LAN rule removed" || bad "rule left: $(ip -n "$NS_C" rule)"
-fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '10.77.0.1' && ! fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '@eth0' \
-  && [ "$(fuci -q get 'dhcp.@dnsmasq[0].rebind_protection')" = 1 ] && ok "dnsmasq restored" || bad "dnsmasq not restored: $(fuci show dhcp)"
+# eth0 rejoining bonding restarts mqvpn: client-down (drops the tunnel DNS)
+# then client-up (adds it back) may run right after portal-close, so check
+# once the client hooks have caught up.
+dns_restored() {
+  hooks_settled && fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '10.77.0.1' && ! fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '@eth0' \
+    && [ "$(fuci -q get 'dhcp.@dnsmasq[0].rebind_protection')" = 1 ]
+}
+wait_for 30 "dnsmasq restored" dns_restored && ok "dnsmasq restored" || bad "dnsmasq not restored: $(fuci show dhcp; tail -n 4 "$WORK/hook-history.log")"
 wait_for 30 "eth0 back in bonding" grep -q '^Path = eth0' "$WORK/cli/state/client.conf" && ok "eth0 rejoined bonding" || bad "eth0 not rejoined"
 rm -f "$WORK/hook-portal-open.env" "$WORK/hook-portal-close.env" "$WORK/hook-portal-open.done" "$WORK/hook-portal-close.done"
 
@@ -638,8 +646,6 @@ await_src() {
   done
   echo "$got"
 }
-# the client hooks caught up: the last one was client-up, and it finished
-hooks_settled() { grep -E ' client-(up|down) ' "$WORK/hook-history.log" | tail -1 | grep -q ' client-up ' && [ -e "$WORK/hook-client-up.done" ]; }
 cstatus() { capi "http://$API/api/status"; }
 connected() { cstatus | jq -e '.state == "connected"' >/dev/null; }
 
