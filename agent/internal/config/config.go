@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -238,16 +239,29 @@ type Config struct {
 }
 
 type UpdateSettings struct {
-	Policy          string   `json:"policy,omitempty"` // auto | notify | off
-	Channel         string   `json:"channel,omitempty"`
-	Source          string   `json:"source,omitempty"`
-	Window          string   `json:"window,omitempty"`
-	CheckEveryHours int      `json:"check_every_hours,omitempty"`
-	Pin             string   `json:"pin,omitempty"`
-	DeferKbps       int      `json:"defer_kbps,omitempty"`
-	Mirror          *bool    `json:"mirror,omitempty"`
-	MirrorMaxMB     int      `json:"mirror_max_mb,omitempty"`
-	TrustedKeys     []string `json:"trusted_keys,omitempty"`
+	Policy          string `json:"policy,omitempty"` // auto | notify | off
+	Channel         string `json:"channel,omitempty"`
+	Source          string `json:"source,omitempty"`
+	Window          string `json:"window,omitempty"`
+	CheckEveryHours int    `json:"check_every_hours,omitempty"`
+	Pin             string `json:"pin,omitempty"`
+	DeferKbps       int    `json:"defer_kbps,omitempty"`
+	Mirror          *bool  `json:"mirror,omitempty"`
+	MirrorMaxMB     int    `json:"mirror_max_mb,omitempty"`
+	// Verify: "attestation" (a GitHub artifact attestation for the
+	// manifest) or "sha256-only" (trust the source / uploads; check SHA-256s
+	// only). Clients always trust their server's mirror. Empty: attestation,
+	// except a server built without the verifier (a GL router as the home
+	// server): sha256-only (docs/updates.md).
+	Verify string `json:"verify,omitempty"`
+	// Repo ("owner/name") and Workflow (".github/workflows/ci.yml") the
+	// attestation must name; default: the ones this build was made by.
+	Repo     string `json:"repo,omitempty"`
+	Workflow string `json:"workflow,omitempty"`
+	// TrustedRoot: a Sigstore trusted_root.json (private repos: GitHub's
+	// own instance, `gh attestation trusted-root`); default: Sigstore's
+	// public-good instance.
+	TrustedRoot string `json:"trusted_root,omitempty"`
 }
 
 type BackupSettings struct {
@@ -256,6 +270,11 @@ type BackupSettings struct {
 	Keep       int    `json:"keep,omitempty"`
 	Push       *bool  `json:"push,omitempty"`
 }
+
+var (
+	updateRepoRE     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	updateWorkflowRE = regexp.MustCompile(`^\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$`)
+)
 
 // UpdateOrDefault returns the update settings with defaults filled in.
 func (c *Config) UpdateOrDefault() UpdateSettings {
@@ -474,6 +493,17 @@ func (c *Config) Validate() error {
 		case "", "stable", "beta":
 		default:
 			return fmt.Errorf("update.channel must be stable or beta, not %q", u.Channel)
+		}
+		switch u.Verify {
+		case "", "attestation", "sha256-only":
+		default:
+			return fmt.Errorf("update.verify must be attestation or sha256-only, not %q", u.Verify)
+		}
+		if u.Repo != "" && !updateRepoRE.MatchString(u.Repo) {
+			return fmt.Errorf("update.repo must be owner/name, not %q", u.Repo)
+		}
+		if u.Workflow != "" && !updateWorkflowRE.MatchString(u.Workflow) {
+			return fmt.Errorf("update.workflow must be .github/workflows/<file>.yml, not %q", u.Workflow)
 		}
 	}
 	return nil

@@ -1,6 +1,6 @@
-// Package update implements tailbond's signed auto-updates
-// (docs/architecture.md, "Updates"): version ordering, the signed channel
-// manifest, the install decision, the server's mirror cache and the Linux
+// Package update implements tailbond's auto-updates (docs/architecture.md,
+// "Updates"): version ordering, the channel manifest and its GitHub
+// attestation, the install decision, the server's mirror cache and the Linux
 // self-update with trial boots and rollback.
 package update
 
@@ -14,12 +14,14 @@ import (
 // needs a newer server to work (manifest requires_server_protocol).
 const Protocol = 1
 
-// Build-time settings (-ldflags -X):
-//   - BuildKeys: trusted ed25519 public keys, base64 of the raw 32 bytes,
-//     comma separated (CI variable TB_UPDATE_PUBKEY);
+// Build-time settings (-ldflags -X, scripts/release/ldflags.sh):
+//   - BuildRepo: the GitHub repository ("owner/name") whose release workflow
+//     must have attested the manifests (CI: github.repository);
+//   - BuildWorkflow: that workflow's path (default DefaultWorkflow);
 //   - DefaultSource: the update source base URL when the config has none.
 var (
-	BuildKeys     string
+	BuildRepo     string
+	BuildWorkflow string
 	DefaultSource string
 )
 

@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -22,21 +21,18 @@ import (
 )
 
 type fakeRelease struct {
-	priv     ed25519.PrivateKey
-	raw, sig []byte
-	files    map[string][]byte
-	srv      *httptest.Server
+	raw   []byte
+	files map[string][]byte
+	srv   *httptest.Server
 }
 
 func newFakeRelease(t *testing.T, version string) *fakeRelease {
 	t.Helper()
-	fr := &fakeRelease{priv: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{4}, 32)), files: map[string][]byte{}}
+	fr := &fakeRelease{files: map[string][]byte{}}
 	fr.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/channels/stable.json":
 			w.Write(fr.raw)
-		case r.URL.Path == "/channels/stable.json.sig":
-			w.Write(fr.sig)
 		case strings.HasPrefix(r.URL.Path, "/dl/"):
 			if b, ok := fr.files[strings.TrimPrefix(r.URL.Path, "/dl/")]; ok {
 				w.Write(b)
@@ -65,11 +61,15 @@ func (fr *fakeRelease) publish(t *testing.T, version string) {
 		m.Artifacts = append(m.Artifacts, update.Artifact{Name: name, Kind: kind, Arch: arch, URL: fr.srv.URL + "/dl/" + name, SHA256: hex.EncodeToString(h[:]), Size: int64(len(body))})
 	}
 	fr.raw, _ = json.Marshal(m)
-	fr.sig = update.Sign(fr.raw, fr.priv)
 }
 
-func (fr *fakeRelease) pub() string {
-	return base64.StdEncoding.EncodeToString(fr.priv.Public().(ed25519.PublicKey))
+// noAttestations is a GitHub API that has no attestation for anything.
+func noAttestations(t *testing.T) string {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 func TestServerMirrorAndClientVersions(t *testing.T) {
@@ -77,15 +77,24 @@ func TestServerMirrorAndClientVersions(t *testing.T) {
 	a := pairServer(t)
 	a.opts.Version = "0.1.0"
 	a.store.Update(func(c *config.Config) error {
-		c.Update = &config.UpdateSettings{Source: fr.srv.URL + "/channels", TrustedKeys: []string{fr.pub()}, Policy: "notify"}
+		c.Update = &config.UpdateSettings{Source: fr.srv.URL + "/channels", Repo: "tailbond/tailbond", Policy: "notify", Verify: "attestation"}
 		return nil
 	})
+	a.upd.githubAPI = noAttestations(t)
 	if _, err := a.addClient(context.Background(), "slate7"); err != nil {
 		t.Fatal(err)
 	}
+	// attestation: the fake release has none (or this build can't check
+	// them, -tags noattest): nothing is offered or mirrored
+	a.checkManifest(context.Background())
+	if v := a.updateView(); v.Available != "" || !strings.Contains(v.Error, "attestation") || v.Verify != "attestation" || v.Repo != "tailbond/tailbond" || v.Mirror.Version != "" {
+		t.Fatalf("unattested manifest: %+v %+v", v, v.Mirror)
+	}
+	// sha256-only (setups without GitHub): offered and mirrored
+	a.store.Update(func(c *config.Config) error { c.Update.Verify = "sha256-only"; return nil })
 	a.checkManifest(context.Background())
 	v := a.updateView()
-	if v.Available != "0.2.0" || v.Source != "public" || v.Error != "" || v.Mirror == nil || v.Mirror.Version != "0.2.0" || v.Mirror.Files != 2 {
+	if v.Available != "0.2.0" || v.Source != "public" || v.Error != "" || v.Verified != "sha256" || v.Mirror == nil || v.Mirror.Version != "0.2.0" || v.Mirror.Files != 2 {
 		t.Fatalf("view %+v mirror %+v", v, v.Mirror)
 	}
 	// served byte-identical, to tailnet sources and token holders only
@@ -127,11 +136,18 @@ func TestServerMirrorAndClientVersions(t *testing.T) {
 	if _, err := os.Stat(a.mirror().FilePath("tailbond_0.2.0-r1_aarch64_cortex-a53.ipk")); err != nil {
 		t.Fatal("previous version's files pruned")
 	}
-	// a tampered manifest is refused and the mirror keeps the good one
-	fr.raw = bytes.Replace(fr.raw, []byte("0.2.1"), []byte("9.9.9"), 1)
+	// a broken manifest is refused and the mirror keeps the good one
+	fr.raw = bytes.Replace(fr.raw, []byte(`"format":1`), []byte(`"format":7`), 1)
 	a.checkManifest(context.Background())
 	if v := a.updateView(); v.Error == "" || v.Mirror.Version != "0.2.1" {
-		t.Fatalf("tampered: %+v %+v", v, v.Mirror)
+		t.Fatalf("broken: %+v %+v", v, v.Mirror)
+	}
+	// switching back to attestations: the cached sha256-only manifest isn't
+	// offered (or installable) any more
+	a.store.Update(func(c *config.Config) error { c.Update.Verify = "attestation"; return nil })
+	a.checkManifest(context.Background())
+	if v := a.updateView(); v.Available != "" || v.Verified != "" || a.upd.manifest != nil {
+		t.Fatalf("sha256-only cache offered under attestation: %+v", v)
 	}
 }
 
@@ -140,9 +156,10 @@ func TestUpdateUploadAndPolicy(t *testing.T) {
 	a := pairServer(t)
 	a.opts.Version = "0.1.0"
 	a.store.Update(func(c *config.Config) error {
-		c.Update = &config.UpdateSettings{TrustedKeys: []string{fr.pub()}, Policy: "notify"}
+		c.Update = &config.UpdateSettings{Repo: "tailbond/tailbond", Policy: "notify", Verify: "attestation"}
 		return nil
 	})
+	a.upd.githubAPI = noAttestations(t)
 	up := func(name string, body []byte) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/api/update/upload?name="+name, bytes.NewReader(body))
 		r.RemoteAddr = "127.0.0.1:1"
@@ -151,22 +168,30 @@ func TestUpdateUploadAndPolicy(t *testing.T) {
 		a.Handler().ServeHTTP(w, r)
 		return w
 	}
-	if w := up("stable.json", fr.raw); w.Code != 200 {
-		t.Fatalf("manifest: %d %s", w.Code, w.Body)
+	if update.AttestSupported {
+		// attestation mode, offline: the manifest waits for its .sigstore.json
+		if w := up("stable.json", fr.raw); w.Code != 200 || !strings.Contains(w.Body.String(), `"waiting_for":"stable.json.sigstore.json"`) {
+			t.Fatalf("manifest: %d %s", w.Code, w.Body)
+		}
+		if w := up("stable.json.sigstore.json", []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`)); w.Code != 400 {
+			t.Fatalf("bad attestation accepted: %d %s", w.Code, w.Body)
+		}
+	} else if w := up("stable.json", fr.raw); w.Code != 400 || !strings.Contains(w.Body.String(), "can't check GitHub attestations") {
+		// -tags noattest with verify attestation: refused, says why
+		t.Fatalf("noattest: %d %s", w.Code, w.Body)
 	}
-	if w := up("stable.json.sig", update.Sign(fr.raw, ed25519.NewKeyFromSeed(bytes.Repeat([]byte{9}, 32)))); w.Code != 400 {
-		t.Fatalf("wrong signer accepted: %d %s", w.Code, w.Body)
+	if _, err := os.Stat(filepath.Join(a.mirror().Dir, "upload", "stable.json")); err == nil {
+		t.Fatal("refused upload kept")
 	}
-	if w := up("stable.json", fr.raw); w.Code != 200 {
-		t.Fatal(w.Body)
-	}
-	if w := up("stable.json.sig", fr.sig); w.Code != 200 || !strings.Contains(w.Body.String(), `"manifest":"0.3.0"`) {
-		t.Fatalf("sig: %d %s", w.Code, w.Body)
+	// sha256-only: the manifest is taken as uploaded
+	a.store.Update(func(c *config.Config) error { c.Update.Verify = "sha256-only"; return nil })
+	if w := up("stable.json", fr.raw); w.Code != 200 || !strings.Contains(w.Body.String(), `"manifest":"0.3.0"`) || !strings.Contains(w.Body.String(), `"verified":"sha256"`) {
+		t.Fatalf("sha256-only upload: %d %s", w.Code, w.Body)
 	}
 	if w := up("tailbond-linux-x86_64.tar.gz", []byte("corrupted")); w.Code != 400 {
 		t.Fatalf("bad artifact: %d", w.Code)
 	}
-	if w := up("tailbond-linux-x86_64.tar.gz", fr.files["tailbond-linux-x86_64.tar.gz"]); w.Code != 200 || !strings.Contains(w.Body.String(), `"verified":true`) {
+	if w := up("tailbond-linux-x86_64.tar.gz", fr.files["tailbond-linux-x86_64.tar.gz"]); w.Code != 200 || !strings.Contains(w.Body.String(), `"checksum_ok":true`) {
 		t.Fatalf("artifact: %d %s", w.Code, w.Body)
 	}
 	a.checkManifest(context.Background())

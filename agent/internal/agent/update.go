@@ -3,7 +3,6 @@ package agent
 import (
 	"bufio"
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,23 +49,27 @@ type clientVersion struct {
 
 // updater is the update state (its own lock: checks run long).
 type updater struct {
-	mu        sync.Mutex
-	view      status.Update
-	manifest  *update.Manifest
-	lastCheck time.Time
-	failed    []string
-	busy      bool
-	traffic   []int64 // client: tunnel bps samples, newest last
-	srvProto  int     // client: the active server's protocol
-	clients   map[string]clientVersion
-	backup    backupStatus
-	checkNow  chan struct{}
-	installNw chan string
+	mu         sync.Mutex
+	view       status.Update
+	manifest   *update.Manifest
+	lastCheck  time.Time
+	failed     []string
+	busy       bool
+	traffic    []int64 // client: tunnel bps samples, newest last
+	srvProto   int     // client: the active server's protocol
+	clients    map[string]clientVersion
+	backup     backupStatus
+	checkNow   chan struct{}
+	installNw  chan string
+	attest     *update.Attestor
+	attestErr  error
+	attestOpts update.AttestOptions
 	// tests and the e2e
-	platform string
-	pkgDir   string
-	ipkCmd   string
-	now      func() time.Time
+	githubAPI string
+	platform  string
+	pkgDir    string
+	ipkCmd    string
+	now       func() time.Time
 }
 
 func newUpdater() *updater {
@@ -82,9 +85,56 @@ func (a *Agent) mirror() update.Mirror {
 	return update.Mirror{Dir: filepath.Join(a.store.Get().StateDir, "update", "mirror"), MaxBytes: int64(u.MirrorMaxMB) << 20}
 }
 
-func (a *Agent) trustedKeys() []ed25519.PublicKey {
+// trust is the manifest policy: a GitHub attestation of the release
+// workflow (default) or SHA-256s only (update.verify). The attestor is kept
+// while its options don't change (it caches Sigstore's trusted root).
+func (a *Agent) trust() update.Trust {
 	u := a.store.Get().UpdateOrDefault()
-	return update.ParseKeys(update.BuildKeys, strings.Join(u.TrustedKeys, ","))
+	t := update.Trust{Mode: a.verifyMode()}
+	if t.Mode == update.VerifySHA256 {
+		return t
+	}
+	o := update.AttestOptions{
+		Repo: u.Repo, Workflow: u.Workflow, TrustedRoot: u.TrustedRoot,
+		CacheDir: filepath.Join(a.store.Get().StateDir, "update", "sigstore"),
+		API:      a.upd.githubAPI,
+	}
+	if o.Repo == "" {
+		o.Repo = update.BuildRepo
+	}
+	if o.Workflow == "" {
+		o.Workflow = update.BuildWorkflow
+	}
+	a.upd.mu.Lock()
+	defer a.upd.mu.Unlock()
+	if a.upd.attest == nil || a.upd.attestOpts != o {
+		a.upd.attest, a.upd.attestErr = update.NewAttestor(o)
+		a.upd.attestOpts = o
+	}
+	t.Attest, t.AttestErr = a.upd.attest, a.upd.attestErr
+	return t
+}
+
+// verifyMode is update.verify with its default: attestation, except a
+// server built without the verifier (-tags noattest: a GL router as the home
+// server), which can't check them and uses sha256-only (HTTPS + checksums).
+func (a *Agent) verifyMode() string {
+	if v := a.store.Get().UpdateOrDefault().Verify; v != "" {
+		return v
+	}
+	if !update.AttestSupported && a.role == config.RoleServer {
+		return update.VerifySHA256
+	}
+	return update.VerifyAttestation
+}
+
+// updateRepo is the repository the attestations must come from.
+func (a *Agent) updateRepo() string {
+	u := a.store.Get().UpdateOrDefault()
+	if u.Repo != "" {
+		return u.Repo
+	}
+	return update.BuildRepo
 }
 
 func (a *Agent) updatePolicy() update.Policy {
@@ -115,6 +165,10 @@ func (a *Agent) updateView() *status.Update {
 	}
 	a.upd.mu.Unlock()
 	v.Current, v.Policy, v.Channel, v.Pin = a.opts.Version, u.Policy, u.Channel, u.Pin
+	v.Verify = a.verifyMode()
+	if v.Verify == update.VerifyAttestation {
+		v.Repo = a.updateRepo()
+	}
 	if a.role == config.RoleServer {
 		v.Window = u.Window
 		for _, usr := range a.store.Get().Server.Users {
@@ -370,20 +424,14 @@ func (a *Agent) serverProtocol(ctx context.Context) int {
 // mirror it and its artifacts.
 func (a *Agent) checkManifest(ctx context.Context) {
 	u := a.store.Get().UpdateOrDefault()
-	keys := a.trustedKeys()
+	t := a.trust()
 	a.setUpdate(func(v *status.Update) { v.State, v.Error = "checking", "" })
 	now := time.Now().UTC()
 	a.upd.mu.Lock()
 	a.upd.lastCheck = now
 	a.upd.mu.Unlock()
-	if len(keys) == 0 {
-		a.setUpdate(func(v *status.Update) {
-			v.State, v.Error, v.LastCheck = "off", update.ErrNoKeys.Error(), &now
-		})
-		return
-	}
 	f := &update.Fetcher{}
-	got, err := f.Manifest(ctx, a.updateSources(ctx), u.Channel, keys)
+	got, err := f.Manifest(ctx, a.updateSources(ctx), u.Channel, t)
 	fetchErr := ""
 	if err != nil {
 		fetchErr = err.Error()
@@ -395,11 +443,11 @@ func (a *Agent) checkManifest(ctx context.Context) {
 	if a.role == config.RoleServer {
 		// the server's own cache: an offline upload newer than what the
 		// public source has, or the last good manifest when it's unreachable
-		if raw, sig, ok := a.mirror().Manifest(u.Channel); ok {
-			if m, verr := update.Verify(raw, sig, keys); verr == nil {
+		if raw, bundle, ok := a.mirror().Manifest(u.Channel); ok {
+			if m, how, b, verr := t.Check(ctx, raw, bundle); verr == nil {
 				switch {
 				case got == nil:
-					got, src = &update.Fetched{Manifest: m, Raw: raw, Sig: sig}, "cache"
+					got, src = &update.Fetched{Manifest: m, Raw: raw, Bundle: b, Verified: how}, "cache"
 					if a.mirror().Origin(u.Channel) == "upload" {
 						src = "upload"
 					}
@@ -407,13 +455,21 @@ func (a *Agent) checkManifest(ctx context.Context) {
 						fetchErr = "" // offline on purpose: uploads only
 					}
 				case update.Newer(m.Version, got.Manifest.Version):
-					got, src = &update.Fetched{Manifest: m, Raw: raw, Sig: sig}, "upload"
+					got, src = &update.Fetched{Manifest: m, Raw: raw, Bundle: b, Verified: how}, "upload"
 				}
 			}
 		}
 	}
 	if got == nil {
-		a.setUpdate(func(v *status.Update) { v.State, v.Error, v.LastCheck = "idle", fetchErr, &now })
+		// nothing verifies now (policy changed, source gone): an update
+		// that can't be verified isn't offered or installed any more
+		a.upd.mu.Lock()
+		a.upd.manifest = nil
+		a.upd.mu.Unlock()
+		a.setUpdate(func(v *status.Update) {
+			v.State, v.Error, v.LastCheck = "idle", fetchErr, &now
+			v.Available, v.Verified, v.NotesURL, v.Security = "", "", "", false
+		})
 		return
 	}
 	a.upd.mu.Lock()
@@ -421,6 +477,7 @@ func (a *Agent) checkManifest(ctx context.Context) {
 	a.upd.mu.Unlock()
 	a.setUpdate(func(v *status.Update) {
 		v.State, v.LastCheck, v.Source, v.NotesURL, v.Security, v.Error = "idle", &now, src, got.Manifest.NotesURL, got.Manifest.Security, fetchErr
+		v.Verified = got.Verified
 		v.Available = ""
 		if update.Newer(got.Manifest.Version, a.opts.Version) || !isRelease(a.opts.Version) {
 			v.Available = got.Manifest.Version
@@ -449,7 +506,7 @@ func (a *Agent) syncMirror(ctx context.Context, channel string, got *update.Fetc
 			prev = &m
 		}
 	}
-	if err := mir.Store(channel, got.Raw, got.Sig); err != nil {
+	if err := mir.Store(channel, got.Raw, got.Bundle); err != nil {
 		return err
 	}
 	mir.SetOrigin(channel, "public")

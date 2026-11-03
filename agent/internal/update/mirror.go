@@ -3,7 +3,6 @@ package update
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
@@ -15,9 +14,11 @@ import (
 	"time"
 )
 
-// Mirror is the server's cache of a channel: <dir>/<channel>.json(.sig),
+// Mirror is the server's cache of a channel: <dir>/<channel>.json, its
+// GitHub attestation <dir>/<channel>.json.sigstore.json (when it had one),
 // <dir>/<channel>.prev.json (the previous version, keep-last-2) and
-// <dir>/files/<artifact>.
+// <dir>/files/<artifact>. Everything in it was verified before it was
+// stored.
 type Mirror struct {
 	Dir      string
 	MaxBytes int64
@@ -37,24 +38,35 @@ func (m Mirror) manifestPath(channel string) string {
 	return filepath.Join(m.Dir, channel+".json")
 }
 
-// Manifest returns the cached raw manifest and signature of a channel.
-func (m Mirror) Manifest(channel string) (manifest, sig []byte, ok bool) {
-	mb, err1 := os.ReadFile(m.manifestPath(channel))
-	sb, err2 := os.ReadFile(m.manifestPath(channel) + ".sig")
-	return mb, sb, err1 == nil && err2 == nil
+// Manifest returns the cached raw manifest of a channel and its
+// attestation bundle (nil if it had none).
+func (m Mirror) Manifest(channel string) (manifest, bundle []byte, ok bool) {
+	mb, err := os.ReadFile(m.manifestPath(channel))
+	bb, _ := os.ReadFile(m.manifestPath(channel) + BundleSuffix)
+	return mb, bb, err == nil
 }
 
-// Store keeps a verified manifest; the one it replaces becomes .prev.
-func (m Mirror) Store(channel string, manifest, sig []byte) error {
+// Store keeps a verified manifest and its bundle (may be nil); the one it
+// replaces becomes .prev.
+func (m Mirror) Store(channel string, manifest, bundle []byte) error {
 	if err := os.MkdirAll(m.FilesDir(), 0o755); err != nil {
 		return err
 	}
-	if old, oldSig, ok := m.Manifest(channel); ok && string(old) != string(manifest) {
-		_ = os.WriteFile(filepath.Join(m.Dir, channel+".prev.json"), old, 0o644)
-		_ = os.WriteFile(filepath.Join(m.Dir, channel+".prev.json.sig"), oldSig, 0o644)
+	prev := filepath.Join(m.Dir, channel+".prev.json")
+	if old, oldB, ok := m.Manifest(channel); ok && string(old) != string(manifest) {
+		_ = os.WriteFile(prev, old, 0o644)
+		_ = os.Remove(prev + BundleSuffix)
+		if oldB != nil {
+			_ = os.WriteFile(prev+BundleSuffix, oldB, 0o644)
+		}
 	}
-	if err := writeAtomic(m.manifestPath(channel)+".sig", sig); err != nil {
-		return err
+	_ = os.Remove(m.manifestPath(channel) + ".sig") // from before attestations
+	if bundle != nil {
+		if err := writeAtomic(m.manifestPath(channel)+BundleSuffix, bundle); err != nil {
+			return err
+		}
+	} else {
+		_ = os.Remove(m.manifestPath(channel) + BundleSuffix)
 	}
 	return writeAtomic(m.manifestPath(channel), manifest)
 }
@@ -198,16 +210,21 @@ func (f *Fetcher) getBytes(ctx context.Context, url string, h http.Header, max i
 	return b.Bytes(), nil
 }
 
-// Fetched is a verified manifest and where it came from.
+// Fetched is a verified manifest, its attestation bundle (if any), where it
+// came from and how it was trusted (Verified*).
 type Fetched struct {
-	Manifest *Manifest
-	Raw, Sig []byte
-	From     Source
+	Manifest    *Manifest
+	Raw, Bundle []byte
+	From        Source
+	Verified    string
 }
 
 // Manifest tries the sources in order and returns the first manifest that
-// verifies (errors from all of them otherwise).
-func (f *Fetcher) Manifest(ctx context.Context, sources []Source, channel string, keys []ed25519.PublicKey) (*Fetched, error) {
+// verifies (errors from all of them otherwise). A mirror source is the home
+// server, reached through the tunnel (its TLS certificate is pinned) or the
+// tailnet, which only serves what it verified: its manifest is trusted as
+// is. Other sources go through t.
+func (f *Fetcher) Manifest(ctx context.Context, sources []Source, channel string, t Trust) (*Fetched, error) {
 	var errs []string
 	for _, s := range sources {
 		if s.Base == "" {
@@ -216,11 +233,18 @@ func (f *Fetcher) Manifest(ctx context.Context, sources []Source, channel string
 		base := strings.TrimRight(s.Base, "/") + "/" + channel + ".json"
 		raw, err := f.getBytes(ctx, base, s.Header, 1<<20)
 		if err == nil {
-			var sig []byte
-			if sig, err = f.getBytes(ctx, base+".sig", s.Header, 4096); err == nil {
+			if s.Mirror {
 				var m *Manifest
-				if m, err = Verify(raw, sig, keys); err == nil {
-					return &Fetched{Manifest: m, Raw: raw, Sig: sig, From: s}, nil
+				if m, err = ParseManifest(raw); err == nil {
+					return &Fetched{Manifest: m, Raw: raw, From: s, Verified: VerifiedMirror}, nil
+				}
+			} else {
+				// the attestation next to it, if the source has one
+				bundle, _ := f.getBytes(ctx, base+BundleSuffix, s.Header, 8<<20)
+				var m *Manifest
+				var how string
+				if m, how, bundle, err = t.Check(ctx, raw, bundle); err == nil {
+					return &Fetched{Manifest: m, Raw: raw, Bundle: bundle, From: s, Verified: how}, nil
 				}
 			}
 		}

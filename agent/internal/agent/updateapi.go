@@ -74,6 +74,10 @@ func (a *Agent) hUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		Window  *string `json:"window"`
 		Source  *string `json:"source"`
 		Pin     *string `json:"pin"`
+		// attestation | sha256-only (setups without GitHub), and the
+		// repository the attestations must come from (forks)
+		Verify *string `json:"verify"`
+		Repo   *string `json:"repo"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -111,6 +115,12 @@ func (a *Agent) hUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		if body.Pin != nil {
 			u.Pin = *body.Pin
 		}
+		if body.Verify != nil {
+			u.Verify = *body.Verify
+		}
+		if body.Repo != nil {
+			u.Repo = *body.Repo
+		}
 		c.Update = &u
 		return nil
 	}); err != nil {
@@ -125,7 +135,9 @@ func (a *Agent) hUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // hUpdateUpload: one file into the server's mirror (offline setups). The
-// manifest is verified once it and its signature are both there.
+// manifest is verified as soon as it can be: at once with update.verify
+// sha256-only; with attestations, when its .sigstore.json is there too (or
+// GitHub's API has it, if the server is online).
 func (a *Agent) hUpdateUpload(w http.ResponseWriter, r *http.Request) {
 	if a.role != config.RoleServer {
 		httpErr(w, http.StatusBadRequest, errServerOnly)
@@ -134,7 +146,7 @@ func (a *Agent) hUpdateUpload(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	mir := a.mirror()
 	u := a.store.Get().UpdateOrDefault()
-	isManifest := name == u.Channel+".json" || name == u.Channel+".json.sig"
+	isManifest := name == u.Channel+".json" || name == u.Channel+".json"+update.BundleSuffix
 	var dst string
 	if isManifest {
 		dst = filepath.Join(mir.Dir, "upload", name)
@@ -142,7 +154,7 @@ func (a *Agent) hUpdateUpload(w http.ResponseWriter, r *http.Request) {
 		dst = mir.FilePath(name)
 	}
 	if dst == "" || name == "" {
-		httpErr(w, http.StatusBadRequest, errors.New("name: a manifest (<channel>.json, .sig) or an artifact file name"))
+		httpErr(w, http.StatusBadRequest, errors.New("name: a manifest (<channel>.json, <channel>.json.sigstore.json) or an artifact file name"))
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -167,30 +179,37 @@ func (a *Agent) hUpdateUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	res := map[string]any{"ok": true, "name": name, "size": n}
 	up := filepath.Join(mir.Dir, "upload", u.Channel+".json")
-	raw, err1 := os.ReadFile(up)
-	sig, err2 := os.ReadFile(up + ".sig")
-	if err1 == nil && err2 == nil {
-		m, err := update.Verify(raw, sig, a.trustedKeys())
-		if err != nil {
-			// start over: upload the manifest and a good signature again
-			os.Remove(up)
-			os.Remove(up + ".sig")
-			httpErr(w, http.StatusBadRequest, fmt.Errorf("the uploaded manifest doesn't verify: %w", err))
-			return
+	t := a.trust()
+	if raw, err := os.ReadFile(up); err == nil {
+		bundle, _ := os.ReadFile(up + update.BundleSuffix)
+		if t.Mode == update.VerifySHA256 || bundle != nil || name == u.Channel+".json" {
+			m, how, b, err := t.Check(r.Context(), raw, bundle)
+			switch {
+			case err == nil:
+				if err := mir.Store(u.Channel, raw, b); err != nil {
+					httpErr(w, http.StatusInternalServerError, err)
+					return
+				}
+				mir.SetOrigin(u.Channel, "upload")
+				os.Remove(up)
+				os.Remove(up + update.BundleSuffix)
+				res["manifest"], res["verified"] = m.Version, how
+				a.Logf("update mirror: uploaded manifest %s (%s)", m.Version, how)
+			case bundle == nil && errors.Is(err, update.ErrNoAttestation):
+				// offline: wait for the .sigstore.json from the release
+				res["waiting_for"] = u.Channel + ".json" + update.BundleSuffix
+			default:
+				// start over: upload the manifest and its attestation again
+				os.Remove(up)
+				os.Remove(up + update.BundleSuffix)
+				httpErr(w, http.StatusBadRequest, fmt.Errorf("the uploaded manifest doesn't verify: %w", err))
+				return
+			}
 		}
-		if err := mir.Store(u.Channel, raw, sig); err != nil {
-			httpErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		mir.SetOrigin(u.Channel, "upload")
-		os.Remove(up)
-		os.Remove(up + ".sig")
-		res["manifest"] = m.Version
-		a.Logf("update mirror: uploaded manifest %s", m.Version)
 	}
 	if !isManifest {
-		if raw, sig, ok := mir.Manifest(u.Channel); ok {
-			if m, err := update.Verify(raw, sig, a.trustedKeys()); err == nil {
+		if raw, bundle, ok := mir.Manifest(u.Channel); ok {
+			if m, _, _, err := t.Check(r.Context(), raw, bundle); err == nil {
 				for _, art := range m.Artifacts {
 					if art.Name == name {
 						if err := update.CheckFile(dst, art); err != nil {
@@ -198,7 +217,7 @@ func (a *Agent) hUpdateUpload(w http.ResponseWriter, r *http.Request) {
 							httpErr(w, http.StatusBadRequest, err)
 							return
 						}
-						res["verified"] = true
+						res["checksum_ok"] = true
 					}
 				}
 			}
@@ -211,7 +230,8 @@ func (a *Agent) hUpdateUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// hMirror serves /updates/<channel>.json(.sig) and /updates/files/<name>.
+// hMirror serves /updates/<channel>.json, its .sigstore.json (when the
+// manifest had a GitHub attestation) and /updates/files/<name>.
 func (a *Agent) hMirror(w http.ResponseWriter, r *http.Request) {
 	if a.role != config.RoleServer {
 		http.NotFound(w, r)
@@ -229,21 +249,21 @@ func (a *Agent) hMirror(w http.ResponseWriter, r *http.Request) {
 		serveDownload(w, r, fp, name, "application/octet-stream")
 		return
 	}
-	channel, sig := strings.CutSuffix(p, ".sig")
+	channel, wantBundle := strings.CutSuffix(p, update.BundleSuffix)
 	channel, ok := strings.CutSuffix(channel, ".json")
 	if !ok || (channel != "stable" && channel != "beta") {
 		http.NotFound(w, r)
 		return
 	}
-	raw, s, found := mir.Manifest(channel)
-	if !found {
+	raw, bundle, found := mir.Manifest(channel)
+	if !found || (wantBundle && bundle == nil) {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
-	if sig {
-		_, _ = w.Write(s)
+	if wantBundle {
+		_, _ = w.Write(bundle)
 	} else {
 		_, _ = w.Write(raw)
 	}

@@ -1,12 +1,10 @@
 package update
 
 import (
-	"crypto/ed25519"
+	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,69 +34,59 @@ type Artifact struct {
 	VersionCode int64  `json:"version_code,omitempty"`
 }
 
-// Signature is <channel>.json.sig.
-type Signature struct {
-	KeyID string `json:"key_id"`
-	Sig   string `json:"sig"`
-}
-
-var (
-	ErrNoKeys       = errors.New("this build has no update key")
-	ErrUnknownKey   = errors.New("manifest signed with a key this build doesn't trust")
-	ErrBadSignature = errors.New("manifest signature doesn't match")
+// Verification modes (config update.verify).
+const (
+	VerifyAttestation = "attestation" // default: a GitHub attestation for the manifest
+	VerifySHA256      = "sha256-only" // trust the source (HTTPS, an upload); check SHA-256s only
 )
 
-// KeyID is the hex of the first 8 bytes of SHA-256(public key).
-func KeyID(pub ed25519.PublicKey) string {
-	h := sha256.Sum256(pub)
-	return hex.EncodeToString(h[:8])
+// How a manifest was trusted (status update.verified).
+const (
+	VerifiedAttestation = "attestation"
+	VerifiedMirror      = "mirror" // the home server's copy, over the authenticated tunnel/tailnet
+	VerifiedSHA256      = "sha256"
+)
+
+// Trust decides whether a manifest from a public source or an upload is
+// authentic. Attest is nil when the build has no verifier (noattest) or
+// no repository is known; AttestErr says why.
+type Trust struct {
+	Mode      string
+	Attest    *Attestor
+	AttestErr error
 }
 
-// ParseKeys reads base64 raw public keys (comma or space separated);
-// invalid entries are skipped.
-func ParseKeys(lists ...string) []ed25519.PublicKey {
-	var out []ed25519.PublicKey
-	seen := map[string]bool{}
-	for _, l := range lists {
-		for _, s := range strings.FieldsFunc(l, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' }) {
-			b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
-			if err != nil || len(b) != ed25519.PublicKeySize || seen[string(b)] {
-				continue
-			}
-			seen[string(b)] = true
-			out = append(out, ed25519.PublicKey(b))
-		}
+// Check verifies raw against the policy; bundles is the .sigstore.json
+// content (nil: ask GitHub). It returns how the manifest was trusted and the
+// bundle to keep with it.
+func (t Trust) Check(ctx context.Context, raw, bundles []byte) (*Manifest, string, []byte, error) {
+	m, err := ParseManifest(raw)
+	if err != nil {
+		return nil, "", nil, err
 	}
-	return out
+	if t.Mode == VerifySHA256 {
+		return m, VerifiedSHA256, bundles, nil
+	}
+	if t.Attest == nil {
+		err := t.AttestErr
+		if err == nil {
+			err = ErrNoAttestSupport
+		}
+		return nil, "", nil, err
+	}
+	d := sha256.Sum256(raw)
+	b, err := t.Attest.Verify(ctx, d[:], bundles)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return m, VerifiedAttestation, b, nil
 }
 
-// Verify checks sig over the exact manifest bytes and parses the manifest.
-func Verify(manifest, sig []byte, keys []ed25519.PublicKey) (*Manifest, error) {
-	if len(keys) == 0 {
-		return nil, ErrNoKeys
-	}
-	var s Signature
-	if err := json.Unmarshal(sig, &s); err != nil {
-		return nil, fmt.Errorf("signature file: %w", err)
-	}
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s.Sig))
-	if err != nil || len(raw) != ed25519.SignatureSize {
-		return nil, ErrBadSignature
-	}
-	var key ed25519.PublicKey
-	for _, k := range keys {
-		if KeyID(k) == strings.ToLower(s.KeyID) {
-			key = k
-		}
-	}
-	if key == nil {
-		return nil, ErrUnknownKey
-	}
-	if !ed25519.Verify(key, manifest, raw) {
-		return nil, ErrBadSignature
-	}
+// ParseManifest reads and sanity-checks a manifest (it doesn't say whether
+// it's authentic: see Trust).
+func ParseManifest(raw []byte) (*Manifest, error) {
 	var m Manifest
-	if err := json.Unmarshal(manifest, &m); err != nil {
+	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("manifest: %w", err)
 	}
 	if m.Format != 1 {
@@ -111,19 +99,11 @@ func Verify(manifest, sig []byte, keys []ed25519.PublicKey) (*Manifest, error) {
 		if a.Name == "" || strings.ContainsAny(a.Name, "/\\") || strings.HasPrefix(a.Name, ".") {
 			return nil, fmt.Errorf("artifact name %q", a.Name)
 		}
-		if len(a.SHA256) != 64 {
+		if _, err := hex.DecodeString(a.SHA256); err != nil || len(a.SHA256) != 64 {
 			return nil, fmt.Errorf("artifact %s: bad sha256", a.Name)
 		}
 	}
 	return &m, nil
-}
-
-// Sign makes a signature file (tests and the e2e's fake release server;
-// releases are signed by scripts/release/sign-manifest.sh).
-func Sign(manifest []byte, priv ed25519.PrivateKey) []byte {
-	pub := priv.Public().(ed25519.PublicKey)
-	b, _ := json.Marshal(Signature{KeyID: KeyID(pub), Sig: base64.StdEncoding.EncodeToString(ed25519.Sign(priv, manifest))})
-	return b
 }
 
 // Find returns the artifact of a kind for one of the archs (in order).

@@ -138,11 +138,18 @@ type Update struct {
 	Security          bool   `json:"security,omitempty"`
 	Deferred          string `json:"deferred,omitempty"`
 	// busy | window | server | notify, while waiting
-	DeferredCode string        `json:"deferred_code,omitempty"`
-	Window       string        `json:"window,omitempty"`
-	Error        string        `json:"error,omitempty"`
-	Mirror       *MirrorStatus `json:"mirror,omitempty"`
-	Outdated     []Outdated    `json:"outdated,omitempty"`
+	DeferredCode string `json:"deferred_code,omitempty"`
+	Window       string `json:"window,omitempty"`
+	Error        string `json:"error,omitempty"`
+	// Verify is the policy (attestation | sha256-only); Verified how the
+	// offered manifest was trusted: attestation (GitHub attestation of
+	// Repo's release workflow) | mirror (the home server's copy, over the
+	// authenticated tunnel/tailnet) | sha256 (the source, checksums only)
+	Verify   string        `json:"verify,omitempty"`
+	Verified string        `json:"verified,omitempty"`
+	Repo     string        `json:"repo,omitempty"`
+	Mirror   *MirrorStatus `json:"mirror,omitempty"`
+	Outdated []Outdated    `json:"outdated,omitempty"`
 }
 
 // MirrorStatus: the server's update mirror.

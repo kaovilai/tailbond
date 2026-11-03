@@ -5,9 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -18,11 +16,6 @@ import (
 	"testing"
 	"time"
 )
-
-func key(t *testing.T, seed byte) ed25519.PrivateKey {
-	t.Helper()
-	return ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seed}, 32))
-}
 
 func manifestBytes(t *testing.T, m Manifest) []byte {
 	t.Helper()
@@ -38,57 +31,37 @@ func sampleManifest() Manifest {
 		Artifacts: []Artifact{{Name: "tailbond-linux-x86_64.tar.gz", Kind: "linux", Arch: "x86_64", URL: "https://example/x", SHA256: strings.Repeat("a", 64), Size: 1}}}
 }
 
-func TestVerify(t *testing.T) {
-	priv := key(t, 1)
-	pub := priv.Public().(ed25519.PublicKey)
+func TestParseManifestAndTrust(t *testing.T) {
 	raw := manifestBytes(t, sampleManifest())
-	sig := Sign(raw, priv)
-	m, err := Verify(raw, sig, []ed25519.PublicKey{key(t, 9).Public().(ed25519.PublicKey), pub})
+	m, err := ParseManifest(raw)
 	if err != nil || m.Version != "0.2.0" {
-		t.Fatalf("good signature: %v %+v", err, m)
+		t.Fatalf("%v %+v", err, m)
 	}
-	// tampered manifest
-	bad := bytes.Replace(raw, []byte(`"0.2.0"`), []byte(`"9.9.9"`), 1)
-	if _, err := Verify(bad, sig, []ed25519.PublicKey{pub}); err != ErrBadSignature {
-		t.Fatalf("tampered: %v", err)
+	// artifact names can't escape the mirror directory; checksums are hex
+	for _, mut := range []func(*Manifest){
+		func(m *Manifest) { m.Artifacts[0].Name = "../etc/passwd" },
+		func(m *Manifest) { m.Artifacts[0].Name = ".hidden" },
+		func(m *Manifest) { m.Artifacts[0].SHA256 = strings.Repeat("z", 64) },
+		func(m *Manifest) { m.Format = 2 },
+		func(m *Manifest) { m.Version = "dev" },
+	} {
+		bad := sampleManifest()
+		mut(&bad)
+		if _, err := ParseManifest(manifestBytes(t, bad)); err == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
 	}
-	// wrong key
-	if _, err := Verify(raw, sig, []ed25519.PublicKey{key(t, 2).Public().(ed25519.PublicKey)}); err != ErrUnknownKey {
-		t.Fatalf("wrong key: %v", err)
+	ctx := context.Background()
+	// sha256-only: the manifest as is, its bundle kept if there was one
+	if m, how, b, err := (Trust{Mode: VerifySHA256}).Check(ctx, raw, []byte("x")); err != nil || how != VerifiedSHA256 || m.Version != "0.2.0" || string(b) != "x" {
+		t.Fatalf("sha256-only: %v %s", err, how)
 	}
-	// a key with the right id field but a different key: forge the id
-	var s Signature
-	json.Unmarshal(sig, &s)
-	other := key(t, 3)
-	s.KeyID = KeyID(other.Public().(ed25519.PublicKey))
-	forged, _ := json.Marshal(s)
-	if _, err := Verify(raw, forged, []ed25519.PublicKey{other.Public().(ed25519.PublicKey)}); err != ErrBadSignature {
-		t.Fatalf("relabelled signature: %v", err)
+	// attestation without a verifier (router build / no repo): refused
+	if _, _, _, err := (Trust{Mode: VerifyAttestation, AttestErr: ErrNoRepo}).Check(ctx, raw, nil); err != ErrNoRepo {
+		t.Fatalf("no repo: %v", err)
 	}
-	if _, err := Verify(raw, sig, nil); err != ErrNoKeys {
-		t.Fatalf("no keys: %v", err)
-	}
-	if _, err := Verify(raw, []byte("not json"), []ed25519.PublicKey{pub}); err == nil {
-		t.Fatal("garbage signature accepted")
-	}
-	// artifact names can't escape the mirror directory
-	m2 := sampleManifest()
-	m2.Artifacts[0].Name = "../etc/passwd"
-	raw2 := manifestBytes(t, m2)
-	if _, err := Verify(raw2, Sign(raw2, priv), []ed25519.PublicKey{pub}); err == nil {
-		t.Fatal("path in artifact name accepted")
-	}
-}
-
-func TestParseKeys(t *testing.T) {
-	pub := key(t, 1).Public().(ed25519.PublicKey)
-	b64 := base64.StdEncoding.EncodeToString(pub)
-	keys := ParseKeys(b64+", junk,"+b64, "")
-	if len(keys) != 1 || !keys[0].Equal(pub) {
-		t.Fatalf("%v", keys)
-	}
-	if KeyID(pub) != KeyID(keys[0]) || len(KeyID(pub)) != 16 {
-		t.Fatal("key id")
+	if _, _, _, err := (Trust{Mode: VerifyAttestation}).Check(ctx, raw, nil); err != ErrNoAttestSupport {
+		t.Fatalf("no verifier: %v", err)
 	}
 }
 
@@ -263,36 +236,41 @@ func TestUnpackAndTrial(t *testing.T) {
 }
 
 func TestFetchAndMirror(t *testing.T) {
-	priv := key(t, 7)
 	body := []byte("new release")
 	h := sha256.Sum256(body)
 	m := sampleManifest()
 	m.Artifacts = []Artifact{{Name: "tailbond-linux-x86_64.tar.gz", Kind: "linux", Arch: "x86_64", SHA256: hex.EncodeToString(h[:]), Size: int64(len(body))}}
 	raw := manifestBytes(t, m)
-	sig := Sign(raw, priv)
 	var gotHeader string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHeader = r.Header.Get("X-Tailbond-Version")
 		switch r.URL.Path {
 		case "/updates/stable.json":
 			w.Write(raw)
-		case "/updates/stable.json.sig":
-			w.Write(sig)
 		case "/updates/files/tailbond-linux-x86_64.tar.gz":
 			w.Write(body)
-		case "/public/stable.json", "/public/stable.json.sig":
-			http.NotFound(w, r)
+		case "/public/stable.json":
+			w.Write(raw) // no attestation next to it
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
 	f := &Fetcher{}
-	keys := []ed25519.PublicKey{priv.Public().(ed25519.PublicKey)}
+	strict := Trust{Mode: VerifyAttestation, AttestErr: ErrNoRepo}
 	srcs := []Source{{Base: srv.URL + "/nothing", Mirror: true}, {Base: srv.URL + "/updates", Mirror: true, Header: http.Header{"X-Tailbond-Version": {"0.1.0"}}}, {Base: srv.URL + "/public"}}
-	got, err := f.Manifest(context.Background(), srcs, "stable", keys)
-	if err != nil || got.Manifest.Version != "0.2.0" || got.From.Base != srv.URL+"/updates" || gotHeader != "0.1.0" {
+	// the home server's mirror is trusted as is (authenticated channel)
+	got, err := f.Manifest(context.Background(), srcs, "stable", strict)
+	if err != nil || got.Manifest.Version != "0.2.0" || got.From.Base != srv.URL+"/updates" || gotHeader != "0.1.0" || got.Verified != VerifiedMirror {
 		t.Fatalf("manifest: %v %+v header %q", err, got, gotHeader)
+	}
+	// a public source needs an attestation, unless sha256-only
+	pub := srcs[2:]
+	if _, err := f.Manifest(context.Background(), pub, "stable", strict); err == nil {
+		t.Fatal("public manifest without an attestation accepted")
+	}
+	if got, err := f.Manifest(context.Background(), pub, "stable", Trust{Mode: VerifySHA256}); err != nil || got.Verified != VerifiedSHA256 {
+		t.Fatalf("sha256-only: %v %+v", err, got)
 	}
 	dst := filepath.Join(t.TempDir(), "dl", "x.tar.gz")
 	if _, err := f.Download(context.Background(), srcs, m.Artifacts[0], dst); err != nil {
@@ -304,13 +282,14 @@ func TestFetchAndMirror(t *testing.T) {
 	if _, err := f.Download(context.Background(), srcs, bad, dst+"2"); err == nil {
 		t.Fatal("checksum mismatch accepted")
 	}
-	// no source answering a valid signature: error, no manifest
-	if _, err := f.Manifest(context.Background(), srcs[:1], "stable", keys); err == nil {
+	// no source answering: error, no manifest
+	if _, err := f.Manifest(context.Background(), srcs[:1], "stable", strict); err == nil {
 		t.Fatal("nothing should verify")
 	}
 
 	mir := Mirror{Dir: t.TempDir(), MaxBytes: 1 << 20}
-	if err := mir.Store("stable", raw, sig); err != nil {
+	bundle := []byte(`{"mediaType":"x"}`)
+	if err := mir.Store("stable", raw, bundle); err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(mir.FilePath("tailbond-linux-x86_64.tar.gz"), body, 0o644)
@@ -325,8 +304,22 @@ func TestFetchAndMirror(t *testing.T) {
 	if mir.FilePath("../x") != "" {
 		t.Fatal("path escape")
 	}
-	m2, s2, ok := mir.Manifest("stable")
-	if !ok || !bytes.Equal(m2, raw) || !bytes.Equal(s2, sig) {
+	m2, b2, ok := mir.Manifest("stable")
+	if !ok || !bytes.Equal(m2, raw) || !bytes.Equal(b2, bundle) {
 		t.Fatal("mirror manifest not byte-identical")
 	}
+	// a newer manifest without an attestation (sha256-only): the bundle
+	// moves with the old one to .prev
+	m.Version = "0.2.1"
+	raw3 := manifestBytes(t, m)
+	if err := mir.Store("stable", raw3, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, b3, _ := mir.Manifest("stable"); b3 != nil {
+		t.Fatal("stale bundle kept with the new manifest")
+	}
+	if b, _ := os.ReadFile(filepath.Join(mir.Dir, "stable.prev.json"+BundleSuffix)); !bytes.Equal(b, bundle) {
+		t.Fatal("previous bundle not kept")
+	}
+
 }
