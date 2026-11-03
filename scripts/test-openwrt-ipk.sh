@@ -82,7 +82,7 @@ echo "== install"
 opkg install /t/tailbond.ipk >/tmp/install.log 2>&1 && ok "opkg install" || { cat /tmp/install.log; bad "opkg install"; }
 for f in /usr/bin/tailbondd /usr/bin/mqvpn /etc/init.d/tailbond /usr/share/oui/menu.d/tailbond.json \
 	/www/views/gl-sdk4-ui-tailbond.common.js.gz /usr/lib/oui-httpd/rpc/tailbond /usr/share/gl-validator.d/tailbond.lua \
-	/etc/nginx/gl-conf.d/tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/tailbond/tailbond.json; do
+	/usr/share/tailbond/nginx-tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/tailbond/tailbond.json; do
 	[ -e "$f" ] && ok "$f" || bad "missing $f"
 done
 jsonfilter -i /usr/share/oui/menu.d/tailbond.json -e '@.view' | grep -qx tailbond && ok "menu.d entry parses (view=tailbond)" || bad "menu json"
@@ -206,7 +206,7 @@ echo "== uninstall"
 export TB_PKG_PURGE_DELAY=2 # postrm drops the package cache after this delay
 opkg remove tailbond >/tmp/remove.log 2>&1 && ok "opkg remove" || { cat /tmp/remove.log; bad "opkg remove"; }
 for f in /usr/bin/tailbondd /usr/lib/oui-httpd/rpc/tailbond /www/views/gl-sdk4-ui-tailbond.common.js.gz /usr/share/oui/menu.d/tailbond.json \
-	/usr/share/gl-validator.d/tailbond.lua /etc/nginx/gl-conf.d/tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/init.d/tailbond; do
+	/usr/share/gl-validator.d/tailbond.lua /etc/nginx/gl-conf.d/tailbond.conf /usr/share/tailbond/nginx-tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/init.d/tailbond; do
 	[ -e "$f" ] && bad "left behind: $f"
 done
 [ -e /etc/rc.d/S99tailbond ] && bad "init still enabled" || ok "files and init links removed"

@@ -84,11 +84,20 @@ uset firewall.tailbond_api.target ACCEPT
 # The phone page: http://<this router's Tailscale name>/ from the tailnet
 # lands on the agent's landing port (GL's nginx keeps port 80 elsewhere).
 landing="$(tbcfg_or main.landing_port 8078)"
+# Only traffic to this router's own Tailscale address: LAN addresses reached
+# over the tailnet (the 192.168.8.0/24 subnet route) must keep GL's admin UI.
+ts4="$(tailscale ip -4 2>/dev/null | head -n1)"
+[ -n "$ts4" ] || landing=0
+if [ "$landing" = 0 ]; then
+	udel firewall.tailbond_landing
+	udel firewall.tailbond_landing_in
+fi
 if [ "$landing" != 0 ]; then
 	uset firewall.tailbond_landing redirect
 	uset firewall.tailbond_landing.name tailbond-phone-page
 	uset firewall.tailbond_landing.src "$ts"
 	uset firewall.tailbond_landing.proto tcp
+	uset firewall.tailbond_landing.src_dip "$ts4"
 	uset firewall.tailbond_landing.src_dport 80
 	uset firewall.tailbond_landing.dest_port "$landing"
 	uset firewall.tailbond_landing.target DNAT
