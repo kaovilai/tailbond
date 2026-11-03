@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
@@ -65,6 +66,7 @@ import dev.tailbond.app.model.Mode
 import dev.tailbond.app.model.PathKind
 import dev.tailbond.app.model.Words
 import dev.tailbond.app.service.ConnState
+import dev.tailbond.app.update.Availability
 import java.time.Duration
 import java.time.Instant
 
@@ -80,6 +82,7 @@ fun HomeScreen(
     onMachine: (String) -> Unit,
     modifier: Modifier = Modifier,
     startSearch: String = "",
+    onUpdates: () -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf(startSearch) }
     val live = state.live
@@ -92,6 +95,8 @@ fun HomeScreen(
         if (state.wifiSignIn && state.settings.captivePrompts && state.settings.path(PathKind.WIFI).enabled) item { WifiSignInCard(state, actions) }
         val handedBack = state.settings.handedToTailscale && live.state == ConnState.DISCONNECTED
         if (handedBack) item { HandedBackCard(state, actions) }
+        // a debug build can't take the release APK, so it isn't told about one here
+        if (state.update.status.availability == Availability.AVAILABLE && !state.update.debugBuild) item { UpdateBanner(state, onUpdates) }
 
         if (state.servers.size > 1) {
             item { SectionHeader("Servers") }
@@ -293,6 +298,25 @@ private fun WifiSignInCard(state: UiState, actions: UiActions) {
             )
             Button(onClick = actions::openWifiSignIn) { Text("Sign in to Wi-Fi") }
         }
+    }
+}
+
+/** "Update available: vX" on the main screen; opens Settings → Updates. */
+@Composable
+private fun UpdateBanner(state: UiState, onUpdates: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clickable(onClick = onUpdates),
+    ) {
+        ListItem(
+            headlineContent = {
+                Text("Update available: v${state.update.status.latest}", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            },
+            supportingContent = { Text("Tap to see what's new and download it") },
+            leadingContent = { Icon(Icons.Filled.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary) },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
     }
 }
 

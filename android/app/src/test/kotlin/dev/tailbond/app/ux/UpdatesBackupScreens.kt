@@ -80,6 +80,7 @@ class UpdatesBackupScreens : UxRender() {
     // settings: where the two sections are
     @Test fun settingsRows() = app("01-settings-updates-and-backup-rows", state(), Routes.SETTINGS, tall = 1700)
     @Test fun settingsRowAvailable() = app("02-settings-update-available-row", state(available), Routes.SETTINGS, tall = 1700)
+    @Test fun homeBanner() = app("03-home-update-available", state(available), Routes.HOME)
 
     // updates
     @Test fun upToDate() = app("10-updates-up-to-date", state(), Routes.UPDATES, tall = 1000)

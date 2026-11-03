@@ -188,6 +188,7 @@ fun TailbondApp(
                     onRepair = { toPair(null) },
                     onMachine = { route = Routes.MACHINE + it },
                     startSearch = startSearch,
+                    onUpdates = { route = Routes.UPDATES },
                     modifier = m,
                 )
             }

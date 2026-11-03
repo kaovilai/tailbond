@@ -71,16 +71,17 @@ object UpdateWords {
     /** Under "Download update": what happens next. */
     fun howToInstall(version: String?): String =
         "Your browser downloads tailbond-${version ?: "<version>"}.apk. Open it and tap Update: Android installs it over this app " +
-            "and keeps your servers and settings. The first time, Android asks you to allow your browser to install apps."
+            "and keeps your servers and settings. The first time, Android asks to allow your browser to install apps; that's normal. " +
+            "tailbond reconnects by itself after the update."
 
     /** A debug build can't take the release APKs; how to switch. */
     const val DEBUG_BUILD = "This is a debug build. It's signed with a different key than the release APKs on GitHub, " +
-        "so Android won't install a release over it. To switch: save a backup, uninstall tailbond, install the release APK, " +
-        "then restore the backup."
+        "so Android won't install a release over it. Back up first (Settings → Backup) so you keep your settings. " +
+        "Then uninstall tailbond, install the release APK, and restore the backup."
 
-    const val OBTAINIUM_TITLE = "Want automatic updates? Use Obtainium"
+    const val OBTAINIUM_TITLE = "Automatic: use Obtainium"
 
     fun obtainium(repo: String): String =
-        "Obtainium is a free app that follows tailbond's GitHub releases (github.com/$repo) and installs each new version for you. " +
-            "Add tailbond in it by that address."
+        "tailbond doesn't install updates by itself. To get them automatically on this phone, install Obtainium, a free app that " +
+            "follows tailbond's GitHub releases (github.com/$repo) and installs each new version for you. Add tailbond in it by that address."
 }

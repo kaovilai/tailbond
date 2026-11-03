@@ -122,7 +122,7 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                 if (s.checking) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(UpdateWords.lastChecked(s, state.now()), style = MaterialTheme.typography.bodySmall, color = muted)
                 val apk = s.apkUrl
-                if (a == Availability.AVAILABLE && apk != null) {
+                if (a == Availability.AVAILABLE && apk != null && !u.debugBuild) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Button(onClick = { actions.openUrl(apk) }) {
                             Icon(Icons.Filled.Download, null)
@@ -130,8 +130,9 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                         }
                         s.notesUrl?.let { url -> TextButton(onClick = { actions.openUrl(url) }) { Text("What's new", maxLines = 1) } }
                     }
-                    if (!u.debugBuild) Text(UpdateWords.howToInstall(s.latest), style = MaterialTheme.typography.bodySmall, color = muted)
-                } else if (a == Availability.DEV_BUILD || a == Availability.NO_APK) {
+                    Text(UpdateWords.howToInstall(s.latest), style = MaterialTheme.typography.bodySmall, color = muted)
+                } else if (a == Availability.DEV_BUILD || a == Availability.NO_APK || a == Availability.AVAILABLE) {
+                    // a debug build can't install the release APK: no Download, only the release notes
                     s.notesUrl?.let { url -> TextButton(onClick = { actions.openUrl(url) }) { Text("What's new in v${s.latest}") } }
                 }
                 OutlinedButton(onClick = actions::checkUpdates, enabled = !s.checking) { Text("Check now") }

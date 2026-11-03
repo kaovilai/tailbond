@@ -19,12 +19,13 @@ android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.Up
 |---|---|
 | 01-settings-updates-and-backup-rows | Settings page (long): the "Updates" row ("Up to date · checked today at 14:02") and the "Backup" row at the bottom |
 | 02-settings-update-available-row | The same rows when 0.2.0 is out: "Update available: v0.2.0" |
-| 10-updates-up-to-date | Settings → Updates. Up to date, checked today. Check now; policy "Tell me" / "Off"; what the check sends; "Want automatic updates? Use Obtainium" with how it works and "How to set up Obtainium" (the docs) |
+| 03-home-update-available | The main screen when 0.2.0 is out: an "Update available: v0.2.0" card under the status card; tapping it opens Settings → Updates (not shown on debug builds) |
+| 10-updates-up-to-date | Settings → Updates. Up to date, checked today. Check now; policy "Tell me" / "Off"; what the check sends; "Automatic: use Obtainium" (tailbond doesn't install updates itself; Obtainium does it automatically on the phone) with "How to set up Obtainium" (the docs) |
 | 10-updates-up-to-date-dark | The same in dark theme |
-| 11-updates-available | "Update available: v0.2.0" with "Download update" (opens the APK in the browser) and "What's new" (the release page), and what happens after the download |
+| 11-updates-available | "Update available: v0.2.0" with "Download update" (opens the APK in the browser) and "What's new" (the release page), and what happens after the download: Android asking to allow the browser to install apps is normal, and tailbond reconnects by itself after the update |
 | 12-updates-check-failed | "Couldn't check for updates": no internet or GitHub unreachable; when it tried and when the last good check was |
 | 13-updates-off | Policy Off, never checked: "Updates are off", Check now still works |
-| 19-updates-debug-build | A debug build with 0.2.0 available: the debug key differs from the release key, so a release APK won't install over it; how to switch (back up, uninstall, install the release APK, restore) |
+| 19-updates-debug-build | A debug build with 0.2.0 available: no "Download update" (a release APK won't install over a debug build, which has a different key), only "What's new"; how to switch: back up first (Settings → Backup) so the settings are kept, uninstall, install the release APK, restore |
 | 30-backup-page | Settings → Back up and restore |
 | 30-backup-page-dark | The same in dark theme |
 | 31-backup-save-dialog | After tapping "Save a backup file": passphrase typed twice, at least 10 characters |
