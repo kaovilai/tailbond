@@ -10,9 +10,10 @@
 // last_push, last_error). Restore warnings are the texts of
 // agent/internal/agent/backupapi.go restoreWarnings.
 //
-// One clock for every screen: today 22:00 (UTC). homebox updated to 0.2.0
-// at 03:06 this morning. Scheduled backups run at 03:00, slate7 pushes its
-// backup at 17:00, pixel-8 at 08:12.
+// One clock for every screen: today 22:00 (UTC). On Tell me, slate7 and
+// homebox were updated to 0.2.0 by hand at 14:20; on Automatic it installs
+// at 03:06. Scheduled backups run at 03:00, slate7 pushes its backup at
+// 17:00, pixel-8 at 08:12.
 import { connected, serverBase, serverStatus, withApi, twoWans, landing } from './fixtures.mjs';
 
 const T = Math.floor(Date.now() / 864e5) * 864e5 + 22 * 3600e3;
@@ -32,8 +33,9 @@ const rollback = `before-restore-${stamp(new Date(T + 60e3).toISOString())}.tbba
 const upd = (over = {}) => ({ current: '0.1.0', available: '', notes_url: '', policy: 'notify', repo: 'kaovilai/tailbond', method: 'opkg', state: 'idle', last_check: hAgo(1.5),
   last_result: '', last_result_version: '', last_result_at: '', detail: '', error: '', auto_window: '03:00-05:00', ...over });
 const avail = (over = {}) => upd({ available: '0.2.0', notes_url: notes((over.available) || '0.2.0'), ...over });
-// updated to 0.2.0 at 03:06 this morning
-const went = { last_result: 'ok', last_result_version: '0.2.0', last_result_at: hAgo(18.9) };
+// updated to 0.2.0 by hand at 14:20 (Tell me), or at 03:06 (Automatic)
+const went = { last_result: 'ok', last_result_version: '0.2.0', last_result_at: hAgo(7 + 40 / 60) };
+const wentNight = { ...went, last_result_at: hAgo(18.9) };
 
 // ---- GL travel router (Slate 7) ----
 const sched = { passphrase_set: true, every_hours: 24, keep: 7, push: true, last: hAgo(5), last_push: hAgo(5) };
@@ -47,16 +49,16 @@ const slateFile = download('slate7', 29);
 const routerPreview = {
   role: 'client', host: 'slate7', created: hAgo(29), agent_version: '0.2.0',
   changes: [
+    { what: 'Mode', from: '(default)', to: 'Speed' },
     { what: 'Servers', from: '(none)', to: 'homebox, vps' },
     { what: 'Bypass rules', from: '0', to: '4' },
     { what: 'Connection settings', from: '0', to: '3' },
-    { what: 'Update policy', from: 'notify', to: 'auto' },
   ],
   warnings: [],
 };
 const routerApi = (u, extra = {}) => ({
   'GET /api/update': u,
-  'GET /api/backup/summary': { role: 'client', mode: 'speed', servers: ['homebox (home.example.net:443)', 'vps (203.0.113.9:8443)'], bypass_rules: 4, paths: 3, password_set: false, update_policy: 'auto', files: ['global.key'], uci: true },
+  'GET /api/backup/summary': { role: 'client', mode: 'speed', servers: ['homebox (home.example.net:443)', 'vps (203.0.113.9:8443)'], bypass_rules: 4, paths: 3, password_set: false, update_policy: 'Tell me', files: ['global.key'], uci: true },
   'POST /api/restore/preview': routerPreview,
   'POST /api/restore': { ok: true, rollback },
   ...extra,
@@ -68,7 +70,7 @@ export const glStates = {
   'r02-router-update-available': r(avail()),
   'r03-router-installing': r(avail({ state: 'installing' })),
   'r04-router-rolled-back': r(avail({ state: 'rolled_back', last_result: 'rolled_back', last_result_version: '0.2.0', last_result_at: hAgo(0.2), detail: "the tunnel didn't come back within 60 seconds" })),
-  'r05-router-automatic': r(upd({ current: '0.2.0', policy: 'auto', ...went })),
+  'r05-router-automatic': r(upd({ current: '0.2.0', policy: 'auto', ...wentNight })),
   'r06-router-reinstalled-after-firmware-upgrade': r(upd({ current: '0.2.0', last_check: hAgo(0.3), last_result: 'ok', last_result_version: '0.2.0', last_result_at: hAgo(0.4), detail: 'reinstalled_after_firmware_upgrade' })),
   'r08-router-backups-off': r(upd({ current: '0.2.0', ...went }), { passphrase_set: false, every_hours: 24, keep: 7, push: true }),
 };
@@ -95,7 +97,7 @@ const flint = (u) => {
   return { ...withApi(fx, {
     'GET /api/update': u,
     'GET /api/backups': flintBackups,
-    'GET /api/backup/summary': { role: 'server', mode: 'speed', clients: ['slate7', 'pixel-8', 'beryl'], public_addr: 'home.example.net', port: 443, subnet: '10.77.0.0/24', approvers: null, password_set: false, update_policy: 'notify', files: serverFiles, uci: true },
+    'GET /api/backup/summary': { role: 'server', mode: 'speed', clients: ['slate7', 'pixel-8', 'beryl'], public_addr: 'home.example.net', port: 443, subnet: '10.77.0.0/24', approvers: null, password_set: false, update_policy: 'Tell me', files: serverFiles, uci: true },
   }), clock, model: 'GL-BE9300', info: { ...fx.info, version: u.current === '0.2.0' ? '0.2.0-r1' : '0.1.0-r42' } };
 };
 glStates['s01-flint-devices-out-of-date'] = flint(upd({ current: '0.2.0', ...went, outdated }));
@@ -131,23 +133,25 @@ const webStatus = (u, over = {}) => ({
 const webSettings = (over = {}) => ({ role: 'server', mode: 'speed', public_addr: 'home.example.net', effective_public_addr: 'home.example.net:443', port: 443, subnet: '10.77.0.0/24', tls: 'tailscale', tls_name: 'homebox.tail1234.ts.net', version: '0.2.0', glinet_ipk: true, password_set: false, ...landing,
   backup: { passphrase_set: true, every_hours: 24, keep: 7, last: hAgo(19) }, ...over });
 const webBackups = [own('homebox', 19, 11200), own('homebox', 43, 11150), own('homebox', 67, 11150), ...devBackups];
-const webSummary = { role: 'server', mode: 'speed', clients: ['slate7', 'pixel-8', 'beryl'], public_addr: 'home.example.net', port: 443, subnet: '10.77.0.0/24', approvers: ['sam@example.com'], password_set: false, update_policy: 'notify', files: serverFiles, uci: false };
+const webSummary = { role: 'server', mode: 'speed', clients: ['slate7', 'pixel-8', 'beryl'], public_addr: 'home.example.net', port: 443, subnet: '10.77.0.0/24', approvers: ['sam@example.com'], password_set: false, update_policy: 'Tell me', files: serverFiles, uci: false };
 // a new VPS "vps2" (198.51.100.20, port 443) getting the old one's backup
-// (vps, 203.0.113.9, port 8443, tailscale cert): restoreWarnings' three texts
+// (vps, 203.0.113.9, port 8443, tailscale cert): restoreWarnings' three
+// texts; the restore keeps this machine's public address and port
+// (backup.KeepOnRestore), so the change list doesn't show them
 const vpsFile = `vps-${stamp(hAgo(43))}.tbbackup`;
 const vpsPreview = {
   role: 'server', host: 'vps', created: hAgo(43), agent_version: '0.2.0',
   changes: [
+    { what: 'Mode', from: '(default)', to: 'Speed' },
     { what: 'Devices (clients)', from: '(none)', to: 'slate7, pixel-8, beryl' },
-    { what: 'Public address', from: '198.51.100.20', to: '203.0.113.9' },
-    { what: 'Tunnel port', from: '443', to: '8443' },
     { what: 'Tunnel addresses', from: '10.77.0.0/24', to: '10.83.142.0/24' },
     { what: 'Approvers', from: '(none)', to: 'sam@example.com' },
+    { what: 'Update policy', from: 'Tell me', to: 'Automatic' },
   ],
   warnings: [
-    'The backup is from vps. Turn tailbond off on vps first (or wipe it): both machines would have the same devices and keys, and devices would keep switching between them.',
-    "The backup sets the public address to 203.0.113.9 (where the old machine was reached). If devices reach this machine at another address, change it after restoring (Devices tab). Devices with Tailscale then learn the new address by themselves within a few minutes, as long as this machine has the old one's Tailscale name (vps). Devices without Tailscale (a phone or router paired with a link or QR code only) need their link again: Devices tab, the QR button next to each.",
-    "The tunnel port becomes udp/8443 (it was 443 here): allow it in this machine's firewall and in your provider's or home router's (port forward).",
+    'Before restoring, turn tailbond off on vps (sudo systemctl disable --now tailbond there): both machines would have the same devices and keys, and devices would switch back and forth.',
+    'Devices reached the old machine at 203.0.113.9:8443; this one is reached at 198.51.100.20:443 (kept). A device with Tailscale on (a router signed in to Tailscale, a phone with the Tailscale app) learns the new address by itself within a few minutes, once this machine has the old one\'s Tailscale name "vps": in the Tailscale admin console remove the old machine (or rename it), then rename this one to vps. A device without Tailscale needs its link again (Devices tab, the QR button next to it): check slate7, pixel-8, beryl. A travel router with the kill switch on has no internet until it reconnects, so send it its new link before you switch over.',
+    "The tunnel addresses become 10.83.142.0/24 (the backup's): if you approved this machine's route in the Tailscale admin console, approve 10.83.142.0/24 instead.",
   ],
 };
 const webApi = (u, extra = {}) => ({
@@ -166,15 +170,15 @@ const webHome = (u, setOver) => ({ status: webStatus(u), settings: webSettings(s
 const webFresh = (u) => ({
   status: webStatus(u, { ...vpsTs('vps2'), clients: [], uptime_sec: 12 * 60, totals: { tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0 }, subnet: '10.77.0.0/24' }),
   settings: webSettings({ public_addr: '198.51.100.20', effective_public_addr: '198.51.100.20:443', tls_name: 'vps2.tail1234.ts.net', backup: { passphrase_set: false, every_hours: 24, keep: 7 } }),
-  api: webApi(u, { 'GET /api/backups': [], 'GET /api/backup/summary': { role: 'server', mode: 'speed', clients: [], public_addr: '198.51.100.20', port: 443, subnet: '10.77.0.0/24', approvers: null, password_set: false, update_policy: 'notify', files: ['global.key', 'server.crt', 'server.key'], uci: false } }),
+  api: webApi(u, { 'GET /api/backups': [], 'GET /api/backup/summary': { role: 'server', mode: 'speed', clients: [], public_addr: '198.51.100.20', port: 443, subnet: '10.77.0.0/24', approvers: null, password_set: false, update_policy: 'Tell me', files: ['global.key', 'server.crt', 'server.key'], uci: false } }),
 });
 
 // homebox: Fedora RPM (dnf), on 0.2.0; 0.2.1 is out
-const homeU = (over = {}) => upd({ method: 'dnf', current: '0.2.0', ...went, outdated, dnf_automatic: true, ...over });
+const homeU = (over = {}) => upd({ method: 'dnf', current: '0.2.0', ...went, outdated, dnf_automatic: 'install', ...over });
 // vps: the Linux bundle (static), on 0.1.0
 const vpsU = (over = {}) => upd({ method: 'static', outdated: [], ...over });
 export const webStates = {
-  'w01-homebox-dnf-update-available': webHome(homeU({ available: '0.2.1', notes_url: notes('0.2.1'), dnf_automatic: false })),
+  'w01-homebox-dnf-update-available': webHome(homeU({ available: '0.2.1', notes_url: notes('0.2.1'), dnf_automatic: 'download' })),
   'w02-updated-devices-out-of-date-backups': webHome(homeU()),
   'w03-vps-update-available': webVps(vpsU({ available: '0.2.0', notes_url: notes('0.2.0') })),
   'w08-vps-rolled-back': webVps(vpsU({ available: '0.2.0', notes_url: notes('0.2.0'), policy: 'auto', state: 'rolled_back', last_result: 'rolled_back', last_result_version: '0.2.0', last_result_at: hAgo(18.9), detail: "the service wasn't up on 0.2.0 within 60 seconds" })),

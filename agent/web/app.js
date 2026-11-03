@@ -865,6 +865,17 @@ function releasesUrl(u) {
 const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg';
 
 const isPhone = (c) => c.kind === 'android' || c.kind === 'phone';
+// semver order of "0.2.0" / "v0.2.1-beta.1": <0, 0, >0 (a pre-release sorts before its release)
+function verCmp(a, b) {
+  const p = (v) => String(v || '').replace(/^v/, '').split('-');
+  const [x, xp] = p(a), [y, yp] = p(b);
+  const xs = x.split('.').map(Number), ys = y.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((xs[i] || 0) !== (ys[i] || 0)) return (xs[i] || 0) - (ys[i] || 0);
+  return xp && !yp ? -1 : !xp && yp ? 1 : 0;
+}
+// the newest release known: what's available, else this server's version
+const latestOf = (u, cur) => u.available || cur || '';
+const behind = (c, latest) => !!(c.version && latest && verCmp(c.version, latest) < 0);
 // the one-line state of updates, for the chip, the tab badge and the banner
 function updState(u) {
   const off = u.policy === 'off' || u.state === 'off';
@@ -876,7 +887,8 @@ function updState(u) {
 
 function renderMaint(st) {
   const u = st.update || {};
-  const outdated = st.role === 'server' && Array.isArray(u.outdated) ? u.outdated.length : 0;
+  const latest = latestOf(u, u.current || st.version);
+  const outdated = st.role === 'server' ? (st.clients || []).filter((c) => c.registered !== false && behind(c, latest)).length : 0;
   const badge = $('#maint-badge');
   const bad = u.state === 'failed';
   const n = (u.available && u.policy !== 'off' && u.state !== 'rolled_back' ? 1 : 0) + outdated;
@@ -1015,17 +1027,17 @@ function renderUpdates(st) {
   if (!off) acts.push(h('button', { class: 'btn', type: 'button', disabled: busy, onclick: () => updAction('/api/update/check', {}, 'Checking for updates…') }, 'Check now'));
   kids.push(h('div', { class: 'ub-now' }, now, acts.length ? h('div', { class: 'row' }, acts) : null));
 
-  // server: every device, its version, the ones out of date marked
+  // server: every device, its version, the ones behind the newest release marked
   if (srv) {
-    const outN = new Set((Array.isArray(u.outdated) ? u.outdated : []).map((c) => c.name));
+    const latest = latestOf(u, cur);
     const devs = (st.clients || []).filter((c) => c.registered !== false);
-    const outs = devs.filter((c) => outN.has(c.name));
-    const sec = [h('h4', { text: !devs.length ? 'Your devices' : outs.length ? `Your devices: ${outs.length} of ${devs.length} out of date` : 'Your devices' })];
+    const outs = devs.filter((c) => behind(c, latest));
+    const sec = [h('h4', { text: devs.length && outs.length ? `Your devices: ${outs.length} of ${devs.length} out of date` : 'Your devices' })];
     if (devs.length) {
       sec.push(h('ul', { class: 'ub-list' }, devs.map((c) => h('li', {}, icon(isPhone(c) ? 'device' : 'ethernet', 'ico sm'), h('b', { text: c.name }),
-        h('span', { class: 'muted', text: ` ${KIND_NAME[c.kind] || 'device'} · ${c.version ? c.version : 'version not known yet'}` }),
-        outN.has(c.name) ? h('span', { class: 'chip s-pending ub-mini', text: 'Out of date' })
-          : c.version ? h('span', { class: 'ub-ok small', text: '✓ up to date' }) : null))));
+        h('span', { class: 'muted', text: ` ${KIND_NAME[c.kind] || 'device'} · ${c.version ? c.version + (behind(c, latest) ? ` · behind the latest (${latest})` : '') : 'version not known yet'}` }),
+        behind(c, latest) ? h('span', { class: 'chip s-pending ub-mini', text: 'Out of date' })
+          : c.version && latest ? h('span', { class: 'ub-ok small', text: '✓ up to date' }) : null))));
       const how = [];
       if (outs.some((c) => !isPhone(c))) how.push('Routers: Update now in its tailbond panel, or Automatic.');
       if (outs.some(isPhone)) how.push('Phones: the app shows it; with Obtainium it installs by itself.');
@@ -1037,16 +1049,24 @@ function renderUpdates(st) {
 
   // the policy, in plain words
   const set = [h('h4', { text: 'When a new version is out' })];
-  const opts = selfUpdates(u) ? [['notify', 'Tell me (recommended)'], ['auto', 'Automatic'], ['off', 'Off']] : [['notify', 'Tell me (recommended)'], ['off', 'Off']];
-  set.push(seg(opts, policy, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
-  set.push(h('p', { class: 'muted small', text: policy === 'off' ? "Doesn't check for new versions."
-    : policy === 'auto' ? `Installs new versions by itself between ${win[0]} and ${win[1] || '05:00'} (this machine's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself.`
-    : `Checks GitHub once a day and shows new versions here${selfUpdates(u) ? '; nothing installs until you click Update now' : ''}.` }));
   if (u.method === 'dnf') {
-    if (u.dnf_automatic === true) set.push(h('p', { class: 'small' }, h('b', { text: 'Automatic updates: on' }), ' (dnf-automatic)'));
-    else if (u.dnf_automatic === false) set.push(h('p', { class: 'small' }, h('b', { text: 'Automatic updates are off.' }), ' To turn them on, run in a terminal on this server:'), cmdRow(DNF_AUTO_CMD));
-    else set.push(h('p', { class: 'muted small', text: 'Automatic updates come from dnf-automatic.' }));
-    set.push(h('p', { class: 'muted small' }, 'A new version reaches dnf shortly after the release. If an update misbehaves: ', h('code', { text: 'sudo dnf downgrade tailbond-server' })));
+    // dnf installs; tailbond only checks, so the choice is just On / Off
+    set.push(h('div', { class: 'row ub-seg-row' }, h('span', { class: 'small', text: 'Check for new versions' }),
+      seg([['notify', 'On'], ['off', 'Off']], policy === 'off' ? 'off' : 'notify', (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Check for new versions')),
+      h('p', { class: 'muted small', text: policy === 'off' ? "Doesn't check; dnf still updates tailbond with the rest of the computer." : 'Checks GitHub once a day and shows new versions here.' }));
+    const da = u.dnf_automatic;
+    const auto = h('b', { text: 'Automatic updates: ' });
+    if (da === 'install') set.push(h('p', { class: 'small' }, auto, 'dnf-automatic installs updates for every package on this computer, tailbond included.'));
+    else if (da === 'download') set.push(h('p', { class: 'small' }, auto, "dnf-automatic only downloads updates (Fedora's default). To install them too: set ", h('code', { text: 'apply_updates = yes' }), ' in ', h('code', { text: '/etc/dnf/automatic.conf' }), '.'));
+    else if (da === 'off') set.push(h('p', { class: 'small' }, auto, 'off. To turn on dnf-automatic (it updates every package on this computer), run in a terminal on this server:'), cmdRow(DNF_AUTO_CMD));
+    else set.push(h('p', { class: 'small' }, auto, 'they come from dnf-automatic, which updates every package on this computer.'));
+    set.push(h('p', { class: 'muted small' }, 'These are done on the computer itself, by whoever looks after it. A new version reaches dnf shortly after the release. If an update misbehaves: ', h('code', { text: 'sudo dnf downgrade tailbond-server' })));
+  } else {
+    const opts = selfUpdates(u) ? [['notify', 'Tell me'], ['auto', 'Automatic'], ['off', 'Off']] : [['notify', 'Tell me'], ['off', 'Off']];
+    set.push(seg(opts, policy, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
+    set.push(h('p', { class: 'muted small', text: policy === 'off' ? "Doesn't check for new versions."
+      : policy === 'auto' ? `Installs new versions by itself between ${win[0]} and ${win[1] || '05:00'} (this machine's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself.`
+      : `Checks GitHub once a day and shows new versions here${selfUpdates(u) ? '; nothing installs until you click Update now' : ''}.` }));
   }
   kids.push(h('div', { class: 'ub-sec' }, set));
   box.replaceChildren(...kids);
@@ -1175,7 +1195,7 @@ function showPreview(body, p, fname) {
       dlg(h('div', { class: 'ub-done' }, icon('backup'), h('h3', { text: 'Restored' })),
         h('p', { text: `The settings from ${host} are in place. A copy of the previous settings was kept${r && r.rollback ? ` (${r.rollback})` : ''}, locked with the same passphrase, in case you want them back.` }),
         warns.length
-          ? h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: 'Next steps (from the check before restoring)' }), h('ol', {}, warns.map((w) => h('li', { text: w }))))
+          ? h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: "If you haven't already:" }), h('ol', {}, warns.map((w) => h('li', { text: w }))))
           : h('p', { class: 'small', text: state.role === 'server' ? 'Devices reconnect by themselves within a few minutes.' : 'tailbond connects to its home server again by itself within a minute.' }),
         h('p', { class: 'muted small', text: `Automatic backups now follow the backup: if they were on on ${host}, they stay on here, with the same schedule and passphrase.` }),
         h('p', { class: 'muted small', text: 'tailbond is restarting with them; this page reconnects by itself in a few seconds.' }),
@@ -1188,7 +1208,7 @@ function showPreview(body, p, fname) {
     h('div', { class: 'ub-file' }, icon('backup', 'ico sm'), h('div', {},
       h('b', { text: fname }),
       h('div', { class: 'muted small', text: `${p.host || '?'} (${ROLE_WORDS[p.role] || p.role}) · made ${fmtWhen(p.created)} · tailbond ${p.agent_version || '?'}` }))),
-    warns.length ? h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: `Before you restore: ${warns.length === 1 ? 'one thing' : warns.length + ' things'} to know` }), h('ol', {}, warns.map((w) => h('li', { text: w })))) : null,
+    warns.length ? h('div', { class: 'ub-note warn ub-warns' }, h('b', { text: 'Before you restore' }), h('ol', {}, warns.map((w) => h('li', { text: w })))) : null,
     h('h4', { text: changes.length ? 'What it replaces' : 'Nothing differs from the current settings' }),
     changes.length ? h('table', { class: 'ub-changes' }, h('tbody', {}, changes.map((c) => h('tr', {},
       h('th', { text: c.what }), h('td', { class: 'muted', text: c.from || '—' }), h('td', { text: '→' }), h('td', { text: c.to || '—' }))))) : null,
@@ -1253,7 +1273,7 @@ function renderBackups() {
   const kids = [h('div', { class: 'ub-head' },
     h('div', { class: 'kind-ico' }, icon('backup')),
     h('div', { class: 'grow' }, h('h3', { text: 'Backup & restore' }),
-      h('div', { class: 'muted small', text: srv ? 'Settings, devices and keys, locked with a passphrase. Move to a new machine and your devices keep working.' : 'Settings, servers and rules, locked with a passphrase.' })),
+      h('div', { class: 'muted small', text: srv ? 'Settings, devices and keys, locked with a passphrase. Move to a new machine: the restore preview says what each device needs.' : 'Settings, servers and rules, locked with a passphrase.' })),
     h('span', { class: 'chip ' + (on ? 's-active' : 's-off'), text: on ? 'Automatic backups on' : 'Automatic backups off' }))];
   kids.push(h('div', { class: 'row' },
     h('button', { class: 'btn primary', type: 'button', onclick: openBackup }, 'Download a backup'),

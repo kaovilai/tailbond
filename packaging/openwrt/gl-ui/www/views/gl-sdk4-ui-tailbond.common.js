@@ -407,6 +407,13 @@
     if (p.length >= 20 || nw >= 4 || (p.length >= 14 && kinds >= 3)) return ["strong", "Strong"];
     return ["ok", "OK. Longer is better: four random words are strong and easy to type"];
   }
+  // semver order of "0.2.0" / "v0.2.1-beta.1": <0, 0, >0 (a pre-release sorts before its release)
+  function verCmp(a, b) {
+    var p = function (v) { return String(v || "").replace(/^v/, "").split("-"); };
+    var x = p(a), y = p(b), xs = x[0].split(".").map(Number), ys = y[0].split(".").map(Number);
+    for (var i = 0; i < 3; i++) if ((xs[i] || 0) !== (ys[i] || 0)) return (xs[i] || 0) - (ys[i] || 0);
+    return x[1] && !y[1] ? -1 : !x[1] && y[1] ? 1 : 0;
+  }
   var KIND_NAME = { router: "travel router", android: "Android phone", phone: "Android phone" };
   var ROLE_WORDS = { server: "home server", client: "travel router" };
   // GET /api/backup/summary keys, in reading order
@@ -544,7 +551,7 @@
         var tried = u.last_result_version || u.available || "The new version";
         if (S.reinstalled) {
           body.push(this.alert(h, "ok", "tailbond is back after the firmware update, with your settings",
-            "The GL firmware update removed it; it reinstalled itself from the copy kept on this router (or, if that was gone, from the GitHub release)" + (u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "") + ". Nothing to do. If you upgrade the firmware without Keep Settings, install tailbond again and pair again."));
+            "The GL firmware update removed it; it reinstalled itself from the copy kept on this router (or, if that was gone, from the GitHub release)" + (u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "") + ". Nothing to do. If you upgrade the firmware without Keep Settings: install tailbond again, then restore the router's backup (" + (this.serverShort || "your home server") + " keeps the last 3: Backup & restore there), or pair again."));
         }
         if (u.state === "rolled_back") {
           body.push(this.alert(h, "info", "Everything works as before on " + cur,
@@ -586,17 +593,18 @@
         if (acts.length) body.push(h("div", { class: "tb-actions" }, acts));
 
         if (srv) {
-          var outN = {}, isPhone = function (c) { return c.kind === "android" || c.kind === "phone"; };
-          A(u.outdated).forEach(function (c) { outN[c.name] = true; });
+          // out of date = behind the newest release known (what's available, else this router's version)
+          var latest = u.available || cur, isPhone = function (c) { return c.kind === "android" || c.kind === "phone"; };
+          var behind = function (c) { return !!(c.version && latest && verCmp(c.version, latest) < 0); };
           var devs = A(st.clients).filter(function (c) { return c.registered !== false; });
-          var outs = devs.filter(function (c) { return outN[c.name]; });
+          var outs = devs.filter(behind);
           var sec = [h("div", { class: "tb-sec-t" }, devs.length && outs.length ? "Your devices: " + outs.length + " of " + devs.length + " out of date" : "Your devices")];
           if (devs.length) {
             sec.push(h("div", { class: "tb-list" }, devs.map(function (c) {
               return h("div", { class: "tb-li", style: { padding: "8px 0" } }, [
                 h("div", { class: "tb-wan-icon", style: { width: "32px", height: "32px" } }, [icon(h, isPhone(c) ? "phone" : "router", 18)]),
-                h("div", { class: "tb-grow" }, [h("b", c.name), h("span", { class: "tb-muted" }, " · " + (KIND_NAME[c.kind] || "device") + " · " + (c.version || "version not known yet"))]),
-                outN[c.name] ? h("span", { class: "tb-chip warn" }, "Out of date") : c.version ? h("span", { class: "tb-small", style: { color: "#13a35a" } }, "✓ up to date") : null
+                h("div", { class: "tb-grow" }, [h("b", c.name), h("span", { class: "tb-muted" }, " · " + (KIND_NAME[c.kind] || "device") + " · " + (c.version ? c.version + (behind(c) ? " · behind the latest (" + latest + ")" : "") : "version not known yet"))]),
+                behind(c) ? h("span", { class: "tb-chip warn" }, "Out of date") : c.version && latest ? h("span", { class: "tb-small", style: { color: "#13a35a" } }, "✓ up to date") : null
               ]);
             })));
             var how = [];
@@ -608,19 +616,27 @@
           body.push(h("div", { class: "tb-sec" }, sec));
         }
 
-        var opts = selfUp ? [["notify", "Tell me (recommended)"], ["auto", "Automatic"], ["off", "Off"]] : [["notify", "Tell me (recommended)"], ["off", "Off"]];
-        var set = [h("div", { class: "tb-sec-t" }, "When a new version is out"),
-          h("div", { class: "tb-seg" }, opts.map(function (o) {
-            return h("button", { class: o[0] === policy ? "on" : "", attrs: { type: "button", disabled: !!self.busy.upd }, on: { click: function () { if (o[0] !== policy) self.updPost("/api/update/policy", { policy: o[0] }, "Saved"); } } }, o[1]);
-          })),
-          h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check for new versions."
-            : policy === "auto" ? "Installs new versions by itself between " + win[0] + " and " + (win[1] || "05:00") + " (this router's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
-            : "Checks GitHub once a day and shows new versions here" + (selfUp ? "; nothing installs until you click Update now." : "."))];
+        var segOf = function (opts, val, label) {
+          return h("div", { class: "tb-seg", attrs: { "aria-label": label } }, opts.map(function (o) {
+            return h("button", { class: o[0] === val ? "on" : "", attrs: { type: "button", disabled: !!self.busy.upd }, on: { click: function () { if (o[0] !== val) self.updPost("/api/update/policy", { policy: o[0] }, "Saved"); } } }, o[1]);
+          }));
+        };
+        var set = [h("div", { class: "tb-sec-t" }, "When a new version is out")];
         if (u.method === "dnf") {
-          if (u.dnf_automatic === true) set.push(line([h("b", "Automatic updates: on"), " (dnf-automatic)"]));
-          else if (u.dnf_automatic === false) set.push(line([h("b", "Automatic updates are off."), " To turn them on, run in a terminal on this server:"]), cmdRow("sudo systemctl enable --now dnf-automatic.timer"));
-          else set.push(h("div", { class: "tb-help" }, "Automatic updates come from dnf-automatic."));
-          set.push(h("div", { class: "tb-help" }, ["A new version reaches dnf shortly after the release. If an update misbehaves: ", h("code", "sudo dnf downgrade tailbond-server")]));
+          // dnf installs; tailbond only checks, so the choice is just On / Off
+          var da = u.dnf_automatic, auto = h("b", "Automatic updates: ");
+          set.push(h("div", { class: "tb-row", style: { gap: "10px" } }, ["Check for new versions", segOf([["notify", "On"], ["off", "Off"]], policy === "off" ? "off" : "notify", "Check for new versions")]),
+            h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check; dnf still updates tailbond with the rest of the computer." : "Checks GitHub once a day and shows new versions here."));
+          if (da === "install") set.push(line([auto, "dnf-automatic installs updates for every package on this computer, tailbond included."]));
+          else if (da === "download") set.push(line([auto, "dnf-automatic only downloads updates (Fedora's default). To install them too: set ", h("code", "apply_updates = yes"), " in ", h("code", "/etc/dnf/automatic.conf"), "."]));
+          else if (da === "off") set.push(line([auto, "off. To turn on dnf-automatic (it updates every package on this computer), run in a terminal on this server:"]), cmdRow("sudo systemctl enable --now dnf-automatic.timer"));
+          else set.push(line([auto, "they come from dnf-automatic, which updates every package on this computer."]));
+          set.push(h("div", { class: "tb-help" }, ["These are done on the computer itself, by whoever looks after it. A new version reaches dnf shortly after the release. If an update misbehaves: ", h("code", "sudo dnf downgrade tailbond-server")]));
+        } else {
+          set.push(segOf(selfUp ? [["notify", "Tell me"], ["auto", "Automatic"], ["off", "Off"]] : [["notify", "Tell me"], ["off", "Off"]], policy, "Update policy"),
+            h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check for new versions."
+              : policy === "auto" ? "Installs new versions by itself between " + win[0] + " and " + (win[1] || "05:00") + " (this router's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
+              : "Checks GitHub once a day and shows new versions here" + (selfUp ? "; nothing installs until you click Update now." : ".")));
         }
         body.push(h("div", { class: "tb-sec" }, set));
         return this.card(h, "Updates", body, h("span", { class: "tb-chip " + chip[0] }, chip[1]), "tb-upd");
@@ -633,7 +649,7 @@
         var everyWords = every % 24 === 0 ? (every === 24 ? "every day" : "every " + (every / 24) + " days") : "every " + every + " hours";
         var body = [
           h("div", { class: "tb-muted", style: { lineHeight: 1.55 } }, srv
-            ? "Settings, devices and their keys, locked with a passphrase. With it you can move to a new router and your devices keep working."
+            ? "Settings, devices and their keys, locked with a passphrase. Move to a new router: the restore preview says what each device needs."
             : "Settings, servers and rules, locked with a passphrase. With it a new or reset router is back in a minute."),
           h("div", { class: "tb-actions", style: { marginTop: "12px" } }, [
             this.btn(h, "Download a backup", function () { self.openUb("backup"); }, "primary"),
@@ -738,7 +754,7 @@
               h("div", { class: "tb-wan-icon" }, [icon(h, pv.role === "server" ? "server" : "router")]),
               h("div", { class: "tb-grow" }, [h("div", { style: { fontWeight: 600, wordBreak: "break-all" } }, u.file), h("div", { class: "tb-muted tb-small" }, (pv.host || "?") + " (" + (ROLE_WORDS[pv.role] || pv.role) + ") · made " + fmtWhen(pv.created) + " · tailbond " + (pv.agent_version || "?"))])
             ]),
-            warns.length ? this.warnBox(h, "Before you restore: " + (warns.length === 1 ? "one thing" : warns.length + " things") + " to know", warns) : null,
+            warns.length ? this.warnBox(h, "Before you restore", warns) : null,
             h("div", { style: { fontWeight: 600, margin: "12px 0 6px" } }, ch.length ? "What it replaces" : "Nothing differs from the current settings"),
             ch.length ? h("div", { class: "tb-kv tb-small tb-chg" }, [].concat.apply([], ch.map(function (c) { return [h("div", c.what), h("div", [h("span", { class: "tb-muted" }, c.from || "—"), " → ", h("b", c.to || "—")])]; }))) : null,
             p("The current settings are saved first (same passphrase), so you can go back. tailbond restarts afterwards; devices here are offline for a few seconds.", { marginTop: "12px", fontSize: "12px" }),
@@ -748,7 +764,7 @@
           var dw = this.ubWarns(u.preview || {}), dhost = (u.preview && u.preview.host) || "the backup";
           kids.push(h("div", { class: "tb-dialog-t", style: { color: "#13a35a", display: "flex", alignItems: "center", gap: "8px" } }, [icon(h, "check", 22), "Restored"]),
             p("The settings from " + dhost + " are in place. A copy of the previous settings was kept" + (u.rollback ? " (" + u.rollback + ")" : "") + ", locked with the same passphrase, in case you want them back.", { color: "#303133" }),
-            dw.length ? this.warnBox(h, "Next steps (from the check before restoring)", dw)
+            dw.length ? this.warnBox(h, "If you haven't already:", dw)
               : p(this.role === "server" ? "Devices reconnect by themselves within a few minutes." : "tailbond connects to its home server again by itself within a minute.", { color: "#303133" }),
             p("Automatic backups now follow the backup: if they were on on " + dhost + ", they stay on here, with the same schedule and passphrase.", { fontSize: "12px" }),
             p("tailbond is restarting with them; this page comes back by itself in a few seconds.", { fontSize: "12px" }));
