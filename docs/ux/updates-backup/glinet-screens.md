@@ -34,7 +34,7 @@ at 03:04 this morning.
 | r12-router-install-confirm | After "Install 0.2.0 now": the confirmation (what restarts, goes back by itself) |
 | r13-router-whats-inside | "See what's inside": what a backup holds, without secrets |
 | s01-flint-devices-out-of-date-mirror | Flint 3 home server on 0.2.0: "2 devices out of date" (slate7 travel router on 0.1.0, pixel-8 Android phone on 0.1.0), "Update mirror: serving 0.2.0 to your devices", install window 03:00–05:00, saved backups (its own and the travel routers'). Phone too |
-| s02-flint-upload-an-update | "Upload an update" (offline home server): five files picked (stable.json, .sig, two .ipk, .apk), uploaded, all added |
+| s02-flint-upload-an-update | "Upload an update" (offline home server, a GL router: checksums only): five files picked (stable.json, stable.json.sigstore.json, two .ipk, .apk), four added, one uploading |
 | s03-flint-update-waiting-for-window | Flint 3 on 0.1.0, 0.2.0 available: "Waiting for 03:00. It installs between 03:00 and 05:00" |
 
 What the panel sends (docs/architecture.md "Updates", "Backup and restore"):

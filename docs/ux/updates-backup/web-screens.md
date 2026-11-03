@@ -26,7 +26,7 @@ the three marked "phone too". All screens use the same clock: today at
 | w01-update-available-waiting-for-window | homebox on 0.1.0 with 0.2.0 available, policy Automatic: "Waiting for 03:00. It installs between 03:00 and 05:00". The mirror already serves 0.2.0. Install window, Check now, Install now, Upload an update. Below: automatic backups on, saved backups |
 | w02-updated-devices-out-of-date-backups | homebox updated to 0.2.0: "2 devices out of date" (slate7, travel router, on 0.1.0; pixel-8, Android phone, on 0.1.0), "Update mirror: serving 0.2.0", saved backups (homebox's and the routers'). Phone too |
 | w03-install-confirm | After "Install 0.2.0 now": what restarts (2 connected devices drop for a moment), goes back by itself if it doesn't work |
-| w04-upload-an-update | "Upload an update" on the VPS: five files picked (stable.json, .sig, .rpm, .ipk, .apk), uploaded, all added |
+| w04-upload-an-update | "Upload an update" on the VPS: five files picked (stable.json, stable.json.sigstore.json, .rpm, .ipk, .apk), uploaded, all added |
 | w05-backup-download-dialog | "Download a backup" with a passphrase typed twice: strength hint, "Write it down". Phone too |
 | w06-restore-preview-new-vps | New VPS, old VPS's backup checked: what it replaces (devices, public address, port, tunnel addresses, approvers), warnings (another machine with another public address: devices find the new one by themselves through the Tailscale name; devices paired with a link need a new link). Phone too |
 | w07-restore-done | After Restore: "Restored. A copy of the previous settings was kept (before-restore-….tbbackup)" |

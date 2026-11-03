@@ -3,14 +3,17 @@
 # "Updates", "Backup and restore"), in two network namespaces:
 #
 #   - a fake release server (python http.server in the server namespace)
-#     serving a channel manifest signed with a throwaway ed25519 key
-#     (openssl) and a linux tarball (tailbondd built as 0.0.2 + mqvpn);
-#   - the home server (tailbondd 0.0.1) checks it, mirrors it, installs it
+#     serving a channel manifest and a linux tarball (tailbondd built as
+#     0.0.2 + mqvpn), without a GitHub attestation (no GitHub here);
+#   - the home server (tailbondd 0.0.1), by default checking attestations,
+#     refuses it; switched to update.verify sha256-only (setups without
+#     GitHub), it checks it, mirrors it, installs it
 #     (self-update under state_dir, exit 75, restarted by a loop standing in
 #     for systemd's Restart=on-failure, the base execs the new version, the
 #     trial health check commits it);
 #   - the client (0.0.1, public source blocked like on hotel Wi-Fi without
-#     GitHub) updates through the server's mirror over the tunnel;
+#     GitHub, no key, attestation policy) updates through the server's
+#     mirror over the tunnel, trusting the server it's paired with;
 #   - a broken 0.0.3 (its tailbondd exits at once) is rolled back to 0.0.2
 #     by the base after its trial boots, and not retried;
 #   - an encrypted backup of the server, then the server is wiped (the client
@@ -36,7 +39,7 @@ if [ "$(id -u)" -ne 0 ]; then
   exec sudo --preserve-env=KEEP,VERBOSE MQVPN="$MQVPN" "$0" "$@"
 fi
 [ -x "$BUILD/tailbondd-0.0.1" ] && [ -x "$BUILD/tailbondd-0.0.2" ] || { echo "run as a normal user first (it builds, then uses sudo)"; exit 2; }
-for c in curl jq openssl python3 nft; do command -v "$c" >/dev/null || { echo "$c missing"; exit 2; }; done
+for c in curl jq python3 nft; do command -v "$c" >/dev/null || { echo "$c missing"; exit 2; }; done
 [ -x "$MQVPN" ] || { echo "mqvpn not found at $MQVPN"; exit 2; }
 
 WORK="$(mktemp -d /tmp/tailbond-e2e-updates.XXXXXX)"
@@ -84,22 +87,15 @@ cp "$MQVPN" "$WORK/bin/mqvpn"
 cp "$MQVPN" "$WORK/pkg/tailbond-linux-x86_64/bin/mqvpn"
 ok "built"
 
-say "release signing key (throwaway)"
-openssl genpkey -algorithm ed25519 -out "$WORK/key.pem" 2>/dev/null
-PUB="$(openssl pkey -in "$WORK/key.pem" -pubout -outform DER | tail -c 32 | base64 -w0)"
-KEYID="$(openssl pkey -in "$WORK/key.pem" -pubout -outform DER | tail -c 32 | sha256sum | cut -c1-16)"
-publish() { # publish VERSION TARBALL: writes stable.json(.sig) and the artifact
+publish() { # publish VERSION TARBALL: writes stable.json and the artifact
   local v=$1 tb=$2 name=tailbond-linux-x86_64.tar.gz sha size
   cp "$tb" "$WORK/rel/dl/$v-$name"
   sha="$(sha256sum "$tb" | cut -d' ' -f1)"; size="$(stat -c %s "$tb")"
   jq -n --arg v "$v" --arg url "http://10.210.1.1:8088/dl/$v-$name" --arg sha "$sha" --argjson size "$size" --arg name "$name" \
     '{format:1, channel:"stable", version:$v, protocol:1, requires_server_protocol:1, notes_url:"https://example.invalid/notes",
       artifacts:[{name:$name, kind:"linux", arch:"x86_64", url:$url, sha256:$sha, size:$size}]}' >"$WORK/rel/channels/stable.json"
-  openssl pkeyutl -sign -rawin -inkey "$WORK/key.pem" -in "$WORK/rel/channels/stable.json" -out "$WORK/sig.bin"
-  jq -n --arg k "$KEYID" --arg s "$(base64 -w0 "$WORK/sig.bin")" '{key_id:$k, sig:$s}' >"$WORK/rel/channels/stable.json.sig"
 }
 tar -C "$WORK/pkg" -czf "$WORK/v002.tar.gz" tailbond-linux-x86_64
-ok "key $KEYID"
 
 say "network"
 for ns in "$NS_S" "$NS_C"; do ip netns del "$ns" 2>/dev/null || true; ip netns add "$ns"; ip -n "$ns" link set lo up; done
@@ -122,7 +118,7 @@ srv_config() {
 {"role":"server","mqvpn_bin":"$WORK/bin/mqvpn","state_dir":"$WORK/srv/state","hooks_dir":"$WORK/hooks","listen":":8077",
  "disable_tailscale":true,"landing_port":-1,
  "server":{"port":443,"public_addr":"10.210.1.1","subnet":"10.77.0.0/24","use_tailscale_cert":false},
- "update":{"source":"http://10.210.1.1:8088/channels","trusted_keys":["$PUB"],"policy":"auto","window":"00:00-00:00"}}
+ "update":{"source":"http://10.210.1.1:8088/channels","repo":"tailbond/e2e","policy":"auto","window":"00:00-00:00"}}
 EOF
 }
 srv_config
@@ -132,7 +128,7 @@ URI="$(sapi -X POST -d '{"name":"slate7"}' "http://$API/api/clients" | jq -r .ur
 cat >"$WORK/cli/tailbond.json" <<EOF
 {"role":"client","mqvpn_bin":"$WORK/bin/mqvpn","state_dir":"$WORK/cli/state","hooks_dir":"$WORK/hooks","listen":"$API",
  "disable_tailscale":true,"client":{"pairing_uri":"$URI","paths":[{"iface":"eth0","enabled":true,"priority":"primary"}],"no_dns":true,"manage_routes":false,"captive_portal_detect":false},
- "update":{"source":"http://10.210.1.1:8088/channels","trusted_keys":["$PUB"],"policy":"auto"}}
+ "update":{"source":"http://10.210.1.1:8088/channels","policy":"auto"}}
 EOF
 # hotel Wi-Fi without GitHub: the client can't reach the public source
 ip netns exec "$NS_C" nft -f - <<'NFT'
@@ -147,9 +143,18 @@ run_agent "$NS_C" client "$WORK/cli/tailbond.json"
 wait_for 30 "client connected" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" && ok "client 0.0.1 connected" || { bad "client"; exit 1; }
 jq -e '.version == "0.0.1" and .protocol == 1 and .update.policy == "auto"' <(sapi "http://$API/api/status") >/dev/null && ok "status: version 0.0.1, protocol 1" || bad "status: $(sapi "http://$API/api/status" | jq -c '{version, protocol, update}')"
 
-say "release 0.0.2: the server mirrors and installs it"
+say "release 0.0.2 without an attestation: refused, then taken with sha256-only"
 publish 0.0.2 "$WORK/v002.tar.gz"
 sapi -X POST -d '{}' "http://$API/api/update/check" >/dev/null
+if wait_for 30 "refused" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/status | jq -e '.update.verify == \"attestation\" and .update.repo == \"tailbond/e2e\" and (.update.error // \"\" | test(\"attestation\")) and (.update.available // \"\") == \"\"'"; then
+  ok "attestation policy: a manifest without a GitHub attestation is refused, nothing mirrored"
+else
+  bad "not refused: $(sapi "http://$API/api/status" | jq -c .update)"
+fi
+[ ! -e "$WORK/srv/state/update/mirror/stable.json" ] && ok "mirror empty" || bad "unverified manifest mirrored"
+[ "$(ip netns exec "$NS_S" curl -sS -m 5 -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{"verify":"sometimes"}' "http://$API/api/update/policy")" = 400 ] \
+  && ok "a bad verify value is refused" || bad "verify validation"
+sapi -X POST -d '{"verify":"sha256-only"}' "http://$API/api/update/policy" >/dev/null
 if wait_for 90 "server on 0.0.2" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/status | jq -e '.version == \"0.0.2\" and .update.last_result == \"ok\"'"; then
   ok "server self-updated to 0.0.2 and passed its health check (client reconnected)"
 else
@@ -159,7 +164,7 @@ jq -e '.active == "0.0.2" and (.trial == null)' "$WORK/srv/state/update/state.js
 [ -x "$WORK/srv/state/update/versions/0.0.2/mqvpn" ] && pgrep -f "$WORK/srv/state/update/versions/0.0.2/mqvpn" >/dev/null \
   && ok "the update's own mqvpn runs" || bad "mqvpn from the update not running"
 [ "$(sha256sum <"$WORK/bin/tailbondd")" != "$(sha256sum <"$WORK/srv/state/update/versions/0.0.2/tailbondd")" ] && ok "the packaged binary is untouched" || bad "base binary replaced"
-sapi "http://$API/api/status" | jq -e '.update.mirror.version == "0.0.2" and .update.mirror.files == 1' >/dev/null && ok "mirror holds 0.0.2" || bad "mirror: $(sapi "http://$API/api/status" | jq -c .update.mirror)"
+sapi "http://$API/api/status" | jq -e '.update.mirror.version == "0.0.2" and .update.mirror.files == 1 and .update.verify == "sha256-only"' >/dev/null && ok "mirror holds 0.0.2 (sha256-only)" || bad "mirror: $(sapi "http://$API/api/status" | jq -c .update)"
 
 say "the client updates through the server's mirror (public source blocked)"
 capi -X POST -d '{}' "http://$API/api/update/check" >/dev/null
@@ -168,7 +173,7 @@ if wait_for 120 "client on 0.0.2" sh -c "ip netns exec $NS_C curl -fsS -m 2 http
 else
   bad "client: $(capi "http://$API/api/status" | jq -c '{version, state, update}')"
 fi
-capi "http://$API/api/status" | jq -e '.update.source == "mirror"' >/dev/null && ok "client's source: mirror" || bad "source: $(capi "http://$API/api/status" | jq -r .update.source)"
+capi "http://$API/api/status" | jq -e '.update.source == "mirror" and .update.verified == "mirror" and .update.verify == "attestation"' >/dev/null && ok "client's source: mirror, trusted as its paired server (no key, attestation policy)" || bad "source: $(capi "http://$API/api/status" | jq -c .update)"
 wait_for 20 "server sees the client's version" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/status | jq -e '.clients[] | select(.name == \"slate7\" and .version == \"0.0.2\" and .kind == \"router\")'" \
   && ok "server lists slate7 on 0.0.2, nothing outdated" || bad "clients: $(sapi "http://$API/api/status" | jq -c '[.clients[] | {name, version, kind}], .update.outdated')"
 
