@@ -9,6 +9,15 @@
 #   sudo ./install.sh --dry-run              # print the decisions + files, change nothing
 #   sudo ./install.sh --no-tailscale --public-addr vps.example.net
 #   sudo ./install.sh --uninstall [--purge]
+#   sudo /usr/local/lib/tailbond/install.sh --update    # the latest release
+#   sudo ./install.sh --update                # this unpacked bundle's version
+#
+# --update replaces only the binaries and hooks (config, unit and keys stay),
+# keeps the old ones as <file>.prev, restarts tailbond and puts .prev back if
+# it doesn't come up on the new version within 60 s. Without a bundle next
+# to it (the installed copy), it downloads the release from GitHub
+# (--version vX.Y.Z, else the latest) and checks it against SHA256SUMS. The
+# dashboard's "Update now" runs the new bundle's install.sh --update.
 #
 # What it decides (each printed, each overridable):
 # - tunnel UDP port: 443 if free, else 8443, else the first free of 4443
@@ -32,7 +41,9 @@
 #
 # Test knobs (CI, --dry-run): TB_TEST_LISTEN="udp:443 tcp:80" adds fake
 # wildcard listeners, TB_TEST_ROUTES="10.89.0.0/24 ..." adds fake routes,
-# TB_TEST_NO_TAILSCALE=1 pretends Tailscale isn't running.
+# TB_TEST_NO_TAILSCALE=1 pretends Tailscale isn't running; without systemd,
+# TB_TEST_RESTART="cmd" restarts tailbond for --update (its health check and
+# rollback then run as under systemd), TB_API_URL a fake GitHub API.
 set -euo pipefail
 
 usage() {
@@ -47,10 +58,14 @@ Options:
   --no-tailscale        don't use Tailscale even if it runs here
   --tailscale           use Tailscale on a re-run that had it off (re-pair after)
   --landing-port N      phone page port on the Tailscale IPs (-1 = off)
-  --update-policy P     auto (default: installs updates itself in the
-                        maintenance window), notify (shows them, installs on
-                        request) or off; see docs/updates.md
-  --update-source URL   where to look for updates (default: built in;
+  --update-policy P     notify (default: the dashboard shows new releases,
+                        "Update now" installs), auto (installs them by
+                        itself) or off; see docs/updates.md
+  --update              update the binaries only (see above)
+  --version vX.Y.Z      with --update: that release instead of the latest
+  --repo OWNER/NAME     with --update: where releases come from (default
+                        update.repo in the config, else kaovilai/tailbond)
+  --force               with --update: reinstall even the same version
                         "" goes back to it)
   --memory-high SIZE    systemd MemoryHigh= (default 96M)
   --memory-max SIZE     systemd MemoryMax= (default 160M)
@@ -70,7 +85,9 @@ EOF
 
 # ---- options ----------------------------------------------------------------
 OPT_PORT="" OPT_SUBNET="" OPT_SUBNET6="" OPT_PUBLIC="" OPT_TS="" OPT_LANDING=""
-OPT_UPOLICY="" OPT_USOURCE="" OPT_USOURCE_SET=0
+OPT_UPOLICY="" UPDATE=0 OPT_UVERSION="" OPT_REPO="" FORCE=0
+# tests: a fake GitHub API (http allowed then)
+TB_API_URL="${TB_API_URL:-https://api.github.com}"
 MEM_HIGH=96M MEM_MAX=160M GOMEMLIMIT=40MiB OOM_ADJ=-100
 PREFIX=/usr/local CONF=/etc/tailbond/tailbond.json
 BUNDLE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,7 +108,10 @@ while [ $# -gt 0 ]; do
         --tailscale) OPT_TS=on ;;
         --landing-port) need "$@"; OPT_LANDING="$2"; shift ;;
         --update-policy) need "$@"; OPT_UPOLICY="$2"; shift ;;
-        --update-source) need "$@"; OPT_USOURCE="$2"; OPT_USOURCE_SET=1; shift ;;
+        --update) UPDATE=1 ;;
+        --version) need "$@"; OPT_UVERSION="$2"; shift ;;
+        --repo) need "$@"; OPT_REPO="$2"; shift ;;
+        --force) FORCE=1 ;;
         --memory-high) need "$@"; MEM_HIGH="$2"; shift ;;
         --memory-max) need "$@"; MEM_MAX="$2"; shift ;;
         --prefix) need "$@"; PREFIX="${2%/}"; shift ;;
@@ -110,12 +130,9 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-case "$OPT_UPOLICY" in ""|auto|notify|off) ;; *) echo "install.sh: --update-policy $OPT_UPOLICY: auto, notify or off" >&2; exit 2 ;; esac
-case "$OPT_USOURCE" in
-    ""|http://*|https://*) ;;
-    *) echo "install.sh: --update-source $OPT_USOURCE: an http(s):// URL" >&2; exit 2 ;;
-esac
-case "$OPT_USOURCE" in *[[:space:]\"\\]*) echo "install.sh: --update-source: no spaces or quotes" >&2; exit 2 ;; esac
+case "$OPT_UPOLICY" in ""|auto|notify|off) ;; *) echo "install.sh: --update-policy $OPT_UPOLICY: notify, auto or off" >&2; exit 2 ;; esac
+case "$OPT_UVERSION" in ""|v[0-9]*|[0-9]*) ;; *) echo "install.sh: --version $OPT_UVERSION: like v1.2.3" >&2; exit 2 ;; esac
+case "$OPT_REPO" in ""|[A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;; *) echo "install.sh: --repo $OPT_REPO: owner/name" >&2; exit 2 ;; esac
 
 BINDIR="$PREFIX/bin"
 LIBDIR="$PREFIX/lib/tailbond"
@@ -197,7 +214,7 @@ do_uninstall() {
             act ufw --force delete "$n"
         done
     fi
-    act rm -f "$UNIT" "$SYSCTL" "$BINDIR/tailbondd" "$BINDIR/mqvpn"
+    act rm -f "$UNIT" "$SYSCTL" "$BINDIR/tailbondd" "$BINDIR/mqvpn" "$BINDIR/tailbondd.prev" "$BINDIR/mqvpn.prev"
     act rm -rf "$LIBDIR" "$SHARE" "$DOCDIR"
     if systemd_on; then act systemctl daemon-reload; fi
     if [ "$PURGE" = 1 ]; then
@@ -213,6 +230,116 @@ do_uninstall() {
 }
 
 if [ "$UNINSTALL" = 1 ]; then do_uninstall; exit 0; fi
+
+# ---- update ---------------------------------------------------------------------------
+# result RESULT VERSION FROM DETAIL: what the dashboard shows after the restart
+update_result() {
+    local d="${4//\\/\\\\}"
+    install -d -m 0700 "$STATE"
+    printf '{"result":"%s","version":"%s","from":"%s","at":"%s","detail":"%s"}\n' \
+        "$1" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${d//\"/\\\"}" >"$STATE/update-result.json.tmp" &&
+        mv -f "$STATE/update-result.json.tmp" "$STATE/update-result.json"
+}
+# hello_version: the running agent's version (GET /api/hello, no curl needed)
+hello_version() {
+    local r
+    r="$(exec 3<>/dev/tcp/127.0.0.1/8077 && printf 'GET /api/hello HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n' >&3 && timeout 3 cat <&3)" || return 1
+    sed -n 's/.*"version":"\([^"]*\)".*/\1/p' <<<"$r"
+}
+# fetch URL FILE
+fetch() {
+    case "$1" in
+        https://*) ;;
+        http://*) case "$TB_API_URL" in http://*) ;; *) die "refusing $1: not https" ;; esac ;;
+        *) die "bad URL $1" ;;
+    esac
+    if have curl; then curl -fsSL --retry 2 -o "$2" "$1"
+    elif have wget; then wget -q -O "$2" "$1"
+    else die "curl or wget is needed to download the release"; fi
+}
+# fetch_release: download and check the release bundle; sets BUNDLE
+fetch_release() {
+    local repo tag api rel arch name url sums want got tmp
+    repo="${OPT_REPO:-$(sed -n 's/.*"repo": *"\([^"]*\)".*/\1/p' "$CONF" 2>/dev/null | head -1)}"
+    repo="${repo#https://github.com/}"; repo="${repo%.git}"; repo="${repo%/}"; repo="${repo:-kaovilai/tailbond}"
+    tag="$OPT_UVERSION"; [ -z "$tag" ] || tag="v${tag#v}"
+    api="$TB_API_URL/repos/$repo/releases/${tag:+tags/$tag}"; [ -n "$tag" ] || api="${api}latest"
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/tailbond-update.XXXXXX")"
+    trap 'rm -rf "$tmp"' EXIT
+    fetch "$api" "$tmp/release.json" || die "can't read $api"
+    rel="$(tr -d '\n' <"$tmp/release.json")"
+    tag="$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' <<<"$rel")"
+    [ -n "$tag" ] || die "no release found at $api"
+    arch="$(uname -m)"; case "$arch" in x86_64|aarch64) ;; *) die "no release bundle for $arch" ;; esac
+    name="tailbond-linux-$arch.tar.gz"
+    asset_url() { grep -o "\"browser_download_url\": *\"[^\"]*/$1\"" <<<"$rel" | head -1 | sed 's/.*: *"\(.*\)"/\1/'; }
+    url="$(asset_url "$name")"; sums="$(asset_url SHA256SUMS)"
+    [ -n "$url" ] || die "release $tag has no $name"
+    [ -n "$sums" ] || die "release $tag has no SHA256SUMS: not installing anything unchecked"
+    say "downloading $repo $tag ($name)"
+    fetch "$sums" "$tmp/SHA256SUMS" || die "download of SHA256SUMS failed"
+    fetch "$url" "$tmp/$name" || die "download of $name failed"
+    want="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$tmp/SHA256SUMS" | head -1)"
+    got="$(sha256sum "$tmp/$name" | cut -d' ' -f1)"
+    [ -n "$want" ] || die "SHA256SUMS has no line for $name"
+    [ "$want" = "$got" ] || die "$name doesn't match SHA256SUMS (got $got): not installing it"
+    tar -xzf "$tmp/$name" -C "$tmp" || die "can't unpack $name"
+    BUNDLE="$tmp/tailbond-linux-$arch"
+    [ -x "$BUNDLE/bin/tailbondd" ] || die "$name has no bin/tailbondd"
+}
+# swap SRC DST: atomic replace keeping DST.prev
+swap() {
+    [ -e "$2" ] && cp -p "$2" "$2.prev"
+    install -m "$3" "$1" "$2.tbnew" && mv -f "$2.tbnew" "$2"
+}
+restart_tb() {
+    if systemd_on; then systemctl restart tailbond.service || true
+    else bash -c "$TB_TEST_RESTART" || true; fi
+}
+do_update() {
+    [ "$(id -u)" = 0 ] || die "run as root (sudo)"
+    [ -f "$MANIFEST" ] || die "no tailbond install found ($MANIFEST): run install.sh without --update first"
+    local prefix cur new b ok=0 why
+    prefix="$(sed -n 's/^TB_PREFIX=//p' "$MANIFEST")"; prefix="${prefix:-/usr/local}"
+    cur="$(sed -n 's/^TB_VERSION=//p' "$MANIFEST")"
+    BINDIR="$prefix/bin" LIBDIR="$prefix/lib/tailbond" HOOKS="$prefix/lib/tailbond/hooks" SHARE="$prefix/share/tailbond"
+    if [ -n "$OPT_UVERSION" ] || [ ! -x "$BUNDLE/bin/tailbondd" ]; then fetch_release; fi
+    new="$(cat "$BUNDLE/VERSION" 2>/dev/null || echo dev)"
+    if [ "$new" = "$cur" ] && [ "$FORCE" = 0 ]; then say "tailbond $cur is installed already (--force reinstalls it)"; return 0; fi
+    "$BUNDLE/bin/tailbondd" -version >/dev/null 2>&1 || die "$BUNDLE/bin/tailbondd doesn't run here: nothing changed"
+    say "updating tailbond $cur -> $new"
+    for b in tailbondd mqvpn; do swap "$BUNDLE/bin/$b" "$BINDIR/$b" 0755; done
+    rm -rf "$HOOKS.prev"; [ -d "$HOOKS" ] && cp -a "$HOOKS" "$HOOKS.prev"
+    for b in server-up server-down; do install -D -m 0755 "$BUNDLE/hooks/$b" "$HOOKS/$b"; done
+    install -D -m 0755 "$BUNDLE/install.sh" "$LIBDIR/install.sh"
+    [ -f "$BUNDLE/share/tailbond.apk" ] && install -D -m 0644 "$BUNDLE/share/tailbond.apk" "$SHARE/tailbond.apk"
+    sed -i "s/^TB_VERSION=.*/TB_VERSION=$new/" "$MANIFEST"
+    if selinux_on; then restorecon -RF "$BINDIR/mqvpn" "$BINDIR/tailbondd" "$LIBDIR" 2>/dev/null || true; fi
+    if systemd_on || [ -n "${TB_TEST_RESTART:-}" ]; then
+        restart_tb
+        for _ in $(seq 1 60); do
+            if { ! systemd_on || systemctl is-active --quiet tailbond.service; } && [ "$(hello_version 2>/dev/null)" = "$new" ]; then ok=1; break; fi
+            sleep 1
+        done
+    else
+        ok=1; warn "no systemd: restart tailbond yourself"
+    fi
+    if [ "$ok" = 1 ]; then
+        update_result ok "$new" "$cur" ""
+        say "tailbond $new is running (the previous version is kept as $BINDIR/tailbondd.prev)"
+        return 0
+    fi
+    why="tailbond $new didn't come up within 60 s"
+    warn "$why: going back to $cur"
+    for b in tailbondd mqvpn; do [ -e "$BINDIR/$b.prev" ] && cp -p "$BINDIR/$b.prev" "$BINDIR/$b"; done
+    if [ -d "$HOOKS.prev" ]; then rm -rf "$HOOKS"; cp -a "$HOOKS.prev" "$HOOKS"; fi
+    sed -i "s/^TB_VERSION=.*/TB_VERSION=$cur/" "$MANIFEST"
+    if selinux_on; then restorecon -RF "$BINDIR/mqvpn" "$BINDIR/tailbondd" "$LIBDIR" 2>/dev/null || true; fi
+    restart_tb
+    update_result rolled_back "$new" "$cur" "$why; journalctl -u tailbond shows why"
+    return 1
+}
+if [ "$UPDATE" = 1 ]; then do_update; exit $?; fi
 
 # ---- preflight --------------------------------------------------------------------
 [ "$DRY" = 1 ] || [ "$(id -u)" = 0 ] || die "run as root (sudo), or try --dry-run"
@@ -545,7 +672,6 @@ jstr() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 render_update() {
     local u=""
     [ -n "$OPT_UPOLICY" ] && u="\"policy\": $(jstr "$OPT_UPOLICY")"
-    [ "$OPT_USOURCE_SET" = 1 ] && u="${u:+$u, }\"source\": $(jstr "$OPT_USOURCE")"
     [ -n "$u" ] && printf '\n  "update": {%s},' "$u"
     return 0
 }
@@ -657,9 +783,7 @@ E_UPOLICY="$(json_get "$CONF" update.policy)"
 if [ -n "$OPT_UPOLICY" ]; then UP_WHY="--update-policy"
 elif [ -n "$E_UPOLICY" ]; then UP_WHY="kept from $CONF"
 else UP_WHY="default"; fi
-UP_SRC=""
-[ "$OPT_USOURCE_SET" = 1 ] && UP_SRC=", from ${OPT_USOURCE:-the built-in source}"
-note "updates: ${OPT_UPOLICY:-${E_UPOLICY:-auto}}  [$UP_WHY]$UP_SRC; installed updates live in $STATE/update"
+note "updates: ${OPT_UPOLICY:-${E_UPOLICY:-notify}}  [$UP_WHY]; update later with: sudo $LIBDIR/install.sh --update"
 note "binaries: $BINDIR/{mqvpn,tailbondd}; hooks: $HOOKS; config: $CONF; state: $STATE"
 note "systemd: $UNIT (MemoryHigh=$MEM_HIGH MemoryMax=$MEM_MAX OOMScoreAdjust=$OOM_ADJ GOMEMLIMIT=$GOMEMLIMIT)"
 note "SELinux: $(selinux_on && echo "$(getenforce 2>/dev/null || echo on), contexts restored with restorecon" || echo "not enabled")"
@@ -714,6 +838,7 @@ fi
 put "$MQVPN_SRC" "$BINDIR/mqvpn" 0755
 put "$TBD_SRC" "$BINDIR/tailbondd" 0755
 for hk in server-up server-down; do put "$BUNDLE/hooks/$hk" "$HOOKS/$hk" 0755; done
+put "$BUNDLE/install.sh" "$LIBDIR/install.sh" 0755
 [ -n "$APK_SRC" ] && put "$APK_SRC" "$SHARE/tailbond.apk" 0644
 [ -f "$BUNDLE/README.md" ] && put "$BUNDLE/README.md" "$DOCDIR/README.md" 0644
 for f in LICENSE.mqvpn NOTICE.mqvpn; do [ -f "$BUNDLE/$f" ] && put "$BUNDLE/$f" "$DOCDIR/$f" 0644; done
