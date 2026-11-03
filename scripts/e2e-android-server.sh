@@ -91,7 +91,7 @@ echo $! >"$WORK/server.pid"
 if ! wait_for 30 sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\" and .control_api'"; then
   echo "server did not come up"; tail -n 50 "$WORK/server.log"; exit 1
 fi
-wait_for 10 sh -c "ip -4 addr show dev tb0 | grep -q 'inet 10.77.0.1/'" || { echo "tb0 has no 10.77.0.1"; ip addr; exit 1; }
+wait_for 10 sh -c "ip -4 addr show dev tb0 | grep -qE 'inet 10\.77\.0\.1[ /]'" || { echo "tb0 has no 10.77.0.1"; ip addr; exit 1; }
 echo "server up: $(api "http://$API/api/status" | jq -c '{state, server, tunnel_ip}')"
 
 say "pairing for pixel-e2e"
