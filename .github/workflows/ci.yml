@@ -17,14 +17,9 @@ concurrency:
 env:
   TB_JOBS: 4
   JOBS: 4
-  # Compiled into every tailbondd (scripts/release/ldflags.sh, docs/updates.md):
-  # the repository and workflow whose GitHub artifact attestations (job
-  # "release", actions/attest: Sigstore keyless, no signing key) make an
-  # update manifest authentic, and the default update source, the rolling
-  # "channels" release the release job writes.
+  # Compiled into every tailbondd (scripts/release/ldflags.sh): the
+  # repository whose GitHub releases the update check reads (docs/updates.md).
   TB_UPDATE_REPO: ${{ github.repository }}
-  TB_UPDATE_WORKFLOW: .github/workflows/ci.yml
-  TB_UPDATE_SOURCE: https://github.com/${{ github.repository }}/releases/download/channels
   # The release version on v* tags (the build scripts drop the v); empty
   # otherwise, so they use git describe (dev builds never self-update).
   VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
@@ -73,8 +68,6 @@ jobs:
             'packaging/openwrt/files/etc/uci-defaults/*' 'packaging/openwrt/files/usr/lib/tailbond/*' \
             'packaging/openwrt/files/lib/upgrade/*')
           shellcheck -S warning --shell=busybox -x "${files[@]}"
-      - name: Release scripts self-test (manifest, publish with an attestation)
-        run: scripts/release/test-release-scripts.sh
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -108,8 +101,8 @@ jobs:
         run: sudo scripts/smoke-client-control.sh
       - name: e2e-netns
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
-      - name: e2e-updates (auto-updates, mirror, rollback, backup/restore)
-        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-updates.sh
+      - name: e2e-backup (backup, wipe, restore, the client reconnects)
+        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-backup.sh
       - name: Server memory and CPU under load (informational)
         continue-on-error: true
         run: MB=100 MQVPN="$PWD/out/native/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/measure-server-mem.sh
@@ -332,12 +325,28 @@ jobs:
             mkdir -p /tmp/b && tar -C /tmp/b -xzf /src/out/linux/tailbond-linux-x86_64.tar.gz
             /tmp/b/tailbond-linux-x86_64/install.sh --no-tailscale --public-addr 203.0.113.7
             systemctl is-active tailbond
+            # the dashboard'"'"'s "Update now" path: install.sh --update in its own
+            # transient unit (systemd-run), which restarts tailbond and checks it
+            systemd-run --unit tailbond-update-ci --collect --wait --quiet -- \
+              /tmp/b/tailbond-linux-x86_64/install.sh --update --force --bundle-dir /tmp/b/tailbond-linux-x86_64
+            grep -q "\"result\":\"ok\"" /var/lib/tailbond/update-result.json
+            systemctl is-active tailbond
+            test -x /usr/local/bin/tailbondd.prev
             systemctl show tailbond -p MemoryHigh -p MemoryMax -p OOMScoreAdjust
             systemctl show tailbond -p MemoryMax | grep -qx MemoryMax=167772160
             nft list table inet tailbond | grep -q masquerade
             /tmp/b/tailbond-linux-x86_64/uninstall.sh --purge
             ! systemctl is-active -q tailbond'
           sudo podman rm -f tb
+      - uses: actions/setup-go@v6
+        if: matrix.image == 'almalinux:10'
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Updates (fake GitHub release, Update now, rollback, install.sh --update, SHA256SUMS)
+        if: matrix.image == 'almalinux:10'
+        run: |
+          sudo -E env "PATH=$PATH" scripts/e2e-update-vps.sh out/linux/tailbond-linux-x86_64.tar.gz docker.io/library/almalinux:10
 
   ansible:
     name: Ansible role lint
@@ -402,8 +411,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      # GitHub artifact attestations (Sigstore keyless): the workflow's
-      # OIDC identity signs; no private key anywhere
+      # build provenance (actions/attest-build-provenance): no keys
       id-token: write
       attestations: write
       artifact-metadata: write
@@ -412,15 +420,15 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist/
-      - name: Collect assets and checksums
+      - name: Collect assets and SHA256SUMS
         env:
           TAG: ${{ github.ref_name }}
         run: |
           mkdir -p assets
           cp dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz assets/
           if ! compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
-            # never publish a release whose APK phones can't update to
-            echo "::error::no release APK: the Android signing secrets are missing (TB_RELEASE_KEYSTORE_B64 ...). Run scripts/release/gen-android-keystore.sh once (or --restore the existing key from its backup), then re-run this tag. docs/updates.md, Android signing key."
+            # never publish an APK that can't update the installed app
+            echo "::error::no release APK: the Android signing secrets are missing (TB_RELEASE_KEYSTORE_B64 ...). Run scripts/release/gen-android-keystore.sh once (or --restore the key from its backup), then re-run this tag. docs/android.md, Release key."
             exit 1
           fi
           cp dist/android-release-apk/tailbond-*.apk assets/
@@ -428,27 +436,43 @@ jobs:
             tar -czf "assets/tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
           done
           (cd assets && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
-      - name: Update manifests
-        env:
-          TAG: ${{ github.ref_name }}
-        run: scripts/release/publish-channels.sh prepare "$TAG" assets manifests
-      # One attestation for every asset and the manifests: agents check the
-      # manifest's (docs/updates.md), then the artifacts' SHA-256s from it;
-      # anyone can check a file with `gh attestation verify FILE -R OWNER/REPO`.
-      - name: Attest (GitHub artifact attestation)
-        id: attest
-        uses: actions/attest@v4
+      # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
+      # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
+      - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: |
-            assets/*
-            manifests/*.json
-      # The version release with every asset, the manifests and their
-      # attestation (<channel>.json.sigstore.json), then the manifests into
-      # the rolling "channels" release. A pre-release tag (v1.2.3-beta.1) is
-      # a GitHub pre-release and only updates beta.json.
-      - name: Publish the release and the update channels
+          subject-path: assets/*
+      - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
-        run: scripts/release/publish-channels.sh publish "$TAG" assets manifests "$BUNDLE"
+        run: |
+          pre=()
+          # v1.2.3-beta.1: a pre-release, which the update check never offers
+          [[ "$TAG" == *-* ]] && pre=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag "${pre[@]}" assets/*
+
+  copr:
+    name: COPR build (Fedora)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-24.04
+    env:
+      # secret COPR_CONFIG: the ~/.config/copr file from
+      # https://copr.fedorainfracloud.org/api/ (docs/fedora-server.md, COPR)
+      HAS_COPR: ${{ secrets.COPR_CONFIG != '' }}
+    steps:
+      - name: No COPR_CONFIG secret
+        if: env.HAS_COPR != 'true'
+        run: 'echo "::notice::secret COPR_CONFIG is not set, so no COPR build (docs/fedora-server.md, COPR)"'
+      - name: Start the COPR build of this tag
+        if: env.HAS_COPR == 'true'
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+          COPR_PROJECT: ${{ vars.COPR_PROJECT || 'tailbond' }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pipx install copr-cli
+          mkdir -p ~/.config
+          (umask 077; printf '%s\n' "$COPR_CONFIG" >~/.config/copr)
+          copr-cli buildscm --clone-url "https://github.com/$GITHUB_REPOSITORY" --commit "$TAG" \
+            --method make_srpm --nowait "$COPR_PROJECT"

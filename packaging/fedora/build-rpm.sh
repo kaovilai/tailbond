@@ -6,11 +6,14 @@
 # Steps: build mqvpn natively from the third_party/mqvpn submodule (skipped
 # when build/mqvpn exists; JOBS caps parallelism, default 4), build a static
 # tailbondd, stage everything into a tarball, then rpmbuild -bb.
+# SRPM_OUT=DIR: rpmbuild -bs into DIR instead (COPR's make_srpm method,
+# .copr/Makefile; the SRPM carries the prebuilt binaries, so build it on the
+# architecture it's for: the COPR project builds x86_64 only).
 # Needs: cmake gcc gcc-c++ make libevent-devel golang rpm-build systemd-rpm-macros.
 #
 # Env: VERSION (semver, a leading v is dropped; default: the v* tag at HEAD,
 # else 0.1.0 with tailbondd reporting git describe, so a dev build never
-# updates itself), TB_UPDATE_REPO / TB_UPDATE_SOURCE (compiled into
+# updates itself), TB_UPDATE_REPO (compiled into
 # tailbondd, scripts/release/ldflags.sh), JOBS, TAILBOND_APK,
 # TAILBOND_GLINET_IPK.
 # A pre-release 1.2.3-beta.1 becomes Version 1.2.3, Release 0.beta.1 (RPM
@@ -92,6 +95,16 @@ fi
 if [ -n "$ipk" ]; then install -m 0644 "$ipk" "$SRC/share/tailbond-glinet.ipk"; fi
 tar -C "$TOP" -czf "$TOP/SOURCES/tailbond-server-$RPM_VERSION.tar.gz" "tailbond-server-$RPM_VERSION"
 cp "$PKG/tailbond-server.spec" "$TOP/SPECS/"
+
+if [ -n "${SRPM_OUT:-}" ]; then
+  echo "==> rpmbuild -bs"
+  rpmbuild -bs --define "_topdir $TOP" --define "tb_version $RPM_VERSION" --define "tb_release $RPM_RELEASE" "$TOP/SPECS/tailbond-server.spec" >"$TOP/rpmbuild.log" 2>&1 ||
+    { tail -40 "$TOP/rpmbuild.log"; exit 1; }
+  mkdir -p "$SRPM_OUT"
+  find "$TOP/SRPMS" -name '*.src.rpm' -exec cp {} "$SRPM_OUT/" \;
+  ls -1 "$SRPM_OUT"/*.src.rpm
+  exit 0
+fi
 
 echo "==> rpmbuild"
 rpmbuild -bb --define "_topdir $TOP" --define "tb_version $RPM_VERSION" --define "tb_release $RPM_RELEASE" "$TOP/SPECS/tailbond-server.spec" >"$TOP/rpmbuild.log" 2>&1 ||
