@@ -78,7 +78,7 @@ type updater struct {
 	ipkCmd     string
 	runner     func(name string, args, env []string) error // detached installer
 	now        func() time.Time
-	dnfAuto    func() bool
+	dnfAuto    func() string
 }
 
 // Automatic installs happen at night (local time), when nobody is on a
@@ -97,17 +97,48 @@ func (a *Agent) inAutoWindow() bool {
 	return h >= autoFromHour && h < autoToHour
 }
 
-// dnfAutomatic: is a dnf-automatic timer enabled (Fedora RPM installs)?
-func (a *Agent) dnfAutomatic() bool {
+// dnfAutomatic (Fedora RPM installs): "install" when a dnf-automatic timer
+// installs updates, "download" when it only downloads them (Fedora's default
+// apply_updates = no), "off" without one. It covers every package, not just
+// tailbond.
+func (a *Agent) dnfAutomatic() string {
 	if a.upd.dnfAuto != nil {
 		return a.upd.dnfAuto()
 	}
-	for _, t := range []string{"dnf5-automatic.timer", "dnf-automatic.timer", "dnf-automatic-install.timer"} {
-		if exec.Command("systemctl", "is-enabled", "--quiet", t).Run() == nil {
-			return true
+	on := func(t string) bool { return exec.Command("systemctl", "is-enabled", "--quiet", t).Run() == nil }
+	switch {
+	case on("dnf-automatic-install.timer"):
+		return "install"
+	case on("dnf5-automatic.timer"), on("dnf-automatic.timer"):
+		if applyUpdates("/etc/dnf/automatic.conf") {
+			return "install"
+		}
+		return "download"
+	case on("dnf-automatic-download.timer"):
+		return "download"
+	}
+	return "off"
+}
+
+// applyUpdates reads apply_updates from a dnf-automatic config.
+func applyUpdates(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	on := false
+	for _, l := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(l, "=")
+		if ok && strings.TrimSpace(k) == "apply_updates" {
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "yes", "true", "1", "on":
+				on = true
+			default:
+				on = false
+			}
 		}
 	}
-	return false
+	return on
 }
 
 func newUpdater() *updater {
@@ -344,14 +375,14 @@ func (a *Agent) check(ctx context.Context) *update.Release {
 		a.upd.rel = rel
 	}
 	a.upd.mu.Unlock()
-	dnfAuto := false
+	dnfAuto := ""
 	if a.method() == methodDnf {
 		dnfAuto = a.dnfAutomatic()
 	}
 	a.setUpdate(func(v *status.Update) {
 		v.LastCheck = &now
 		if a.method() == methodDnf {
-			v.DnfAutomatic = &dnfAuto
+			v.DnfAutomatic = dnfAuto
 		}
 		if v.State == "checking" {
 			v.State = "idle"

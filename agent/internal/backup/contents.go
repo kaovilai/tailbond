@@ -146,7 +146,7 @@ func Changes(cur, next *config.Config) []Change {
 		}
 	}
 	add("Role", cur.Role, next.Role)
-	add("Mode", cur.Mode, next.Mode)
+	add("Mode", modeName(cur.Mode), modeName(next.Mode))
 	if cur.Role == config.RoleServer || next.Role == config.RoleServer {
 		add("Devices (clients)", names(cur.Server.Users), names(next.Server.Users))
 		add("Public address", orNone(cur.Server.PublicAddr), orNone(next.Server.PublicAddr))
@@ -227,11 +227,44 @@ func set(b bool) string {
 	return "not set"
 }
 
+// policy and modeName: the words the dashboards use.
 func policy(c *config.Config) string {
-	if c.Update == nil || c.Update.Policy == "" {
-		return "auto"
+	switch c.UpdateOrDefault().Policy {
+	case config.UpdateAuto:
+		return "Automatic"
+	case config.UpdateOff:
+		return "Off"
 	}
-	return c.Update.Policy
+	return "Tell me"
+}
+
+func modeName(m string) string {
+	switch m {
+	case "":
+		return "(default)"
+	case config.ModeSpeed:
+		return "Speed"
+	}
+	return strings.ToUpper(m[:1]) + m[1:]
+}
+
+// KeepOnRestore applies what a restore keeps from this machine (cur) to the
+// backup's settings (next): its own paths and binding, and for a server its
+// public address and tunnel port (the address devices reach it at, and the
+// port its firewall allows); devices learn them (docs/backup-restore.md).
+func KeepOnRestore(cur, next *config.Config) *config.Config {
+	c := *next
+	c.MqvpnBin, c.StateDir, c.HooksDir, c.Listen, c.ControlAddr = cur.MqvpnBin, cur.StateDir, cur.HooksDir, cur.Listen, cur.ControlAddr
+	c.AndroidAPK, c.GLiNetIPK = cur.AndroidAPK, cur.GLiNetIPK
+	if c.Role == config.RoleServer && cur.Role == config.RoleServer {
+		if cur.Server.PublicAddr != "" {
+			c.Server.PublicAddr = cur.Server.PublicAddr
+		}
+		if cur.Server.Port != 0 {
+			c.Server.Port = cur.Server.Port
+		}
+	}
+	return &c
 }
 
 // Encode is the payload's plaintext bytes.

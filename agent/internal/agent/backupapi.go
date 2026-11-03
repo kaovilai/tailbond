@@ -165,22 +165,28 @@ func (a *Agent) restoreWarnings(h backup.Header, next *config.Config) []string {
 	host, _ := os.Hostname()
 	if a.role == config.RoleServer {
 		if h.Host != "" && h.Host != a.serverName() && h.Host != host {
-			out = append(out, fmt.Sprintf("The backup is from %s. Turn tailbond off on %s first (or wipe it): both machines would have the same devices and keys, and devices would keep switching between them.", h.Host, h.Host))
+			out = append(out, fmt.Sprintf("Before restoring, turn tailbond off on %s (sudo systemctl disable --now tailbond there): both machines would have the same devices and keys, and devices would switch back and forth.", h.Host))
 		}
-		if next.Server.PublicAddr != "" && next.Server.PublicAddr != cur.Server.PublicAddr {
-			name := ""
-			if next.Server.UseTailscaleCert {
-				name = h.Host
+		oldAddr := fmt.Sprintf("%s:%d", next.Server.PublicAddr, next.Server.Port)
+		newAddr := fmt.Sprintf("%s:%d", cur.Server.PublicAddr, cur.Server.Port)
+		if next.Server.PublicAddr != "" && cur.Server.PublicAddr != "" && oldAddr != newAddr {
+			var names []string
+			for _, u := range next.Server.Users {
+				names = append(names, u.Name)
 			}
-			msg := "The backup sets the public address to " + next.Server.PublicAddr + " (where the old machine was reached). If devices reach this machine at another address, change it after restoring (Devices tab)."
-			if name != "" {
-				msg += " Devices with Tailscale then learn the new address by themselves within a few minutes, as long as this machine has the old one's Tailscale name (" + name + ")."
+			msg := fmt.Sprintf("Devices reached the old machine at %s; this one is reached at %s (kept). ", oldAddr, newAddr)
+			if next.Server.UseTailscaleCert && h.Host != "" {
+				msg += fmt.Sprintf("A device with Tailscale on (a router signed in to Tailscale, a phone with the Tailscale app) learns the new address by itself within a few minutes, once this machine has the old one's Tailscale name %q: in the Tailscale admin console remove the old machine (or rename it), then rename this one to %s. ", h.Host, h.Host)
 			}
-			msg += " Devices without Tailscale (a phone or router paired with a link or QR code only) need their link again: Devices tab, the QR button next to each."
+			msg += "A device without Tailscale needs its link again (Devices tab, the QR button next to it)"
+			if len(names) > 0 {
+				msg += ": check " + strings.Join(names, ", ")
+			}
+			msg += ". A travel router with the kill switch on has no internet until it reconnects, so send it its new link before you switch over."
 			out = append(out, msg)
 		}
-		if next.Server.Port != 0 && next.Server.Port != cur.Server.Port {
-			out = append(out, fmt.Sprintf("The tunnel port becomes udp/%d (it was %d here): allow it in this machine's firewall and in your provider's or home router's (port forward).", next.Server.Port, cur.Server.Port))
+		if next.Server.Subnet != "" && next.Server.Subnet != cur.Server.Subnet && next.Server.UseTailscaleCert {
+			out = append(out, fmt.Sprintf("The tunnel addresses become %s (the backup's): if you approved this machine's route in the Tailscale admin console, approve %s instead.", next.Server.Subnet, next.Server.Subnet))
 		}
 	}
 	if a.role == config.RoleClient && h.Host != "" && h.Host != host {
@@ -205,7 +211,7 @@ func (a *Agent) hRestorePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"role": h.Role, "host": h.Host, "platform": h.Platform, "created": h.Created, "agent_version": h.AgentVersion,
-		"changes": backup.Changes(a.store.Get(), cfg), "warnings": a.restoreWarnings(h, cfg),
+		"changes": backup.Changes(a.store.Get(), backup.KeepOnRestore(a.store.Get(), cfg)), "warnings": a.restoreWarnings(h, cfg),
 	})
 }
 
@@ -255,11 +261,7 @@ func RestoreBackup(store *config.Store, p *backup.Payload, next *config.Config, 
 		return "", err
 	}
 	if _, err := store.Update(func(c *config.Config) error {
-		keep := *c
-		*c = *next
-		// this machine's own paths and binding
-		c.MqvpnBin, c.StateDir, c.HooksDir, c.Listen, c.ControlAddr = keep.MqvpnBin, keep.StateDir, keep.HooksDir, keep.Listen, keep.ControlAddr
-		c.AndroidAPK, c.GLiNetIPK = keep.AndroidAPK, keep.GLiNetIPK
+		*c = *backup.KeepOnRestore(c, next)
 		return nil
 	}); err != nil {
 		return "", err

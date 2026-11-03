@@ -140,8 +140,9 @@ type Update struct {
 	Error             string `json:"error,omitempty"`
 	// AutoWindow: when policy auto installs (local time, "03:00-05:00")
 	AutoWindow string `json:"auto_window,omitempty"`
-	// DnfAutomatic (method dnf): a dnf-automatic timer is enabled
-	DnfAutomatic *bool      `json:"dnf_automatic,omitempty"`
+	// DnfAutomatic (method dnf): install | download (Fedora's default: a
+	// dnf-automatic timer that only downloads) | off; for every package
+	DnfAutomatic string     `json:"dnf_automatic,omitempty"`
 	Outdated     []Outdated `json:"outdated,omitempty"`
 }
 

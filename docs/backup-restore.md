@@ -94,9 +94,16 @@ Devices keep working after a restore:
 
 What can change is **where they connect**:
 
+Before restoring, turn tailbond off on the old machine
+(`sudo systemctl disable --now tailbond`): two machines with the same devices
+and keys would keep taking them from each other. A restore keeps the new
+machine's own public address and tunnel port (the ones its firewall allows);
+the preview lists what devices need.
+
 - **Same public address or DDNS name** (you moved the box, or the DDNS name
   follows it): nothing to do.
-- **New address**: set it under Settings → public address after restoring.
+- **New address**: devices learn it as below. Port forward on your home
+  router? Point it at the new machine.
   - Routers ask their servers for refreshed pairing details every 6 hours,
     and within 2 minutes once no server answers. They do this through the
     tunnel or over Tailscale (`GET /api/pairing`), so a router on Tailscale
@@ -104,9 +111,13 @@ What can change is **where they connect**:
   - Phones: tap **Ask to connect again** with the server's Tailscale name (the
     server re-issues the same credential), or scan the device's link again
     (Devices → the device → Show link).
-- **Tailscale**: log the new machine into the same tailnet with the same name.
-  If the subnet route was approved for the old machine, approve it for the new
-  one in the Tailscale admin console.
+- **Tailscale**: log the new machine into the same tailnet and give it the
+  old machine's name (admin console → Machines: remove or rename the old one,
+  then rename the new one). If the subnet route was approved for the old
+  machine, approve it for the new one.
+- A travel router with the kill switch on and without Tailscale has no
+  internet until it has the new address: send it its new link before you
+  switch over.
 
 ## A new travel router
 

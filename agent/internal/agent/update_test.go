@@ -121,7 +121,7 @@ func updAgent(t *testing.T, g *fakeGitHub, method string) (*Agent, *[]runCall) {
 	}
 	night := time.Date(2026, 11, 3, 3, 30, 0, 0, time.Local)
 	a.upd.now = func() time.Time { return night }
-	a.upd.dnfAuto = func() bool { return true }
+	a.upd.dnfAuto = func() string { return "download" }
 	a.store.Update(func(c *config.Config) error {
 		c.Update = &config.UpdateSettings{APIURL: g.srv.URL}
 		return nil
@@ -221,7 +221,7 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 	a.upd.method = methodDnf
 	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "notify"})
 	a.updateTick(ctx, false)
-	if v := a.updateView(); v.DnfAutomatic == nil || !*v.DnfAutomatic {
+	if v := a.updateView(); v.DnfAutomatic != "download" {
 		t.Fatalf("dnf_automatic: %+v", v)
 	}
 	for m, want := range map[string]string{methodDnf: "dnf upgrade", methodNone: "by hand"} {
@@ -388,6 +388,9 @@ func TestBackupRestoreAPI(t *testing.T) {
 	got := b.store.Get()
 	if len(got.Server.Users) != 1 || got.Server.Users[0].Key != a.store.Get().Server.Users[0].Key || got.StateDir != stateB {
 		t.Fatalf("restored %+v", got.Server.Users)
+	}
+	if got.Server.PublicAddr != "new-vps.example.net" {
+		t.Fatalf("restore replaced this machine's public address: %q", got.Server.PublicAddr)
 	}
 	if k, _ := os.ReadFile(filepath.Join(stateB, "server.key")); string(k) != "TLSKEY" {
 		t.Fatal("TLS key not restored")

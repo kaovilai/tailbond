@@ -632,7 +632,8 @@ over the app (same signing key). Automatic updates: Obtainium.
 - `state`: `idle` | `checking` | `downloading` | `installing` | `failed` |
   `rolled_back` | `off`.
 - `auto_window`: when `auto` installs (`"03:00-05:00"`); `dnf_automatic`
-  (method `dnf`): whether a dnf-automatic timer is enabled.
+  (method `dnf`): `install` | `download` (a dnf-automatic timer with Fedora's
+  default `apply_updates = no`) | `off`; it covers every package.
 - `outdated` (server): registered clients whose last reported version is
   older than this server's. Clients send `X-Tailbond-Version` and
   `X-Tailbond-Kind` (`router` | `android`) with their API requests
