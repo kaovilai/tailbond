@@ -3,8 +3,12 @@
 # the way packaging/linux/install.sh does it, with its decisions written down
 # as variables instead of detected. See docs/vps.md.
 
-# The bundle on the controller (packaging/linux/build-bundle.sh, CI artifact
-# linux-bundle). One per architecture.
+# The release to install, e.g. "0.2.0": downloaded from the GitHub release
+# (tailbond_repo) and checked against its SHA256SUMS. Bump it to upgrade.
+# Empty: tailbond_bundle, a bundle on the controller
+# (packaging/linux/build-bundle.sh, CI artifact linux-bundle).
+tailbond_version: ""
+tailbond_repo: kaovilai/tailbond
 tailbond_bundle: "files/tailbond-linux-{{ ansible_architecture }}.tar.gz"
 # Unpacked here on the host; binaries and hooks are copied from it.
 tailbond_src_dir: /usr/local/src/tailbond
@@ -66,25 +70,11 @@ tailbond_firewalld_zone: public
 # Zone tailscale0 is in (tcp 8077 and the phone page from tailnet addresses).
 tailbond_firewalld_tailscale_zone: "{{ tailbond_firewalld_zone }}"
 
-# Updates (docs/updates.md):
-#   auto    the agent updates itself (GitHub-attested releases, inside
-#           tailbond_update_window); a later role run never downgrades it:
-#           the bundle's binaries are copied only when they are at least as
-#           new as what runs (the base binary or the agent's own update)
-#   notify  the agent checks and shows updates, installs on request
-#   off     no checks
-#   pinned  the role is the source of truth: the bundle must be
-#           tailbond_version, it is always installed, and the agent is
-#           pinned to it (update.pin) and drops a newer self-update
-tailbond_update_policy: auto
-# With pinned: the version to install and pin, e.g. "0.2.0" (the bundle's
-# VERSION file must say the same).
-tailbond_version: ""
-# Local time window for installs, e.g. "03:00-05:00" ("" = keep / the
-# agent's default).
-tailbond_update_window: ""
-# stable | beta ("" = keep / stable).
-tailbond_update_channel: ""
+# The agent's update check (docs/updates.md): notify (default: the
+# dashboard shows a new release, so you know to bump tailbond_version), auto
+# or off. With this role tailbond_version is the truth: a role run puts it
+# back if someone pressed "Update now" in between.
+tailbond_update_policy: notify
 
 # Start and enable the service.
 tailbond_start: true

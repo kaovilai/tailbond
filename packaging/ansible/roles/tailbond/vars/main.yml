@@ -10,10 +10,6 @@ _tailbond_conf_defaults:
     pairing_uri: ""
     paths: []
 
-# semver MAJOR.MINOR.PATCH[-pre]; git describe builds (-N-g<hash>, -dirty)
-# don't count as releases.
-_tailbond_semver_re: '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$'
-
 # Optional keys tailbondd omits when false/zero.
 _tailbond_conf_omitempty:
   disable_tailscale: false
@@ -22,13 +18,10 @@ _tailbond_conf_omitempty:
   server:
     disable_dns: false
 
-# The update block the role owns: policy, plus pin/window/channel when set
-# (tailbondd leaves empty values out, so empty ones aren't written).
-_tailbond_update_owned: >-
-  {{ {'policy': 'auto' if tailbond_update_policy == 'pinned' else tailbond_update_policy}
-     | combine({'pin': tailbond_version | regex_replace('^v', '')} if tailbond_update_policy == 'pinned' else {})
-     | combine({'window': tailbond_update_window} if tailbond_update_window | length > 0 else {})
-     | combine({'channel': tailbond_update_channel} if tailbond_update_channel | length > 0 else {}) }}
+# The update block the role owns.
+_tailbond_update_owned:
+  policy: "{{ tailbond_update_policy }}"
+  repo: "{{ tailbond_repo }}"
 
 # Owned by the role: set on every run, everything else is left alone
 # (server.users, approvers, ui_password, mode, ...).
@@ -51,3 +44,6 @@ _tailbond_conf_owned: >-
          'disable_dns': tailbond_disable_dns | bool,
        },
      } | combine({'android_apk': tailbond_prefix ~ '/share/tailbond/tailbond.apk'} if _tailbond_apk.stat.exists | default(false) else {}) }}
+
+# The release tailbond_version names.
+_tailbond_release_url: "https://github.com/{{ tailbond_repo }}/releases/download/v{{ tailbond_version | regex_replace('^v', '') }}"

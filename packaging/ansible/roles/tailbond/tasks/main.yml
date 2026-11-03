@@ -20,15 +20,13 @@
       - tailbond_subnet != '10.77.0.0/24'
       - tailbond_firewall in ['firewalld', 'ufw', 'nftables', 'none']
       - tailbond_tailscale | bool or tailbond_public_addr | length > 0
-      - tailbond_update_policy in ['auto', 'notify', 'off', 'pinned']
-      - tailbond_update_policy != 'pinned' or tailbond_version | length > 0
-      - tailbond_update_channel in ['', 'stable', 'beta']
+      - tailbond_update_policy in ['notify', 'auto', 'off']
+      - tailbond_version is match('^(v?\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?)?$')
     fail_msg: >-
       Unsupported platform, or tailbond_subnet unset / 10.77.0.0/24 (the home
       server default; pick a free /24, e.g. from `install.sh --dry-run`), or
       no tailbond_public_addr without Tailscale, or tailbond_update_policy not
-      auto/notify/off/pinned (pinned needs tailbond_version), or
-      tailbond_update_channel not stable/beta.
+      notify/auto/off, or tailbond_version not like 0.2.0.
 
 - name: Work out the IPv6 subnet
   ansible.builtin.set_fact:
@@ -47,7 +45,32 @@
     src: "{{ tailbond_bundle }}"
     dest: "{{ tailbond_src_dir }}.tar.gz"
     mode: "0644"
-  register: _tailbond_bundle
+  register: _tailbond_bundle_copy
+  when: tailbond_version | length == 0
+
+# The release's SHA256SUMS has the bundle's line; get_url checks it.
+- name: Download release {{ tailbond_version }}
+  ansible.builtin.get_url:
+    url: "{{ _tailbond_release_url }}/tailbond-linux-{{ ansible_architecture }}.tar.gz"
+    checksum: "sha256:{{ _tailbond_release_url }}/SHA256SUMS"
+    dest: "{{ tailbond_src_dir }}-{{ tailbond_version | regex_replace('^v', '') }}.tar.gz"
+    mode: "0644"
+  register: _tailbond_bundle_dl
+  when: tailbond_version | length > 0
+
+- name: Use it
+  ansible.builtin.copy:
+    src: "{{ tailbond_src_dir }}-{{ tailbond_version | regex_replace('^v', '') }}.tar.gz"
+    dest: "{{ tailbond_src_dir }}.tar.gz"
+    remote_src: true
+    mode: "0644"
+  register: _tailbond_bundle_use
+  when: tailbond_version | length > 0
+
+- name: Note whether the bundle changed
+  ansible.builtin.set_fact:
+    _tailbond_bundle:
+      changed: "{{ (_tailbond_bundle_copy.changed | default(false)) or (_tailbond_bundle_use.changed | default(false)) }}"
 
 - name: Look for an unpacked bundle
   ansible.builtin.stat:
@@ -102,67 +125,6 @@
     - {path: /var/lib/tailbond, mode: "0700"}
     - {path: /etc/sysctl.d, mode: "0755"}
 
-# Self-updates (docs/updates.md) live in /var/lib/tailbond/update; the
-# installed tailbondd (the base) runs the newest of itself and that.
-- name: Read the bundle's version
-  ansible.builtin.slurp:
-    src: "{{ tailbond_src_dir }}/VERSION"
-  register: _tailbond_bundle_version_raw
-  failed_when: false
-
-- name: Read the installed agent's version
-  ansible.builtin.command:
-    argv: ["{{ tailbond_prefix }}/bin/tailbondd", -version]
-  register: _tailbond_base_version_raw
-  changed_when: false
-  failed_when: false
-  check_mode: false
-
-- name: Read the agent's own update state
-  ansible.builtin.slurp:
-    src: /var/lib/tailbond/update/state.json
-  register: _tailbond_update_state_raw
-  failed_when: false
-
-- name: Work out which version runs and whether to install the bundle's
-  ansible.builtin.set_fact:
-    _tailbond_bundle_version: "{{ (_tailbond_bundle_version_raw.content | default('') | b64decode | trim) or 'unknown' }}"
-    _tailbond_running_version: >-
-      {{ ((_tailbond_update_state_raw.content | b64decode | from_json).active | default(''))
-         if _tailbond_update_state_raw.content is defined else '' }}
-    _tailbond_base_version: "{{ (_tailbond_base_version_raw.stdout | default('')).split(' ') | last }}"
-
-- name: Decide on the binaries
-  ansible.builtin.set_fact:
-    _tailbond_have_version: "{{ _tailbond_running_version or _tailbond_base_version }}"
-    # Never downgrade an agent that updated itself (auto/notify/off): copy
-    # only when the bundle isn't older than what runs, or when either
-    # version isn't a release (a dev build).
-    _tailbond_copy_binaries: >-
-      {{ tailbond_update_policy == 'pinned'
-         or not ((_tailbond_running_version or _tailbond_base_version) is match(_tailbond_semver_re)
-                 and _tailbond_bundle_version is match(_tailbond_semver_re)
-                 and _tailbond_bundle_version is version(_tailbond_running_version or _tailbond_base_version, '<', version_type='semver')) }}
-
-- name: Pinned means the bundle is that version
-  ansible.builtin.assert:
-    that: _tailbond_bundle_version == tailbond_version | regex_replace('^v', '')
-    fail_msg: >-
-      tailbond_update_policy is pinned to {{ tailbond_version }}, but the bundle
-      {{ tailbond_bundle }} is {{ _tailbond_bundle_version }}.
-  when:
-    - tailbond_update_policy == 'pinned'
-    # in check mode on a first run the bundle isn't unpacked yet
-    - _tailbond_bundle_version_raw.content is defined or not ansible_check_mode
-
-- name: Keep the self-updated agent
-  ansible.builtin.debug:
-    msg: >-
-      {{ _tailbond_have_version }} runs, newer than the bundle's {{ _tailbond_bundle_version }}:
-      binaries left alone (tailbond_update_policy {{ tailbond_update_policy }}; pin a version
-      with tailbond_update_policy: pinned)
-  when: not _tailbond_copy_binaries | bool
-
 - name: Install binaries
   ansible.builtin.copy:
     src: "{{ tailbond_src_dir }}/bin/{{ item }}"
@@ -170,7 +132,6 @@
     remote_src: true
     mode: "0755"
   loop: [mqvpn, tailbondd]
-  when: _tailbond_copy_binaries | bool
   notify: [Restore SELinux contexts, Restart tailbond]
 
 - name: Install hooks
@@ -180,20 +141,7 @@
     remote_src: true
     mode: "0755"
   loop: [server-up, server-down]
-  when: _tailbond_copy_binaries | bool
   notify: Restore SELinux contexts
-
-# Pinned: the installed binary is the truth, not a self-update the agent
-# made before (the base would run that one if it's newer).
-- name: Drop a self-update other than the pinned version
-  ansible.builtin.file:
-    path: /var/lib/tailbond/update/state.json
-    state: absent
-  when:
-    - tailbond_update_policy == 'pinned'
-    - _tailbond_running_version | length > 0
-    - _tailbond_running_version != tailbond_version | regex_replace('^v', '')
-  notify: Restart tailbond
 
 - name: Install the README (the unit's Documentation=)
   ansible.builtin.copy:
@@ -239,13 +187,6 @@
       {{ (_tailbond_conf_defaults if _tailbond_conf_raw.content is not defined else {})
          | combine(_tailbond_conf_old, recursive=True)
          | combine(_tailbond_conf_owned, recursive=True) }}
-
-- name: Drop update.pin unless pinned
-  ansible.builtin.set_fact:
-    _tailbond_conf_new: >-
-      {{ _tailbond_conf_new | combine({'update': _tailbond_conf_new['update'] | dict2items
-                                                 | rejectattr('key', 'equalto', 'pin') | items2dict}) }}
-  when: tailbond_update_policy != 'pinned'
 
 - name: Write the config
   ansible.builtin.template:
