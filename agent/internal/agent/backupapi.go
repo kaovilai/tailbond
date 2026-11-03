@@ -183,6 +183,9 @@ func (a *Agent) restoreWarnings(h backup.Header, next *config.Config) []string {
 			out = append(out, fmt.Sprintf("The tunnel port becomes udp/%d (it was %d here): allow it in this machine's firewall and in your provider's or home router's (port forward).", next.Server.Port, cur.Server.Port))
 		}
 	}
+	if a.role == config.RoleClient && h.Host != "" && h.Host != host {
+		out = append(out, fmt.Sprintf("This backup is from another device (%s). If %s still runs, turn tailbond off there first: both would use the same keys and keep pushing each other off the server.", h.Host, h.Host))
+	}
 	if h.Platform != "" && h.Platform != a.backupHeader().Platform {
 		out = append(out, fmt.Sprintf("Made on %s, restoring on %s: paths that belong to this machine (programs, hooks, state directory) are kept.", h.Platform, a.backupHeader().Platform))
 	}
