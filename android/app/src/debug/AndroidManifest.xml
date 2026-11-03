@@ -10,6 +10,7 @@
             <intent-filter>
                 <action android:name="dev.tailbond.app.debug.STATUS" />
                 <action android:name="dev.tailbond.app.debug.PAIR" />
+                <action android:name="dev.tailbond.app.debug.SHARE" />
             </intent-filter>
         </receiver>
     </application>

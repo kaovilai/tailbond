@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -57,6 +58,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     onUpdates: () -> Unit = {},
     onBackup: () -> Unit = {},
+    onShare: () -> Unit = {},
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
@@ -131,6 +133,15 @@ fun SettingsScreen(
                 Text("  Open Android VPN settings")
             }
         }
+
+        SectionHeader("Pair & Share")
+        ListItem(
+            headlineContent = { Text("Share my mobile data") },
+            supportingContent = { Text(dev.tailbond.app.share.ShareWords.headline(state.share)) },
+            leadingContent = { Icon(Icons.Filled.CellTower, null) },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+            modifier = Modifier.clickable(onClick = onShare),
+        )
 
         UpdatesBackupRows(state, onUpdates, onBackup)
 

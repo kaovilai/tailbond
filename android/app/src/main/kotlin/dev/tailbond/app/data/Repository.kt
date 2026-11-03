@@ -153,6 +153,26 @@ class Repository private constructor(ctx: Context) {
         prefs.edit { putString(KEY_CELL_MONTH, cellMonth); putLong(KEY_CELL_BYTES, 0) }
     }
 
+    // --- Pair & Share ---
+
+    /** The server's share key: the pairing's, else the one fetched from the server (older pairings). */
+    fun shareKey(p: PairingPayload?): String? =
+        p?.shareKey?.takeIf { it.isNotBlank() } ?: prefs.getString(KEY_SHARE_KEY, null)?.takeIf { it.isNotBlank() }
+
+    fun saveShareKey(k: String) = prefs.edit { putString(KEY_SHARE_KEY, k) }
+
+    /** Mobile data shared with hubs this month (bytes). */
+    @Synchronized
+    fun sharedBytes(): Long = if (prefs.getString(KEY_SHARE_MONTH, null) == monthKey()) prefs.getLong(KEY_SHARE_BYTES, 0) else 0
+
+    @Synchronized
+    fun setSharedBytes(v: Long) = prefs.edit { putString(KEY_SHARE_MONTH, monthKey()); putLong(KEY_SHARE_BYTES, v) }
+
+    /** A stable id for this phone as a sharer. */
+    fun shareId(): String = prefs.getString(KEY_SHARE_ID, null) ?: ("an-" + java.util.UUID.randomUUID().toString().take(10)).also {
+        prefs.edit { putString(KEY_SHARE_ID, it) }
+    }
+
     fun cellularCapReached(): Boolean {
         val cap = _settings.value.cellularCapMb
         return cap > 0 && _cellularBytes.value >= cap * 1_000_000
@@ -167,6 +187,10 @@ class Repository private constructor(ctx: Context) {
         private const val KEY_CELL_MONTH = "cell_month"
         private const val KEY_CELL_BYTES = "cell_bytes"
         private const val KEY_PEERS = "peers_json"
+        private const val KEY_SHARE_KEY = "share_key"
+        private const val KEY_SHARE_MONTH = "share_month"
+        private const val KEY_SHARE_BYTES = "share_bytes"
+        private const val KEY_SHARE_ID = "share_id"
 
         @Volatile private var instance: Repository? = null
 

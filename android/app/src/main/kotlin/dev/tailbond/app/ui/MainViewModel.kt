@@ -232,6 +232,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val list = PeersClient.fetch(key, host, dev.tailbond.app.BuildConfig.VERSION_NAME)
                 repo.savePeers(list)
                 Log.i(TAG, "machine list from $host: ${list.peers.size} machines")
+                // pairings older than Pair & Share: learn the share key the same way
+                if (repo.shareKey(server.payload) == null) dev.tailbond.app.share.ShareKey.fetch(key, host)?.let(repo::saveShareKey)
                 null
             } catch (e: Exception) {
                 (e.message ?: e.javaClass.simpleName).also { Log.w(TAG, "machine list from $host failed: $it") }
@@ -443,6 +445,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setPath(kind: PathKind, s: PathSetting) = repo.updateSettings { it.withPath(kind, s) }
     fun setRouteMode(r: RouteMode) = repo.updateSettings { it.copy(routeMode = r) }
     fun setCapMb(mb: Long) = repo.updateSettings { it.copy(cellularCapMb = mb.coerceAtLeast(0)) }
+    fun setShareMinBattery(pct: Int) = repo.updateSettings { it.copy(shareMinBattery = pct.coerceIn(0, 90)) }
+    fun setShareCapMb(mb: Long) = repo.updateSettings { it.copy(shareCapMb = mb.coerceAtLeast(0)) }
+    fun setShareAllowedHubs(hubs: List<String>) = repo.updateSettings { it.copy(shareAllowedHubs = hubs.map { h -> h.trim() }.filter { h -> h.isNotEmpty() }.distinct()) }
     fun setBackupFec(on: Boolean) = repo.updateSettings { it.copy(experimentalBackupFec = on) }
     fun resetCellular() = repo.resetCellularBytes()
 

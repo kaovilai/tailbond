@@ -209,6 +209,24 @@ else
   note "server sees $(srv_active_paths) active path(s), not 2. App paths: $(app_status | jq -c '[.paths[] | {name, kind, status}]'). Networks: $(grep -oE 'ni\{[A-Z_]+ [A-Z_]+' "$OUT/connectivity-multipath.txt" | sort -u | tr '\n' ' ')"
 fi
 
+say "Pair & Share: \"Share my mobile data\" comes up next to the VPN"
+# The emulator can't host a hub on its Wi-Fi (its only other device is the
+# emulator's own virtual router), so the relay itself is covered by unit
+# tests and scripts/e2e-share.sh; here: the service starts, holds mobile
+# data next to Wi-Fi, listens on UDP 47077 and has the share key.
+sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.SHARE --ez on true >/dev/null
+if wait_for 30 app_is '.share.status == "WAITING"'; then
+  ok "sharing ready: $(app_status | jq -c '{share, share_key}')"
+else
+  bad "sharing not ready: $(app_status | jq -c '{share, share_key}')"
+fi
+# 47077 = 0xB7E5 in /proc/net/udp
+sh_ cat /proc/net/udp /proc/net/udp6 2>/dev/null | grep -qi ':B7E5 ' && ok "the relay listens on UDP 47077" || bad "nothing on UDP 47077"
+app_is '.state == "CONNECTED"' && ok "tailbond's own tunnel still connected while sharing" || bad "the tunnel dropped when sharing started"
+shot sharing
+sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.SHARE --ez on false >/dev/null
+wait_for 10 app_is '.share.status == "OFF"' && ok "sharing stops" || bad "sharing didn't stop: $(app_status | jq -c .share)"
+
 say "failover: Wi-Fi off"
 if $TWO; then
   sh_ svc wifi disable

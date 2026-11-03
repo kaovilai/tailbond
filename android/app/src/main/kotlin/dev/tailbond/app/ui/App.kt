@@ -50,6 +50,7 @@ object Routes {
     const val WEBSITES = "websites"
     const val UPDATES = "updates"
     const val BACKUP = "backup"
+    const val SHARE = "share"
     const val PAIR = "pair"
     const val MACHINE = "machine:" // + hostname
 }
@@ -102,7 +103,7 @@ fun TailbondApp(
         route = Routes.PAIR
     }
     val back: (() -> Unit)? = when {
-        page == Routes.APPS || page == Routes.WEBSITES || page == Routes.UPDATES || page == Routes.BACKUP -> { { route = Routes.SETTINGS } }
+        page == Routes.APPS || page == Routes.WEBSITES || page == Routes.UPDATES || page == Routes.BACKUP || page == Routes.SHARE -> { { route = Routes.SETTINGS } }
         page == "onboarding" || page == Routes.HOME -> null
         page == Routes.PAIR && p == null -> null
         page == Routes.PAIR && state.pairTarget != null -> { { actions.cancelAsk(); actions.clearPairTarget(); route = Routes.SETTINGS } }
@@ -144,6 +145,7 @@ fun TailbondApp(
                                     page == Routes.WEBSITES -> "Websites that skip tailbond"
                                     page == Routes.UPDATES -> "Updates"
                                     page == Routes.BACKUP -> "Back up and restore"
+                                    page == Routes.SHARE -> "Share my mobile data"
                                     page == Routes.PAIR && state.pairTarget == PairTarget.Add -> "Add another server"
                                     page == Routes.PAIR && state.pairTarget is PairTarget.Replace -> "Pair again"
                                     page == Routes.PAIR -> "Add this phone"
@@ -174,10 +176,12 @@ fun TailbondApp(
                     onAddServer = { toPair(PairTarget.Add) },
                     onUpdates = { route = Routes.UPDATES },
                     onBackup = { route = Routes.BACKUP },
+                    onShare = { route = Routes.SHARE },
                     modifier = m,
                 )
                 page == Routes.UPDATES -> UpdatesScreen(state, actions, m)
                 page == Routes.BACKUP -> BackupScreen(state, actions, m, startDialog = startDialog)
+                page == Routes.SHARE -> ShareScreen(state, actions, m)
                 page == Routes.APPS -> AppsScreen(state, actions, m)
                 page == Routes.WEBSITES -> WebsitesScreen(state, actions, onApps = { route = Routes.APPS }, modifier = m, startDialog = startDialog)
                 page.startsWith(Routes.MACHINE) -> MachineScreen(state, page.removePrefix(Routes.MACHINE), m)

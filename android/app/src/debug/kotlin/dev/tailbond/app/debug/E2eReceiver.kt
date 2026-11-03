@@ -29,6 +29,11 @@ class E2eReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val repo = Repository.get(context)
         when (intent.action) {
+            ACTION_SHARE -> {
+                if (intent.getBooleanExtra("on", true)) dev.tailbond.app.share.ShareService.start(context)
+                else dev.tailbond.app.share.ShareService.stop(context)
+                resultData = "ok"
+            }
             ACTION_PAIR -> {
                 val uri = intent.getStringExtra("uri").orEmpty()
                 when (val r = Pairing.parse(uri)) {
@@ -62,6 +67,15 @@ class E2eReceiver : BroadcastReceiver() {
                     put("servers", repo.servers.value.size)
                     put("server_names", buildJsonArray { repo.servers.value.forEach { add(JsonPrimitive(it.name)) } })
                     put("mode", repo.settings.value.mode?.name)
+                    val sh = dev.tailbond.app.share.ShareState.live.value
+                    put("share", buildJsonObject {
+                        put("status", sh.status.name)
+                        put("hubs", sh.hubs.size)
+                        put("used_bytes", sh.usedBytes)
+                        put("battery", sh.battery)
+                        put("label", sh.label)
+                    })
+                    put("share_key", repo.shareKey(repo.servers.value.firstOrNull()?.payload) != null)
                     put("peers", if (peers == null) JsonNull else buildJsonObject {
                         put("server", peers.server)
                         put("count", peers.peers.size)
@@ -79,5 +93,6 @@ class E2eReceiver : BroadcastReceiver() {
         private const val TAG = "tailbond-e2e"
         const val ACTION_STATUS = "dev.tailbond.app.debug.STATUS"
         const val ACTION_PAIR = "dev.tailbond.app.debug.PAIR"
+        const val ACTION_SHARE = "dev.tailbond.app.debug.SHARE"
     }
 }
