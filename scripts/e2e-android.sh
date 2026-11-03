@@ -149,9 +149,10 @@ else
 fi
 
 say "VPN on the device"
+# the app says connected a moment before Android lists the VPN network
+vpn_listed() { sh_ dumpsys connectivity | grep -qE 'ni\{VPN CONNECTED|Transports: VPN'; }
+wait_for 20 vpn_listed && ok "dumpsys connectivity: a VPN network is up" || bad "no VPN network in dumpsys connectivity"
 dump_net connected
-grep -qE 'ni\{VPN CONNECTED|Transports: VPN' "$OUT/connectivity-connected.txt" \
-  && ok "dumpsys connectivity: a VPN network is up" || bad "no VPN network in dumpsys connectivity"
 TUN="$(sh_ ip -o -4 addr show | awk '$4 ~ /^10\.77\.0\./ {print $2; exit}')"
 if [ -n "$TUN" ]; then
   ok "$TUN has $(sh_ ip -o -4 addr show dev "$TUN" | awk '{print $4}')"
