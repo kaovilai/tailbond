@@ -110,6 +110,9 @@ jobs:
   android:
     name: Android APK
     runs-on: ubuntu-24.04
+    outputs:
+      # "true" when the signed release APK was built (artifact android-release-apk)
+      release-apk: ${{ steps.release-apk.outputs.built }}
     env:
       # Release signing (docs/updates.md, "Android signing key"): secrets
       # from scripts/release/gen-android-keystore.sh. Without them only the
@@ -144,6 +147,7 @@ jobs:
           path: out/android/tailbond-debug.apk
           if-no-files-found: error
       - name: Release APK (signed with the release key)
+        id: release-apk
         if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
         env:
           TB_RELEASE_KEYSTORE_B64: ${{ secrets.TB_RELEASE_KEYSTORE_B64 }}
@@ -155,6 +159,7 @@ jobs:
           trap 'rm -f "$TB_RELEASE_KEYSTORE"' EXIT
           (umask 077; printf '%s' "$TB_RELEASE_KEYSTORE_B64" | base64 -d >"$TB_RELEASE_KEYSTORE")
           android/scripts/build-release-apk.sh
+          echo "built=true" >>"$GITHUB_OUTPUT"
       # The key never changes by accident: a phone refuses an update signed
       # with another key (variable from gen-android-keystore.sh).
       - name: Release APK is signed with the known key
@@ -211,7 +216,7 @@ jobs:
       # must be the one phones update to (debug and release can't update
       # each other).
       - uses: actions/download-artifact@v8
-        continue-on-error: true
+        if: needs.android.outputs.release-apk == 'true'
         with:
           name: android-release-apk
           path: out/android-release/
@@ -380,7 +385,7 @@ jobs:
           name: android-apk
           path: out/android/
       - uses: actions/download-artifact@v8
-        continue-on-error: true
+        if: needs.android.outputs.release-apk == 'true'
         with:
           name: android-release-apk
           path: out/android-release/
@@ -396,7 +401,13 @@ jobs:
           dnf install -y -q out/rpm/tailbond-server-*.rpm
           test -x /usr/bin/mqvpn && test -x /usr/bin/tailbondd
           test -f /usr/share/tailbond/tailbond.apk
-          dnf remove -y -q tailbond-server
+          rpm -q --scripts tailbond-server
+          # rpm -e, not dnf remove: dnf also removes the dependencies it
+          # pulled in, and ipset's own %preun fails in a container. Our
+          # %preun/%postun must run clean: any scriptlet message fails.
+          out="$(rpm -e tailbond-server 2>&1)" || { echo "$out"; exit 1; }
+          echo "$out"
+          if grep -Ei 'scriptlet|warning|error' <<<"$out"; then exit 1; fi
           test ! -e /usr/bin/tailbondd
       - uses: actions/upload-artifact@v7
         with:

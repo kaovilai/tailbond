@@ -65,7 +65,13 @@ bad() { echo "  FAIL $*"; fail=1; }
 mkdir -p /var/lock /var/run /tmp/sysinfo
 printf 'arch all 1\narch noarch 1\narch aarch64_generic 10\narch aarch64_cortex-a53 20\n' >>/etc/opkg.conf
 echo "GL.iNet GL-BE3600" >/tmp/sysinfo/model
-opkg update >/dev/null 2>&1 && opkg install lua lua-cjson >/dev/null 2>&1 || { echo "need lua + lua-cjson from the feed"; exit 2; }
+# the feed over the network (a CI runner's network may need a retry)
+feed_ok=0
+for try in 1 2 3; do
+	if opkg update >/tmp/opkg.log 2>&1 && opkg install lua lua-cjson >>/tmp/opkg.log 2>&1; then feed_ok=1; break; fi
+	sleep $((try * 5))
+done
+[ "$feed_ok" = 1 ] || { echo "need lua + lua-cjson from the feed:"; tail -n 25 /tmp/opkg.log; cat /etc/resolv.conf; exit 2; }
 
 echo "== install"
 opkg install /t/tailbond.ipk >/tmp/install.log 2>&1 && ok "opkg install" || { cat /tmp/install.log; bad "opkg install"; }
