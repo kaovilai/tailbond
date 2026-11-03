@@ -1,0 +1,254 @@
+From: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+Subject: [PATCH] feat(darwin): client control API and relay paths on macOS
+
+Builds on the client-mode control API (Linux) and relay paths
+(NAME@HOST:PORT, POSIX bind) and wires both into the Darwin client:
+
+- Control API: --control-port / [Control] Listen serve get_status (per
+  path "iface" and "status"), get_stats, get_build_info and
+  get_reorder_stats in client mode on macOS. control_socket.c is plain
+  POSIX + libevent, so the Darwin CLI compiles it from
+  src/platform/linux/ rather than a copy (moving it to src/platform/posix/
+  is a pure rename for a follow-up). No RX offload counters on Darwin.
+- Relay paths: a NAME@HOST:PORT slot is not IP_BOUND_IF-pinned (its
+  socket is routed normally to the relay), gets the relay set on its
+  transport, and is skipped by everything that treats a slot name as an
+  interface: the scoped server pins (#F1) at setup, re-add and
+  reactivate, the reactivate re-pin, and the route monitor's
+  interface-gone fallback and periodic resync (which would otherwise drop
+  it as "interface not present"). Interface paths are unchanged.
+- Tests: test_control_socket (client mode included) now runs in the
+  Darwin ctest set; test_bind_posix_socket already does, and covers the
+  relay bind and the spec parser there.
+
+Signed-off-by: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+---
+diff -ruN a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt	2026-11-03 18:45:19.135792605 -0500
++++ b/CMakeLists.txt	2026-11-03 18:54:10.429096171 -0500
+@@ -595,8 +595,9 @@
+ 
+ # ---------- mqvpn CLI binary (Darwin) ----------
+ # Darwin platform layer: client mode is fully wired (drop+reactivate path
+-# lifecycle, routing, killswitch, DNS). Server mode + control_socket are
+-# intentionally not ported here (server mode is not built on macOS in v1).
++# lifecycle, routing, killswitch, DNS, the client-mode control API). Server
++# mode is intentionally not ported here (not built on macOS in v1); the
++# control API is the Linux control_socket.c, which is plain POSIX + libevent.
+ # This branch exists so CMake picks up APPLE instead of falling into the
+ # Linux else() below (which would pull in netlink_mon.c and Linux
+ # tun.c/dns.c and fail to compile on Darwin).
+@@ -613,6 +614,7 @@
+     src/platform/darwin/killswitch.c
+     src/platform/posix/status.c
+     src/platform/posix/dns_common.c
++    src/platform/linux/control_socket.c
+     src/config.c
+ )
+ 
+@@ -652,6 +654,7 @@
+     src/platform/darwin/killswitch.c
+     src/platform/posix/status.c
+     src/platform/posix/dns_common.c
++    src/platform/linux/control_socket.c
+ )
+ 
+ target_include_directories(mqvpn_darwin_platform PRIVATE
+@@ -748,6 +751,18 @@
+         add_test(NAME ${t} COMMAND ${t})
+     endforeach()
+ 
++    # Control-API dispatch, client mode included (the Darwin CLI serves it
++    # too). Same TU-include idiom and mocks as the Linux twin below.
++    add_executable(test_control_socket tests/test_control_socket.c src/log.c
++        third_party/yyjson/yyjson.c)
++    target_include_directories(test_control_socket PRIVATE
++        ${EVENT_INCLUDE_DIR}
++        ${CMAKE_SOURCE_DIR}/src
++        ${CMAKE_SOURCE_DIR}/src/platform/linux
++        ${CMAKE_SOURCE_DIR}/include)
++    target_link_libraries(test_control_socket ${EVENT_LIB})
++    add_test(NAME test_control_socket COMMAND test_control_socket)
++
+     # Bundled POSIX transport over real loopback sockets — the only test of
+     # the bind's non-Linux branch, which macOS and iOS run. Links the bind
+     # alone (the test stubs its two delivery targets). Keep in sync with the
+diff -ruN a/src/main.c b/src/main.c
+--- a/src/main.c	2026-11-03 18:53:11.863610302 -0500
++++ b/src/main.c	2026-11-03 18:53:28.255070847 -0500
+@@ -60,14 +60,14 @@
+         "  --path IFACE              Network interface for multipath (repeatable, client "
+         "mode)\n"
+         "                            NAME@HOST:PORT: a relay path through the UDP relay at\n"
+-        "                            HOST:PORT (Linux)\n"
++        "                            HOST:PORT (Linux, macOS)\n"
+         "  --dns ADDR                DNS server to use (repeatable, client mode, max 4)\n"
+         "  --no-reconnect            Disable automatic reconnection (client mode)\n"
+         "  --kill-switch             Block traffic outside the VPN tunnel (client mode)\n"
+         "  --no-manage-routes        Do not modify the host routing table "
+         "(router/embedded integration)\n"
+         "  --control-port PORT       TCP port for JSON control API (server mode; client\n"
+-        "                            mode on Linux: status/stats only)\n"
++        "                            mode on Linux and macOS: status/stats only)\n"
+         "  --control-addr ADDR       Bind address for control API (default 127.0.0.1)\n"
+         "                            (also configurable via [Control] Listen in INI / "
+         "control_listen in JSON)\n"
+diff -ruN a/src/platform/darwin/platform_darwin.c b/src/platform/darwin/platform_darwin.c
+--- a/src/platform/darwin/platform_darwin.c	2026-11-03 18:45:19.263168594 -0500
++++ b/src/platform/darwin/platform_darwin.c	2026-11-03 18:53:45.865322464 -0500
+@@ -14,8 +14,9 @@
+  * Structurally cloned from platform_linux.c's client run loop. Client mode
+  * is fully wired: routing, killswitch, and DNS are ported (routing.c,
+  * killswitch.c, dns.c) and main.c dispatches to darwin_platform_run_client
+- * on __APPLE__. Server mode and the control socket are intentionally NOT
+- * ported here — server mode is not built on macOS in v1.
++ * on __APPLE__. Server mode is intentionally NOT ported here — server mode
++ * is not built on macOS in v1. The client-mode control API (status/stats)
++ * is the Linux control_socket.c, which is plain POSIX + libevent.
+  *
+  * This platform layer compiles in the darwin CI job (macos-14) but has not
+  * yet run on real Darwin hardware, so hardware verification (route(8)/
+@@ -33,6 +34,7 @@
+ #  include "log.h"
+ #  include "platform/path_line.h"
+ #  include "mqvpn_internal.h" /* mqvpn_config_apply_reorder (INI reorder bridge) */
++#  include "platform/linux/control_socket.h" /* POSIX + libevent, shared */
+ 
+ #  include <stdio.h>
+ #  include <inttypes.h>
+@@ -555,6 +557,7 @@
+     signal(SIGPIPE, SIG_IGN);
+ 
+     int rc = 1;
++    ctrl_socket_t *ctrl = NULL;
+     platform_ctx_t ctx;
+     memset(&ctx, 0, sizeof(ctx));
+     ctx.tun.fd = -1;
+@@ -659,7 +662,9 @@
+     for (int i = 0; i < ctx.n_paths; i++) {
+         platform_path_t *s = &ctx.paths[i];
+ 
+-        if (s->iface[0]) {
++        /* A relay path (NAME@HOST:PORT) is not pinned: its socket is routed
++         * like any other to the relay. */
++        if (s->iface[0] && !s->via_len) {
+             sa_family_t af = (sa_family_t)ctx.server_addr.ss_family;
+             if (darwin_pin_socket_to_iface(s->fd, s->iface, af) < 0) {
+                 LOG_ERR("path[%d] iface pin failed for '%s'; --path values must "
+@@ -682,6 +687,21 @@
+             LOG_ERR("path[%d] transport setup failed", i);
+             goto cleanup;
+         }
++        if (s->via_len) {
++            if (mqvpn_bind_posix_path_set_relay(tctx, (const struct sockaddr *)&s->via,
++                                                s->via_len) != MQVPN_OK) {
++                LOG_ERR("path[%d] relay setup failed", i);
++                mqvpn_bind_posix_path_free(tctx);
++                goto cleanup;
++            }
++            char vbuf[INET6_ADDRSTRLEN] = "?";
++            mqvpn_sa_ntop(&s->via, vbuf, sizeof(vbuf));
++            uint16_t vport = s->via.ss_family == AF_INET6
++                                 ? ((const struct sockaddr_in6 *)(const void *)&s->via)->sin6_port
++                                 : ((const struct sockaddr_in *)(const void *)&s->via)->sin_port;
++            LOG_INF("path[%d] %s: relay path via %s port %u", i, s->iface, vbuf,
++                    (unsigned)ntohs(vport));
++        }
+ 
+         mqvpn_path_desc_t desc;
+         platform_path_fill_desc(&ctx, s, &desc);
+@@ -724,6 +744,14 @@
+     /* Schedule initial tick */
+     schedule_next_tick(&ctx);
+ 
++    /* Control API (optional, status/stats only; no RX offload counters on
++     * Darwin). Torn down first in cleanup, while the client is alive. */
++    if (cfg->control_port > 0) {
++        ctrl = ctrl_socket_create_client(ctx.eb, cfg->control_addr, cfg->control_port,
++                                         ctx.client, NULL, NULL);
++        if (!ctrl) LOG_WRN("control API setup failed — continuing without it");
++    }
++
+     LOG_INF("entering event loop...");
+     event_base_dispatch(ctx.eb);
+     rc = ctx.fatal_error ? 1 : 0;
+@@ -748,6 +776,7 @@
+      * still-attached transport ctx — never call on_platform_path_released
+      * after it. Darwin prints no udp-rx line, so its RX counters are not
+      * harvested first. */
++    ctrl_socket_destroy(ctrl);
+     mqvpn_client_destroy(ctx.client);
+     ctx.client = NULL;
+     for (int i = 0; i < ctx.n_paths; i++)
+diff -ruN a/src/platform/darwin/route_mon.c b/src/platform/darwin/route_mon.c
+--- a/src/platform/darwin/route_mon.c	2026-11-03 18:45:19.263168594 -0500
++++ b/src/platform/darwin/route_mon.c	2026-11-03 18:53:45.865519682 -0500
+@@ -88,9 +88,20 @@
+  * PATH_CHALLENGE, or the challenge dies with ENETUNREACH (rationale at
+  * darwin_scoped_server_pin). Best-effort: on failure keep today's behavior
+  * and let xquic's challenge retransmits probe the route. */
++/* Relay paths (NAME@HOST:PORT) are named, not interfaces: no pin, no
++ * scoped server route, and no interface to watch. */
++static int
++route_slot_is_relay(const platform_ctx_t *p, const char *name)
++{
++    for (int i = 0; i < p->n_paths; i++)
++        if (p->paths[i].via_len && strcmp(p->paths[i].iface, name) == 0) return 1;
++    return 0;
++}
++
+ void
+ netmon_platform_pre_readd(platform_ctx_t *p, const char *ifname)
+ {
++    if (route_slot_is_relay(p, ifname)) return;
+     if (p->routing_configured) (void)darwin_scoped_server_pin(p, ifname);
+ }
+ 
+@@ -106,6 +117,7 @@
+      * any earlier would waste a syscall + log on every poll for
+      * routeless or ineligible ifaces. If the pin fails, skip reactivate
+      * for this slot; the recovery timer / next event will retry. */
++    if (s->via_len) return 0; /* relay path: nothing to pin */
+     sa_family_t af = (sa_family_t)p->server_addr.ss_family;
+     if (darwin_pin_socket_to_iface(s->fd, ifname, af) < 0) {
+         LOG_WRN("routemon: reactivate %s skipped: iface pin failed", ifname);
+@@ -280,7 +292,7 @@
+ 
+     for (int i = 0; i < p->n_paths; i++) {
+         const char *tracked_ifname = p->paths[i].iface;
+-        if (tracked_ifname[0] == '\0') continue;
++        if (tracked_ifname[0] == '\0' || p->paths[i].via_len) continue;
+         /* Only a definite ENXIO ("no such interface") counts as gone:
+          * if_nametoindex is getifaddrs-backed on Darwin and can fail for
+          * resource reasons (ENOMEM) — such failures are correlated across
+@@ -425,7 +437,7 @@
+ 
+     for (int i = 0; i < p->n_paths; i++) {
+         const char *ifname = p->paths[i].iface;
+-        if (ifname[0] == '\0') continue;
++        if (ifname[0] == '\0' || p->paths[i].via_len) continue;
+ 
+         /* Presence + admin state from the one snapshot. */
+         int present = 0;
+diff -ruN a/src/platform/darwin/routing.c b/src/platform/darwin/routing.c
+--- a/src/platform/darwin/routing.c	2026-11-03 18:45:19.263168594 -0500
++++ b/src/platform/darwin/routing.c	2026-11-03 18:53:45.865626722 -0500
+@@ -453,7 +453,8 @@
+      * an interface without upstream right now gets its pin from route_mon
+      * at re-add/reactivate time instead. */
+     for (int i = 0; i < p->n_paths; i++) {
+-        if (p->paths[i].iface[0] == '\0') continue;
++        /* relay paths (NAME@HOST:PORT) have no interface to scope to */
++        if (p->paths[i].iface[0] == '\0' || p->paths[i].via_len) continue;
+         (void)darwin_scoped_server_pin(p, p->paths[i].iface);
+     }
+     return 0;
+@@ -465,7 +466,7 @@
+     if (!p->routing_configured) return;
+ 
+     for (int i = 0; i < p->n_paths; i++) {
+-        if (p->paths[i].iface[0] == '\0') continue;
++        if (p->paths[i].iface[0] == '\0' || p->paths[i].via_len) continue;
+         scoped_server_pin_delete(p, p->paths[i].iface);
+     }
+ 

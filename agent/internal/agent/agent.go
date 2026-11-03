@@ -166,6 +166,7 @@ func New(store *config.Store, opts Options) *Agent {
 		OnLine:   a.onLine,
 		OnStart:  a.onStart,
 		OnExit:   a.onExit,
+		PidFile:  filepath.Join(cfg.StateDir, "mqvpn.pid"),
 	}, a.logs)
 	if a.role == config.RoleClient {
 		a.client = newClientState()

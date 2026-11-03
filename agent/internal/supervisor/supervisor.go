@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -91,6 +93,10 @@ type Spec struct {
 	// OnStart / OnExit fire around each process lifetime.
 	OnStart func()
 	OnExit  func(err error)
+	// PidFile (optional) records the running process. A process still
+	// named in it at launch is one a previous agent left behind (no
+	// parent-death signal off Linux): it is stopped first.
+	PidFile string
 }
 
 type Supervisor struct {
@@ -215,8 +221,9 @@ func (s *Supervisor) runOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	s.stopOrphan()
 	cmd := exec.Command(s.spec.Bin, s.spec.Args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
+	cmd.SysProcAttr = procAttr()
 	cmd.Env = os.Environ()
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -229,6 +236,10 @@ func (s *Supervisor) runOnce(ctx context.Context) error {
 		return err
 	}
 	pw.Close()
+	if s.spec.PidFile != "" {
+		_ = os.WriteFile(s.spec.PidFile, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
+		defer os.Remove(s.spec.PidFile)
+	}
 	s.log.Add("agent", "started "+s.spec.Bin+" (pid "+strconv.Itoa(cmd.Process.Pid)+")")
 	s.setState(Running, "")
 	if s.spec.OnStart != nil {
@@ -270,4 +281,35 @@ func (s *Supervisor) runOnce(ctx context.Context) error {
 		return errors.New("mqvpn exited")
 	}
 	return exitErr
+}
+
+// stopOrphan stops the process PidFile names, if it is still running:
+// SIGTERM (mqvpn restores routes and DNS on it), SIGKILL after 5 s.
+func (s *Supervisor) stopOrphan() {
+	if s.spec.PidFile == "" {
+		return
+	}
+	b, err := os.ReadFile(s.spec.PidFile)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(s.spec.PidFile)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 1 || pid == os.Getpid() || syscall.Kill(pid, 0) != nil {
+		return
+	}
+	// the pid may have been reused since: only a process running our binary
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil || filepath.Base(strings.TrimSpace(string(out))) != filepath.Base(s.spec.Bin) {
+		return
+	}
+	s.log.Add("agent", "stopping mqvpn left running by a previous agent (pid "+strconv.Itoa(pid)+")")
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	for range 50 {
+		time.Sleep(100 * time.Millisecond)
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
 }

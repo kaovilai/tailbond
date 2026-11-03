@@ -33,13 +33,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/netif"
 	"github.com/kaovilai/tailbond/agent/internal/pairing"
 	"github.com/kaovilai/tailbond/agent/internal/share"
+	"github.com/kaovilai/tailbond/agent/internal/sockbind"
 	"github.com/kaovilai/tailbond/agent/internal/status"
 )
 
@@ -688,13 +688,7 @@ func (a *Agent) startSharer(ctx context.Context, cfg *config.Config, sc *config.
 		ID: id, Label: label, Key: key, Server: p.Server,
 		CapBytes: uint64(max(sc.CapMB, 0)) << 20, UsedBytes: used, AllowedHubs: sc.AllowedHubs,
 		Dial: func(ctx context.Context, server string) (net.Conn, error) {
-			d := net.Dialer{Control: func(network, address string, c syscall.RawConn) error {
-				var serr error
-				if err := c.Control(func(fd uintptr) { serr = syscall.BindToDevice(int(fd), iface) }); err != nil {
-					return err
-				}
-				return serr
-			}}
+			d := net.Dialer{Control: sockbind.Control(iface)}
 			return d.DialContext(ctx, "udp", server)
 		},
 		Logf: a.Logf,

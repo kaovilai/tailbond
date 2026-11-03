@@ -257,6 +257,48 @@ jobs:
           path: out/e2e-android/
           if-no-files-found: warn
 
+  # The macOS client (hub) role (docs/macos.md): patched mqvpn built natively
+  # on arm64 with mqvpn's own Darwin unit tests, tailbondd's Go tests on
+  # darwin, and the hub end to end on the runner (scripts/e2e-macos.sh).
+  macos:
+    name: macOS client (mqvpn, tailbondd, e2e)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Homebrew deps (libevent, GNU patch)
+        run: brew install libevent gpatch
+      - name: mqvpn submodule revision
+        id: mq
+        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+      - name: Cache mqvpn build tree
+        uses: actions/cache@v6
+        with:
+          path: out/build/mqvpn-macos
+          key: mqvpn-macos-${{ runner.arch }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-macos.sh', 'scripts/lib/*.sh') }}
+      - name: Build patched mqvpn and run its Darwin unit tests
+        run: TB_TEST=1 scripts/build-mqvpn-macos.sh
+      - name: go vet + go test (darwin)
+        working-directory: agent
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build tailbondd (darwin/arm64)
+        run: agent/build.sh darwin/arm64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-arm64
+          path: |
+            out/macos/mqvpn
+            out/agent/darwin-arm64/tailbondd
+          if-no-files-found: error
+
   # tailbond Share for iPhone (ios/, docs/ios.md): the relay core's unit
   # tests on macOS and on an iOS simulator, and an unsigned simulator build
   # of the app. No signing, no App Store.
