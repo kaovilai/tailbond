@@ -319,6 +319,27 @@ UDP 443 to it on the upstream router. Who can approve: anyone logged in to
 GL's admin, and anyone on the tailnet who opens `http://homebox:8077` unless
 the panel sets a password for that page.
 
+## Pair & Share: phones lend their mobile data
+
+Phones on the Slate 7's Wi-Fi can lend their 5G/LTE to it
+([pair-and-share.md](pair-and-share.md)): on Android tailbond → Settings →
+**Share my mobile data**; on iPhone the **tailbond Share** app ([ios.md](ios.md)).
+The panel's **Shared by nearby phones** card lists each phone (sharing,
+battery, why it stopped) with **Use mobile data that nearby phones share**;
+each phone also appears under **Internet connections** as *… (shared)* with
+Use it / Backup only / Off and a data limit, defaulting to the mobile tier
+(kept in reserve by **Save mobile data**).
+
+The router finds phones over mDNS on `br-lan` (alongside GL's own `umdns`)
+and through your home server; it talks to them on UDP 47077 from the LAN
+side, which GL's default lan-zone rules allow. Phones on the router's own
+Wi-Fi can always reach it; on a hotel network that isolates devices, the
+panel says *This Wi-Fi blocks devices from talking to each other; sharing
+isn't available here*.
+
+A phone plugged in by USB with tethering on is a WAN like any other (no app
+needed); an iPhone shows as **iPhone (USB)**.
+
 ## Firmware upgrades
 
 What GL.iNet 4.x keeps on a firmware upgrade with **Keep Settings**, read
@@ -367,6 +388,9 @@ Config: `/etc/config/tailbond`, rendered to `/etc/tailbond/tailbond.json`.
 - `scripts/e2e-netns.sh`: pairing over Tailscale with fake `tailscale`
   CLIs, captive portals (own probe, mocked GL repeater with Login Mode, the
   real portal hooks against a stub uci).
+- `scripts/e2e-share.sh`: Pair & Share with a Linux sharer and hub in
+  namespaces (2 paths on the server, sharer gone → clean again within
+  seconds, client-isolation note).
 - **Not tested on real Flint 3 / Slate 7 hardware**: GL's `/rpc` and nginx
   behaviour, firewall/routing hooks, GL's repeater status fields, Network
   Acceleration interaction, cellular naming.

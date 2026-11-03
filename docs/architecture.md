@@ -82,6 +82,8 @@ must accept payloads without them):
   Missing: the first label of `sni`, else the host of `server`.
 - `subnet`: the server's IPv4 tunnel subnet (`server.subnet`, e.g.
   `10.77.0.0/24`). Missing: the /24 around `dns[0]`, else `10.77.0.0/24`.
+- `share_key`: the server's [Pair & Share](#pair--share) key. Missing: the
+  client fetches it from `GET /api/shares` once connected.
 
 ## mqvpn client control API (patch)
 
@@ -724,6 +726,78 @@ CLI:
 - `tailbondd backup --out FILE [--passphrase-file F]`: the passphrase comes from the file, from `TB_BACKUP_PASSPHRASE`, or a prompt.
 - `tailbondd backup --plain` prints the summary.
 - `tailbondd restore FILE [--yes] [--passphrase-file F]`: run it with the service stopped, or restart the service right after (the running agent would otherwise keep its settings in memory).
+
+## Pair & Share
+
+User guide and design: [pair-and-share.md](pair-and-share.md). A **sharer**
+(Android app, iOS tailbond Share, or tailbondd with `client.share`) lends its
+cellular uplink to a **hub** (tailbondd client role) on its LAN. Reference
+implementation: `agent/internal/share` (Go); Android `share/ShareProtocol.kt`
+and iOS `TailbondShareKit` follow it byte for byte
+(`agent/internal/share/testdata/vectors.json`, checked by all three).
+
+**Share key.** The server's `share.key` (state dir, random, created once).
+Every pairing carries it as `share_key` (additive). Older pairings get it
+from `GET /api/shares` with the client token. Holding it is what "paired
+with the same server" means. `key_id` = hex of the first 4 bytes of
+HMAC-SHA256(key, `"tbs1-keyid"`): public, used to skip other servers' sharers.
+
+**Relay protocol** (UDP, sharer port 47077; integers big-endian):
+
+| Frame | Bytes |
+|---|---|
+| HELLO (hub →) | `01 01 hub_nonce[16] len hub_id` |
+| CHALLENGE (← sharer) | `02 01 hub_nonce[16] sharer_nonce[16] len sharer_id len label` |
+| AUTH (hub →) | `03 01 hub_nonce[16] sharer_nonce[16] mac[32]`, mac = HMAC(key, `"tbs1-auth"` ‖ hub_nonce ‖ sharer_nonce ‖ hub_id) |
+| WELCOME (← sharer) | `04 01 hub_nonce[16] session[8] cap_left[8] mac[32]`, mac = HMAC(key, `"tbs1-welcome"` ‖ hub_nonce ‖ sharer_nonce ‖ session ‖ cap_left) |
+| REFUSE (← sharer) | `05 01 hub_nonce[16] reason mac[32]`, mac = HMAC(key, `"tbs1-refuse"` ‖ hub_nonce ‖ sharer_nonce ‖ reason) |
+| DATA (both ways) | `10 session[8] payload` (one mqvpn/QUIC datagram) |
+| KEEPALIVE (hub →) | `11 session[8] seq[4]` |
+| KA_ACK (← sharer) | `12 session[8] seq[4] up[8] down[8] cap_left[8] battery flags` (battery 255 = unknown; flags bit 0 = charging) |
+| BYE (both ways) | `13 session[8] reason` |
+
+Reasons: 1 not allowed, 2 data cap, 3 battery, 4 paused, 5 no cellular,
+6 replaced (a newer session from the same hub), 7 idle. `cap_left` is bytes,
+all ones = no cap. Rules: a wrong MAC, an unknown handshake or a stranger gets
+no answer at all; REFUSE only after a valid AUTH. A session is bound to the
+hub's address; DATA/KEEPALIVE from any other address are dropped. One session
+per hub id (a new one replaces it); at most 8 hubs and 64 pending handshakes;
+handshakes expire after 10 s, sessions after 30 s without traffic. The sharer
+forwards only to its own pairing's server (`server`), over cellular only. The
+hub keeps a keepalive a second and treats 3.5 s without KA_ACK as lost; it
+retries a REFUSE after 30 s. Counters (`up`/`down`) are payload bytes; the
+sharer's cap counts both directions.
+
+**Discovery.** mDNS `_tailbond-share._udp.local`: instance = label, SRV port,
+TXT `v=1`, `id=<sharer id>`, `k=<key_id>`, `n=<label>`. The hub browses with a
+legacy-unicast query on each LAN interface (not `tb0`, not the shared
+uplink). Server registry, client token required (also over the tunnel):
+
+- `POST /api/shares` `{"id","label","key_id","lan":["192.168.8.23"],"port":47077,"kind":"android|ios|linux"}`
+  → `{"ok":true}`. Entries expire after 3 minutes; sharers refresh every
+  minute while connected. Private/link-local IPv4 only, up to 8 addresses,
+  64 sharers.
+- `GET /api/shares` → `{"key","key_id","sharers":[{"id","label","key_id","client","lan","port","kind","seen"}]}`.
+  On the client role it returns this hub's view: `{"shares","note","sharing"}`.
+- `POST /api/share` (client role): `{"use_shares": bool}` and/or
+  `{"share": {"enabled","iface","port","label","cap_mb","allowed_hubs"}}`.
+
+**Hub paths.** Each sharer becomes path `sh` + hex(sha256(id))[:6], kind
+`shared-cellular`, label `"<label> (shared)"`; default priority secondary
+(like cellular), settings and data caps keyed by that name, usage from the
+link's counters. It is in the path set only while its session is open. mqvpn
+runs it as a relay path, `Path = shNNNNNN@127.0.0.1:PORT`
+(`patches/mqvpn/0002-relay-paths.patch`): the slot isn't pinned to an
+interface, its datagrams go to the hub's link on that port, and replies from
+there are delivered as the server's.
+
+**Status (client role, additive):** `shares[]`
+`{id,label,path,addr,via,state,reason,up_bytes,down_bytes,cap_left_bytes,battery,charging}`
+(state: connecting, ready, refused, unreachable, lost), `use_shares`,
+`share_note` (client isolation: *"This Wi-Fi blocks devices from talking to
+each other; sharing isn't available here."*), and `sharing`
+`{enabled,iface,label,port,state,error,used_bytes,cap_mb,hubs[]}` for this
+machine's own share.
 
 ## Captive portals
 

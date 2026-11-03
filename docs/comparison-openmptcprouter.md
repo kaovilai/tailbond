@@ -20,6 +20,7 @@ Both now share a data-plane option: OMR ships MQVPN 0.16.2 as one of its tunnels
 | WAN count | Up to 8 | Any number of interfaces mqvpn binds (router); Wi-Fi + cellular (+ ethernet) on Android |
 | Modes | Aggregation vs failover per interface (master/backup), MPTCP schedulers and path managers | Plain-language modes (Fastest / Smooth calls and video / Most reliable / Save mobile data), per-WAN Always / Backup only / Off, data caps |
 | Phone client | None (router only) | Android app: bonds the phone's Wi-Fi + 5G, Tailscale-style UI, machines list, quick-settings tile |
+| Phones lending mobile data to the router (Pair & Share) | No (USB tethering counts as a WAN) | Yes: Android and iPhone (tailbond Share, free Apple ID) lend their cellular over the router's Wi-Fi; each shows as a bonded WAN with Always / Backup only / Off, data caps and battery stop. USB tethering is a WAN too (iPhone labelled) |
 | Desktop client | None | Not built (Fedora is server role only). mqvpn's own Linux/macOS/Windows CLIs exist |
 | Tailscale | Not integrated (generic OpenWrt package possible) | Core: tailnet reachable through the home server, pairing via `tailscale whois` with one-tap approval, MagicDNS forwarding, `tailscale cert` TLS, peers list, direct-vs-relay health |
 | Pairing / onboarding | Wizard: enter VPS IP + key | Discover server over tailnet → ask → approve; QR / deep link fallback; phone landing page at `http://homebox/` |
@@ -48,7 +49,8 @@ Both now share a data-plane option: OMR ships MQVPN 0.16.2 as one of its tunnels
 1. **Stock GL.iNet firmware on Flint 3 / Slate 7**: no reflash, GL UI and features kept. OMR can't run there today.
 2. **Phone bonding**: the Android app bonds Wi-Fi + 5G on the phone itself.
 3. **Tailscale-native**: tailnet access, pairing, identity, MagicDNS and setup health. No VPS needed.
-4. **Travel UX**: captive-portal handling that works with GL Login Mode, plain-language modes, data caps, one-tap pairing.
+4. **Pair & Share**: phones on the router's Wi-Fi (Android, and iPhone without a paid developer account) add their mobile data to the router's bond, like Speedify. OMR only bonds what's plugged into the router.
+5. **Travel UX**: captive-portal handling that works with GL Login Mode, plain-language modes, data caps, one-tap pairing.
 
 ## Gaps worth closing (ideas taken from OMR)
 
