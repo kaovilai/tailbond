@@ -259,6 +259,18 @@ func TestUpdateIPKAndResult(t *testing.T) {
 	if v := a.updateView(); v.State != "rolled_back" || v.LastResult != "rolled_back" || v.LastResultVersion != "0.2.0" || !strings.Contains(v.Detail, "90s") {
 		t.Fatalf("result: %+v", v)
 	}
+	// automatic updates don't try a version that didn't start here again;
+	// Update now does
+	*calls = nil
+	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "auto"})
+	a.updateTick(ctx, false)
+	if len(*calls) != 0 {
+		t.Fatalf("auto retried the rolled-back version: %v", *calls)
+	}
+	a.updateTick(ctx, true)
+	if len(*calls) != 1 {
+		t.Fatal("Update now didn't retry it")
+	}
 }
 
 func TestOutdatedClients(t *testing.T) {

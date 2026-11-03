@@ -60,15 +60,17 @@ type clientVersion struct {
 
 // updater is the update state (its own lock: checks run long).
 type updater struct {
-	mu        sync.Mutex
-	view      status.Update
-	rel       *update.Release
-	lastCheck time.Time
-	busy      bool
-	clients   map[string]clientVersion
-	backup    backupStatus
-	checkNow  chan struct{}
-	installNw chan struct{}
+	mu         sync.Mutex
+	view       status.Update
+	rel        *update.Release
+	lastCheck  time.Time
+	busy       bool
+	clients    map[string]clientVersion
+	backup     backupStatus
+	checkNow   chan struct{}
+	installNw  chan struct{}
+	resultAt   time.Time // mtime of the result file last read
+	rolledBack string    // a version that didn't start here: auto skips it
 	// tests and the e2e
 	method     string
 	installEnv string
@@ -150,6 +152,7 @@ func installable(m string) bool { return m == methodStatic || m == methodOpkg }
 
 // updateView is the status object (copied).
 func (a *Agent) updateView() *status.Update {
+	a.loadUpdateResult() // install.sh writes it after the restart's health check
 	u := a.store.Get().UpdateOrDefault()
 	a.upd.mu.Lock()
 	v := a.upd.view
@@ -267,6 +270,12 @@ func (a *Agent) updateTick(ctx context.Context, install bool) {
 	auto := u.Policy == config.UpdateAuto && isRelease(a.opts.Version)
 	if !install && !auto {
 		return
+	}
+	a.upd.mu.Lock()
+	bad := a.upd.rolledBack
+	a.upd.mu.Unlock()
+	if !install && update.Same(bad, rel.Version) {
+		return // it didn't start here: only "Update now" tries it again
 	}
 	m := a.method()
 	if !installable(m) {
@@ -539,7 +548,19 @@ func (a *Agent) installIPK(ctx context.Context, rel *update.Release) error {
 // loadUpdateResult shows the installers' last result
 // (<state_dir>/update-result.json).
 func (a *Agent) loadUpdateResult() {
-	b, err := os.ReadFile(filepath.Join(a.store.Get().StateDir, resultFileName))
+	p := filepath.Join(a.store.Get().StateDir, resultFileName)
+	fi, err := os.Stat(p)
+	if err != nil {
+		return
+	}
+	a.upd.mu.Lock()
+	seen := fi.ModTime().Equal(a.upd.resultAt)
+	a.upd.resultAt = fi.ModTime()
+	a.upd.mu.Unlock()
+	if seen {
+		return
+	}
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return
 	}
@@ -549,14 +570,26 @@ func (a *Agent) loadUpdateResult() {
 	if json.Unmarshal(b, &r) != nil || r.Result == "" {
 		return
 	}
+	if r.Result == "rolled_back" {
+		a.upd.mu.Lock()
+		a.upd.rolledBack = r.Version
+		a.upd.mu.Unlock()
+	}
 	a.setUpdate(func(v *status.Update) {
 		v.LastResult, v.Detail, v.LastResultVersion, v.LastResultAt = r.Result, r.Detail, r.Version, r.At
 		if r.Result == "rolled_back" && update.Newer(r.Version, a.opts.Version) {
 			v.State = "rolled_back"
 		}
 	})
-	if r.Detail == "reinstalled_after_firmware_upgrade" {
+	switch {
+	case r.Detail == "reinstalled_after_firmware_upgrade":
 		a.Logf("tailbond was reinstalled after a firmware upgrade (%s)", r.Version)
+	case r.Result == "ok" && update.Same(r.Version, a.opts.Version):
+		a.setUpdate(func(v *status.Update) {
+			if v.State == "installing" || v.State == "downloading" {
+				v.State = "idle"
+			}
+		})
 	}
 }
 
