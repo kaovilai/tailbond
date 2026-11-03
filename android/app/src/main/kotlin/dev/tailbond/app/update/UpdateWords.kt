@@ -69,11 +69,13 @@ object UpdateWords {
         }
     }
 
-    /** Under "Download update": what happens next. */
+    /** Under "Download update": what happens. */
     fun howToInstall(version: String?): String =
-        "Your browser downloads tailbond-${version ?: "<version>"}.apk. Open it and tap Update: Android installs it over this app " +
-            "and keeps your servers and settings. The first time, Android asks to allow your browser to install apps; that's normal. " +
-            "tailbond reconnects by itself after the update."
+        "Your browser downloads tailbond-${version ?: "<version>"}.apk. Open it and tap Update. Your servers and settings stay."
+
+    /** And the one prompt that may look scary. */
+    const val ALLOW_PROMPT = "The first time, Android asks to allow your browser to install apps. That's normal. " +
+        "tailbond reconnects by itself after the update."
 
     /** A debug build can't take the release APKs; how to switch. */
     const val DEBUG_BUILD = "This is a debug build. It's signed with a different key than the release APKs on GitHub, " +

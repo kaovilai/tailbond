@@ -224,8 +224,9 @@ class RestorePreviewTest {
         assertEquals("no limit" to "5 GB a month", by.getValue("Mobile data limit").let { it.from to it.to })
         assertEquals("Tell me" to "Off", by.getValue("Updates").let { it.from to it.to })
         assertFalse(by.containsKey("Server choice"))
-        assertEquals(1, p.warnings.size)
-        assertTrue(p.warnings[0].startsWith("1 app from the backup isn't installed"))
+        // a missing app is a neutral note, named, not a warning
+        assertTrue(p.warnings.isEmpty())
+        assertEquals(listOf("Not installed on this phone: com.netflix.mediaclient. It skips tailbond once you install it."), p.notes)
         // this phone's own state stays
         assertTrue(p.backup.config.settings.handedToTailscale)
         assertTrue(p.backup.config.settings.onboarded)
@@ -236,6 +237,7 @@ class RestorePreviewTest {
         val p = Restore.preview(h, b, b.config.servers, b.config.settings)
         assertTrue(p.changes.toString(), p.changes.isEmpty())
         assertTrue(p.warnings.isEmpty())
+        assertTrue(p.notes.isEmpty())
     }
 
     @Test fun alwaysServerNamesIt() {

@@ -128,7 +128,8 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                         }
                         s.notesUrl?.let { url -> TextButton(onClick = { actions.openUrl(url) }) { Text("What's new", maxLines = 1) } }
                     }
-                    Text(UpdateWords.howToInstall(s.latest), style = MaterialTheme.typography.bodySmall, color = muted)
+                    Text(UpdateWords.howToInstall(s.latest), style = MaterialTheme.typography.bodyMedium)
+                    Text(UpdateWords.ALLOW_PROMPT, style = MaterialTheme.typography.bodySmall, color = muted)
                 } else if (a == Availability.DEV_BUILD || a == Availability.NO_APK || a == Availability.AVAILABLE) {
                     // a debug build can't install the release APK: no Download, only the release notes
                     s.notesUrl?.let { url -> TextButton(onClick = { actions.openUrl(url) }) { Text("What's new in v${s.latest}") } }
@@ -195,13 +196,13 @@ fun BackupScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifi
         )
         b.undoAt?.let { at ->
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Restored ${UpdateWords.whenText(at, state.now())}", style = MaterialTheme.typography.titleMedium)
                     Text("Changed your mind? Undo puts back the servers and settings from before the restore. It works once.", style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = actions::undoRestore, enabled = b.busy == null) {
+                    Button(onClick = actions::undoRestore, enabled = b.busy == null) {
                         Icon(Icons.AutoMirrored.Filled.Undo, null)
                         Text("  Undo restore")
                     }
@@ -345,6 +346,7 @@ private fun RestorePreviewDialog(p: dev.tailbond.app.backup.RestorePreview, b: B
                     }
                 }
                 p.warnings.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
+                p.notes.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Text(
                     "Your current servers and settings are kept on this phone, so you can undo this once.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -364,7 +366,7 @@ private fun RestoreDoneDialog(b: BackupUi, actions: UiActions) {
         text = {
             Text(
                 "Your servers and settings are now the ones from the backup. If tailbond was on, it reconnects with them in a moment. " +
-                    "Not what you wanted? Undo puts everything back as it was.",
+                    "Not what you wanted? Undo puts everything back as it was. It works once.",
             )
         },
         confirmButton = { TextButton(onClick = actions::dismissBackup) { Text("Done") } },

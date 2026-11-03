@@ -40,7 +40,10 @@ data class RestorePreview(
     val created: String,
     val appVersion: String,
     val changes: List<Change>,
+    /** Something to stop and think about (shown in red): "the backup has no servers". */
     val warnings: List<String>,
+    /** Harmless facts (shown neutral): apps from the backup that aren't installed here. */
+    val notes: List<String>,
     val backup: AndroidBackup,
 )
 
@@ -103,13 +106,15 @@ object Restore {
         if (linksChanged) changes += Change("Wi-Fi / mobile data / Ethernet roles", "this phone's", "the backup's")
 
         val warnings = mutableListOf<String>()
-        val missing = inc.excludedApps.filterNot(isInstalled)
+        val notes = mutableListOf<String>()
+        val missing = inc.excludedApps.filterNot(isInstalled).sorted()
         if (missing.isNotEmpty()) {
-            warnings += "${count(missing.size, "app")} from the backup ${if (missing.size == 1) "isn't" else "aren't"} installed on this phone; " +
-                "${if (missing.size == 1) "it" else "they"} will skip tailbond once installed"
+            // only the package name is known for an app that isn't installed
+            notes += "Not installed on this phone: ${missing.joinToString(", ")}. " +
+                if (missing.size == 1) "It skips tailbond once you install it." else "They skip tailbond once you install them."
         }
         if (b.config.servers.isEmpty()) warnings += "The backup has no servers: this phone would be unpaired"
-        return RestorePreview(h.host, h.created, h.agentVersion, changes, warnings, b.copy(config = b.config.copy(settings = inc)))
+        return RestorePreview(h.host, h.created, h.agentVersion, changes, warnings, notes, b.copy(config = b.config.copy(settings = inc)))
     }
 
     private fun count(n: Int, what: String) = if (n == 0) "none" else if (n == 1) "1 $what" else "$n ${what}s"
