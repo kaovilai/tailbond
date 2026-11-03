@@ -44,10 +44,29 @@ public enum ShareProtocol {
 
     static func idBytes(_ s: String) -> [UInt8] { Array(Array(s.utf8).prefix(maxID)) }
 
-    static func be64(_ v: UInt64) -> [UInt8] { (0..<8).map { UInt8(truncatingIfNeeded: v >> (56 - 8 * UInt64($0))) } }
-    static func be32(_ v: UInt32) -> [UInt8] { (0..<4).map { UInt8(truncatingIfNeeded: v >> (24 - 8 * UInt32($0))) } }
-    static func read32(_ b: [UInt8], _ at: Int) -> UInt32 { b[at..<at + 4].reduce(0) { $0 << 8 | UInt32($1) } }
-    static func read64(_ b: [UInt8], _ at: Int) -> UInt64 { b[at..<at + 8].reduce(0) { $0 << 8 | UInt64($1) } }
+    static func be64(_ v: UInt64) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: 8)
+        for i in 0..<8 { out[i] = UInt8(truncatingIfNeeded: v >> UInt64(56 - 8 * i)) }
+        return out
+    }
+
+    static func be32(_ v: UInt32) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: 4)
+        for i in 0..<4 { out[i] = UInt8(truncatingIfNeeded: v >> UInt32(24 - 8 * i)) }
+        return out
+    }
+
+    static func read32(_ b: [UInt8], _ at: Int) -> UInt32 {
+        var v: UInt32 = 0
+        for i in 0..<4 { v = v << 8 | UInt32(b[at + i]) }
+        return v
+    }
+
+    static func read64(_ b: [UInt8], _ at: Int) -> UInt64 {
+        var v: UInt64 = 0
+        for i in 0..<8 { v = v << 8 | UInt64(b[at + i]) }
+        return v
+    }
 
     public struct Hello: Equatable { public var hubNonce: [UInt8]; public var hubID: String }
     public struct Auth: Equatable { public var hubNonce: [UInt8]; public var sharerNonce: [UInt8]; public var mac: [UInt8] }
@@ -66,45 +85,53 @@ public enum ShareProtocol {
                     mac: Array(b[2 + 2 * nonceLen..<2 + 2 * nonceLen + macLen]))
     }
 
+    /// Concatenates parts (one append each: long `+` chains stall the type checker).
+    static func frame(_ parts: [UInt8]...) -> [UInt8] {
+        var out: [UInt8] = []
+        for p in parts { out.append(contentsOf: p) }
+        return out
+    }
+
     public static func helloFrame(hubNonce: [UInt8], hubID: String) -> [UInt8] {
         let id = idBytes(hubID)
-        return [hello, version] + hubNonce + [UInt8(id.count)] + id
+        return frame([hello, version], hubNonce, [UInt8(id.count)], id)
     }
 
     public static func challengeFrame(hubNonce: [UInt8], sharerNonce: [UInt8], sharerID: String, label: String) -> [UInt8] {
-        let id = idBytes(sharerID), lab = idBytes(label)
-        return [challenge, version] + hubNonce + sharerNonce + [UInt8(id.count)] + id + [UInt8(lab.count)] + lab
+        let id = idBytes(sharerID)
+        let lab = idBytes(label)
+        return frame([challenge, version], hubNonce, sharerNonce, [UInt8(id.count)], id, [UInt8(lab.count)], lab)
     }
 
     public static func authFrame(hubNonce: [UInt8], sharerNonce: [UInt8], mac: [UInt8]) -> [UInt8] {
-        [auth, version] + hubNonce + sharerNonce + mac
+        frame([auth, version], hubNonce, sharerNonce, mac)
     }
 
     public static func welcomeFrame(hubNonce: [UInt8], session: [UInt8], capLeft: UInt64, mac: [UInt8]) -> [UInt8] {
-        [welcome, version] + hubNonce + session + be64(capLeft) + mac
+        frame([welcome, version], hubNonce, session, be64(capLeft), mac)
     }
 
     public static func refuseFrame(hubNonce: [UInt8], reason: Reason, mac: [UInt8]) -> [UInt8] {
-        [refuse, version] + hubNonce + [reason.rawValue] + mac
+        frame([refuse, version], hubNonce, [reason.rawValue], mac)
     }
 
-    public static func dataFrame(session: [UInt8], payload: [UInt8]) -> [UInt8] { [data] + session + payload }
+    public static func dataFrame(session: [UInt8], payload: [UInt8]) -> [UInt8] { frame([data], session, payload) }
 
-    public static func keepaliveFrame(session: [UInt8], seq: UInt32) -> [UInt8] { [keepalive] + session + be32(seq) }
+    public static func keepaliveFrame(session: [UInt8], seq: UInt32) -> [UInt8] { frame([keepalive], session, be32(seq)) }
 
     public static func kaAckFrame(session: [UInt8], seq: UInt32, up: UInt64, down: UInt64, capLeft: UInt64,
                                   battery: UInt8, flags: UInt8) -> [UInt8] {
-        [kaAck] + session + be32(seq) + be64(up) + be64(down) + be64(capLeft) + [battery, flags]
+        frame([kaAck], session, be32(seq), be64(up), be64(down), be64(capLeft), [battery, flags])
     }
 
-    public static func byeFrame(session: [UInt8], reason: Reason) -> [UInt8] { [bye] + session + [reason.rawValue] }
+    public static func byeFrame(session: [UInt8], reason: Reason) -> [UInt8] { frame([bye], session, [reason.rawValue]) }
 
     /// Session id of a DATA/KEEPALIVE/BYE frame.
     public static func session(of b: [UInt8]) -> [UInt8]? { b.count < 1 + sessionLen ? nil : Array(b[1..<1 + sessionLen]) }
 
     static func mac(_ key: [UInt8], _ label: String, _ parts: [UInt8]...) -> [UInt8] {
-        var msg = Array(label.utf8)
-        for p in parts { msg += p }
+        var msg: [UInt8] = Array(label.utf8)
+        for p in parts { msg.append(contentsOf: p) }
         let code = HMAC<SHA256>.authenticationCode(for: msg, using: SymmetricKey(data: key))
         return Array(code)
     }
