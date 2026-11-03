@@ -73,7 +73,7 @@ jobs:
             'packaging/openwrt/files/etc/uci-defaults/*' 'packaging/openwrt/files/usr/lib/tailbond/*' \
             'packaging/openwrt/files/lib/upgrade/*')
           shellcheck -S warning --shell=busybox -x "${files[@]}"
-      - name: Release scripts self-test (update key, manifest, signature)
+      - name: Release scripts self-test (manifest, publish with an attestation)
         run: scripts/release/test-release-scripts.sh
 
   e2e:
@@ -169,7 +169,8 @@ jobs:
         env:
           WANT: ${{ vars.TB_RELEASE_CERT_SHA256 }}
         run: |
-          signer="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)"
+          signers=("$ANDROID_HOME"/build-tools/*/apksigner)
+          signer="$(printf '%s\n' "${signers[@]}" | sort -V | tail -n1)"
           for apk in out/android/tailbond-*.apk; do
             [ "$apk" = out/android/tailbond-debug.apk ] && continue
             got="$("$signer" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n1)"
