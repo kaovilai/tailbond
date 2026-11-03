@@ -50,7 +50,7 @@ or `tailbondd backup --plain`.
 Copy the files somewhere else too. They're encrypted, so a cloud folder or
 another machine is fine.
 
-### On the VPS with Ansible (a `backup` role)
+### On a VPS managed with Ansible (a `backup` role)
 
 Add the scheduled backups directory to that role's paths:
 
