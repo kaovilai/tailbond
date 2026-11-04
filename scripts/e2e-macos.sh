@@ -165,6 +165,23 @@ wait_for 30 "both sharers registered" sh -c "curl -fsS -m 3 http://$SAPI/api/sha
   && ok "server lists them: $(sapi "http://$SAPI/api/shares" | jq -c '[.sharers[] | {label, lan, port}]')" \
   || bad "sharers not registered: $(sapi "http://$SAPI/api/shares" | jq -c .)"
 
+say "certificate pin: mqvpn on macOS refuses the server when the pin is another certificate's"
+# The server's certificate is self-signed: the pairing pins it, and mqvpn
+# checks the pin in every handshake (--cert-sha256 / CertSHA256). A pin
+# that isn't the server's must fail the handshake, before the tunnel and
+# before the key is sent. No timeout(1) on macOS: perl's alarm.
+HUB_KEY="$(printf '%s' "${HUB_URI#tailbond://pair?d=}" | tr '_-' '/+' | jq -Rr '. + ("=" * ((4 - length % 4) % 4)) | @base64d | fromjson | .key')"
+set +e
+perl -e 'alarm shift; exec @ARGV' 30 "$MQVPN" --mode client --server "127.0.0.1:$PORT" \
+  --cert-sha256 "$(printf '%064d' 0)" --auth-key "$HUB_KEY" --no-reconnect --no-manage-routes >"$WORK/pin-wrong.log" 2>&1
+PIN_RC=$?
+set -e
+if [ "$PIN_RC" -ne 0 ] && [ "$PIN_RC" -ne 142 ] && grep -q 'does not match the pinned' "$WORK/pin-wrong.log" && ! grep -q 'ESTABLISHED' "$WORK/pin-wrong.log"; then
+  ok "wrong pin: handshake rejected (exit $PIN_RC)"
+else
+  bad "wrong pin: exit $PIN_RC: $(tail -n 4 "$WORK/pin-wrong.log" | tr '\n' ' ')"
+fi
+
 say "hub: tailbondd client role on this Mac (path lo0 + the shares)"
 mkdir -p "$WORK/hub"
 cat >"$WORK/hub/tailbond.json" <<EOF
@@ -178,6 +195,9 @@ HUB_PID=$!
 wait_for 90 "hub connected" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
   && ok "hub connected: tunnel $(hapi "http://$API/api/status" | jq -r .tunnel_ip) on $(grep -o 'TUN utun[0-9]* configured' "$WORK/hub.log" | tail -n1 | awk '{print $2}')" \
   || { bad "hub not connected: $(hapi "http://$API/api/status" | jq -c '{state, error}')"; exit 1; }
+grep -q '^CertSHA256 = [0-9a-f]\{64\}$' "$WORK/hub/client.conf" && grep -q '^Insecure = false$' "$WORK/hub/client.conf" \
+  && ok "hub's mqvpn checks the server's certificate pin (CertSHA256, Insecure off)" \
+  || bad "client.conf: $(grep -E '^(CertSHA256|Insecure)' "$WORK/hub/client.conf" | tr '\n' ' ')"
 if wait_for 90 "2 shares ready" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '[.shares[]? | select(.state == \"ready\")] | length == 2'"; then
   ok "hub found both phones: $(hapi "http://$API/api/status" | jq -c '[.shares[] | {label, via, state, path}]')"
 else
