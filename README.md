@@ -128,6 +128,7 @@ scripts/e2e-macos.sh                    # Mac hub end-to-end (on a Mac, sudo, QE
 - **Issues:** use the [issue forms](https://github.com/kaovilai/tailbond/issues/new/choose) ([bug](.github/ISSUE_TEMPLATE/bug_report.yml), [feature](.github/ISSUE_TEMPLATE/feature_request.yml)). Take pairing links, keys and addresses you don't want public out of logs first.
 - **`autofix`:** a maintainer adds the `autofix` label to an issue they've read, and an AI agent ([workflow](.github/workflows/issue-autofix.md)) drafts a fix PR checked with the repo's own tests; a maintainer's own new issues get one right away. Nothing merges without review.
 - **Dependencies:** [Dependabot](.github/dependabot.yml) opens one grouped PR a week for Go modules, Gradle and GitHub Actions; security updates come separately.
+- **[SBOM](docs/sbom.md):** every release has an attested SPDX SBOM of each file, down to the C libraries inside mqvpn; main's build is submitted to the dependency graph, so Dependabot alerts cover what ships.
 - Commits carry a DCO sign-off (`git commit -s`).
 
 ## Security

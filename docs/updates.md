@@ -3,7 +3,8 @@
 tailbond is released like most open-source projects: each version is a
 [GitHub release](https://github.com/kaovilai/tailbond/releases) with every
 file and a `SHA256SUMS` list (plus GitHub build-provenance attestations, so
-anyone can check a file with `gh attestation verify FILE -R kaovilai/tailbond`).
+anyone can check a file with `gh attestation verify FILE -R kaovilai/tailbond`),
+and an attested [SBOM](sbom.md) of what each file contains.
 
 ## How releases happen
 
