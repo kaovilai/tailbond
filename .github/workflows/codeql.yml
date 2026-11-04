@@ -73,8 +73,9 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
 
-  # Swift (iOS Share app, macOS menu app) needs a macOS runner, which CI
-  # already waits on. Not on pull requests: main, weekly and by hand.
+  # Swift (iOS Share app and TailbondShareKit, macOS menu app) needs a macOS
+  # runner, which CI already waits on. Not on pull requests: main, weekly
+  # and by hand.
   analyze-swift:
     name: Analyze (swift)
     if: github.event_name != 'pull_request'
@@ -84,10 +85,24 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
+      # the iOS app's Xcode project is generated (ios/project.yml) and not in
+      # git, so autobuild can't find the app: build what CI's ios and macos
+      # jobs build
+      - name: XcodeGen
+        run: brew install xcodegen
       - uses: github/codeql-action/init@v4
         with:
           languages: swift
-          build-mode: autobuild
+          build-mode: manual
+      - name: Build the iOS app with TailbondShareKit (simulator, unsigned)
+        shell: bash
+        run: |
+          set -o pipefail
+          cd ios && xcodegen
+          xcodebuild build -project TailbondShare.xcodeproj -scheme TailbondShare \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO | tail -n 30
+      - name: Build the menu bar app
+        run: swift build --package-path macos/TailbondMenu
       - uses: github/codeql-action/analyze@v4
         with:
           category: /language:swift
