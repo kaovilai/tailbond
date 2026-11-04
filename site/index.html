@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>tailbond: bond every connection to your own server</title>
+<meta name="description" content="Speedify-style bonding of Wi-Fi, 5G, ethernet and nearby phones into one fast, steady tunnel to your own home server or VPS, with your Tailscale tailnet reachable through it.">
+<meta property="og:title" content="tailbond">
+<meta property="og:description" content="Bond Wi-Fi, 5G, ethernet and nearby phones into one tunnel to your own server, with your tailnet along for the ride.">
+<meta property="og:image" content="https://raw.githubusercontent.com/kaovilai/tailbond/main/assets/brand/social-preview.png">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<style>
+:root {
+  color-scheme: light dark;
+  --ink-950: #071a1d; --ink-900: #0b2a2e;
+  --teal-700: #0f766e; --teal-400: #2dd4bf; --volt: #c6f432;
+  --wifi: #38bdf8; --cell: #a78bfa; --eth: #94a3b8; --usb: #fb923c; --shared: #f472b6;
+  --bg: var(--ink-950); --card: var(--ink-900); --text: #e6fffa; --muted: #8fb8b2; --border: #16403f;
+  --primary: var(--teal-400); --on-primary: #062a26;
+  --beam: linear-gradient(90deg, #2dd4bf, #c6f432);
+  --radius: 16px;
+  --font: Inter, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4fbfa; --card: #ffffff; --text: #062a26; --muted: #4b6b66; --border: #cdeee9;
+    --primary: var(--teal-700); --on-primary: #ffffff;
+    --beam: linear-gradient(90deg, #0d9488, #65a30d);
+    --wifi: #0284c7; --cell: #7c3aed; --eth: #475569; --usb: #ea580c; --shared: #db2777;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 var(--font); }
+a { color: var(--primary); }
+.wrap { width: min(1080px, 100% - 2.5rem); margin-inline: auto; }
+
+/* header */
+.top { position: sticky; top: 0; z-index: 2; backdrop-filter: blur(10px); background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--border); }
+.top .wrap { display: flex; align-items: center; gap: 1rem; min-height: 60px; }
+.brand { display: flex; align-items: center; gap: .55rem; color: var(--text); text-decoration: none; font-size: 1.25rem; letter-spacing: -.01em; }
+.brand b { font-weight: 800; background: var(--beam); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.top nav { margin-left: auto; display: flex; gap: 1.1rem; flex-wrap: wrap; }
+.top nav a { color: var(--muted); text-decoration: none; font-size: .95rem; }
+.top nav a:hover, .top nav a:focus-visible { color: var(--text); }
+
+/* hero */
+.hero { padding: clamp(3rem, 8vw, 6rem) 0 3rem; display: grid; gap: 2.5rem; grid-template-columns: 1.05fr .95fr; align-items: center; }
+@media (width < 820px) { .hero { grid-template-columns: 1fr; } }
+.hero h1 { font-size: clamp(2.1rem, 5vw, 3.4rem); line-height: 1.08; letter-spacing: -.03em; margin: 0 0 1rem; }
+.hero h1 em { font-style: normal; background: var(--beam); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero p { color: var(--muted); font-size: 1.12rem; margin: 0 0 1.6rem; max-width: 34em; }
+.cta { display: flex; gap: .8rem; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: .5rem; padding: .75rem 1.2rem; border-radius: 12px; font-weight: 650; text-decoration: none; }
+.btn.primary { background: var(--primary); color: var(--on-primary); }
+.btn.ghost { border: 1px solid var(--border); color: var(--text); }
+.note { margin-top: 1rem; font-size: .9rem; color: var(--muted); }
+
+/* braid animation */
+.braid { width: 100%; height: auto; border-radius: var(--radius); background: var(--card); border: 1px solid var(--border); }
+.braid .lbl { font: 600 13px var(--font); fill: var(--muted); }
+.braid .pkt { offset-rotate: 0deg; opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .braid .pkt { animation: ride 2.6s linear infinite; }
+  .braid .pkt.d1 { animation-delay: -.9s; } .braid .pkt.d2 { animation-delay: -1.7s; }
+}
+@keyframes ride {
+  0% { offset-distance: 0%; opacity: 0; } 8% { opacity: 1; } 92% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; }
+}
+
+/* sections */
+section { padding: 3.5rem 0; border-top: 1px solid var(--border); }
+h2 { font-size: clamp(1.5rem, 3vw, 2rem); letter-spacing: -.02em; margin: 0 0 .5rem; }
+.lead { color: var(--muted); margin: 0 0 2rem; max-width: 46em; }
+.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.2rem 1.25rem; }
+.card h3 { margin: 0 0 .35rem; font-size: 1.05rem; }
+.card p { margin: 0; color: var(--muted); font-size: .96rem; }
+.dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin-right: .45rem; vertical-align: .05em; }
+.tag { display: inline-block; font-size: .78rem; padding: .1rem .55rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); margin-left: .35rem; vertical-align: .15em; }
+.steps.five { grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
+.steps { counter-reset: s; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); padding: 0; list-style: none; }
+.steps li { counter-increment: s; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.2rem 1.25rem 1.2rem 3.4rem; position: relative; }
+.steps li::before { content: counter(s); position: absolute; left: 1.1rem; top: 1.05rem; width: 1.7rem; height: 1.7rem; border-radius: 50%; display: grid; place-items: center; background: var(--primary); color: var(--on-primary); font-weight: 700; font-size: .9rem; }
+.steps b { display: block; margin-bottom: .2rem; }
+.steps span { color: var(--muted); font-size: .95rem; }
+table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+th, td { text-align: left; padding: .7rem .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+.tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: .3rem .8rem; }
+details { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: .9rem 1.1rem; margin-bottom: .7rem; }
+summary { cursor: pointer; font-weight: 600; }
+details p { color: var(--muted); margin: .6rem 0 0; }
+footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-top: 1px solid var(--border); }
+:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="tailbond home">
+      <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="hb" gradientUnits="userSpaceOnUse" x1="36" y1="0" x2="50" y2="0"><stop offset="0" stop-color="#2DD4BF"/><stop offset="1" stop-color="#C6F432"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="#071A1D"/><path d="M12 18 C26 18 28 32 38 32" fill="none" stroke="#38BDF8" stroke-width="4.5" stroke-linecap="round"/><path d="M12 46 C26 46 28 32 38 32" fill="none" stroke="#A78BFA" stroke-width="4.5" stroke-linecap="round"/><path d="M12 32 H38" stroke="#2DD4BF" stroke-width="4.5" stroke-linecap="round"/><path d="M36 32 H50" stroke="url(#hb)" stroke-width="8" stroke-linecap="round"/><path d="M45 23 L54 32 L45 41" fill="none" stroke="#C6F432" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="18" r="3.6" fill="#38BDF8"/><circle cx="12" cy="32" r="3.6" fill="#2DD4BF"/><circle cx="12" cy="46" r="3.6" fill="#A78BFA"/></svg>
+      <span>tail<b>bond</b></span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#platforms">Platforms</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/kaovilai/tailbond">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top" class="wrap">
+  <div class="hero">
+    <div>
+      <h1>Every connection,<br><em>one steady tunnel home.</em></h1>
+      <p>tailbond bonds Wi-Fi, 5G, ethernet and nearby phones into one fast, steady connection to <strong>your own</strong> home server or VPS. Your Tailscale machines stay reachable through it. No subscription, no third-party servers.</p>
+      <div class="cta">
+        <a class="btn primary" href="#start">Get started</a>
+        <a class="btn ghost" href="https://github.com/kaovilai/tailbond">View on GitHub</a>
+      </div>
+      <p class="note">Early, open source (Apache-2.0). CI-tested everywhere; real-hardware testing so far is a GL.iNet Flint 3 home server.</p>
+    </div>
+
+    <svg class="braid" viewBox="0 0 480 300" role="img" aria-labelledby="braid-t">
+      <title id="braid-t">Wi-Fi, mobile data and ethernet braid into one tunnel to your home server</title>
+      <defs><linearGradient id="beam-d" gradientUnits="userSpaceOnUse" x1="295" y1="0" x2="410" y2="0"><stop offset="0" stop-color="#2DD4BF"/><stop offset="1" stop-color="#C6F432"/></linearGradient></defs>
+      <path id="p1" d="M30 70 C200 70 210 150 300 150" fill="none" style="stroke:var(--wifi)" stroke-width="7" stroke-linecap="round"/>
+      <path id="p2" d="M30 150 L300 150" fill="none" style="stroke:var(--teal-400)" stroke-width="7" stroke-linecap="round"/>
+      <path id="p3" d="M30 230 C200 230 210 150 300 150" fill="none" style="stroke:var(--cell)" stroke-width="7" stroke-linecap="round"/>
+      <path d="M295 150 H410" stroke="url(#beam-d)" stroke-width="14" stroke-linecap="round"/>
+      <path d="M396 128 L420 150 L396 172" fill="none" stroke="#C6F432" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="30" cy="70" r="9" style="fill:var(--wifi)"/><circle cx="30" cy="150" r="9" style="fill:var(--teal-400)"/><circle cx="30" cy="230" r="9" style="fill:var(--cell)"/>
+      <circle class="pkt" r="5" fill="#fff" style="offset-path: path('M30 70 C200 70 210 150 300 150 H410')"/>
+      <circle class="pkt d1" r="5" fill="#fff" style="offset-path: path('M30 150 L410 150')"/>
+      <circle class="pkt d2" r="5" fill="#fff" style="offset-path: path('M30 230 C200 230 210 150 300 150 H410')"/>
+      <text class="lbl" x="48" y="58">Wi-Fi</text>
+      <text class="lbl" x="48" y="138">Ethernet</text>
+      <text class="lbl" x="48" y="256">5G</text>
+      <text class="lbl" x="340" y="205">your server</text>
+    </svg>
+  </div>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p class="lead">A hub, which can be an Android phone or a travel router, opens one tunnel to your server over <em>every</em> connection it has, using Multipath QUIC (<a href="https://github.com/mp0rta/mqvpn">mqvpn</a>). Your server combines them and sends traffic on to the internet and your tailnet.</p>
+    <ol class="steps five">
+      <li><b>Connections</b><span>Hotel Wi-Fi, 5G, ethernet, a phone tethered over USB, or a friend's phone sharing its data.</span></li>
+      <li><b>Hub</b><span>The Android app, or a GL.iNet travel router that bonds for every device on its Wi-Fi. A Mac hub is in progress.</span></li>
+      <li><b>Bonded tunnel</b><span>Faster together, or duplicated for calls that never drop. Fails over in seconds.</span></li>
+      <li><b>Your server</b><span>A Flint 3 or Fedora box at home, or a VPS, with automatic failover between them.</span></li>
+      <li><b>Internet + tailnet</b><span>Reach the NAS by its MagicDNS name, from anywhere.</span></li>
+    </ol>
+  </section>
+
+  <section id="features">
+    <h2>Features</h2>
+    <p class="lead">Everything a travel bonding service does, on hardware you own.</p>
+    <div class="grid">
+      <div class="card"><h3>Four plain modes</h3><p>Fastest, Smooth calls and video, Most reliable, Save mobile data. Per-link Always / Backup only / Off and data caps.</p></div>
+      <div class="card"><h3>Tailscale-native</h3><p>Pair a new device with one tap: it asks your server over Tailscale and you approve. Machines list, MagicDNS, setup health.</p></div>
+      <div class="card"><h3>Home + VPS failover</h3><p>Prefer home, switch to a VPS in about 15 s if home goes down, fail back when it's healthy.</p></div>
+      <div class="card"><h3><span class="dot" style="background:var(--shared)"></span>Pair &amp; Share</h3><p>Nearby phones lend their mobile data to your hub over Wi-Fi: no hotspot setup, counted as app data.</p></div>
+      <div class="card"><h3>Hotel Wi-Fi friendly</h3><p>Sign-in pages are detected and kept out of the bond, and work with GL.iNet's Login Mode.</p></div>
+      <div class="card"><h3>Bypass rules</h3><p>Send a banking site, a work laptop or Wi-Fi calling direct, or through one chosen connection.</p></div>
+      <div class="card"><h3>Native GL.iNet panel</h3><p>Lives under VPN in GL's own admin, with GL's login. No reflashing.</p></div>
+      <div class="card"><h3>Updates &amp; backups</h3><p>Releases are cut automatically. Routers and servers tell you when one is out, or install it themselves if you turn that on. Encrypted config backups and restore.</p></div>
+    </div>
+  </section>
+
+  <section id="platforms">
+    <h2>Platforms</h2>
+    <p class="lead">Honest status: each row says what CI actually checks. Real-hardware testing is just beginning.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col">Platform</th><th scope="col">Role</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr><td>GL.iNet Flint 3 / OpenWrt</td><td>Home server</td><td>Package install test in CI + <strong>tested on real hardware</strong></td></tr>
+          <tr><td>GL.iNet Slate 7 / OpenWrt</td><td>Travel hub</td><td>Package install test in CI (emulated OpenWrt)</td></tr>
+          <tr><td>Fedora</td><td>Home server (RPM)</td><td>RPM build, install and removal in CI</td></tr>
+          <tr><td>Any Linux VPS</td><td>Server, failover backup</td><td>Installer tested in CI (AlmaLinux, Debian, Ubuntu); bonding and failover end to end in network namespaces</td></tr>
+          <tr><td>macOS</td><td>Hub (Wi-Fi, ethernet, iPhone USB, phone shares)</td><td>In progress, not released yet</td></tr>
+          <tr><td>Android</td><td>Hub for itself (Wi-Fi + 5G), Pair &amp; Share sharer</td><td>Unit tests, plus connect-and-pass-traffic on an emulator in CI</td></tr>
+          <tr><td>iPhone</td><td>Pair &amp; Share sharer (free-signed app you build)</td><td>Unit tests and build on an iOS simulator in CI</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>Get started</h2>
+    <p class="lead">You need a server you control (a GL.iNet router, a Fedora box or a VPS) with a public IP or a forwarded UDP port.</p>
+    <ol class="steps">
+      <li><b>Set up the server</b><span><a href="https://github.com/kaovilai/tailbond/blob/main/docs/glinet.md">GL.iNet</a>, <a href="https://github.com/kaovilai/tailbond/blob/main/docs/fedora-server.md">Fedora</a> or a <a href="https://github.com/kaovilai/tailbond/blob/main/docs/vps.md">VPS</a>.</span></li>
+      <li><b>Open its "Get tailbond" page</b><span>On your Android phone, while Tailscale is on: <code>http://&lt;server&gt;/</code>. Travel router? Follow the <a href="https://github.com/kaovilai/tailbond/blob/main/docs/glinet.md">GL.iNet guide</a> instead.</span></li>
+      <li><b>Install and ask to connect</b><span>Install the app and tap Connect; approve the request on your server.</span></li>
+      <li><b>Add more links</b><span>Plug in a phone, share a friend's data, or bring the travel router.</span></li>
+    </ol>
+    <p class="note">Downloads are on <a href="https://github.com/kaovilai/tailbond/releases">GitHub Releases</a>. Tips for the fastest setup: <a href="https://github.com/kaovilai/tailbond/blob/main/docs/setup-tips.md">setup tips</a>.</p>
+  </section>
+
+  <section id="faq">
+    <h2>Questions</h2>
+    <details><summary>Is this a Tailscale product?</summary><p>No. tailbond is an independent open-source project. It uses Tailscale (if you have it) for pairing, identity and reaching your tailnet; the bonded tunnel itself is mqvpn.</p></details>
+    <details><summary>Can I keep using the Tailscale app?</summary><p>On a phone, tailbond replaces the Tailscale VPN while it's on (Android allows one VPN at a time), and your tailnet stays reachable through your server. Servers and travel routers run both. Step by step for each device: <a href="https://github.com/kaovilai/tailbond/blob/main/docs/coming-from-tailscale.md">coming from Tailscale</a>.</p></details>
+    <details><summary>Why my own server?</summary><p>Your traffic goes to hardware you control, and it exits with your home IP. Speed is capped by your server's upload, so a VPS helps if home upload is slow.</p></details>
+    <details><summary>Does it work on Heroku or Vercel?</summary><p>No. A server needs inbound UDP and a TUN device. There are untested <a href="https://github.com/kaovilai/tailbond/blob/main/docs/deploy.md">templates</a> for any VPS, Docker and Fly.io.</p></details>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    tailbond · <a href="https://github.com/kaovilai/tailbond/blob/main/LICENSE">Apache-2.0</a> ·
+    Tailscale, GL.iNet, Speedify, Peplink and SpeedFusion are trademarks of their respective owners; tailbond isn't affiliated with them.
+  </div>
+</footer>
+</body>
+</html>

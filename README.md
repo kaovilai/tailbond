@@ -29,7 +29,7 @@ tailbond combines Wi-Fi, 5G/cellular, ethernet and phone tethering into one tunn
 | Phone | Android app (Wi-Fi + mobile data bonding; shares its mobile data with the travel router) | [Android](docs/android.md) |
 | iPhone | tailbond Share: lends its mobile data to the travel router (no VPN, builds with a free Apple ID) | [iOS](docs/ios.md) · [Pair & Share](docs/pair-and-share.md) |
 
-More: [setup tips for best speed](docs/setup-tips.md) · [updates](docs/updates.md) · [backup and restore](docs/backup-restore.md) · [architecture and API contract](docs/architecture.md) · [comparison with OpenMPTCProuter](docs/comparison-openmptcprouter.md)
+More: [coming from Tailscale](docs/coming-from-tailscale.md) · [setup tips for best speed](docs/setup-tips.md) · [updates](docs/updates.md) · [backup and restore](docs/backup-restore.md) · [architecture and API contract](docs/architecture.md) · [comparison with OpenMPTCProuter](docs/comparison-openmptcprouter.md)
 
 ## Building
 
