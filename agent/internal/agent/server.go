@@ -261,7 +261,11 @@ func (a *Agent) serverPreStart(ctx context.Context) error {
 	return writeFileAtomic(a.confPath(), []byte(ini), 0o600)
 }
 
+// stateSecret is a random secret in the state dir, created on first use.
+// Concurrent first callers get the same one.
 func (a *Agent) stateSecret(name string) (string, error) {
+	a.secretMu.Lock()
+	defer a.secretMu.Unlock()
 	p := filepath.Join(a.store.Get().StateDir, name)
 	if b, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		return strings.TrimSpace(string(b)), nil
@@ -374,7 +378,7 @@ func (a *Agent) pairingFor(u config.User) (*pairResult, error) {
 	p := &pairing.Payload{
 		V: pairing.Version, Name: u.Name, Server: server, User: u.Name, Key: u.Key,
 		Mode: cfg.Mode, TailnetRoutes: config.TailnetRoutes, SNI: tls.sni,
-		ServerName: a.serverName(), Subnet: cfg.Server.Subnet,
+		ServerName: a.serverName(), Subnet: cfg.Server.Subnet, ShareKey: a.shareKeyFor(u),
 	}
 	if tls.insecure {
 		p.Insecure, p.CertSHA256 = true, tls.sha256
@@ -451,6 +455,7 @@ func (a *Agent) removeClient(ctx context.Context, name string) error {
 	if err := a.ctl.RemoveUser(ctx, name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
 		a.Logf("remove_user %s: %v", name, err)
 	}
+	a.dropSharers(name)
 	a.Logf("client %s revoked", name)
 	// With no users left mqvpn falls back to the private global key, which
 	// needs a fresh config.

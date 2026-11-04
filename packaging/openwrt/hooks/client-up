@@ -23,7 +23,9 @@ lans="$(tbcfg client.lan_network)"
 [ -n "$lans" ] || lans=lan
 
 ensure_network
-commit_reload network network && log "network: added interface tailbond ($TB_TUN)"
+commit_reload network network && log "network: removed legacy interface tailbond"
+# Tearing that interface down also set the device down.
+ip link set dev "$TB_TUN" up 2>/dev/null || true
 
 ensure_zone REJECT
 uset firewall.tailbond.masq 1

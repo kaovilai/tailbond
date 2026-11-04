@@ -67,6 +67,16 @@
                 android:value="vpn" />
         </service>
 
+        <!-- Pair & Share: "Share my mobile data" (share/ShareService.kt) -->
+        <service
+            android:name=".share.ShareService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Lends this phone's mobile data to the user's own travel router or laptop on the same Wi-Fi, which bonds it with its other connections" />
+        </service>
+
         <service
             android:name=".service.TailbondTileService"
             android:exported="true"

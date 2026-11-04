@@ -2,6 +2,7 @@
 [ -n "$IPKG_INSTROOT" ] && exit 0
 /etc/init.d/tailbond stop
 /etc/init.d/tailbond disable
+rm -f /etc/nginx/gl-conf.d/tailbond.conf
 # Package removal (not upgrade): drop the network/firewall/dnsmasq/route
 # config the hooks added.
 if [ "$1" != "upgrade" ]; then

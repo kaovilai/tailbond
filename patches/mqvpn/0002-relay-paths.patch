@@ -1,0 +1,536 @@
+From: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+Subject: [PATCH] feat(posix): relay paths (--path NAME@HOST:PORT)
+
+A client path can now go through a UDP relay instead of straight to the
+server: --path / Path = NAME@HOST:PORT opens a path whose socket is not
+pinned to an interface and whose datagrams go to HOST:PORT. What the
+relay sends back is handed to the core as if it came from the server
+(the address the core last sent to on that path); anything else on the
+socket is dropped. NAME labels the path in logs and status.
+
+Use: a device without its own uplink to the server lends one, e.g. a
+phone on the LAN sharing its cellular data. QUIC multipath sees the path
+from the relay's public address, like any NAT rebinding.
+
+- mqvpn_bind_posix_path_set_relay(ctx, addr, len): the bind side.
+- platform/path_spec.h: the NAME@HOST:PORT parser (numeric IPv4 or
+  [IPv6]), used when the POSIX platforms create their path slots.
+- Linux: relay slots skip the interface pin and the interface/route gates
+  of re-add and reactivation (there is no interface to gate on).
+- tests/test_bind_posix_socket.c: spec parsing, and a relay path over
+  loopback sockets (sends reach the relay, the relay's reply is delivered
+  as the server's, a stranger's is dropped).
+
+Signed-off-by: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+---
+diff -ruN a/include/mqvpn_bind_posix.h b/include/mqvpn_bind_posix.h
+--- a/include/mqvpn_bind_posix.h	2026-11-03 14:34:59.828057215 -0500
++++ b/include/mqvpn_bind_posix.h	2026-11-03 16:26:44.959967363 -0500
+@@ -82,6 +82,14 @@
+ /* Destructor for a ctx the library never took ownership of (add_path failed).
+  * Identical to ops.release; never closes the fd. */
+ MQVPN_API void mqvpn_bind_posix_path_free(void *ctx);
++/* Make ctx a relay path: every datagram goes to relay (a UDP relay that
++ * forwards it to the server) instead of the peer the core names, and
++ * datagrams received from relay are delivered as if they came from that
++ * peer (the address the core last sent to); anything else arriving on the
++ * socket is dropped. Call before add_path. MQVPN_OK, or
++ * MQVPN_ERR_INVALID_ARG (NULL ctx/relay, not AF_INET/AF_INET6, bad length). */
++MQVPN_API int mqvpn_bind_posix_path_set_relay(void *ctx, const struct sockaddr *relay,
++                                              socklen_t relay_len);
+ 
+ MQVPN_API int mqvpn_bind_posix_path_gro_enabled(const void *ctx); /* 0/1 */
+ /* errno of a failed enable, else 0 */
+diff -ruN a/src/bind/posix.c b/src/bind/posix.c
+--- a/src/bind/posix.c	2026-11-03 14:34:59.844700860 -0500
++++ b/src/bind/posix.c	2026-11-03 16:26:44.959871754 -0500
+@@ -53,6 +53,13 @@
+ typedef struct {
+     bind_common_t c;
+     int gso_disabled; /* sticky classifying errno; per path (one destination) */
++    /* Relay path (mqvpn_bind_posix_path_set_relay): datagrams go to relay
++     * instead of the core's peer; what arrives from relay is delivered as if
++     * it came from peer, the address the core last sent to. */
++    struct sockaddr_storage relay;
++    socklen_t relay_len;
++    struct sockaddr_storage peer;
++    socklen_t peer_len;
+ } bind_path_ctx_t;
+ 
+ /* Open-addressed hash (linear probing, power-of-two capacity, backward-shift
+@@ -370,13 +377,44 @@
+ typedef struct {
+     mqvpn_client_t *client;
+     mqvpn_path_handle_t handle;
++    const bind_path_ctx_t *ctx;
+ } path_deliver_arg_t;
+ 
++/* The relay's address in sa: same family, address and port. */
++static int
++bind_addr_equal(const struct sockaddr *sa, socklen_t sa_len, const struct sockaddr_storage *b,
++                socklen_t b_len)
++{
++    if (sa->sa_family != b->ss_family) return 0;
++    if (sa->sa_family == AF_INET && sa_len >= (socklen_t)sizeof(struct sockaddr_in) &&
++        b_len >= (socklen_t)sizeof(struct sockaddr_in)) {
++        const struct sockaddr_in *x = (const struct sockaddr_in *)(const void *)sa;
++        const struct sockaddr_in *y = (const struct sockaddr_in *)(const void *)b;
++        return x->sin_port == y->sin_port && x->sin_addr.s_addr == y->sin_addr.s_addr;
++    }
++    if (sa->sa_family == AF_INET6 && sa_len >= (socklen_t)sizeof(struct sockaddr_in6) &&
++        b_len >= (socklen_t)sizeof(struct sockaddr_in6)) {
++        const struct sockaddr_in6 *x = (const struct sockaddr_in6 *)(const void *)sa;
++        const struct sockaddr_in6 *y = (const struct sockaddr_in6 *)(const void *)b;
++        return x->sin6_port == y->sin6_port &&
++               memcmp(&x->sin6_addr, &y->sin6_addr, sizeof(x->sin6_addr)) == 0;
++    }
++    return 0;
++}
++
+ static void
+ path_deliver(void *arg, const uint8_t *pkt, size_t len, const struct sockaddr *peer,
+              socklen_t peer_len)
+ {
+     path_deliver_arg_t *a = (path_deliver_arg_t *)arg;
++    const bind_path_ctx_t *ctx = a->ctx;
++    if (ctx && ctx->relay_len) {
++        /* a relay path only hears its relay, which speaks for the server */
++        if (!ctx->peer_len || !bind_addr_equal(peer, peer_len, &ctx->relay, ctx->relay_len))
++            return;
++        peer = (const struct sockaddr *)&ctx->peer;
++        peer_len = ctx->peer_len;
++    }
+     mqvpn_client_on_socket_recv(a->client, a->handle, pkt, len, peer, peer_len);
+ }
+ 
+@@ -386,6 +424,14 @@
+ {
+     bind_path_ctx_t *ctx = (bind_path_ctx_t *)vctx;
+     if (!ctx) return MQVPN_TX_FAILED;
++    if (ctx->relay_len) {
++        if (peer && peer_len > 0 && (size_t)peer_len <= sizeof(ctx->peer)) {
++            memcpy(&ctx->peer, peer, (size_t)peer_len);
++            ctx->peer_len = peer_len;
++        }
++        return bind_send(&ctx->c, &ctx->gso_disabled, NULL, bufs, n,
++                         (const struct sockaddr *)&ctx->relay, ctx->relay_len);
++    }
+     return bind_send(&ctx->c, &ctx->gso_disabled, NULL, bufs, n, peer, peer_len);
+ }
+ 
+@@ -439,6 +485,18 @@
+ }
+ 
+ int
++mqvpn_bind_posix_path_set_relay(void *vctx, const struct sockaddr *relay, socklen_t relay_len)
++{
++    bind_path_ctx_t *ctx = (bind_path_ctx_t *)vctx;
++    if (!ctx || !relay || relay_len <= 0 || (size_t)relay_len > sizeof(ctx->relay) ||
++        (relay->sa_family != AF_INET && relay->sa_family != AF_INET6))
++        return MQVPN_ERR_INVALID_ARG;
++    memcpy(&ctx->relay, relay, (size_t)relay_len);
++    ctx->relay_len = relay_len;
++    return MQVPN_OK;
++}
++
++int
+ mqvpn_bind_posix_path_gro_enabled(const void *ctx)
+ {
+     return ctx ? ((const bind_path_ctx_t *)ctx)->c.gro_enabled : 0;
+@@ -482,7 +540,7 @@
+ {
+     bind_path_ctx_t *ctx = (bind_path_ctx_t *)vctx;
+     if (!ctx || !client) return -1;
+-    path_deliver_arg_t a = {client, handle};
++    path_deliver_arg_t a = {client, handle, ctx};
+     uint8_t buf[BIND_POSIX_RX_BUF];
+     unsigned delivered;
+     return bind_recv_one(&ctx->c, buf, handle >= 0 ? path_deliver : NULL, &a, &delivered);
+@@ -494,7 +552,7 @@
+ {
+     bind_path_ctx_t *ctx = (bind_path_ctx_t *)vctx;
+     if (!ctx || !client) return -1;
+-    path_deliver_arg_t a = {client, handle};
++    path_deliver_arg_t a = {client, handle, ctx};
+     return bind_drain(&ctx->c, handle >= 0 ? path_deliver : NULL, &a, budget);
+ }
+ 
+diff -ruN a/src/main.c b/src/main.c
+--- a/src/main.c	2026-11-03 16:25:40.864893529 -0500
++++ b/src/main.c	2026-11-03 16:27:22.759624969 -0500
+@@ -59,6 +59,8 @@
+         "  --genkey                  Generate a random PSK and exit\n"
+         "  --path IFACE              Network interface for multipath (repeatable, client "
+         "mode)\n"
++        "                            NAME@HOST:PORT: a relay path through the UDP relay at\n"
++        "                            HOST:PORT (Linux)\n"
+         "  --dns ADDR                DNS server to use (repeatable, client mode, max 4)\n"
+         "  --no-reconnect            Disable automatic reconnection (client mode)\n"
+         "  --kill-switch             Block traffic outside the VPN tunnel (client mode)\n"
+diff -ruN a/src/platform/linux/platform_linux.c b/src/platform/linux/platform_linux.c
+--- a/src/platform/linux/platform_linux.c	2026-11-03 16:25:40.865589178 -0500
++++ b/src/platform/linux/platform_linux.c	2026-11-03 16:27:05.035386704 -0500
+@@ -594,7 +594,7 @@
+     for (int i = 0; i < ctx.n_paths; i++) {
+         platform_path_t *s = &ctx.paths[i];
+ 
+-        if (s->iface[0]) {
++        if (s->iface[0] && !s->via_len) {
+             if (linux_pin_socket_to_iface(s->fd, s->iface) < 0) {
+                 LOG_ERR("path[%d] iface pin failed for '%s'; --path values must "
+                         "be valid interface names (see `ip link`)",
+@@ -617,6 +617,25 @@
+             LOG_ERR("path[%d] transport setup failed", i);
+             goto cleanup;
+         }
++        if (s->via_len) {
++            char vbuf[INET6_ADDRSTRLEN] = "?";
++            const struct sockaddr *va = (const struct sockaddr *)&s->via;
++            if (va->sa_family == AF_INET6)
++                inet_ntop(AF_INET6, &((const struct sockaddr_in6 *)(const void *)va)->sin6_addr,
++                          vbuf, sizeof(vbuf));
++            else
++                inet_ntop(AF_INET, &((const struct sockaddr_in *)(const void *)va)->sin_addr,
++                          vbuf, sizeof(vbuf));
++            if (mqvpn_bind_posix_path_set_relay(tctx, va, s->via_len) != MQVPN_OK) {
++                LOG_ERR("path[%d] relay setup failed", i);
++                mqvpn_bind_posix_path_free(tctx);
++                goto cleanup;
++            }
++            LOG_INF("path[%d] %s: relay path via %s port %u", i, s->iface, vbuf,
++                    (unsigned)ntohs(va->sa_family == AF_INET6
++                                        ? ((const struct sockaddr_in6 *)(const void *)va)->sin6_port
++                                        : ((const struct sockaddr_in *)(const void *)va)->sin_port));
++        }
+         if (ctx.udp_gro) {
+             if (mqvpn_bind_posix_path_gro_enabled(tctx)) {
+                 LOG_INF("udp-gro: enabled on path[%d]", i);
+diff -ruN a/src/platform/path_spec.h b/src/platform/path_spec.h
+--- a/src/platform/path_spec.h	1969-12-31 19:00:00.000000000 -0500
++++ b/src/platform/path_spec.h	2026-11-03 16:26:21.952624990 -0500
+@@ -0,0 +1,90 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright (c) 2026 mp0rta and mqvpn contributors
++
++/*
++ * path_spec.h — a --path / [Multipath] Path value (POSIX platforms):
++ *
++ *   IFACE             bind the path's socket to interface IFACE (as before)
++ *   NAME@HOST:PORT    a relay path: not bound to an interface; its datagrams
++ *                     go to HOST:PORT instead of the server, a UDP relay that
++ *                     forwards them to the server and its replies back. NAME
++ *                     (up to IFNAMSIZ-1 bytes) labels the path in logs and
++ *                     status. HOST is a numeric IPv4 address or [IPv6].
++ *
++ * A relay path lets a device without its own uplink to the server lend one
++ * (e.g. a phone sharing its cellular data on the LAN). The relay must send
++ * the server's replies back from HOST:PORT; they are handed to the core as
++ * if they came from the server. Plain C, header only.
++ */
++#ifndef MQVPN_PLATFORM_PATH_SPEC_H
++#define MQVPN_PLATFORM_PATH_SPEC_H
++
++#include <arpa/inet.h>
++#include <net/if.h>
++#include <netinet/in.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/socket.h>
++
++/* Parse spec. Writes the interface or label to name (NUL-terminated,
++ * truncated to name_sz-1). Returns 0 for a plain interface, 1 for a relay
++ * path (via/via_len filled), -1 for a malformed relay spec. */
++static inline int
++platform_path_spec_parse(const char *spec, char *name, size_t name_sz,
++                         struct sockaddr_storage *via, socklen_t *via_len)
++{
++    if (name_sz) name[0] = '\0';
++    if (via_len) *via_len = 0;
++    if (!spec) return -1;
++    const char *at = strchr(spec, '@');
++    if (!at) {
++        if (name_sz) snprintf(name, name_sz, "%s", spec);
++        return 0;
++    }
++    size_t nlen = (size_t)(at - spec);
++    if (nlen == 0 || nlen >= IFNAMSIZ || !via || !via_len) return -1;
++    if (name_sz) snprintf(name, name_sz, "%.*s", (int)nlen, spec);
++
++    const char *host = at + 1, *colon;
++    char hbuf[INET6_ADDRSTRLEN];
++    size_t hlen;
++    int v6 = 0;
++    if (*host == '[') {
++        const char *rb = strchr(host, ']');
++        if (!rb || rb[1] != ':') return -1;
++        host++;
++        hlen = (size_t)(rb - host);
++        colon = rb + 1;
++        v6 = 1;
++    } else {
++        colon = strrchr(host, ':');
++        if (!colon) return -1;
++        hlen = (size_t)(colon - host);
++    }
++    if (hlen == 0 || hlen >= sizeof(hbuf)) return -1;
++    memcpy(hbuf, host, hlen);
++    hbuf[hlen] = '\0';
++
++    char *end = NULL;
++    long port = strtol(colon + 1, &end, 10);
++    if (!colon[1] || !end || *end != '\0' || port < 1 || port > 65535) return -1;
++
++    memset(via, 0, sizeof(*via));
++    if (v6) {
++        struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)via;
++        if (inet_pton(AF_INET6, hbuf, &s6->sin6_addr) != 1) return -1;
++        s6->sin6_family = AF_INET6;
++        s6->sin6_port = htons((unsigned short)port);
++        *via_len = sizeof(*s6);
++    } else {
++        struct sockaddr_in *s4 = (struct sockaddr_in *)via;
++        if (inet_pton(AF_INET, hbuf, &s4->sin_addr) != 1) return -1;
++        s4->sin_family = AF_INET;
++        s4->sin_port = htons((unsigned short)port);
++        *via_len = sizeof(*s4);
++    }
++    return 1;
++}
++
++#endif /* MQVPN_PLATFORM_PATH_SPEC_H */
+diff -ruN a/src/platform/posix/netmon_common.c b/src/platform/posix/netmon_common.c
+--- a/src/platform/posix/netmon_common.c	2026-11-03 14:34:59.853806731 -0500
++++ b/src/platform/posix/netmon_common.c	2026-11-03 16:27:17.016483689 -0500
+@@ -223,7 +223,10 @@
+ void
+ netmon_try_reactivate_by_ifname(platform_ctx_t *p, const char *ifname)
+ {
+-    if (iface_has_route_to_server(ifname, &p->server_addr) == 0) return;
++    int relay = 0; /* a relay path (NAME@HOST:PORT) has no route to check */
++    for (int i = 0; i < p->n_paths; i++)
++        if (p->paths[i].via_len && strcmp(p->paths[i].iface, ifname) == 0) relay = 1;
++    if (!relay && iface_has_route_to_server(ifname, &p->server_addr) == 0) return;
+ 
+     /* PR5: query lib state instead of platform-tracked path_recoverable[].
+      * The lib accepts a reactivate for DEGRADED, CREATE_WAIT and
+@@ -360,7 +363,7 @@
+     }
+     s->fd = fd; /* committed: from here only platform_path_close_socket() closes it */
+ 
+-    if (netmon_platform_pin_socket(fd, ifname, af) < 0) {
++    if (!s->via_len && netmon_platform_pin_socket(fd, ifname, af) < 0) {
+         LOG_WRN("%s: iface pin for re-add %s failed", netmon_log_tag, ifname);
+         platform_path_close_socket(s);
+         return -1;
+@@ -459,8 +462,14 @@
+      * redundant. This function is also reachable via the address-gained
+      * handler, which must not be allowed to bypass the gate on an
+      * admin-down or carrier-less iface. */
+-    if (!netmon_iface_is_up_and_running(ifname)) return 0;
+-    if (netmon_iface_has_usable_ip(ifname, p->server_addr.ss_family) != 1) return 0;
++    /* A relay path (NAME@HOST:PORT) has no interface to gate on. */
++    int relay = 0;
++    for (int i = 0; i < p->n_paths; i++)
++        if (p->paths[i].via_len && strcmp(p->paths[i].iface, ifname) == 0) relay = 1;
++    if (!relay) {
++        if (!netmon_iface_is_up_and_running(ifname)) return 0;
++        if (netmon_iface_has_usable_ip(ifname, p->server_addr.ss_family) != 1) return 0;
++    }
+ 
+     mqvpn_path_info_t pinfo[MQVPN_MAX_PATHS];
+     int n = 0;
+@@ -479,7 +488,7 @@
+          * blackhole (sendto succeeds, nothing on the wire). The 3s
+          * recovery timer retries once a route exists.
+          * -1 (probe unavailable) intentionally passes — fail open. */
+-        if (iface_has_route_to_server(ifname, &p->server_addr) == 0) return 0;
++        if (!s->via_len && iface_has_route_to_server(ifname, &p->server_addr) == 0) return 0;
+ 
+         /* Platform hook: Darwin restores the scoped server pin (#F1)
+          * before the add-path below fires the first PATH_CHALLENGE. */
+@@ -492,6 +501,12 @@
+             platform_path_close_socket(s);
+             return 0;
+         }
++        if (s->via_len && mqvpn_bind_posix_path_set_relay(
++                              tctx, (const struct sockaddr *)&s->via, s->via_len) != MQVPN_OK) {
++            mqvpn_bind_posix_path_free(tctx);
++            platform_path_close_socket(s);
++            return 0;
++        }
+ 
+         mqvpn_add_path_outcome_t outcome = MQVPN_ADD_PATH_OK;
+         mqvpn_path_handle_t new_h =
+@@ -618,9 +633,10 @@
+                     pinfo[j].status == MQVPN_PATH_CLOSED) {
+                     const char *rifname = s->iface;
+                     /* route gate runs inside netmon_try_reactivate_by_ifname */
+-                    if (netmon_iface_is_up_and_running(rifname) &&
+-                        netmon_iface_has_usable_ip(rifname, p->server_addr.ss_family) ==
+-                            1)
++                    if (s->via_len ||
++                        (netmon_iface_is_up_and_running(rifname) &&
++                         netmon_iface_has_usable_ip(rifname, p->server_addr.ss_family) ==
++                             1))
+                         netmon_try_reactivate_by_ifname(p, rifname);
+                     break;
+                 }
+@@ -636,9 +652,10 @@
+             continue;
+ 
+         const char *ifname = s->iface;
+-        if (!netmon_iface_is_up_and_running(ifname)) continue;
+-        if (netmon_iface_has_usable_ip(ifname, p->server_addr.ss_family) != 1) continue;
+-        if (iface_has_route_to_server(ifname, &p->server_addr) == 0) {
++        if (!s->via_len && !netmon_iface_is_up_and_running(ifname)) continue;
++        if (!s->via_len && netmon_iface_has_usable_ip(ifname, p->server_addr.ss_family) != 1)
++            continue;
++        if (!s->via_len && iface_has_route_to_server(ifname, &p->server_addr) == 0) {
+             /* First block + every 10th (≈30s at the 3s poll). The message
+              * wording is grepped by scripts/ci_e2e/run_route_gate_test.sh and
+              * run_readd_recycled_slot_test.sh. Each needs the first block's
+diff -ruN a/src/platform/posix/path_table.c b/src/platform/posix/path_table.c
+--- a/src/platform/posix/path_table.c	2026-11-03 14:34:59.853806731 -0500
++++ b/src/platform/posix/path_table.c	2026-11-03 16:27:05.035007886 -0500
+@@ -13,6 +13,7 @@
+ 
+ #include "platform_internal.h"
+ #include "compat/socket_compat.h"
++#include "platform/path_spec.h"
+ 
+ #include <errno.h>
+ #include <stdio.h>
+@@ -46,7 +47,15 @@
+     s->p = p;
+     s->fd = -1;
+     s->handle = -1;
+-    if (iface && iface[0]) snprintf(s->iface, sizeof(s->iface), "%s", iface);
++    if (iface && iface[0]) {
++        /* NAME@HOST:PORT is a relay path; a malformed one keeps the whole
++         * spec as its name, so the interface pin reports it */
++        if (platform_path_spec_parse(iface, s->iface, sizeof(s->iface), &s->via,
++                                     &s->via_len) < 0) {
++            snprintf(s->iface, sizeof(s->iface), "%s", iface);
++            s->via_len = 0;
++        }
++    }
+     return s;
+ }
+ 
+diff -ruN a/src/platform/posix/platform_internal.h b/src/platform/posix/platform_internal.h
+--- a/src/platform/posix/platform_internal.h	2026-11-03 14:34:59.853806731 -0500
++++ b/src/platform/posix/platform_internal.h	2026-11-03 16:27:05.034943346 -0500
+@@ -52,6 +52,11 @@
+      * during WiFi reassoc CID lag). Reset on success or Level-2 reconnect. */
+     int recover_failures;
+     int route_gate_blocked; /* consecutive route-gate blocks, warn debounce */
++    /* Relay path (NAME@HOST:PORT, platform/path_spec.h): iface holds NAME,
++     * the socket is not pinned, and its datagrams go to via. via_len 0 =
++     * an ordinary interface path. */
++    struct sockaddr_storage via;
++    socklen_t via_len;
+ } platform_path_t;
+ 
+ struct platform_ctx {
+diff -ruN a/tests/test_bind_posix_socket.c b/tests/test_bind_posix_socket.c
+--- a/tests/test_bind_posix_socket.c	2026-11-03 14:34:59.857095903 -0500
++++ b/tests/test_bind_posix_socket.c	2026-11-03 16:27:52.231606425 -0500
+@@ -10,6 +10,7 @@
+  * not assert(): the verdict must not depend on NDEBUG. */
+ 
+ #include "mqvpn_bind_posix.h"
++#include "platform/path_spec.h"
+ 
+ #include <arpa/inet.h>
+ #include <errno.h>
+@@ -471,6 +472,80 @@
+     close(cli);
+ }
+ 
++/* NAME@HOST:PORT path specs (platform/path_spec.h) */
++static void
++test_path_spec_parse(void)
++{
++    char name[IFNAMSIZ];
++    struct sockaddr_storage via;
++    socklen_t vl = 99;
++    CHECK(platform_path_spec_parse("wlan0", name, sizeof(name), &via, &vl) == 0);
++    CHECK(strcmp(name, "wlan0") == 0 && vl == 0);
++    CHECK(platform_path_spec_parse("sh1@127.0.0.1:41234", name, sizeof(name), &via, &vl) == 1);
++    CHECK(strcmp(name, "sh1") == 0 && vl == sizeof(struct sockaddr_in));
++    const struct sockaddr_in *v4 = (const struct sockaddr_in *)(const void *)&via;
++    CHECK(v4->sin_family == AF_INET && ntohs(v4->sin_port) == 41234 &&
++          v4->sin_addr.s_addr == htonl(INADDR_LOOPBACK));
++    CHECK(platform_path_spec_parse("r6@[::1]:7", name, sizeof(name), &via, &vl) == 1);
++    const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)(const void *)&via;
++    CHECK(vl == sizeof(*v6) && v6->sin6_family == AF_INET6 && ntohs(v6->sin6_port) == 7);
++    const char *bad[] = {"@1.2.3.4:5", "x@1.2.3.4", "x@1.2.3.4:0", "x@1.2.3.4:70000",
++                         "x@host.example:5", "x@[::1]5", "x@1.2.3.4:5z",
++                         "averyveryverylongname@1.2.3.4:5"};
++    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
++        CHECK(platform_path_spec_parse(bad[i], name, sizeof(name), &via, &vl) == -1);
++}
++
++/* A relay path sends to its relay whatever peer the core names, delivers
++ * the relay's datagrams as the server's, and drops anyone else's. */
++static void
++test_relay_path_sends_to_relay_and_speaks_for_the_server(void)
++{
++    struct sockaddr_in path_a, relay_a;
++    int fd = udp_socket(&path_a);
++    int relay = udp_socket(&relay_a);
++    int other = udp_socket(NULL);
++    mqvpn_bind_posix_opts_t o = opts_default();
++    void *ctx = NULL;
++    CHECK(mqvpn_bind_posix_path_new(fd, &o, &ctx) == MQVPN_OK);
++    CHECK(mqvpn_bind_posix_path_set_relay(NULL, (struct sockaddr *)&relay_a,
++                                          sizeof(relay_a)) == MQVPN_ERR_INVALID_ARG);
++    CHECK(mqvpn_bind_posix_path_set_relay(ctx, NULL, 0) == MQVPN_ERR_INVALID_ARG);
++    CHECK(mqvpn_bind_posix_path_set_relay(ctx, (struct sockaddr *)&relay_a,
++                                          sizeof(relay_a)) == MQVPN_OK);
++
++    /* the server: TEST-NET-1, never reachable, so only the relay can hear it */
++    struct sockaddr_in server;
++    memset(&server, 0, sizeof(server));
++    server.sin_family = AF_INET;
++    server.sin_port = htons(443);
++    CHECK(inet_pton(AF_INET, "192.0.2.7", &server.sin_addr) == 1);
++    uint8_t d[3] = {'Q', 1, 2};
++    mqvpn_datagram_t one[1] = {{d, sizeof(d)}};
++    CHECK(mqvpn_bind_posix_path_ops()->send(ctx, one, 1, (const struct sockaddr *)&server,
++                                            sizeof(server)) == 1);
++    wait_readable(relay);
++    uint8_t got[16];
++    struct sockaddr_in from;
++    socklen_t fl = sizeof(from);
++    CHECK(recvfrom(relay, got, sizeof(got), 0, (struct sockaddr *)&from, &fl) == 3);
++    CHECK(got[0] == 'Q' && from.sin_port == path_a.sin_port);
++
++    /* replies: the relay's is the server's; a stranger's is dropped */
++    CHECK(sendto(other, "O", 1, 0, (struct sockaddr *)&path_a, sizeof(path_a)) == 1);
++    CHECK(sendto(relay, "R", 1, 0, (struct sockaddr *)&path_a, sizeof(path_a)) == 1);
++    settle();
++    memset(&g_rx, 0, sizeof(g_rx));
++    CHECK(mqvpn_bind_posix_path_drain(ctx, (mqvpn_client_t *)(uintptr_t)1, 5, 16) == 2);
++    CHECK(g_rx.n == 1 && g_rx.handle[0] == 5 && g_rx.first[0] == 'R');
++    CHECK(g_rx.peer_port[0] == 443);
++
++    mqvpn_bind_posix_path_free(ctx);
++    close(fd);
++    close(relay);
++    close(other);
++}
++
+ int
+ main(void)
+ {
+@@ -484,6 +559,8 @@
+     test_negative_handle_drains_without_delivering();
+     test_free_and_release_leave_the_fd_open();
+     test_server_ctx_send_scope_and_drain();
++    test_path_spec_parse();
++    test_relay_path_sends_to_relay_and_speaks_for_the_server();
+     printf("test_bind_posix_socket: all passed\n");
+     return 0;
+ }

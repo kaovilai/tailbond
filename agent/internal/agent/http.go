@@ -73,6 +73,9 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST /api/bypass", a.hBypassPost)
 	mux.HandleFunc("DELETE /api/bypass/{id}", a.hBypassDelete)
 	mux.HandleFunc("GET /api/lan-clients", a.hLANClients)
+	mux.HandleFunc("GET /api/shares", a.hShares)
+	mux.HandleFunc("POST /api/shares", a.hShareRegister)
+	mux.HandleFunc("POST /api/share", a.hShareSettings)
 	// Updates, the update mirror, backups (docs/architecture.md)
 	mux.HandleFunc("GET /api/update", a.hUpdateGet)
 	mux.HandleFunc("POST /api/update/check", a.hUpdateCheck)
@@ -136,7 +139,7 @@ func (a *Agent) secure(next http.Handler) http.Handler {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" {
-			if !a.authorized(r) && !tailnetPublic(r) && !(r.URL.Path == "/api/peers" && a.clientForToken(r) != "") {
+			if !a.authorized(r) && !tailnetPublic(r) && !((r.URL.Path == "/api/peers" || r.URL.Path == "/api/shares") && a.clientForToken(r) != "") {
 				httpErr(w, http.StatusUnauthorized, errors.New("login required"))
 				return
 			}
@@ -719,9 +722,9 @@ func (a *Agent) serveOn(ctx context.Context, what string, h http.Handler, addrs 
 func tunnelPath(r *http.Request) bool {
 	p := r.URL.Path
 	switch {
-	case r.Method == http.MethodGet && (p == "/api/peers" || p == "/api/hello" || p == "/api/pairing"):
+	case r.Method == http.MethodGet && (p == "/api/peers" || p == "/api/hello" || p == "/api/pairing" || p == "/api/shares"):
 		return true
-	case r.Method == http.MethodPost && p == "/api/backups/push":
+	case r.Method == http.MethodPost && (p == "/api/backups/push" || p == "/api/shares"):
 		return true
 	}
 	return false

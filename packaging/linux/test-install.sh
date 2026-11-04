@@ -75,11 +75,13 @@ check "unit: restarts on exit 75 (self-update)" has '^RestartForceExitStatus=75$
 check "unit: nothing forbids running updates from /var/lib/tailbond" hasnt '^(NoExecPaths|ExecPaths|ReadOnlyPaths|InaccessiblePaths|TemporaryFileSystem)='
 check "unit: /var/lib/tailbond writable" has '^ReadWritePaths=.*/var/lib/tailbond'
 check "no update block unless asked" hasnt '"update":'
-out="$(dry --update-policy notify --update-source https://mirror.example/channels)"
-check "--update-policy/--update-source -> update block" grep -q '"update": {"policy": "notify", "source": "https://mirror.example/channels"}' <<<"$out"
-check "summary names the policy" grep -q 'updates: notify  \[--update-policy\]' <<<"$out"
+out="$(dry --update-policy auto)"
+check "--update-policy -> update block" grep -q '"update": {"policy": "auto"}' <<<"$out"
+check "summary names the policy" grep -q 'updates: auto  \[--update-policy\]' <<<"$out"
 out="$(dry --update-policy sometimes)"
-check "bad --update-policy refused" grep -q 'auto, notify or off' <<<"$out"
+check "bad --update-policy refused" grep -q 'notify, auto or off' <<<"$out"
+out="$(dry --update-source https://mirror.example/channels)"
+check "--update-source is gone (releases come from GitHub)" grep -q 'unknown option --update-source' <<<"$out"
 check "nothing written by --dry-run" test ! -e /usr/local/bin/tailbondd -a ! -e /etc/tailbond
 
 say "dry run, udp/443 and tcp *:80 taken (an HTTP/3 web server)"
@@ -126,6 +128,11 @@ check "hooks in /usr/local/lib/tailbond/hooks" test -x /usr/local/lib/tailbond/h
 check "config mode 0600" test "$(stat -c %a /etc/tailbond/tailbond.json)" = 600
 check "state dir 0700" test "$(stat -c %a /var/lib/tailbond)" = 700
 check "sysctl file enables forwarding" grep -q '^net.ipv4.ip_forward = 1' /etc/sysctl.d/90-tailbond.conf
+# /proc/sys is read-only in this container: forwarding is the host's
+# business, so install.sh warns (it fails on a real host).
+if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != 1 ]; then
+  check "forwarding off in a container: a warning" grep -q "can't enable IP forwarding in this container" <<<"$out"
+fi
 check "Tailscale off in config" sh -c 'grep -q "\"disable_tailscale\": true" /etc/tailbond/tailbond.json && grep -q "\"use_tailscale_cert\": false" /etc/tailbond/tailbond.json'
 check "phone page off without Tailscale" grep -q '"landing_port": -1' /etc/tailbond/tailbond.json
 SUB1="$(sed -n 's/.*"subnet": "\([^"]*\)".*/\1/p' /etc/tailbond/tailbond.json)"
@@ -156,20 +163,20 @@ check "port kept ($PORT1)" grep -q "\"port\": $PORT1," /etc/tailbond/tailbond.js
 check "still no Tailscale" grep -q '"disable_tailscale": true' /etc/tailbond/tailbond.json
 check "backup of the previous config" test -f /etc/tailbond/tailbond.json.bak
 upd() { python3 -c 'import json,sys; print((json.load(open("/etc/tailbond/tailbond.json")).get("update") or {}).get(sys.argv[1], ""))' "$1"; }
-"$I" --update-policy off --update-source https://mirror.example/channels >/dev/null 2>&1
-check "re-run with --update-policy off writes the update block" test "$(upd policy) $(upd source)" = "off https://mirror.example/channels"
+"$I" --update-policy off >/dev/null 2>&1
+check "re-run with --update-policy off writes the update block" test "$(upd policy)" = off
 python3 - <<'EOF2'
 import json
 p = "/etc/tailbond/tailbond.json"
 c = json.load(open(p))
-c["update"]["window"] = "02:00-04:00"
+c["update"]["repo"] = "example/tailbond-fork"
 json.dump(c, open(p, "w"), indent=2)
 EOF2
 "$I" >/dev/null 2>&1
-check "re-run without update options keeps policy, source and the dashboard's window" \
-  test "$(upd policy) $(upd source) $(upd window)" = "off https://mirror.example/channels 02:00-04:00"
-"$I" --update-policy auto --update-source "" >/dev/null 2>&1
-check "--update-policy auto --update-source '' (back to the built-in source)" test "$(upd policy)|$(upd source)|$(upd window)" = "auto||02:00-04:00"
+check "re-run without --update-policy keeps the policy and the dashboard's repo" \
+  test "$(upd policy) $(upd repo)" = "off example/tailbond-fork"
+"$I" --update-policy auto >/dev/null 2>&1
+check "--update-policy auto changes only the policy" test "$(upd policy)|$(upd repo)" = "auto|example/tailbond-fork"
 check "user slate7 still there" grep -q '"slate7"' /etc/tailbond/tailbond.json
 
 say "tailbondd runs from the installed config"
@@ -207,6 +214,8 @@ if [ -c /dev/net/tun ] && ip link add tbcap0 type dummy 2>/dev/null; then
   if command -v nft >/dev/null; then
     check "server-down hook removed the nft table" sh -c '! nft list table inet tailbond >/dev/null 2>&1'
   fi
+  check "server-up hook ran without failing (forwarding: a warning in a container)" \
+    sh -c "grep -q 'running .*/server-up' '$W/agent.log' && ! grep -Eq 'server-up: (ERROR|server-up failed)' '$W/agent.log'"
   [ "$FAIL" = 0 ] || tail -20 "$W/agent.log"
 else
   echo "  SKIP no NET_ADMIN or /dev/net/tun in this container"

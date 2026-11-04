@@ -32,7 +32,10 @@ The debug APK is signed with the standard Android debug key
 (`~/.android/debug.keystore`, created on first build; not committed). It
 can't update a release install, and a release APK can't update it: see
 [Updates](#updates) for `build-release-apk.sh` and the release key.
-Only `arm64-v8a` is built.
+Phone APKs carry `arm64-v8a` only. `-Ptailbond.abis` / `TB_ANDROID_ABIS`
+picks other ABIs (each needs `TB_ANDROID_ABIS=<abi> build-native.sh` first);
+`android/scripts/build-e2e-apk.sh` builds an x86_64-only debug APK for the
+emulator test below.
 
 Individual steps:
 
@@ -163,6 +166,62 @@ with a Disconnect action.
 
 **Always-on VPN**: supported (`SUPPORTS_ALWAYS_ON`); when the system starts the
 service it uses the stored pairing and settings.
+
+## Share my mobile data (Pair & Share)
+
+Settings → **Share my mobile data** lends this phone's mobile data to the
+travel router or a Linux laptop on the same Wi-Fi, which bonds it with its
+other links ([pair-and-share.md](pair-and-share.md)). A foreground service
+(`share/ShareService.kt`) holds `requestNetwork(CELLULAR)` so mobile data
+stays up next to Wi-Fi, listens on the Wi-Fi network (UDP 47077, NSD
+`_tailbond-share._udp`) and sends upstream over cellular only
+(`Network.bindSocket`). Both sockets are `protect()`ed while tailbond's own
+VPN runs, so shared traffic never loops through this phone's tunnel; it also
+works with the VPN off. While connected it registers with the home server
+(`POST /api/shares`) so hubs that can't see mDNS still find it.
+
+- Notification: *Sharing mobile data with slate7: 120 MB*, with **Stop
+  sharing**.
+- Stop below 10/20/30/50 % battery unless charging (default 20 %); goes on
+  by itself when plugged in.
+- A monthly limit (500 MB … 10 GB), counted separately from the tunnel's own
+  mobile data.
+- Who can use it: any device paired with your server, or only named ones.
+
+The relay (`share/ShareRelay.kt`) is plain JVM and unit tested over loopback;
+its frames and MACs are checked against the Go reference
+(`agent/internal/share/testdata/vectors.json`). The phone never bonds other
+phones' shares: hubs are the travel router and Linux.
+
+## Emulator end-to-end test
+
+CI job `android-e2e` runs the real app on an x86_64 Android 14 emulator
+(`reactivecircus/android-emulator-runner`, KVM) against a tailbond server
+on the runner, which the emulator reaches as `10.0.2.2`:
+
+- `scripts/e2e-android-server.sh`: tailbondd (server role) with the static
+  mqvpn on UDP 443, Tailscale off with a fake `tailscale` CLI for the machine
+  list, a pairing for `pixel-e2e`, and a token web server on `10.77.0.1:8099`
+  that only answers through the tunnel.
+- `scripts/e2e-android.sh` (adb): installs `tailbond-debug-x86_64.apk`,
+  grants VPN consent with `appops set dev.tailbond.app ACTIVATE_VPN allow`,
+  opens the `tailbond://pair` deep link and taps **Add phone** (found with
+  `uiautomator dump`), then connects with the app's own connect action (the
+  one the quick settings tile sends). It checks: a VPN network in `dumpsys
+  connectivity`, `tun0` with `10.77.0.x` and MTU 1280 (in every mode), `ping 10.77.0.1`, the token through the tunnel (and
+  not before it), the server's `/api/status` (the phone connected, kind
+  `android`), the machine list from `GET /api/peers`, **two paths** (the
+  emulator's Wi-Fi and cellular; `requestNetwork(CELLULAR)` keeps cellular up
+  next to Wi-Fi there too) and **Wi-Fi off**: traffic keeps flowing over
+  cellular. **Sharing**: Share my mobile data starts next to the VPN (mobile
+  data held, UDP 47077 open, the tunnel stays up). The emulator's Wi-Fi has
+  no room for a hub, so relaying itself is tested elsewhere.
+- The app's state comes from a debug-only receiver
+  (`src/debug/.../E2eReceiver.kt`, guarded by `android.permission.DUMP`, so
+  only adb's shell can call it); release builds don't have it.
+- Artifact `android-e2e`: screenshots (`pair-dialog.png`, `sharing.png`,
+  `home-connected.png`, `wifi-off.png`, `final.png`), logcat, `dumpsys
+  connectivity` and `ip addr` before and after, the server's status and log.
 
 ## Screen renders
 
@@ -431,6 +490,11 @@ Two ways to let traffic use the phone's own connection instead of tailbond:
   addresses ([Skipping the tunnel](#skipping-the-tunnel)).
 - **DNS**: the pairing's `dns` list (default `10.77.0.1`, the server's
   forwarder that resolves MagicDNS names).
+- **MTU**: the tunnel is 1280 (`TunnelPlan.TUN_MTU`, the same as
+  tailbondd's `client.mtu`, IPv6's minimum) in every mode: in Speed mqvpn
+  takes its 8-byte reorder header off after the cap, so the cap is 1288
+  there. mqvpn's auto value (1382) assumes a 1500-byte uplink; cellular and
+  hotel Wi-Fi often carry less, and larger packets were lost.
 
 ## Wi-Fi sign-in pages (captive portals)
 
@@ -487,5 +551,5 @@ Android's sign-in can't load: turn it off while you sign in, then on again
 - The phone is not a tailnet machine: tailnet peers see its traffic as coming
   from the home server, and reach it at its tunnel IP only if the server's
   `10.77.0.0/24` route is approved.
-- Only `arm64-v8a`; `minSdk` 26 (Android 8).
+- Only `arm64-v8a` (x86_64 only for the emulator test); `minSdk` 26 (Android 8).
 - The QR scanner needs a back camera; without one, paste the URI.

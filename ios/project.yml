@@ -1,0 +1,52 @@
+# XcodeGen spec for tailbond Share (docs/ios.md): `xcodegen` makes
+# TailbondShare.xcodeproj. Free Apple ID: set your team in Xcode (Signing &
+# Capabilities) and, if Xcode says the bundle id is taken, change
+# PRODUCT_BUNDLE_IDENTIFIER below (e.g. dev.tailbond.share.<you>).
+name: TailbondShare
+options:
+  bundleIdPrefix: dev.tailbond
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  TailbondShareKit:
+    path: TailbondShareKit
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  TailbondShare:
+    type: application
+    platform: iOS
+    sources: [TailbondShare]
+    dependencies:
+      - package: TailbondShareKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tailbond.share
+        PRODUCT_NAME: tailbond Share
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: TailbondShare/Info.plist
+      properties:
+        CFBundleDisplayName: tailbond Share
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSLocalNetworkUsageDescription: tailbond Share talks to your travel router or laptop on this Wi-Fi to lend it your mobile data.
+        NSBonjourServices: [_tailbond-share._udp]
+        NSCameraUsageDescription: Scan the pairing code from your home server.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.tailbond.share
+            CFBundleURLSchemes: [tailbond]
+schemes:
+  TailbondShare:
+    build:
+      targets:
+        TailbondShare: all
+    test:
+      targets:
+        - package: TailbondShareKit/TailbondShareKitTests

@@ -71,21 +71,19 @@ commit_reload() {
 	return 0
 }
 
-# network.tailbond: unmanaged interface on the tunnel device, so firewall
-# zones can refer to it by network name.
-ensure_network() {
-	uset network.tailbond interface
-	uset network.tailbond.proto none
-	uset network.tailbond.device "$TB_TUN"
-	uset network.tailbond.auto 1
-}
+# No netifd interface for the tunnel: bringing up a 'proto none' interface
+# on $TB_TUN flushes the addresses mqvpn put there, which kills the tunnel.
+# The firewall zone matches the device instead (as GL's tailscale0 zone
+# does). Older installs created network.tailbond; drop it.
+ensure_network() { udel network.tailbond; }
 remove_network() { udel network.tailbond; }
 
 # firewall zone 'tailbond' for the tunnel. $1 = input policy.
 ensure_zone() {
 	uset firewall.tailbond zone
 	uset firewall.tailbond.name tailbond
-	uset firewall.tailbond.network tailbond
+	udel firewall.tailbond.network
+	uset firewall.tailbond.device "$TB_TUN"
 	uset firewall.tailbond.input "${1:-REJECT}"
 	uset firewall.tailbond.output ACCEPT
 	uset firewall.tailbond.forward REJECT

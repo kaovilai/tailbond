@@ -4,7 +4,7 @@
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const HISTORY = 60;
-const KIND_LABEL = { wifi: 'Wi-Fi', cellular: 'Cellular', ethernet: 'Ethernet', usb: 'USB tether', unknown: 'Link' };
+const KIND_LABEL = { wifi: 'Wi-Fi', cellular: 'Cellular', ethernet: 'Ethernet', usb: 'USB tether', 'shared-cellular': 'Shared by a phone', unknown: 'Link' };
 
 const state = {
   status: null,
@@ -313,6 +313,7 @@ function renderClientPaths(st) {
     els.push(el);
   }
   syncChildren($('#paths'), els);
+  renderShares(st);
   const empty = $('#paths-empty');
   if (!els.length) {
     empty.innerHTML = st.paired
@@ -320,6 +321,26 @@ function renderClientPaths(st) {
       : '<b>Not paired</b>Open the Setup tab and paste the pairing link from your home server.';
     empty.classList.remove('hidden');
   } else empty.classList.add('hidden');
+}
+
+// Pair & Share: phones on this machine's network lending their mobile data
+function renderShares(st) {
+  const box = $('#shares');
+  if (!box) return;
+  const shares = st.shares || [];
+  const kids = [h('h3', { text: 'Shared by nearby phones' })];
+  if (st.share_note) kids.push(h('div', { class: 'banner warn', text: st.share_note }));
+  const words = { ready: 'Sharing', connecting: 'Connecting…', refused: 'Stopped', unreachable: "Can't reach it", lost: 'Stopped answering' };
+  for (const s of shares) {
+    const bits = [words[s.state] || s.state];
+    if (s.battery >= 0) bits.push(`battery ${s.battery}%${s.charging ? ' (charging)' : ''}`);
+    if (s.reason && s.state !== 'ready') bits.push(s.reason);
+    bits.push(s.via === 'server' ? 'listed by the home server' : 'found on this network');
+    kids.push(h('div', { class: 'share-row' }, h('b', { text: s.label }), h('span', { class: 'muted small', text: ' · ' + bits.join(' · ') })));
+  }
+  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Share my mobile data. On iPhone: tailbond Share → Share mobile data.' }));
+  box.replaceChildren(...kids);
+  box.classList.toggle('hidden', st.role !== 'client');
 }
 
 function renderServerPaths(st) {

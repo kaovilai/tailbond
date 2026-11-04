@@ -225,6 +225,11 @@ class MainActivity : ComponentActivity() {
         override fun undoRestore() = vm.undoRestore()
         override fun pushBackup(passphrase: String) = vm.pushBackup(passphrase)
         override fun dismissBackup() = vm.dismissBackup()
+        override fun startShare() = dev.tailbond.app.share.ShareService.start(this@MainActivity)
+        override fun stopShare() = dev.tailbond.app.share.ShareService.stop(this@MainActivity)
+        override fun setShareMinBattery(pct: Int) = vm.setShareMinBattery(pct)
+        override fun setShareCapMb(mb: Long) = vm.setShareCapMb(mb)
+        override fun setShareAllowedHubs(hubs: List<String>) = vm.setShareAllowedHubs(hubs)
     }
 
     @Composable
@@ -255,6 +260,7 @@ class MainActivity : ComponentActivity() {
                 debugBuild = BuildConfig.DEBUG,
             ),
             backup = vm.backup.collectAsStateWithLifecycle().value,
+            share = dev.tailbond.app.share.ShareState.live.collectAsStateWithLifecycle().value,
         )
         TailbondApp(state, actions)
     }

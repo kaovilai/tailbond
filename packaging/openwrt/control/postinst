@@ -13,6 +13,19 @@ fi
 # the agent to pair. The tunnel starts once paired.
 /etc/init.d/tailbond enable
 /etc/init.d/tailbond restart
+# The panel's nginx fallback needs nginx's Lua module, which GL firmware
+# (4.10 on the Flint 3) doesn't have. A config nginx can't parse takes the
+# whole admin UI down at its next reload, so enable it only if nginx still
+# passes its config test with it.
+conf=/etc/nginx/gl-conf.d/tailbond.conf
+rm -f "$conf"
+if [ -d /etc/nginx/gl-conf.d ] && command -v nginx >/dev/null && nginx -t >/dev/null 2>&1; then
+	cp /usr/share/tailbond/nginx-tailbond.conf "$conf"
+	if ! nginx -t >/dev/null 2>&1; then
+		rm -f "$conf"
+		logger -t tailbond "nginx can't load the admin panel fallback (no Lua module); using /rpc only"
+	fi
+fi
 # GL admin panel: nginx caches /rpc modules per worker and reads
 # gl-conf.d at load; the menu itself is re-read on every page load.
 if [ -x /etc/init.d/nginx ] && nginx -t >/dev/null 2>&1; then

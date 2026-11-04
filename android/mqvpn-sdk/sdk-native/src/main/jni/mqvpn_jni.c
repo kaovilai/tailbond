@@ -823,6 +823,16 @@ JNI_FN(configSetPathMtu)(JNIEnv *env, jobject thiz, jlong cfg, jint mtu)
     return mqvpn_config_set_path_mtu((mqvpn_config_t *)(intptr_t)cfg, (int)mtu);
 }
 
+/* tailbond: configSetTunMtu(cfg, mtu) → int. TUN MTU cap; the stock JNI
+ * never exposed mqvpn_config_set_tun_mtu. */
+JNIEXPORT jint JNICALL
+JNI_FN(configSetTunMtu)(JNIEnv *env, jobject thiz, jlong cfg, jint mtu)
+{
+    (void)env;
+    (void)thiz;
+    return mqvpn_config_set_tun_mtu((mqvpn_config_t *)(intptr_t)cfg, (int)mtu);
+}
+
 /* configSetPmtud(cfg, enable) → int. The reactor then sets DF on the path
  * sockets (mqvpn_client_pmtud_enabled). */
 JNIEXPORT jint JNICALL

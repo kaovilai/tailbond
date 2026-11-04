@@ -65,13 +65,24 @@ bad() { echo "  FAIL $*"; fail=1; }
 mkdir -p /var/lock /var/run /tmp/sysinfo
 printf 'arch all 1\narch noarch 1\narch aarch64_generic 10\narch aarch64_cortex-a53 20\n' >>/etc/opkg.conf
 echo "GL.iNet GL-BE3600" >/tmp/sysinfo/model
-opkg update >/dev/null 2>&1 && opkg install lua lua-cjson >/dev/null 2>&1 || { echo "need lua + lua-cjson from the feed"; exit 2; }
+# the feed over the network (a CI runner's network may need a retry)
+feed_ok=0
+for try in 1 2 3; do
+	if opkg update >/tmp/opkg.log 2>&1 && opkg install lua lua-cjson >>/tmp/opkg.log 2>&1; then feed_ok=1; break; fi
+	sleep $((try * 5))
+done
+[ "$feed_ok" = 1 ] || {
+	echo "need lua + lua-cjson from the feed:"; tail -n 25 /tmp/opkg.log
+	cat /etc/resolv.conf; nslookup downloads.openwrt.org; ip route
+	uclient-fetch -O /dev/null https://downloads.openwrt.org/releases/23.05.0/packages/aarch64_generic/base/Packages.gz
+	exit 2
+}
 
 echo "== install"
 opkg install /t/tailbond.ipk >/tmp/install.log 2>&1 && ok "opkg install" || { cat /tmp/install.log; bad "opkg install"; }
 for f in /usr/bin/tailbondd /usr/bin/mqvpn /etc/init.d/tailbond /usr/share/oui/menu.d/tailbond.json \
 	/www/views/gl-sdk4-ui-tailbond.common.js.gz /usr/lib/oui-httpd/rpc/tailbond /usr/share/gl-validator.d/tailbond.lua \
-	/etc/nginx/gl-conf.d/tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/tailbond/tailbond.json; do
+	/usr/share/tailbond/nginx-tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/tailbond/tailbond.json; do
 	[ -e "$f" ] && ok "$f" || bad "missing $f"
 done
 jsonfilter -i /usr/share/oui/menu.d/tailbond.json -e '@.view' | grep -qx tailbond && ok "menu.d entry parses (view=tailbond)" || bad "menu json"
@@ -149,6 +160,14 @@ grep -q 'nftset=/bank.example/4#inet#tailbond#' /etc/tailbond/state/bypass-nftse
 jsonfilter -i /etc/tailbond/state/bypass-status.json -e '@.domains' | grep -qx none && ok "plain dnsmasq detected: website rules wait (domains=none)" || bad "domains status"
 if nft list tables >/dev/null 2>&1; then
 	grep -q dnsmasq-full /etc/tailbond/state/bypass-status.json && ok "the reason names dnsmasq-full" || bad "reason"
+	# bypass-status.json is there from the agent's start (no rules yet): wait
+	# for the hook run that loads the two rules added above
+	applied() {
+		nft list table inet tailbond 2>/dev/null | grep -q 'ether saddr aa:bb:cc:dd:ee:ff' &&
+			ip rule | grep -q 'fwmark 0x2000000/0x7000000 lookup 77' && ip rule | grep -q 'fwmark 0x1000000/0x7000000 lookup main'
+	}
+	i=0; while [ $i -lt 30 ] && ! applied; do sleep 1; i=$((i+1)); done
+	applied || uclient-fetch -q -O - http://127.0.0.1:8077/api/logs | grep -o '[^"]*bypass[^"]*' | tail -n 20
 	nft list table inet tailbond | grep -q 'ether saddr aa:bb:cc:dd:ee:ff' && ok "nft table inet tailbond loaded (device rule)" || bad "nft table"
 	ip rule | grep -q 'fwmark 0x2000000/0x7000000 lookup 77' && ip rule | grep -q 'fwmark 0x1000000/0x7000000 lookup main' \
 		&& ok "ip rules for 'always tailbond' and 'direct'" || { bad "ip rules"; ip rule; }
@@ -187,7 +206,7 @@ echo "== uninstall"
 export TB_PKG_PURGE_DELAY=2 # postrm drops the package cache after this delay
 opkg remove tailbond >/tmp/remove.log 2>&1 && ok "opkg remove" || { cat /tmp/remove.log; bad "opkg remove"; }
 for f in /usr/bin/tailbondd /usr/lib/oui-httpd/rpc/tailbond /www/views/gl-sdk4-ui-tailbond.common.js.gz /usr/share/oui/menu.d/tailbond.json \
-	/usr/share/gl-validator.d/tailbond.lua /etc/nginx/gl-conf.d/tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/init.d/tailbond; do
+	/usr/share/gl-validator.d/tailbond.lua /etc/nginx/gl-conf.d/tailbond.conf /usr/share/tailbond/nginx-tailbond.conf /etc/hotplug.d/iface/90-tailbond /etc/init.d/tailbond; do
 	[ -e "$f" ] && bad "left behind: $f"
 done
 [ -e /etc/rc.d/S99tailbond ] && bad "init still enabled" || ok "files and init links removed"
@@ -327,4 +346,7 @@ fi
 exit $fail
 IN
 chmod +x "$TMP/test.sh"
-podman run --rm --cap-add NET_ADMIN --platform linux/arm64 -v "$TMP:/t:z" "$IMAGE" /t/test.sh 2>&1 | grep -v 'image platform'
+# PODMAN: the podman command (CI: "sudo podman"; rootless networking on the
+# arm64 runner can't reach the feed).
+read -ra podman <<<"${PODMAN:-podman}"
+"${podman[@]}" run --rm --cap-add NET_ADMIN --platform linux/arm64 -v "$TMP:/t:z" "$IMAGE" /t/test.sh 2>&1 | grep -v 'image platform'

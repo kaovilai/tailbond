@@ -86,7 +86,7 @@ ours renders natively). It uses GL's login; there is no second password.
 | View | `/www/views/gl-sdk4-ui-tailbond.common.js.gz` | GL's app fetches it and `eval()`s it into a Vue 2 component (runtime-only Vue: render functions). Self-contained styles |
 | Backend | `/usr/lib/oui-httpd/rpc/tailbond` (Lua) | The view calls `window.$rpcRequest("call", ["sid","tailbond",method,{…}])` → `POST /rpc`. oui-httpd checks GL's session (admin = `aclgroup root`), then calls the module, which talks HTTP to tailbondd on 127.0.0.1:8077 (ngx cosocket; busybox `nc` outside nginx). Methods: `status`, `api{method,path,body}` (only `/api/…` paths, no login), `info`, `service{action}`, `set_role{role}` |
 | Validator | `/usr/share/gl-validator.d/tailbond.lua` | oui-httpd rejects string args outside `^[%w%.%s%-_:#/]-$` unless a validator allows them; `api` carries JSON bodies, so it's `true` |
-| Fallback | `/etc/nginx/gl-conf.d/tailbond.conf` | Same-origin `/tailbond-api/` proxy (and `/tailbond-glinet.ipk`), checking the `Admin-Token` cookie with `ubus call gl-session session`. The view switches to it only if `/rpc` refuses the object |
+| Fallback | `/etc/nginx/gl-conf.d/tailbond.conf` (shipped as `/usr/share/tailbond/nginx-tailbond.conf`) | Same-origin `/tailbond-api/` proxy (and `/tailbond-glinet.ipk`), checking the `Admin-Token` cookie with `ubus call gl-session session`. **Needs nginx's Lua module, which GL firmware 4.10 (Flint 3) lacks**: postinst enables it only if `nginx -t` still passes, otherwise it is skipped and logged, because a config nginx can't parse takes GL's admin UI down at the next reload. Without it, panel features that move files (backup download/restore, package download) aren't available from the panel |
 | Agent | `tailbondd` | Client role listens on 127.0.0.1:8077 only (`lan_dashboard=1` adds the LAN page as an advanced/debug view); server role on 127.0.0.1 + its Tailscale IP |
 
 Sources for GL's internals: GL 4.9.1 firmware files as published in
@@ -319,6 +319,27 @@ UDP 443 to it on the upstream router. Who can approve: anyone logged in to
 GL's admin, and anyone on the tailnet who opens `http://homebox:8077` unless
 the panel sets a password for that page.
 
+## Pair & Share: phones lend their mobile data
+
+Phones on the Slate 7's Wi-Fi can lend their 5G/LTE to it
+([pair-and-share.md](pair-and-share.md)): on Android tailbond → Settings →
+**Share my mobile data**; on iPhone the **tailbond Share** app ([ios.md](ios.md)).
+The panel's **Shared by nearby phones** card lists each phone (sharing,
+battery, why it stopped) with **Use mobile data that nearby phones share**;
+each phone also appears under **Internet connections** as *Mobile data from <phone>* with
+Use it / Backup only / Off and a data limit, defaulting to the mobile tier
+(kept in reserve by **Save mobile data**).
+
+The router finds phones over mDNS on `br-lan` (alongside GL's own `umdns`)
+and through your home server; it talks to them on UDP 47077 from the LAN
+side, which GL's default lan-zone rules allow. Phones on the router's own
+Wi-Fi can always reach it; on a hotel network that isolates devices, the
+panel says *This Wi-Fi blocks devices from talking to each other; sharing
+isn't available here*.
+
+A phone plugged in by USB with tethering on is a WAN like any other (no app
+needed); an iPhone shows as **iPhone (USB)**.
+
 ## Firmware upgrades
 
 What GL.iNet 4.x keeps on a firmware upgrade with **Keep Settings**, read
@@ -367,6 +388,9 @@ Config: `/etc/config/tailbond`, rendered to `/etc/tailbond/tailbond.json`.
 - `scripts/e2e-netns.sh`: pairing over Tailscale with fake `tailscale`
   CLIs, captive portals (own probe, mocked GL repeater with Login Mode, the
   real portal hooks against a stub uci).
+- `scripts/e2e-share.sh`: Pair & Share with a Linux sharer and hub in
+  namespaces (2 paths on the server, sharer gone → clean again within
+  seconds, client-isolation note).
 - **Not tested on real Flint 3 / Slate 7 hardware**: GL's `/rpc` and nginx
   behaviour, firewall/routing hooks, GL's repeater status fields, Network
   Acceleration interaction, cellular naming.
