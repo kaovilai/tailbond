@@ -469,6 +469,10 @@ While the server runs, the `server-up` hook
   connections" would stop phones and routers from connecting: the hook warns
   about it;
 - holds a power assertion (`caffeinate -i -s`) so the Mac doesn't idle-sleep;
+- (not the hook: mqvpn itself) TCP from bonded devices travels in mqvpn's
+  TCP lane in the default modes, and the server opens the outgoing TCP
+  connection from the Mac's own address; UDP, ICMP and the rest are
+  forwarded and NATed by the pf rules above;
 - advertises the tunnel subnet in Tailscale (`tailscale set
   --advertise-routes`, keeping the routes already advertised). Approve it
   once in the admin console if your tailnet machines should reach bonded
@@ -524,14 +528,16 @@ with a tailnet address behind it), not any real variant.
 
 CI (job `macos-server`, GitHub's `macos-latest` arm64 runner) runs
 `scripts/e2e-macos-server.sh`: the Mac is the server (mqvpn's server mode
-on a utun, [patch 0005](../patches/mqvpn/0005-darwin-server-mode.patch), with
-the hooks above), and a Linux client in a QEMU VM bonds two network
+on a utun and its TCP egress,
+[patch 0005](../patches/mqvpn/0005-darwin-server-mode.patch), with the hooks
+above), and a Linux client in a QEMU VM bonds two network
 interfaces to it. It checks that:
 
 - a pair request from a tailnet address is accepted (whois), approved and
   delivered; the client connects and the server sees two active paths;
-- the client reaches the internet through the Mac's NAT (pf's state table
-  shows the translation), a tailnet machine through the tunnel (it sees the
+- the client reaches the internet over TCP (through the server's TCP
+  egress) and UDP (through the Mac's NAT: pf's state table shows the
+  translation), a tailnet machine through the tunnel (it sees the
   Mac's Tailscale address), and the server's DNS forwarder; a tailnet
   machine reaches the client through the advertised route; the subnet is
   advertised;

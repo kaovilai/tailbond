@@ -20,8 +20,9 @@
 #
 # Checks: pairing over the tailnet (a pair request from a tailnet address,
 # whois, approval); the VM connects and the server sees >= 2 active paths;
-# the VM reaches the internet through the Mac's NAT (pf state shows the
-# translation), the tailnet through the tunnel with its source NATed to the
+# the VM reaches the internet over TCP (mqvpn's TCP lane: the server's TCP
+# egress connects out) and UDP (through the Mac's NAT: pf's state table shows
+# the translation), the tailnet through the tunnel with its source NATed to the
 # Mac's Tailscale address, and the server's DNS forwarder; a tailnet
 # machine reaches the VM through the advertised route without NAT; the
 # subnet is advertised; the dashboard (8077) and the phone page (80)
@@ -231,7 +232,7 @@ jq -e '.status == "pending" and .device == "pixel" and .user == "alex@example.co
 sapi -X POST -d '{}' "http://$API/api/pair-requests/$RID/approve" | jq -e '.client == "linux-vm"' >/dev/null && ok "approved on the server" || bad "approve failed"
 URI="$(curl -fsS -m 10 --interface "$ASKER" -H "Authorization: Bearer $RTOK" "http://$TSIP:8077/api/pair-requests/$RID" | jq -r '.uri // empty')"
 [ -n "$URI" ] && ok "the requester got its pairing link (${#URI} chars)" || { bad "no pairing link"; exit 1; }
-curl -fsS -m 5 --interface "$ASKER" "http://$TSIP/" | grep -qi tailbond && ok "phone page on http://$TSIP/ (port 80) for the tailnet" || bad "no phone page on port 80"
+wait_for 20 "phone page on port 80" sh -c "curl -fsS -m 3 --interface $ASKER http://$TSIP/ | grep -qi tailbond" && ok "phone page on http://$TSIP/ (port 80) for the tailnet" || bad "no phone page on port 80"
 
 say "firewall: dashboard and phone page only from the tailnet, loopback and the tunnel"
 for p in 8077 80; do
@@ -272,11 +273,16 @@ TD1=$!
 tcpdump -n -l -i "$TUN" -c 40 host 1.1.1.1 >"$WORK/tcpdump-tun.log" 2>&1 &
 TD2=$!
 sleep 1
+# TCP rides mqvpn's hybrid TCP lane: the server connects out itself (its
+# TCP egress, patch 0005); datagrams (UDP, ICMP) are forwarded and NATed
 OUT="$(probe 'what=http&url=http://1.1.1.1/cdn-cgi/trace')"
-STATES="$(pfctl -s state 2>/dev/null | grep '1\.1\.1\.1:80' || true)"
+DOUT="$(probe 'what=dns&name=github.com&server=1.1.1.1')"
+STATES="$(pfctl -s state 2>/dev/null | grep '1\.1\.1\.1:53' || true)"
 sleep 1; kill "$TD1" "$TD2" 2>/dev/null || true
+grep -q "TCP egress\|tcp_egress\|connect-tcp" "$WORK/server.log" && info "server log: $(grep -m1 -i 'egress' "$WORK/server.log")"
+grep -q 'Name:' <<<"$DOUT" && ! grep -q PROBE-FAILED <<<"$DOUT" && ok "VM asked 1.1.1.1 (UDP) for github.com through the tunnel" || bad "UDP to the internet: $(head -c 300 <<<"$DOUT")"
 if grep -q 'HTTP/1\.[01] [0-9]' <<<"$OUT"; then
-  ok "VM fetched http://1.1.1.1/cdn-cgi/trace through the tunnel"
+  ok "VM fetched http://1.1.1.1/cdn-cgi/trace through the tunnel (TCP, the server's TCP egress)"
 else
   bad "internet from the VM: $(head -c 300 <<<"$OUT")"
   info "the Mac itself: $(curl -sS -m 10 -o /dev/null -w '%{http_code}' http://1.1.1.1/cdn-cgi/trace 2>&1)"
@@ -284,7 +290,7 @@ else
   info "on $WAN: $(head -n 8 "$WORK/tcpdump-wan.log" | tr '\n' ';')"
   info "pf: $(pfctl -s info 2>/dev/null | grep -E 'state-|match|Status' | tr -s ' ' | tr '\n' ';')"
 fi
-grep -q "$CIP" <<<"$STATES" && ok "pf translated it: $(grep "$CIP" <<<"$STATES" | head -n1 | tr -s ' ')" || bad "no NAT state for $CIP: $STATES"
+grep -q "$CIP" <<<"$STATES" && ok "pf NATed the UDP: $(grep "$CIP" <<<"$STATES" | head -n1 | tr -s ' ')" || bad "no NAT state for $CIP: $STATES"
 OUT="$(probe "what=ping&host=$PEER")"
 grep -q ' 0% packet loss\|bytes from' <<<"$OUT" && ok "VM pings tailnet machine $PEER through the tunnel" || bad "tailnet ping: $(tail -n 3 <<<"$OUT")"
 grep -q "icmp echo from $TSIP to $PEER" "$WORK/fts.log" && ok "the tailnet saw the Mac's Tailscale address $TSIP (NAT)" || bad "tailnet saw: $(grep 'icmp echo' "$WORK/fts.log" | tail -n 3)"
