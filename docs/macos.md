@@ -266,7 +266,8 @@ How tailbond stays out of the way:
     tailbond's tunnel MTU must be at least NetBird's interface MTU + 80, so
     tailbond raises its own MTU (and reconnects) when the uplink leaves room:
     the uplink's MTU minus tailbond's 100 bytes of overhead. If it can't,
-    the card shows a warning and tailbond uses Direct.
+    tailbond uses Direct and says why, as information next to the choice
+    (`bonded_blocked` in the coexist status), not a warning: Direct works.
 - **Kill switch.** With `client.kill_switch` on, tailbond allows NetBird's
   interface and (in Direct mode) its endpoints. This is the pf anchor
   `com.apple/249.tailbond`, evaluated before tailbond's own block.
