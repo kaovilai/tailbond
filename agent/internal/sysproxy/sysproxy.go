@@ -297,6 +297,32 @@ func (m *Mac) Restore(ctx context.Context) error {
 			return fmt.Errorf("networksetup %s: %v: %s", c[0], err, strings.TrimSpace(string(out)))
 		}
 	}
+	// check it took: setting the server switches the proxy on, and the
+	// state change right after it has been seen not to stick
+	state := cmds[len(cmds)-1]
+	for try := 0; try < 3; try++ {
+		var on, want bool
+		if rec.Mode == "pac" {
+			p, err := m.GetPAC(ctx, rec.Service)
+			if err != nil {
+				return err
+			}
+			on, want = p.Enabled, rec.PrevPAC.Enabled
+		} else {
+			s, err := m.Get(ctx, rec.Service)
+			if err != nil {
+				return err
+			}
+			on, want = s.Enabled, rec.Previous.Enabled
+		}
+		if on == want {
+			break
+		}
+		time.Sleep(time.Duration(try+1) * 300 * time.Millisecond)
+		if out, err := m.run(ctx, "networksetup", state...); err != nil {
+			return fmt.Errorf("networksetup %s: %v: %s", state[0], err, strings.TrimSpace(string(out)))
+		}
+	}
 	if err := os.Remove(m.RecordPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

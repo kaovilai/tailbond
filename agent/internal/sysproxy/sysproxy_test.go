@@ -16,6 +16,9 @@ type fakeMac struct {
 	dev   string
 	calls []string
 	fail  string // a networksetup verb that fails
+	// the next n -setsocksfirewallproxystate calls don't take (seen on
+	// macOS right after -setsocksfirewallproxy)
+	ignoreState int
 }
 
 func newFake() *fakeMac {
@@ -62,6 +65,10 @@ func (f *fakeMac) run(_ context.Context, name string, args ...string) ([]byte, e
 		s.Enabled = true // networksetup turns it on
 		s.Auth = len(args) > 4 && args[4] == "on"
 	case "-setsocksfirewallproxystate":
+		if f.ignoreState > 0 {
+			f.ignoreState--
+			return nil, nil
+		}
 		f.socks[args[1]].Enabled = args[2] == "on"
 	case "-getautoproxyurl":
 		p := f.pac[args[1]]
@@ -216,5 +223,22 @@ func TestParseGet(t *testing.T) {
 	s := parseGet("Enabled: Yes\nServer: fe80::1%en0\nPort: 1888\nAuthenticated Proxy Enabled: 1\n")
 	if !s.Enabled || s.Server != "fe80::1%en0" || s.Port != 1888 || !s.Auth {
 		t.Fatalf("%+v", s)
+	}
+}
+
+// A state change that doesn't stick is applied again.
+func TestRestoreChecksItTook(t *testing.T) {
+	f := newFake()
+	m := &Mac{RecordPath: filepath.Join(t.TempDir(), "r.json"), Run: f.run}
+	ctx := context.Background()
+	if err := m.Use(ctx, "iPhone USB", "127.0.0.1", 1889, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.ignoreState = 1
+	if err := m.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.socks["iPhone USB"]; s.Enabled || s.Server != "10.0.0.9" {
+		t.Fatalf("restored: %+v", s)
 	}
 }
