@@ -215,7 +215,14 @@ do_update() {
     fi
     why="tailbond $new didn't come up within 60 s"
     warn "$why: going back to $cur"
-    for b in tailbondd mqvpn; do if [ -e "$BINDIR/$b.prev" ]; then cp -p "$BINDIR/$b.prev" "$BINDIR/$b"; fi; done
+    # mqvpn first, each through a new file and a rename (as on Linux): never
+    # write into a binary that may be running; an in-place overwrite of a
+    # signed Mach-O can get the process using it killed
+    for b in mqvpn tailbondd; do
+        if [ -e "$BINDIR/$b.prev" ]; then
+            install -m 0755 "$BINDIR/$b.prev" "$BINDIR/$b.tbnew" && mv -f "$BINDIR/$b.tbnew" "$BINDIR/$b"
+        fi
+    done
     if [ -d "$HOOKS.prev" ]; then rm -rf "$HOOKS"; cp -a "$HOOKS.prev" "$HOOKS"; fi
     set_kv "$MANIFEST" TB_VERSION "$cur"
     tb_restart
