@@ -1,0 +1,43 @@
+name: iPhone path probe
+
+# Tests scripts/ios/probe_paths.py, the script a-Shell/Pythonista users run on
+# an iPhone to check that a plain App Store app can use mobile data while on
+# Wi-Fi. CI has no cellular modem: this covers the DNS packet, the verdict
+# logic and pinning sockets to a real interface (loopback servers), across the
+# Python versions those apps ship.
+on:
+  push:
+    paths: ["scripts/ios/**", ".github/workflows/probe-ios-paths.yml"]
+  pull_request:
+    paths: ["scripts/ios/**", ".github/workflows/probe-ios-paths.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit + loopback socket tests
+        run: python -m unittest discover -s scripts/ios -p 'test_*.py' -v
+      - name: Linux socket tests as root (SO_BINDTODEVICE needs CAP_NET_RAW)
+        if: runner.os == 'Linux'
+        run: sudo "$(command -v python)" -m unittest discover -s scripts/ios -p 'test_*.py' -v
+      - name: Smoke run against the runner's real network
+        # The runner has one uplink, so the honest verdict is NO or UNCLEAR;
+        # this only checks the script runs end to end on a real path.
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then wifi=en0; else wifi=$(ip -o route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}'); fi
+          sudo "$(command -v python)" scripts/ios/probe_paths.py --wifi "$wifi" | tee probe.txt
+          grep -qE '^RESULT: (NO|UNCLEAR|YES)' probe.txt
