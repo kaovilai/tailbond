@@ -90,6 +90,8 @@ jobs:
         run: scripts/brand/check-svgs.sh
       - name: Release asset names (stable latest/download names, SHA256SUMS)
         run: scripts/release/test-collect-assets.sh
+      - name: macOS installer helpers (port holders, subnet overlap) on canned output
+        run: scripts/test-macos-install-helpers.sh
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -429,7 +431,9 @@ jobs:
           tar -tzf out/macos/tailbond-macos-arm64.tar.gz | grep -qx 'tailbond-macos-arm64/tailbond.app/Contents/MacOS/tailbond'
           tar -tzf out/macos/tailbond-macos-arm64.tar.gz | grep -qx 'tailbond-macos-arm64/icons/tailbond.icns'
       - name: Install test (install.sh, --update, uninstall.sh, Homebrew formula)
-        run: scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
+        run: |
+          /bin/bash scripts/test-macos-install-helpers.sh   # macOS's own bash 3.2
+          scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
       - uses: actions/upload-artifact@v7
         with:
           name: macos-bundle

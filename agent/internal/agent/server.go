@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/dnsfwd"
+	"github.com/kaovilai/tailbond/agent/internal/hooks"
 	"github.com/kaovilai/tailbond/agent/internal/mqconf"
 	"github.com/kaovilai/tailbond/agent/internal/mqctl"
 	"github.com/kaovilai/tailbond/agent/internal/pairing"
@@ -29,7 +31,95 @@ func (a *Agent) startServer(ctx context.Context) {
 		go a.runDNS(ctx)
 	}
 	go a.certRenewer(ctx)
+	if goruntime.GOOS == "darwin" {
+		go a.tailscaleWatch(ctx)
+	}
 	a.sup.Start()
+}
+
+// runServerUp queues the server-up hook and records the Tailscale state it
+// ran with (tailscaleWatch compares against it).
+func (a *Agent) runServerUp(env map[string]string) {
+	a.queueHook(func() {
+		sig := a.tailscaleSig(context.Background())
+		a.hooks.Run(hooks.ServerUp, env)
+		a.mu.Lock()
+		if a.rt.upHookFired {
+			a.rt.tsApplied = sig
+		}
+		a.mu.Unlock()
+	})
+}
+
+// tailscaleSig: Tailscale's IPv4 address and the interface holding it, as
+// the server's network rules depend on them ("off", "none" without one).
+func (a *Agent) tailscaleSig(ctx context.Context) string {
+	if a.store.Get().DisableTailscale {
+		return "off"
+	}
+	ti := a.ts.Get(ctx)
+	if !ti.Running {
+		return "none"
+	}
+	for _, s := range ti.IPs {
+		ip, err := netip.ParseAddr(s)
+		if err != nil || !ip.Is4() {
+			continue
+		}
+		return ip.String() + "@" + ifaceOf(ip)
+	}
+	return "none"
+}
+
+// ifaceOf: the interface with this address ("" if none here).
+func ifaceOf(ip netip.Addr) string {
+	ifs, _ := net.Interfaces()
+	for _, ni := range ifs {
+		addrs, _ := ni.Addrs()
+		for _, ad := range addrs {
+			if p, err := netip.ParsePrefix(ad.String()); err == nil && p.Addr() == ip {
+				return ni.Name
+			}
+		}
+	}
+	return ""
+}
+
+// tailscaleWatch (macOS): when Tailscale starts after the server (the app
+// starts at login, tailbondd at boot) or its utun is recreated, the
+// server-up hook runs again (TB_REFRESH=1), so the tailnet NAT, the web
+// rules and the route advertisement follow it.
+func (a *Agent) tailscaleWatch(ctx context.Context) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		a.mu.Lock()
+		applied, up := a.rt.tsApplied, a.rt.upHookFired
+		a.mu.Unlock()
+		if !up || applied == "" {
+			continue
+		}
+		cur := a.tailscaleSig(ctx)
+		if cur == applied {
+			continue
+		}
+		a.Logf("tailscale changed (%s -> %s): applying the server's network rules again", applied, cur)
+		a.mu.Lock()
+		if !a.rt.upHookFired {
+			a.mu.Unlock()
+			continue
+		}
+		a.rt.tsApplied = cur
+		env := a.hookEnvLocked()
+		a.mu.Unlock()
+		env["TB_REFRESH"] = "1"
+		a.runServerUp(env)
+	}
 }
 
 // runDNS serves the tunnel DNS on the server's tunnel IP, and moves with

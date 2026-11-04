@@ -84,6 +84,71 @@ set_kv() {
     mv -f "$tmp" "$1"
 }
 
+# ---- server helpers (scripts/test-macos-install-helpers.sh tests them) ------------
+# udp_holder PORT: what else holds udp/PORT locally ("" = free or ours)
+udp_holder() { { lsof -nP -iUDP:"$1" 2>/dev/null || true; } | lsof_local_holder "$1"; }
+# lsof_local_holder PORT < lsof output: the first process whose LOCAL
+# endpoint is PORT. lsof -iUDP:P also lists sockets whose remote port is P
+# (a browser's QUIC to some server's 443): "local->remote" in NAME.
+lsof_local_holder() {
+    awk -v p="$1" 'NR > 1 && $1 != "mqvpn" {
+        n = $NF; split(n, e, "->"); if (e[1] ~ (":" p "$")) { print $1; exit } }'
+}
+ip2int() { local IFS=.; read -r a b c d <<<"$1"; echo $(( (a << 24) | (b << 16) | (c << 8) | d )); }
+# overlaps CIDR CIDR (IPv4; as packaging/linux/install.sh)
+overlaps() {
+    local a="${1%/*}" la="${1#*/}" b="${2%/*}" lb="${2#*/}"
+    [ "$la" = "$1" ] && la=32
+    [ "$lb" = "$2" ] && lb=32
+    local l=$(( la < lb ? la : lb ))
+    local m=$(( l == 0 ? 0 : (0xFFFFFFFF << (32 - l)) & 0xFFFFFFFF ))
+    [ $(( $(ip2int "$a") & m )) -eq $(( $(ip2int "$b") & m )) ]
+}
+# netstat_prefixes < `netstat -rn -f inet`: each destination as a CIDR.
+# macOS abbreviates: "10/8", "10.64/10", "192.168.64" (= .0/24), "10" (/8),
+# a full address is a host; "default", link-local scoped routes ("%en0")
+# and the header are skipped.
+netstat_prefixes() {
+    awk '$1 ~ /^[0-9]+(\.[0-9]+)*(\/[0-9]+)?$/ { print $1 }' | while read -r d; do
+        local base="${d%/*}" bits="" n
+        [ "$base" != "$d" ] && bits="${d#*/}"
+        n="$(printf '%s' "$base" | awk -F. '{ print NF }')"
+        [ -n "$bits" ] || bits=$(( n * 8 ))
+        while [ "$n" -lt 4 ]; do base="$base.0"; n=$((n + 1)); done
+        echo "$base/$bits"
+    done
+}
+# ifconfig_prefixes < `ifconfig`: each IPv4 address with its netmask
+ifconfig_prefixes() {
+    awk '$1 == "inet" { m = ""; for (i = 2; i < NF; i++) if ($i == "netmask") m = $(i + 1); print $2, m }' |
+        while read -r ip m; do
+            local bits=32 v
+            case "$m" in 0x*) v=$(( m )); bits=0; while [ "$v" -ne 0 ]; do bits=$(( bits + (v & 1) )); v=$(( v >> 1 )); done ;; esac
+            echo "$ip/$bits"
+        done
+}
+used_prefixes() { { netstat -rn -f inet 2>/dev/null | netstat_prefixes; ifconfig 2>/dev/null | ifconfig_prefixes; } | sort -u; }
+# subnet_clash CIDR [USED]: the first used prefix it overlaps (USED: the
+# list, default this Mac's routes and addresses)
+subnet_clash() {
+    local u used="${2-$(used_prefixes)}"
+    while read -r u; do
+        [ -n "$u" ] || continue
+        if overlaps "$1" "$u"; then echo "$u"; return 0; fi
+    done <<<"$used"
+    return 1
+}
+# pick_subnet [USED]: the first 10.N.0.0/24 (N 78..99) that overlaps nothing
+pick_subnet() {
+    local n used="${1-$(used_prefixes)}"
+    for n in $(seq 78 99); do
+        subnet_clash "10.$n.0.0/24" "$used" >/dev/null || { echo "10.$n.0.0/24"; return 0; }
+    done
+    return 1
+}
+# sourced by a test: the helpers only
+if [ -n "${TB_INSTALL_SOURCE_ONLY:-}" ]; then return 0 2>/dev/null || exit 0; fi
+
 PAIR="" UPDATE=0 OPT_UVERSION="" OPT_REPO="" FORCE=0
 OPT_ROLE="" OPT_PUBLIC="" OPT_PORT="" OPT_SUBNET="" OPT_SUBNET6="" OPT_NOTS=0
 while [ $# -gt 0 ]; do
@@ -276,13 +341,6 @@ case "$ROLE" in client|server) ;; *) die "--role client or server, not $ROLE" ;;
 [ "$ROLE" = server ] || [ -z "$OPT_PUBLIC$OPT_PORT$OPT_SUBNET$OPT_SUBNET6" ] || die "--public-addr, --port and --subnet are for --role server"
 [ "$ROLE" = client ] || [ -z "$PAIR" ] || die "--pair is for the client role"
 
-# udp_holder PORT: what else listens on udp/PORT ("" = free or ours)
-udp_holder() { { lsof -nP -iUDP:"$1" 2>/dev/null || true; } | awk 'NR > 1 && $1 != "mqvpn" { print $1; exit }'; }
-# subnet_used N: 10.N.0.0/24 is a route or address here
-subnet_used() {
-    { netstat -rn -f inet 2>/dev/null | awk '{ print $1 }'; ifconfig 2>/dev/null | awk '$1 == "inet" { print $2 }'; } |
-        grep -q "^10\.$1\([./]\|$\)"
-}
 # the tailscale CLI: on PATH (tailscaled, the app's CLI integration), else in the app
 ts_cli() {
     if command -v tailscale >/dev/null 2>&1; then echo tailscale
@@ -302,12 +360,12 @@ server_args() { # -> SARGS (tailbondd configure flags), notes on stdout
         [ "$p" = ok ] || die "no free UDP port among 443 8443 4443 10443 50443; pass --port N"
     fi
     if [ -n "$OPT_SUBNET" ]; then
+        n="$(subnet_clash "$OPT_SUBNET" || true)"
+        [ -z "$n" ] || warn "--subnet $OPT_SUBNET overlaps $n (a route or address here)"
         SARGS="$SARGS -subnet $OPT_SUBNET"
     elif [ "$E_ROLE" != server ]; then
-        n=78
-        while [ "$n" -le 99 ] && subnet_used "$n"; do n=$((n + 1)); done
-        [ "$n" -le 99 ] || die "no free /24 in 10.78.0.0-10.99.255.0; pass --subnet"
-        SARGS="$SARGS -subnet 10.$n.0.0/24"
+        n="$(pick_subnet)" || die "no free /24 among 10.78.0.0-10.99.0.0 (something here routes them all); pass --subnet"
+        SARGS="$SARGS -subnet $n"
     fi
     [ -z "$OPT_SUBNET6" ] || SARGS="$SARGS -subnet6 $OPT_SUBNET6"
     [ -z "$OPT_PUBLIC" ] || SARGS="$SARGS -public-addr $OPT_PUBLIC"

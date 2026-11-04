@@ -49,7 +49,11 @@ type Agent struct {
 	rater *status.Rater
 	role  string
 
-	hookq    chan func()
+	hookq chan func()
+	// hookMu: one hook at a time, also while drainHooks runs the queue at
+	// shutdown and hookWorker may still be in the middle of one (a down hook
+	// must never overlap the up hook whose changes it undoes)
+	hookMu   sync.Mutex
 	pollMu   sync.Mutex // serializes poll (the rater is not concurrency-safe)
 	secretMu sync.Mutex // stateSecret: each secret is created once
 
@@ -122,8 +126,11 @@ type runtime struct {
 	readyAt     time.Time
 	upHookFired bool
 	upEnv       map[string]string // what the up hook got; the down hook gets the same
-	lastState   string
-	logPaths    map[string]logPath
+	// tsApplied: the Tailscale state the last server-up hook saw
+	// (tailscaleSig; "" = none ran yet), for tailscaleWatch
+	tsApplied string
+	lastState string
+	logPaths  map[string]logPath
 }
 
 type logPath struct {
@@ -277,15 +284,20 @@ func (a *Agent) hookWorker(ctx context.Context) {
 	for {
 		select {
 		case f := <-a.hookq:
+			a.hookMu.Lock()
 			f()
+			a.hookMu.Unlock()
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-// drainHooks runs queued hooks synchronously at shutdown (down hooks matter).
+// drainHooks runs queued hooks synchronously at shutdown (down hooks
+// matter), after the one hookWorker may be running.
 func (a *Agent) drainHooks() {
+	a.hookMu.Lock()
+	defer a.hookMu.Unlock()
 	for {
 		select {
 		case f := <-a.hookq:
@@ -297,10 +309,15 @@ func (a *Agent) drainHooks() {
 }
 
 func (a *Agent) runHook(name string, env map[string]string) {
+	a.queueHook(func() { a.hooks.Run(name, env) })
+}
+
+// queueHook queues f on the hook worker (one hook at a time).
+func (a *Agent) queueHook(f func()) {
 	select {
-	case a.hookq <- func() { a.hooks.Run(name, env) }:
+	case a.hookq <- f:
 	default:
-		a.Logf("hook queue full, dropping %s", name)
+		a.Logf("hook queue full, dropping one")
 	}
 }
 
@@ -398,7 +415,7 @@ func (a *Agent) markReadyLocked() {
 	a.rt.upHookFired = true
 	a.rt.upEnv = a.hookEnvLocked()
 	if a.role == config.RoleServer {
-		a.runHook(hooks.ServerUp, a.rt.upEnv)
+		a.runServerUp(a.rt.upEnv)
 	} else {
 		a.runHook(hooks.ClientUp, a.rt.upEnv)
 	}
@@ -466,6 +483,12 @@ func (a *Agent) hookEnvLocked() map[string]string {
 		env["TB_ADVERTISE_ROUTE"] = "1"
 		if cfg.Server.NoAdvertiseRoute {
 			env["TB_ADVERTISE_ROUTE"] = "0"
+		}
+		// disable_tailscale: the hook leaves Tailscale alone too (no tailnet
+		// NAT, no route advertisement)
+		env["TB_TAILSCALE"] = "1"
+		if cfg.DisableTailscale {
+			env["TB_TAILSCALE"], env["TB_ADVERTISE_ROUTE"] = "0", "0"
 		}
 		if !cfg.Server.DisableDNS {
 			env["TB_DNS_IP"] = cfg.ServerTunnelIP()

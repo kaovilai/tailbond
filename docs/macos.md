@@ -455,7 +455,9 @@ While the server runs, the `server-up` hook
 - turns on IP forwarding (`net.inet.ip.forwarding`, and
   `net.inet6.ip6.forwarding` with an IPv6 subnet);
 - loads the pf anchor `com.apple/251.tailbond.server` (macOS's own
-  `/etc/pf.conf` evaluates `com.apple/*`) and enables pf with a reference
+  `/etc/pf.conf` evaluates `com.apple/*`; pf's main ruleset is never
+  replaced: if another firewall loaded one without Apple's anchors, the
+  hook adds nothing and says so in the log) and enables pf with a reference
   token: bonded devices' traffic is NATed out the default route's interface
   (and the Mac's other Ethernet and Wi-Fi ports, so a switch between them
   keeps working), and out Tailscale's interface toward `100.64.0.0/10` and
@@ -463,7 +465,9 @@ While the server runs, the `server-up` hook
   advertised route without NAT; the dashboard (tcp/8077) and the phone page
   (tcp/80), on the addresses tailbond serves them on, answer only loopback,
   bonded devices on the tunnel and tailnet addresses (a web server of your
-  own on another address keeps its port 80);
+  own on another address keeps its port 80). tailbondd itself also refuses
+  other sources on those addresses, so this holds while the server is
+  stopped too;
 - with the macOS firewall on (System Settings → Network → Firewall), allows
   incoming connections for `mqvpn` and `tailbondd`. "Block all incoming
   connections" would stop phones and routers from connecting: the hook warns
@@ -477,6 +481,12 @@ While the server runs, the `server-up` hook
   --advertise-routes`, keeping the routes already advertised). Approve it
   once in the admin console if your tailnet machines should reach bonded
   devices; bonded devices reach the tailnet without it.
+
+When Tailscale starts after tailbond (the apps start at login, tailbond at
+boot) or its interface changes, tailbondd notices within about 20 s and runs
+the hook again for the pf rules and the route. With `--no-tailscale`
+(`"disable_tailscale": true`) the hook leaves Tailscale alone: no tailnet NAT,
+no route advertised.
 
 Everything except the route and the firewall entries is written first to
 `/usr/local/var/lib/tailbond/server-net.state`. `server-down` (the server
@@ -533,6 +543,8 @@ on a utun and its TCP egress,
 above), and a Linux client in a QEMU VM bonds two network
 interfaces to it. It checks that:
 
+- Tailscale starting after the server: the tailnet NAT and the route
+  follow it;
 - a pair request from a tailnet address is accepted (whois), approved and
   delivered; the client connects and the server sees two active paths;
 - the client reaches the internet over TCP (through the server's TCP
@@ -542,13 +554,20 @@ interfaces to it. It checks that:
   machine reaches the client through the advertised route; the subnet is
   advertised;
 - the dashboard and the phone page answer the tailnet and the tunnel, and
-  drop other sources; with the macOS firewall on, mqvpn is allowed in;
+  refuse other sources, also after the server is stopped; with the macOS
+  firewall on, mqvpn is allowed in; another firewall's pf anchor, its pf
+  reference and pf's main ruleset survive tailbond's start, stop and
+  crashes; with Tailscale disabled the hook adds no tailnet NAT and
+  advertises nothing;
 - a power assertion is held and Setup health says so; the server's
   settings back up and restore;
 - pf, both forwarding sysctls and the power assertion are back to how they
   were after a stop, after `kill -9` and a restart, and after `kill -9` and
   the uninstaller's restore.
 
+`scripts/test-macos-install-helpers.sh` checks the installer's port and
+subnet choices on canned macOS output (a browser's QUIC to some server's
+443 doesn't hold udp/443; a `10/8` route rules out every `10.N.0.0/24`).
 `scripts/test-macos-install.sh` (job `macos`) installs with `--role server`
 under launchd, checks the anchor and forwarding, updates, and uninstalls.
 

@@ -51,6 +51,8 @@ PORT=4443
 CTL=47999             # fake-tailscaled's control socket
 ANCHOR=com.apple/251.tailbond.server
 TSIP=100.101.0.1 PEER=100.101.0.2 ASKER=100.101.9.9
+STRANGER=198.51.100.77 # a source that is neither tailnet nor tunnel (a lo0 alias)
+OTHER=com.apple/200.e2e-otherfw OTHER_TOK="" # another product's pf anchor
 
 if [ "$(id -u)" -ne 0 ]; then
   exec sudo --preserve-env=KEEP,VERBOSE,PATH MQVPN="$MQVPN" TAILBONDD="$TAILBONDD" VM="$VM" "$0" "$@"
@@ -91,6 +93,8 @@ fwd() { echo "$(sysctl -n net.inet.ip.forwarding)/$(sysctl -n net.inet6.ip6.forw
 pfstatus() { pfctl -s info 2>/dev/null | awk '/^Status:/ {print $2; exit}'; }
 anchor_rules() { { pfctl -a "$ANCHOR" -s nat 2>/dev/null; pfctl -a "$ANCHOR" -s rules 2>/dev/null; } | grep -v '^$' || true; }
 caff() { pgrep -f "caffeinate -i -s -w" || true; }
+# the main ruleset (nat and filter; anchors show as references only)
+root_rules() { { pfctl -s nat; pfctl -s rules; } 2>/dev/null; }
 
 start_server() {
   PATH="$WORK/bin:$PATH" "$TAILBONDD" -config "$CONF" >>"$WORK/server.log" 2>&1 &
@@ -109,6 +113,10 @@ check_clean() { # check_clean <when>
   [ "$(pfstatus)" = "$PF0" ] && ok "$1: pf $PF0 as before" || bad "$1: pf $(pfstatus), was $PF0"
   [ ! -f "$SRV/server-net.state" ] && ok "$1: no restore record left" || bad "$1: restore record left: $(cat "$SRV/server-net.state")"
   [ -z "$(caff)" ] && ok "$1: no power assertion left" || bad "$1: caffeinate still running: $(caff)"
+  [ "$(root_rules)" = "$ROOT_RULES0" ] && ok "$1: main pf ruleset as before" || bad "$1: main ruleset changed: $(root_rules | tr '\n' ';')"
+  if [ -n "$OTHER_TOK" ]; then
+    pfctl -a "$OTHER" -s rules 2>/dev/null | grep -q 'port = 9' && ok "$1: the other firewall's anchor $OTHER is intact" || bad "$1: $OTHER lost its rule"
+  fi
 }
 
 cleanup() {
@@ -121,6 +129,8 @@ cleanup() {
   [ -n "$QEMU_PID" ] && kill "$QEMU_PID" 2>/dev/null || true
   [ -n "$FTS_PID" ] && kill "$FTS_PID" 2>/dev/null || true
   ifconfig lo0 -alias "$ASKER" 2>/dev/null || true
+  ifconfig lo0 -alias "$STRANGER" 2>/dev/null || true
+  if [ -n "$OTHER_TOK" ]; then pfctl -q -a "$OTHER" -F all 2>/dev/null; pfctl -q -X "$OTHER_TOK" 2>/dev/null; fi
   route -q -n delete -host "$TSIP" 2>/dev/null || true
   if [ -n "$ALF_WAS" ]; then
     "$ALF" --remove "$MQVPN" >/dev/null 2>&1 || true
@@ -142,20 +152,15 @@ FWD0="$(fwd)" PF0="$(pfstatus)"
 info "forwarding (inet/inet6) $FWD0, pf $PF0; anchor $ANCHOR: $(anchor_rules | wc -l | tr -d ' ') rules"
 WAN="$(route -n get default | awk '/interface:/ {print $2; exit}')"
 PUB="$(ifconfig "$WAN" | awk '$1 == "inet" {print $2; exit}')"
-SUBNET=""
-for n in $(seq 78 99); do
-  if ! { netstat -rn -f inet | awk '{print $1}'; ifconfig | awk '$1 == "inet" {print $2}'; } | grep -q "^10\.$n\([./]\|$\)"; then
-    SUBNET="10.$n.0.0/24" SUBPFX="10.$n.0"; break
-  fi
-done
+# the installer's own pick (a real CIDR overlap check with the routes here)
+SUBNET="$(TB_INSTALL_SOURCE_ONLY=1 bash -c '. "$1/packaging/macos/install.sh"; pick_subnet' _ "$ROOT" || true)"
+SUBPFX="${SUBNET%.0/24}"
 [ -n "$PUB" ] && [ -n "$SUBNET" ] && ok "this Mac: $PUB on $WAN (the address devices dial), tunnel subnet $SUBNET" || { bad "no address ($PUB) or subnet ($SUBNET)"; exit 1; }
 
-say "fake tailnet: a utun with $TSIP, 100.64.0.0/10 routed to it, $PEER behind it"
-python3 "$ROOT/scripts/e2e-macos/fake-tailscaled.py" "$WORK/fts.log" "$CTL" "$WORK/fts.if" >"$WORK/fts.out.log" 2>&1 &
-FTS_PID=$!
-wait_for 10 "fake tailnet utun" test -s "$WORK/fts.if" && ok "fake Tailscale interface $(cat "$WORK/fts.if") ($TSIP)" \
-  || { bad "fake tailnet didn't start: $(cat "$WORK/fts.out.log")"; exit 1; }
-TSIF="$(cat "$WORK/fts.if")"
+# The stand-in Tailscale is installed now but starts only after the server
+# (the Tailscale app starts at login, tailbondd at boot): until $WORK/ts-up
+# exists its CLI says Stopped.
+TSIF=""
 cat >"$WORK/ts-status.json" <<J
 {"BackendState":"Running","MagicDNSSuffix":"tail1234.ts.net","CurrentTailnet":{"Name":"alex@example.com","MagicDNSSuffix":"tail1234.ts.net"},
  "Self":{"HostName":"macserver","DNSName":"macserver.tail1234.ts.net.","OS":"macOS","TailscaleIPs":["$TSIP"],"Online":true,"UserID":1},
@@ -166,9 +171,10 @@ J
 cat >"$WORK/bin/tailscale" <<EOF
 #!/bin/sh
 # fake tailscale CLI (scripts/e2e-macos-server.sh)
+up() { [ -f "$WORK/ts-up" ]; }
 case "\$1" in
-status) cat "$WORK/ts-status.json" ;;
-ip) [ "\$2" = -6 ] || echo "$TSIP" ;;
+status) up || { echo '{"BackendState":"Stopped"}'; exit 1; }; cat "$WORK/ts-status.json" ;;
+ip) up || { echo "Tailscale is stopped." >&2; exit 1; }; [ "\$2" = -6 ] || echo "$TSIP" ;;
 whois)
   [ "\$3" = "$ASKER" ] || { echo "no such peer" >&2; exit 1; }
   echo '{"Node":{"ID":9,"StableID":"nE2EPIXEL","Name":"pixel.tail1234.ts.net.","ComputedName":"pixel","Hostinfo":{"Hostname":"Pixel 9","OS":"android"}},"UserProfile":{"LoginName":"alex@example.com","DisplayName":"Alex"}}' ;;
@@ -190,7 +196,10 @@ if [ -x "$ALF" ]; then
     && ok "application firewall on (was $ALF_WAS)" || { info "can't turn the application firewall on here"; ALF_WAS=""; }
 fi
 
-say "server: tailbondd + mqvpn (server mode, utun) on this Mac, the macOS hooks"
+ROOT_RULES0="$(root_rules)"
+info "main pf ruleset: $(tr '\n' ';' <<<"$ROOT_RULES0")"
+
+say "server: tailbondd + mqvpn (server mode, utun) on this Mac, the macOS hooks (Tailscale not up yet)"
 cat >"$CONF" <<EOF
 {"role": "server", "mqvpn_bin": "$MQVPN", "state_dir": "$SRV", "hooks_dir": "$ROOT/packaging/macos/hooks",
  "listen": ":8077", "mode": "speed",
@@ -212,15 +221,32 @@ wait_for 10 "server-up hook" grep -q 'server-up: pf: anchor' "$WORK/server.log" 
 [ "$(pfstatus)" = Enabled ] && ok "pf enabled" || bad "pf $(pfstatus)"
 NAT="$(pfctl -a "$ANCHOR" -s nat 2>/dev/null)"
 grep -q "nat on $WAN inet from $SUBNET to any -> ($WAN)" <<<"$NAT" && ok "NAT $SUBNET out $WAN" || bad "nat rules: $NAT"
-grep -q "nat on $TSIF inet from $SUBNET to 100.64.0.0/10 -> ($TSIF)" <<<"$NAT" && ok "NAT $SUBNET to the tailnet out $TSIF" || bad "no tailnet NAT on $TSIF: $NAT"
+grep -q "100.64.0.0/10" <<<"$NAT" && bad "tailnet NAT before Tailscale is up: $NAT" || ok "no tailnet NAT yet (Tailscale not up)"
+[ "$(root_rules)" = "$ROOT_RULES0" ] && ok "the main pf ruleset is untouched (only the anchor changed)" || bad "main ruleset changed: $(root_rules | tr '\n' ';')"
 [ -s "$SRV/server-net.state" ] && ok "restore record: $(tr '\n' ' ' <"$SRV/server-net.state")" || bad "no restore record"
 [ -n "$(caff)" ] && pmset -g assertions | grep -q 'PreventUserIdleSystemSleep *1' && ok "sleep assertion held (caffeinate $(caff))" || bad "no sleep assertion: $(pmset -g assertions | grep -i prevent)"
 HL="$(sapi "http://$API/api/health" | jq -c '.checks[] | select(.id == "sleep")')"
 jq -e '.status == "ok"' <<<"$HL" >/dev/null && ok "Setup health: $(jq -r .title <<<"$HL")" || bad "health sleep check: $HL"
-grep -qx "$SUBNET" "$WORK/ts-advertised" 2>/dev/null && ok "tailscale set --advertise-routes=$SUBNET" || bad "subnet not advertised: $(cat "$WORK/ts-advertised" 2>/dev/null)"
 if [ -n "$ALF_WAS" ]; then
   "$ALF" --listapps 2>/dev/null | grep -A1 -F "$MQVPN" | grep -qi allow && ok "application firewall allows $MQVPN in" || bad "firewall apps: $("$ALF" --listapps 2>&1 | head -n 20)"
 fi
+
+say "Tailscale comes up after the server: the rules and the route follow"
+python3 "$ROOT/scripts/e2e-macos/fake-tailscaled.py" "$WORK/fts.log" "$CTL" "$WORK/fts.if" >"$WORK/fts.out.log" 2>&1 &
+FTS_PID=$!
+wait_for 10 "fake tailnet utun" test -s "$WORK/fts.if" && ok "stand-in Tailscale interface $(cat "$WORK/fts.if") ($TSIP)" \
+  || { bad "fake tailnet didn't start: $(cat "$WORK/fts.out.log")"; exit 1; }
+TSIF="$(cat "$WORK/fts.if")"
+touch "$WORK/ts-up"
+T0=$(date +%s)
+if wait_for 60 "tailnet NAT after Tailscale came up" sh -c "pfctl -a $ANCHOR -s nat 2>/dev/null | grep -q 'nat on $TSIF inet from $SUBNET to 100.64.0.0/10 -> ($TSIF)'"; then
+  ok "NAT $SUBNET to the tailnet out $TSIF, $(( $(date +%s) - T0 )) s after Tailscale came up: $(grep -o 'tailscale changed.*' "$WORK/server.log" | tail -n1)"
+else
+  bad "no tailnet NAT after Tailscale came up: $(pfctl -a "$ANCHOR" -s nat 2>&1 | tr '\n' ';')"
+fi
+wait_for 20 "advertised" grep -qx "$SUBNET" "$WORK/ts-advertised" && ok "tailscale set --advertise-routes=$SUBNET (after it came up)" || bad "subnet not advertised: $(cat "$WORK/ts-advertised" 2>/dev/null)"
+[ "$(tr '\n' ' ' <"$SRV/server-net.state" | grep -c 'FWD4=0')" = 1 ] && [ -n "$(caff)" ] \
+  && ok "the refresh kept the restore record and the assertion: $(tr '\n' ' ' <"$SRV/server-net.state")" || bad "record after refresh: $(cat "$SRV/server-net.state")"
 
 say "pairing over the tailnet: a pair request from $ASKER, whois, approval"
 ifconfig lo0 alias "$ASKER" netmask 255.255.255.255
@@ -235,6 +261,11 @@ URI="$(curl -fsS -m 10 --interface "$ASKER" -H "Authorization: Bearer $RTOK" "ht
 wait_for 20 "phone page on port 80" sh -c "curl -fsS -m 3 --interface $ASKER http://$TSIP/ | grep -qi tailbond" && ok "phone page on http://$TSIP/ (port 80) for the tailnet" || bad "no phone page on port 80"
 
 say "firewall: dashboard and phone page only from the tailnet, loopback and the tunnel"
+ifconfig lo0 alias "$STRANGER" netmask 255.255.255.255
+web_from() { curl -s -m 5 -o /dev/null -w '%{http_code}' --interface "$1" "$2" || true; }
+for u in "http://$TSIP:8077/api/status" "http://$TSIP/"; do
+  c="$(web_from "$STRANGER" "$u")"; [ "$c" = 403 ] && ok "$u from $STRANGER (not tailnet): 403 (tailbondd itself refuses it)" || bad "$u from $STRANGER: HTTP $c"
+done
 for p in 8077 80; do
   r="$(fts "syn $PEER $TSIP $p")"; [ "$r" = synack ] && ok "tcp/$p from tailnet $PEER: answered" || bad "tcp/$p from tailnet $PEER: $r"
   r="$(fts "syn 192.0.2.9 $TSIP $p")"; [ "$r" = none ] && ok "tcp/$p from 192.0.2.9 (not tailnet): dropped" || bad "tcp/$p from 192.0.2.9: $r"
@@ -322,7 +353,18 @@ say "stop: everything put back"
 sapi -X POST "http://$API/api/disconnect" >/dev/null
 wait_for 20 "server-down" sh -c "! test -f '$SRV/server-net.state'" || true
 check_clean "after a stop"
-r="$(fts "syn 192.0.2.9 $TSIP 8077")"; [ "$r" = synack ] && ok "with the server off, the pf rule is gone (192.0.2.9 is answered again)" || info "192.0.2.9 after stop: $r"
+r="$(fts "syn 192.0.2.9 $TSIP 8077")"; [ "$r" = synack ] && ok "with the server off, the pf rule is gone (192.0.2.9's SYN is answered again)" || info "192.0.2.9 after stop: $r"
+for u in "http://$TSIP:8077/api/status" "http://$TSIP/"; do
+  c="$(web_from "$STRANGER" "$u")"; [ "$c" = 403 ] && ok "server off, listeners on: $u from $STRANGER still 403" || bad "server off: $u from $STRANGER: HTTP $c"
+done
+c="$(web_from "$ASKER" "http://$TSIP:8077/api/hello")"; [ "$c" = 200 ] && ok "server off: the tailnet still reaches the dashboard" || bad "server off, tailnet: HTTP $c"
+
+say "another firewall: its own pf anchor and pf reference survive tailbond's start and stop"
+echo "block drop in quick proto tcp from any to any port 9" | pfctl -q -a "$OTHER" -f - 2>/dev/null
+OTHER_TOK="$(pfctl -E 2>&1 | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -n1)"
+PF0="$(pfstatus)"
+[ -n "$OTHER_TOK" ] && [ "$PF0" = Enabled ] && ok "another product: anchor $OTHER, pf enabled with its own reference" || bad "couldn't set up the other product ($OTHER_TOK, $PF0)"
+ROOT_RULES0="$(root_rules)"
 
 say "crash: kill -9 tailbondd and mqvpn, then start it again as launchd would"
 sapi -X POST "http://$API/api/connect" >/dev/null
@@ -354,6 +396,17 @@ SRV_PID=""
 sleep 2
 TB_STATE_DIR="$SRV" "$ROOT/packaging/macos/hooks/server-down" | sed 's/^/  /'
 check_clean "after kill -9 and the uninstall restore"
+
+say "disable_tailscale: the hook leaves Tailscale alone (TB_TAILSCALE=0)"
+mkdir -p "$WORK/h"
+: >"$WORK/ts-advertised"
+env PATH="$WORK/bin:$PATH" TB_STATE_DIR="$WORK/h" TB_TUN=lo0 TB_SUBNET="$SUBNET" TB_PORT="$PORT" TB_WEB_PORTS="8077 80" \
+  TB_TAILSCALE=0 TB_ADVERTISE_ROUTE=1 "$ROOT/packaging/macos/hooks/server-up" >"$WORK/hook-nots.log" 2>&1
+NAT="$(pfctl -a "$ANCHOR" -s nat 2>/dev/null)"
+grep -q "100.64.0.0/10" <<<"$NAT" && bad "tailnet NAT with Tailscale disabled: $NAT" || ok "no tailnet NAT with Tailscale disabled ($(grep -c '^nat' <<<"$NAT") uplink NAT rules)"
+[ -s "$WORK/ts-advertised" ] && bad "advertised with Tailscale disabled: $(cat "$WORK/ts-advertised")" || ok "no route advertised with Tailscale disabled"
+TB_STATE_DIR="$WORK/h" "$ROOT/packaging/macos/hooks/server-down" | sed 's/^/  /'
+SRV="$WORK/h" check_clean "after the disable_tailscale hook run"
 
 echo
 echo "e2e-macos-server: $PASS passed, $FAIL failed"

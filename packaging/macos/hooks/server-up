@@ -2,12 +2,17 @@
 # tailbond macOS server-up hook (docs/macos.md "Mac as home server"). Run by
 # tailbondd after mqvpn's server starts on a utun.
 # Env: TB_TUN (utunN) TB_SUBNET TB_SUBNET6 TB_PORT TB_WEB_PORTS
-#      TB_ADVERTISE_ROUTE TB_STATE_DIR.
+#      TB_ADVERTISE_ROUTE TB_TAILSCALE (0: disable_tailscale, leave Tailscale
+#      alone) TB_STATE_DIR; TB_REFRESH=1 when tailbondd runs it again because
+#      Tailscale came up or changed interface: only the pf rules and the
+#      route advertisement are redone.
 #
 # The Mac twin of packaging/linux/hooks/server-up:
 # - IP forwarding on (net.inet.ip.forwarding, net.inet6.ip6.forwarding).
 # - pf anchor com.apple/251.tailbond.server (the stock /etc/pf.conf
-#   evaluates com.apple/* for nat and filter rules), pf enabled with a
+#   evaluates com.apple/* for nat and filter rules; a main ruleset without
+#   those anchors, i.e. another firewall's, is never replaced: then there's
+#   no NAT and the hook says so), pf enabled with a
 #   reference token: NAT of the tunnel subnets out the default-route
 #   interface and, toward 100.64.0.0/10 / fd7a:115c:a1e0::/48, out
 #   Tailscale's interface; the dashboard and phone page (TB_WEB_PORTS) only
@@ -36,27 +41,33 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 log() { echo "$*"; }
 rec() { printf '%s=%s\n' "$1" "$2" >>"$REC"; }
 
-# a record still here: the last server didn't stop cleanly
-if [ -f "$REC" ]; then
-  log "restore record from an unclean stop found: putting that state back first"
-  TB_STALE=1 "$HERE/server-down"
-fi
-mkdir -p "$STATE"
-: >"$REC.tmp" && mv -f "$REC.tmp" "$REC"
-chmod 0600 "$REC"
-
-# ---- forwarding ------------------------------------------------------------------
-rec FWD4 "$(sysctl -n net.inet.ip.forwarding 2>/dev/null || echo 0)"
-rec FWD6 "$(sysctl -n net.inet6.ip6.forwarding 2>/dev/null || echo 0)"
+REFRESH=0
+[ "${TB_REFRESH:-}" = 1 ] && [ -f "$REC" ] && REFRESH=1
 fail=0
-sysctl -w net.inet.ip.forwarding=1 >/dev/null || { log "ERROR: can't set net.inet.ip.forwarding=1: bonded clients reach only this Mac"; fail=1; }
-if [ -n "$TB_SUBNET6" ]; then sysctl -w net.inet6.ip6.forwarding=1 >/dev/null || log "WARNING: can't set net.inet6.ip6.forwarding=1"; fi
+if [ "$REFRESH" = 0 ]; then
+  # a record still here: the last server didn't stop cleanly
+  if [ -f "$REC" ]; then
+    log "restore record from an unclean stop found: putting that state back first"
+    TB_STALE=1 "$HERE/server-down"
+  fi
+  mkdir -p "$STATE"
+  : >"$REC.tmp" && mv -f "$REC.tmp" "$REC"
+  chmod 0600 "$REC"
+
+  # ---- forwarding ----------------------------------------------------------------
+  rec FWD4 "$(sysctl -n net.inet.ip.forwarding 2>/dev/null || echo 0)"
+  rec FWD6 "$(sysctl -n net.inet6.ip6.forwarding 2>/dev/null || echo 0)"
+  sysctl -w net.inet.ip.forwarding=1 >/dev/null || { log "ERROR: can't set net.inet.ip.forwarding=1: bonded clients reach only this Mac"; fail=1; }
+  if [ -n "$TB_SUBNET6" ]; then sysctl -w net.inet6.ip6.forwarding=1 >/dev/null || log "WARNING: can't set net.inet6.ip6.forwarding=1"; fi
+fi
 
 # ---- interfaces ------------------------------------------------------------------
 WAN="$(route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}')"
 TS_CLI=""
-# on PATH (tailscaled, or the app's CLI integration), else inside the app
-if command -v tailscale >/dev/null 2>&1; then TS_CLI=tailscale
+# on PATH (tailscaled, or the app's CLI integration), else inside the app;
+# none with disable_tailscale
+if [ "${TB_TAILSCALE:-1}" = 0 ]; then :
+elif command -v tailscale >/dev/null 2>&1; then TS_CLI=tailscale
 elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then TS_CLI=/Applications/Tailscale.app/Contents/MacOS/Tailscale; fi
 TS_IF="" TS_IP="" TS_IP6=""
 if [ -n "$TS_CLI" ]; then
@@ -106,17 +117,25 @@ rules() {
   fi
   return 0
 }
-# the stock /etc/pf.conf (loaded at boot) hooks com.apple/* in; without it
-# the anchor would never be evaluated
-if ! pfctl -s nat 2>/dev/null | grep -q 'nat-anchor "com.apple/\*"'; then
-  log "pf: main ruleset has no com.apple anchors: loading /etc/pf.conf"
-  pfctl -q -f /etc/pf.conf 2>/dev/null || log "WARNING: pfctl -f /etc/pf.conf failed"
+PF_OK=1
+# The stock /etc/pf.conf (loaded at boot) hooks com.apple/* in for nat and
+# filter rules. Another firewall that loaded its own main ruleset may have
+# dropped them: that ruleset is never replaced here (it isn't ours to
+# restore), so then there's no NAT and the log says how to fix it.
+if ! pfctl -s nat 2>/dev/null | grep -q 'nat-anchor "com.apple/\*"' ||
+   ! pfctl -s rules 2>/dev/null | grep -q 'anchor "com.apple/\*"'; then
+  PF_OK=0
+  log "ERROR: pf's main ruleset has no com.apple anchors (another firewall replaced /etc/pf.conf's?): tailbond adds no NAT or firewall rules, so bonded clients reach only this Mac. Add nat-anchor \"com.apple/*\" and anchor \"com.apple/*\" to that ruleset, then restart tailbond."
+  fail=1
+elif [ "$REFRESH" = 0 ]; then
+  rec ANCHOR "$ANCHOR"
+  tok="$(pfctl -E 2>&1 | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -n1)"
+  rec PF_TOKEN "$tok"
 fi
-rec ANCHOR "$ANCHOR"
-tok="$(pfctl -E 2>&1 | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -n1)"
-rec PF_TOKEN "$tok"
 # (pfctl warns about -f flushing the main ruleset even for an anchor: noise)
-if out="$(rules | pfctl -q -a "$ANCHOR" -f - 2>&1)"; then
+if [ "$PF_OK" = 0 ]; then
+  :
+elif out="$(rules | pfctl -q -a "$ANCHOR" -f - 2>&1)"; then
   log "pf: anchor $ANCHOR: nat $TB_SUBNET${TB_SUBNET6:+ $TB_SUBNET6} out ${UPLINKS:-<no uplink>}${TS_IF:+, to the tailnet out $TS_IF}; tcp $WEB on ${WEB_TO:-<none>} from loopback, $TB_TUN and the tailnet only"
 else
   printf '%s\n' "$out" | grep -v -e 'Use of -f option' -e 'present in the main ruleset' -e 'See /etc/pf.conf' -e '^$'
@@ -124,10 +143,14 @@ else
   fail=1
 fi
 [ -n "$UPLINKS" ] || log "WARNING: no uplink: no NAT to the internet until there is one (restart tailbond then)"
-if [ -n "$TS_CLI" ] && [ -z "$TS_IF" ]; then log "tailscale: not up (no Tailscale address): bonded clients reach the internet, not the tailnet"; fi
+if [ -n "$TS_CLI" ] && [ -z "$TS_IF" ]; then log "tailscale: not up (no Tailscale address): bonded clients reach the internet, not the tailnet, until it is (tailbond applies it then)"; fi
+
+if [ "$REFRESH" = 1 ]; then
+  log "refreshed for Tailscale${TS_IF:+ on $TS_IF}"
+fi
 
 # ---- application firewall --------------------------------------------------------
-if [ -x "$ALF" ] && "$ALF" --getglobalstate 2>/dev/null | grep -qi 'enabled'; then
+if [ "$REFRESH" = 0 ] && [ -x "$ALF" ] && "$ALF" --getglobalstate 2>/dev/null | grep -qi 'enabled'; then
   bins=""
   sep=""
   me="$(ps -o comm= -p "$PPID" 2>/dev/null)"
@@ -149,7 +172,7 @@ fi
 # ---- sleep ------------------------------------------------------------------------
 # held until server-down or until tailbondd ($PPID) exits; -s keeps the
 # system awake on AC power, -i also on battery (a closed lid still sleeps)
-if command -v caffeinate >/dev/null 2>&1; then
+if [ "$REFRESH" = 0 ] && command -v caffeinate >/dev/null 2>&1; then
   caffeinate -i -s -w "$PPID" </dev/null >/dev/null 2>&1 &
   rec CAFF_PID "$!"
   log "power: holding a sleep assertion while the server runs (caffeinate pid $!)"
