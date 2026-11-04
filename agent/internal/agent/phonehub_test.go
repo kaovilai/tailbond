@@ -258,7 +258,7 @@ func TestPhoneHubStopPACAndStartupRestore(t *testing.T) {
 	w = req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"use": ""})
 	st = status.PhoneHub{}
 	decode(t, w, &st)
-	if st.Using != nil || st.Note != "" || !strings.HasSuffix(fs.log(), "restore Wi-Fi") {
+	if st.Using != nil || st.Note != HubStoppedNote || !strings.HasSuffix(fs.log(), "restore Wi-Fi") {
 		t.Fatalf("stop: %s / %s", w.Body, fs.log())
 	}
 	// unknown hub

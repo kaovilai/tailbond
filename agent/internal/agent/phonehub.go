@@ -66,6 +66,9 @@ const (
 	hubInterest = 2 * time.Minute
 	// HubGoneNote is said when the phone in use went away.
 	HubGoneNote = "Lost the phone hub, so the proxy is off again and this Mac uses its own connection."
+	// HubStoppedNote is said after the user stops using a hub: the Mac is
+	// likely still on the phone's hotspot (its mobile data, not bonded).
+	HubStoppedNote = "Stopped using the phone. This Mac may still be on the phone's hotspot: rejoin your usual Wi-Fi, and turn the hotspot off on the phone."
 )
 
 // systemProxy sets and restores the OS proxy setting (sysproxy.Mac; tests
@@ -603,7 +606,14 @@ func (a *Agent) hPhoneHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Use != nil {
 		if *in.Use == "" {
-			a.stopHub("")
+			a.mu.Lock()
+			was := a.client.hub.use != nil
+			a.mu.Unlock()
+			note := ""
+			if was {
+				note = HubStoppedNote
+			}
+			a.stopHub(note)
 		} else if err := a.useHub(r.Context(), *in.Use, in.PAC); err != nil {
 			httpErr(w, http.StatusConflict, err)
 			return

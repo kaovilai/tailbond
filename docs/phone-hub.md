@@ -134,8 +134,9 @@ What happens:
      (the restore record).
    - If the default route moves to another service, the setting follows it,
      and the first service gets its own setting back.
-3. **Optional, proxy auto-config:** tick *"Keep local and tailnet addresses
-   direct"* before **Use**.
+3. **Proxy auto-config (on by default):** *"Keep home, local and
+   Tailscale addresses on this Mac's own network (recommended)"* is ticked
+   unless you untick it before **Use**.
    - The service's auto-proxy URL becomes
      `http://127.0.0.1:8077/proxy.pac`.
    - That file sends plain host names, `.local`, `.ts.net`, `.home.arpa`,
@@ -145,7 +146,9 @@ What happens:
 **Putting it back:**
 
 - When you stop using the hub, the saved setting comes back exactly: a
-  SOCKS server you had before, on or off, or your own PAC URL.
+  SOCKS server you had before, on or off, or your own PAC URL. The card
+  then reminds you that the Mac may still be on the phone's hotspot:
+  rejoin your usual Wi-Fi and turn the hotspot off.
 - When tailbondd stops normally, it puts the setting back on the way out.
 - If tailbondd crashes, is killed or the Mac loses power, the setting stays
   until tailbondd starts again. Its LaunchDaemon starts it at boot and

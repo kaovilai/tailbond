@@ -247,8 +247,11 @@ function fillPathCard(el, p, key, opts) {
     ki.className = 'kind-ico ' + p.kind;
     ki.replaceChildren(icon(p.kind in KIND_LABEL ? p.kind : 'unknown'));
   }
-  $('.path-title b', el).textContent = opts.title || p.iface || `Path ${p.id}`;
-  $('.path-title small', el).textContent = opts.subtitle || `${KIND_LABEL[p.kind] || 'Link'}${p.priority ? ' · ' + p.priority : ''}`;
+  // the agent's label ("iPhone (USB)", "Pixel's 5G (shared)") when it has
+  // one, the interface name under it
+  const named = p.label && p.label !== p.iface;
+  $('.path-title b', el).textContent = opts.title || (named ? p.label : p.iface) || `Path ${p.id}`;
+  $('.path-title small', el).textContent = opts.subtitle || `${KIND_LABEL[p.kind] || 'Link'}${named ? ' · ' + p.iface : ''}${p.priority ? ' · ' + p.priority : ''}`;
   const chip = $('.chip', el);
   const st = p.enabled === false ? 'off' : p.state;
   chip.textContent = p.cap_reached ? 'cap reached' : (st === 'off' ? 'disabled' : st);
@@ -400,7 +403,7 @@ function renderShares(st) {
     bits.push(s.via === 'server' ? 'listed by the home server' : 'found on this network');
     kids.push(h('div', { class: 'share-row' }, h('b', { text: s.label }), h('span', { class: 'muted small', text: ' · ' + bits.join(' · ') })));
   }
-  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Sharing → Share my mobile data. On iPhone: tailbond Share → Share mobile data.' }));
+  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Sharing → Share my mobile data. On iPhone: tailbond Share → Share mobile data (a cable is better: plug the iPhone in with Personal Hotspot on).' }));
   box.replaceChildren(...kids);
   box.classList.toggle('hidden', st.role !== 'client');
 }
@@ -439,10 +442,11 @@ function renderPhoneHub(st) {
       h('b', { text: `Using ${possessive(u.label)} ${what(u)} (proxy)` }),
       h('div', { class: 'small', text: `${how} ${fmtBytes(u.up_bytes)} up, ${fmtBytes(u.down_bytes)} down.` })));
     if (!u.bonded) kids.push(h('div', { class: 'banner warn', text: `${u.label} shares its mobile data only: this isn't bonded. For bonding with an iPhone, stop using it here and plug the iPhone in over USB with Personal Hotspot on.` }));
-    kids.push(h('p', { class: 'muted small', text: `Video calls, games and other non-web traffic don't go through the phone: they go out directly over the network ${self} is on (the phone's hotspot, not bonded). To undo: Stop using it here, then turn off "Share bonded connection" on the phone. If the phone goes away, ${self} goes back to its own connection by itself.` }));
+    kids.push(h('p', { class: 'muted small', text: `Video calls, games and other non-web traffic don't go through the phone: they go out directly over the network ${self} is on (the phone's hotspot, not bonded). To undo: Stop using it here, rejoin your usual Wi-Fi on ${self}, then turn off the hotspot and "Share bonded connection" on the phone. If the phone goes away, ${self} goes back to its own connection by itself.` }));
     kids.push(stop);
   } else {
     const pac = h('input', { type: 'checkbox' });
+    pac.checked = true;
     for (const f of ph.found) {
       const use = h('button', { class: 'btn small primary', text: 'Use' });
       use.addEventListener('click', () => post({ use: f.id, pac: pac.checked }, `Using ${possessive(f.label)} ${what(f)}`));
@@ -451,13 +455,14 @@ function renderPhoneHub(st) {
         h('span', {}, h('b', { text: f.label }), h('span', { class: 'muted small', text: ` · ${f.bonded ? 'bonded connection' : 'mobile data only, not bonded'} · ${via}${where(f)}` })), use));
     }
     if (ph.found.length) {
-      kids.push(h('label', { class: 'small muted' }, pac, document.createTextNode(` Keep home, local and Tailscale addresses on ${self}'s own network. Off: everything a browser opens goes through the phone.`)));
+      kids.push(h('label', { class: 'small muted' }, pac, document.createTextNode(` Keep home, local and Tailscale addresses on ${self}'s own network (recommended). Off: everything a browser opens goes through the phone.`)));
       kids.push(h('p', { class: 'muted small', text: 'Only phones paired with your home server show up here, and only devices paired with it can use them.' }));
+      if (mac && ph.found.some((f) => !f.bonded)) kids.push(h('p', { class: 'muted small', text: 'For an iPhone, a cable is better: plug it in with Personal Hotspot on and turn tailbond on (switch at the top). This Mac then bonds it with the Wi-Fi as iPhone (USB).' }));
     } else {
       const again = h('button', { class: 'btn small', text: 'Look again' });
       again.addEventListener('click', () => post({ refresh: true }));
       kids.push(h('p', { class: 'muted small', text: `Android phone: in tailbond, Settings → Sharing → Share bonded connection. Then turn on its hotspot (or USB tethering) and join it from ${self}.` }));
-      if (mac) kids.push(h('p', { class: 'muted small', text: 'iPhone: no hub needed. Plug it in over USB with Personal Hotspot on: this Mac bonds it itself, as iPhone (USB) with the connections above.' }));
+      if (mac) kids.push(h('p', { class: 'muted small', text: 'iPhone: no hub needed. Plug it in over USB with Personal Hotspot on and turn tailbond on (switch at the top): this Mac bonds it itself, as iPhone (USB) with the connections above.' }));
       kids.push(h('p', { class: 'muted small', text: 'Not found? A VPN with a kill switch can block local devices: allow local network access in it.' }), again);
     }
   }

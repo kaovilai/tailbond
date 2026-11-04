@@ -105,11 +105,12 @@ tailbond connects over the Mac's default route).
 ### An iPhone over USB
 
 1. On the iPhone: **Settings → Personal Hotspot → Allow Others to Join** on.
-2. Plug it into the Mac with a cable; tap **Trust** if it asks.
+2. Plug it into the Mac with a cable; tap **Trust** if it asks. tailbond
+   must be on (the switch at the top of its page).
 3. **iPhone (USB)** appears under Connections within a few seconds and is
    bonded with the Wi-Fi. It's charged meanwhile, and it works where the
    hotel Wi-Fi keeps devices apart. To save its data for when the Wi-Fi
-   fails, set the **iPhone (USB)** card's dropdown to **Backup only**.
+   fails, set the **iPhone (USB)** card's dropdown to **Backup**.
 4. To stop: unplug it, or turn Personal Hotspot off. The Wi-Fi carries on
    alone.
 
@@ -146,7 +147,12 @@ the Mac's SOCKS proxy at its own forwarder (127.0.0.1:1889), which relays
 to the phone with a password derived from your home server's share key.
 
 - **Stop using it** puts your previous proxy setting back exactly. So does
-  quitting tailbondd. After a crash or a restart, tailbondd puts it back
+  quitting tailbondd. The Mac may still be on the phone's hotspot
+  afterwards: rejoin your usual Wi-Fi, and turn the hotspot off on the
+  phone.
+- USB tethering from an Android phone works on a Mac when the phone uses
+  NCM (Pixel 6 and newer, most phones from 2021 on). Otherwise use the
+  hotspot. After a crash or a restart, tailbondd puts it back
   when it starts.
 - Only apps that follow the system proxy go through the phone, and only
   TCP traffic does: browsers yes, video calls and games no.
