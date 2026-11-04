@@ -6,10 +6,15 @@
 </h1>
 
 [![CI](https://github.com/kaovilai/tailbond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kaovilai/tailbond/actions/workflows/ci.yml?query=branch%3Amain)
-[![Latest release](https://img.shields.io/github/v/release/kaovilai/tailbond?include_prereleases&sort=semver&color=0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
+[![Auto release](https://github.com/kaovilai/tailbond/actions/workflows/auto-release.yml/badge.svg)](https://github.com/kaovilai/tailbond/actions/workflows/auto-release.yml)
+[![Pages](https://github.com/kaovilai/tailbond/actions/workflows/pages.yml/badge.svg)](https://github.com/kaovilai/tailbond/actions/workflows/pages.yml)
+[![iPhone path probe](https://github.com/kaovilai/tailbond/actions/workflows/probe-ios-paths.yml/badge.svg)](https://github.com/kaovilai/tailbond/actions/workflows/probe-ios-paths.yml)
+[![Latest release](https://img.shields.io/github/v/release/kaovilai/tailbond?sort=semver&color=0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/kaovilai/tailbond/total?color=0D9488)](https://github.com/kaovilai/tailbond/releases)
+[![Website](https://img.shields.io/website?url=https%3A%2F%2Fgithub.tig.pw%2Ftailbond%2F&label=website&up_color=0D9488)](https://github.tig.pw/tailbond/)
 [![License](https://img.shields.io/github/license/kaovilai/tailbond?color=0D9488)](LICENSE)
 [![Go version](https://img.shields.io/github/go-mod/go-version/kaovilai/tailbond?filename=agent%2Fgo.mod&color=0D9488)](agent/go.mod)
-[![Platforms](https://img.shields.io/badge/platforms-GL.iNet%20%C2%B7%20OpenWrt%20%C2%B7%20Fedora%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20(Share)-C6F432?labelColor=071A1D)](#platforms)
+[![Platforms](https://img.shields.io/badge/platforms-GL.iNet%20%C2%B7%20OpenWrt%20%C2%B7%20Fedora%20%C2%B7%20Linux%20%C2%B7%20macOS%20(hub)%20%C2%B7%20Android%20%C2%B7%20iOS%20(Share)-C6F432?labelColor=071A1D)](#platforms)
 
 **Download:**
 [![Android APK](https://img.shields.io/badge/Android-APK-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk)
@@ -18,7 +23,7 @@
 [![Linux bundle](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20aarch64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-arm64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz)
 [![All releases](https://img.shields.io/badge/all-releases-071A1D)](https://github.com/kaovilai/tailbond/releases)  
-Built files live only on [GitHub Releases](https://github.com/kaovilai/tailbond/releases) (checksums in `SHA256SUMS`); each guide below starts with its download. Releases appear after the first green `main` with the Android signing secrets set; until then, [build from source](#build-from-source). The iPhone's tailbond Share app is build-from-source only (free Apple ID signing, [iOS](docs/ios.md)).
+Built files live only on [GitHub Releases](https://github.com/kaovilai/tailbond/releases) (checksums in `SHA256SUMS`); each guide below starts with its download. Each merge to `main` that passes CI publishes a release automatically; to try unreleased changes, [build from source](#build-from-source). The iPhone's tailbond Share app is build-from-source only (free Apple ID signing, [iOS](docs/ios.md)).
 
 **Deploy a server:**
 [![Any VPS (cloud-init)](https://img.shields.io/badge/deploy-cloud--init-0D9488)](docs/deploy.md#any-vps-cloud-init)
