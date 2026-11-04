@@ -4,10 +4,10 @@ name: Agentic workflow lock files
 # is stale (edited .md without recompiling, or gh-aw changed its output).
 on:
   pull_request:
-    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml"]
+    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml", ".github/aw/actions-lock.json"]
   push:
     branches: [main]
-    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml"]
+    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml", ".github/aw/actions-lock.json"]
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
@@ -19,12 +19,16 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Pinned: the version that generated the committed locks. Bump it together
+      # with a recompile; an unpinned compiler would fail this check whenever
+      # gh-aw ships a release that changes its output.
       - name: Install gh-aw
         env:
-          GH_TOKEN: ${{ github.token }}
+          TAG: v1.0.1
         run: |
-          TAG=$(gh release list --repo github/gh-aw --limit 1 --json tagName --jq '.[0].tagName')
           mkdir -p "$RUNNER_TEMP/gh-aw/bin"
           curl -fsSL --retry 3 "https://github.com/github/gh-aw/releases/download/${TAG}/linux-amd64" -o "$RUNNER_TEMP/gh-aw/linux-amd64"
           curl -fsSL --retry 3 "https://github.com/github/gh-aw/releases/download/${TAG}/checksums.txt" -o "$RUNNER_TEMP/gh-aw/checksums.txt"
@@ -34,9 +38,9 @@ jobs:
       - name: Recompile and compare
         run: |
           gh-aw version
-          gh-aw compile --strict
-          if [ -n "$(git status --porcelain -- '.github/workflows/*.lock.yml')" ]; then
-            git --no-pager diff --stat -- '.github/workflows/*.lock.yml'
-            echo "::error::Lock files are stale: run 'gh aw compile' and commit the result."
+          gh-aw compile --strict --purge
+          if [ -n "$(git status --porcelain -- .github/workflows .github/aw)" ]; then
+            git status --short -- .github/workflows .github/aw
+            echo "::error::Lock files are stale or orphaned: run 'gh aw compile --purge' and commit the result."
             exit 1
           fi

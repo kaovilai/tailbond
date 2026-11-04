@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. If you're a maintainer, an AI agent will try a fix as soon as this issue is opened and link a **draft PR** here. Anyone else: a maintainer adds the `autofix` label after reading the issue.
+        Thanks for reporting. If you're a maintainer and tick the box at the bottom, an AI agent looks at this issue as soon as it's opened: it links a **draft PR** if it finds a fix, or comments with questions if it can't. Anyone else: a maintainer may add the `autofix` label after reading the issue.
         Remove secrets (pairing links, keys, public IPs you don't want shared) from logs before pasting.
   - type: dropdown
     id: component

@@ -1,0 +1,91 @@
+name: Auto release
+
+# Cut the next patch release whenever main has changed since the last tag:
+# after CI passes on a push to main (human merges), or when dispatched
+# (Dependabot auto-merges). The tag's own CI run does the full build and test
+# and publishes the release only if every job passes; installs then update
+# themselves per their update policy (docs/updates.md).
+#
+# Tags pushed with GITHUB_TOKEN don't start workflows, so this dispatches CI
+# on the new tag explicitly (workflow_dispatch is allowed from GITHUB_TOKEN).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why this release
+        required: false
+        default: manual
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      # Tag the exact commit CI passed on (a later push to main gets its own
+      # run); a dispatch tags main's current head.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || 'main' }}
+          fetch-depth: 0
+      - name: Next version
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --tags --force -q
+          # Stable vX.Y.Z only: a prerelease tag (v1.2.3-beta.1) must not become the base.
+          last=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          if [ -z "$last" ]; then
+            next=v0.1.0
+          else
+            if [ -z "$(git rev-list "$last"..HEAD)" ]; then
+              # Nothing new since the last tag. Recover a tag whose release build never
+              # started (tag pushed, CI dispatch failed): dispatch it if the tag
+              # has no release and no build queued or running.
+              if gh release view "$last" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                echo "main hasn't changed since $last, which is released; nothing to do"
+              elif [ -n "$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$last" --limit 1 --json status --jq '.[] | select(.status != "completed") | .status')" ]; then
+                echo "the release build for $last is still running"
+              elif [ -n "$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$last" --limit 1 --json conclusion --jq '.[].conclusion')" ]; then
+                echo "$last already has a finished build without a release (it failed); fix main and merge again"
+              else
+                echo "$last has no release build; starting it"
+                gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$last"
+              fi
+              echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            IFS=. read -r maj min pat <<<"${last#v}"
+            next="v$maj.$min.$((pat + 1))"
+          fi
+          echo "last=${last:-none} next=$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+      - name: Tag and start the release build
+        if: steps.v.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          REASON: ${{ github.event.inputs.reason || format('CI green on main at {0}', github.event.workflow_run.head_sha) }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG: $REASON"
+          git push origin "$TAG"
+          gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Tagged $TAG and dispatched CI on it ($REASON)" >> "$GITHUB_STEP_SUMMARY"
