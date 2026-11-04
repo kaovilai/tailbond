@@ -77,6 +77,16 @@
                 android:value="Lends this phone's mobile data to the user's own travel router or laptop on the same Wi-Fi, which bonds it with its other connections" />
         </service>
 
+        <!-- Phone hub: "Share bonded connection" (share/HubService.kt, docs/phone-hub.md) -->
+        <service
+            android:name=".share.HubService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Lets the user's own laptop on this phone's hotspot or USB tethering use the phone's VPN tunnel through a local proxy" />
+        </service>
+
         <service
             android:name=".service.TailbondTileService"
             android:exported="true"

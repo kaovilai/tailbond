@@ -226,6 +226,8 @@ class MainActivity : ComponentActivity() {
         override fun pushBackup(passphrase: String) = vm.pushBackup(passphrase)
         override fun dismissBackup() = vm.dismissBackup()
         override fun startShare() = dev.tailbond.app.share.ShareService.start(this@MainActivity)
+        override fun startHub() = dev.tailbond.app.share.HubService.start(this@MainActivity)
+        override fun stopHub() = dev.tailbond.app.share.HubService.stop(this@MainActivity)
         override fun stopShare() = dev.tailbond.app.share.ShareService.stop(this@MainActivity)
         override fun setShareMinBattery(pct: Int) = vm.setShareMinBattery(pct)
         override fun setShareCapMb(mb: Long) = vm.setShareCapMb(mb)
@@ -261,6 +263,7 @@ class MainActivity : ComponentActivity() {
             ),
             backup = vm.backup.collectAsStateWithLifecycle().value,
             share = dev.tailbond.app.share.ShareState.live.collectAsStateWithLifecycle().value,
+            hub = dev.tailbond.app.share.HubState.live.collectAsStateWithLifecycle().value,
         )
         TailbondApp(state, actions)
     }

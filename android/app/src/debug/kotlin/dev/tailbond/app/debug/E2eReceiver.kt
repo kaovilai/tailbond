@@ -21,6 +21,8 @@ import kotlinx.serialization.json.put
  *
  *   adb shell am broadcast -n dev.tailbond.app/.debug.E2eReceiver -a dev.tailbond.app.debug.STATUS
  *     → result data: {"state":"CONNECTED","tunnel_ip":…,"paths":[…],"servers":1,"peers":{…}}
+ *   … -a dev.tailbond.app.debug.HUB --ez on true|false
+ *     → starts/stops "Share bonded connection" (phone hub proxy)
  *   … -a dev.tailbond.app.debug.PAIR --es uri 'tailbond://pair?d=…'
  *     → stores the pairing as the "Add phone" button does (fallback when the
  *       confirm dialog can't be tapped)
@@ -32,6 +34,11 @@ class E2eReceiver : BroadcastReceiver() {
             ACTION_SHARE -> {
                 if (intent.getBooleanExtra("on", true)) dev.tailbond.app.share.ShareService.start(context)
                 else dev.tailbond.app.share.ShareService.stop(context)
+                resultData = "ok"
+            }
+            ACTION_HUB -> {
+                if (intent.getBooleanExtra("on", true)) dev.tailbond.app.share.HubService.start(context)
+                else dev.tailbond.app.share.HubService.stop(context)
                 resultData = "ok"
             }
             ACTION_PAIR -> {
@@ -75,7 +82,19 @@ class E2eReceiver : BroadcastReceiver() {
                         put("battery", sh.battery)
                         put("label", sh.label)
                     })
-                    put("share_key", repo.shareKey(repo.servers.value.firstOrNull()?.payload) != null)
+                    val key = repo.shareKey(repo.servers.value.firstOrNull()?.payload)
+                    put("share_key", key != null)
+                    val hub = dev.tailbond.app.share.HubState.live.value
+                    put("hub", buildJsonObject {
+                        put("status", hub.status.name)
+                        put("up_bytes", hub.upBytes)
+                        put("down_bytes", hub.downBytes)
+                        put("clients", buildJsonArray {
+                            hub.clients.forEach { c -> add(buildJsonObject { put("addr", c.addr); put("up", c.up); put("down", c.down) }) }
+                        })
+                        // debug builds only, to adb's shell: the test proxies with it
+                        if (key != null) put("pass", dev.tailbond.app.share.ProxyServer.credentials(key.toByteArray()).second)
+                    })
                     put("peers", if (peers == null) JsonNull else buildJsonObject {
                         put("server", peers.server)
                         put("count", peers.peers.size)
@@ -94,5 +113,6 @@ class E2eReceiver : BroadcastReceiver() {
         const val ACTION_STATUS = "dev.tailbond.app.debug.STATUS"
         const val ACTION_PAIR = "dev.tailbond.app.debug.PAIR"
         const val ACTION_SHARE = "dev.tailbond.app.debug.SHARE"
+        const val ACTION_HUB = "dev.tailbond.app.debug.HUB"
     }
 }

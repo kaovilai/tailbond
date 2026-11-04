@@ -16,6 +16,12 @@
 # traffic on cellular. The app's state comes from the debug-only status
 # receiver (android/app/src/debug).
 #
+# Phone hub (docs/phone-hub.md): "Share bonded connection" listens on 1888;
+# from the host, through adb forward (a laptop on the phone's hotspot
+# stands in), SOCKS5 and HTTP CONNECT requests with the password derived
+# from the share key reach the tunnel-only token server, which logs the
+# phone's tunnel address as the client; a wrong password is refused.
+#
 # Artifacts in $OUT (default out/e2e-android): screenshots, logcat, UI dumps,
 # dumpsys connectivity, server status and log.
 set -uo pipefail
@@ -226,6 +232,45 @@ app_is '.state == "CONNECTED"' && ok "tailbond's own tunnel still connected whil
 shot sharing
 sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.SHARE --ez on false >/dev/null
 wait_for 10 app_is '.share.status == "OFF"' && ok "sharing stops" || bad "sharing didn't stop: $(app_status | jq -c .share)"
+
+say "phone hub: \"Share bonded connection\" (SOCKS5 + HTTP CONNECT on 1888), upstream into the tunnel"
+sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.HUB --ez on true >/dev/null
+if wait_for 30 app_is '.hub.status == "READY"'; then
+  ok "hub ready: $(app_status | jq -c '.hub | {status, up_bytes, down_bytes}')"
+else
+  bad "hub not ready: $(app_status | jq -c '.hub | del(.pass)')"
+fi
+# 1888 = 0x0760 in /proc/net/tcp6 (listening on "::")
+sh_ cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ':0760 .* 0A ' && ok "listening on TCP 1888" || bad "nothing listens on TCP 1888"
+HUBPASS="$(app_status | jq -r '.hub.pass // empty')"
+TIP="$(app_status | jq -r '.tunnel_ip // empty' | cut -d/ -f1)"
+adb forward tcp:18888 tcp:1888 >/dev/null
+# the token server answers only through the tunnel, so getting the token
+# through the hub means the hub's upstream went into the phone's tunnel
+GOT="$(curl -fsS -m 20 --socks5-hostname 127.0.0.1:18888 -U "tailbond:$HUBPASS" "http://10.77.0.1:8099$TOKEN_URL_PATH?via=phone-hub-socks" || true)"
+[ "$GOT" = "$TOKEN" ] && ok "SOCKS5 through the phone hub reached the tunnel-only token server" || bad "SOCKS5 through the hub: got '${GOT:0:80}'"
+GOT="$(curl -fsS -m 20 -p -x "http://tailbond:$HUBPASS@127.0.0.1:18888" "http://10.77.0.1:8099$TOKEN_URL_PATH?via=phone-hub-connect" || true)"
+[ "$GOT" = "$TOKEN" ] && ok "HTTP CONNECT through the phone hub reached it too" || bad "HTTP CONNECT through the hub: got '${GOT:0:80}'"
+if [ -n "$TIP" ] && grep -E "^$TIP .*GET $TOKEN_URL_PATH\?via=phone-hub-socks" "$WORK/www.log" >/dev/null; then
+  ok "the token server saw the phone's tunnel address ($TIP) as the client: $(grep -E "via=phone-hub" "$WORK/www.log" | tail -n 1 | cut -c1-120)"
+else
+  bad "the token server didn't log the phone's tunnel address '$TIP': $(grep -E 'via=phone-hub' "$WORK/www.log" | tail -n 2 | tr '\n' ' ')"
+fi
+if curl -fsS -m 10 --socks5-hostname 127.0.0.1:18888 -U "tailbond:wrong-password" "http://10.77.0.1:8099$TOKEN_URL_PATH" >/dev/null 2>&1; then
+  bad "the hub let a wrong password through"
+else
+  ok "a wrong password is refused"
+fi
+if wait_for 10 app_is '.hub.up_bytes > 0 and .hub.down_bytes > 0 and (.hub.clients | length) >= 1'; then
+  ok "hub counts the laptop's traffic: $(app_status | jq -c '.hub | {status, up_bytes, down_bytes, clients}')"
+else
+  bad "hub counters: $(app_status | jq -c '.hub | del(.pass)')"
+fi
+grep -q 'hub: up [1-9]' "$OUT/logcat.txt" && ok "logcat: $(grep -o 'hub: up [0-9]* down [0-9]*.*' "$OUT/logcat.txt" | tail -n 1 | cut -c1-140)" || note "no hub counter line in logcat yet"
+shot hub-sharing
+adb forward --remove tcp:18888 >/dev/null 2>&1 || true
+sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.HUB --ez on false >/dev/null
+wait_for 10 app_is '.hub.status == "OFF"' && ok "hub stops" || bad "hub didn't stop: $(app_status | jq -c '.hub | del(.pass)')"
 
 say "failover: Wi-Fi off"
 if $TWO; then

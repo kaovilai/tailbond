@@ -33,6 +33,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Laptop
+import dev.tailbond.app.share.HubStatus
+import dev.tailbond.app.share.HubWords
 import dev.tailbond.app.share.ShareStatus
 import dev.tailbond.app.share.ShareWords
 
@@ -72,6 +75,8 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
             style = MaterialTheme.typography.bodyMedium, color = muted,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+
+        HubCard(state, actions)
 
         SectionHeader("Who's using it")
         if (l.hubs.isEmpty()) {
@@ -145,6 +150,44 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
                 },
                 enabled = name.isNotBlank(),
             ) { Text("Add") }
+        }
+    }
+}
+
+/**
+ * "Share bonded connection" (phone hub, docs/phone-hub.md): a laptop on this
+ * phone's hotspot or USB uses tailbond's whole bonded tunnel through a proxy.
+ */
+@Composable
+private fun HubCard(state: UiState, actions: UiActions) {
+    val l = state.hub
+    val on = l.status != HubStatus.OFF
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (l.status == HubStatus.SHARING) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Share bonded connection", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Switch(checked = on, onCheckedChange = { if (it) actions.startHub() else actions.stopHub() })
+            }
+            Text(HubWords.headline(l), style = MaterialTheme.typography.titleMedium)
+            Text(HubWords.detail(l), style = MaterialTheme.typography.bodyMedium)
+            for (c in l.clients) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Laptop, null, tint = MaterialTheme.colorScheme.primary)
+                    Text("${c.addr}: ${formatBytes(c.up + c.down)}", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (on) {
+                Text(
+                    "Only apps that follow the laptop's proxy setting, and only TCP (web, most apps; not video calls or games).",
+                    style = MaterialTheme.typography.bodySmall, color = muted,
+                )
+            }
         }
     }
 }
