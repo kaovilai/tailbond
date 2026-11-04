@@ -27,16 +27,19 @@ const (
 	PrioritySecondary = "secondary"
 	PriorityBackup    = "backup"
 
-	DefaultPath     = "/etc/tailbond/tailbond.json"
-	DefaultTunName  = "tb0"
-	DefaultCtlAddr  = "127.0.0.1:9077"
-	DefaultListen   = ":8077"
-	DefaultPort     = 443
-	DefaultSubnet   = "10.77.0.0/24"
-	DefaultSubnet6  = "fd77:77::/112"
-	DefaultStateDir = "/var/lib/tailbond"
-	DefaultHooksDir = "/usr/lib/tailbond/hooks"
-	DefaultMqvpnBin = "/usr/bin/mqvpn"
+	DefaultPath    = "/etc/tailbond/tailbond.json"
+	DefaultTunName = "tb0"
+	// DefaultClientMTU is the tunnel's MTU: IPv6's minimum, safe on any
+	// IPv4/IPv6 uplink (the Android app uses it too).
+	DefaultClientMTU = 1280
+	DefaultCtlAddr   = "127.0.0.1:9077"
+	DefaultListen    = ":8077"
+	DefaultPort      = 443
+	DefaultSubnet    = "10.77.0.0/24"
+	DefaultSubnet6   = "fd77:77::/112"
+	DefaultStateDir  = "/var/lib/tailbond"
+	DefaultHooksDir  = "/usr/lib/tailbond/hooks"
+	DefaultMqvpnBin  = "/usr/bin/mqvpn"
 )
 
 // TailnetRoutes are the tailnet prefixes bonded clients reach through the server.
@@ -98,6 +101,11 @@ type Client struct {
 	ManageRoutes *bool `json:"manage_routes,omitempty"`
 	// Additive: keep mqvpn from changing the system resolver (OpenWrt, tests).
 	NoDNS bool `json:"no_dns,omitempty"`
+	// MTU of the tunnel device (in every mode: Speed asks mqvpn for 8 more
+	// to cover its reorder header). 0 = DefaultClientMTU. mqvpn's own "auto"
+	// assumes a 1500-byte uplink; cellular, hotel and WSL links are often
+	// smaller, and then every packet above ~1250 bytes is lost.
+	MTU int `json:"mtu,omitempty"`
 	// Additive: user pressed "disconnect"; persisted so a reboot keeps it off.
 	Disconnected bool `json:"disconnected,omitempty"`
 	// Additive: probe each WAN for a captive portal and keep portal WANs
@@ -118,7 +126,28 @@ type Client struct {
 	// whether bypassed domains resolve through the WAN's DNS (default on).
 	BypassMarkMask string `json:"bypass_mark_mask,omitempty"`
 	BypassLocalDNS *bool  `json:"bypass_local_dns,omitempty"`
+	// Additive: Pair & Share (docs/pair-and-share.md). UseShares: bond the
+	// mobile data nearby devices share (default on). Share: this machine
+	// shares one of its own uplinks (an LTE dongle). Keys and passes from
+	// the server are cached per pairing in the state dir (share-cache.json).
+	UseShares *bool        `json:"use_shares,omitempty"`
+	Share     *ShareConfig `json:"share,omitempty"`
 }
+
+// ShareConfig: this machine lends Iface's data to hubs on its LAN.
+type ShareConfig struct {
+	Enabled bool   `json:"enabled"`
+	Iface   string `json:"iface"`
+	Port    int    `json:"port,omitempty"`  // UDP, default 47077
+	Label   string `json:"label,omitempty"` // default "<hostname>'s <iface>"
+	CapMB   int64  `json:"cap_mb,omitempty"`
+	// Hub names (their pairing's client name) that may use it; empty = any
+	// device paired with the same server.
+	AllowedHubs []string `json:"allowed_hubs,omitempty"`
+}
+
+// SharesUsed reports whether nearby devices' shared data is bonded (default on).
+func (c *Client) SharesUsed() bool { return c.UseShares == nil || *c.UseShares }
 
 // ServerEntry is one paired server in the client's list.
 type ServerEntry struct {

@@ -127,12 +127,18 @@ jq '.confirm = true' "$WORK/restore.json" >"$WORK/restore2.json"
 ip netns exec "$NS_S" curl -fsS -m 30 -H 'Content-Type: application/json' --data @"$WORK/restore2.json" "http://$API/api/restore" | jq -e '.ok and .restarting' >/dev/null \
   && ok "restored (rollback copy kept)" || bad "restore failed"
 ls "$WORK/srv/state/backups/"before-restore-*.tbbackup >/dev/null 2>&1 && ok "before-restore copy in state/backups" || bad "no rollback copy"
-if wait_for 90 "client reconnected" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'"; then
-  ok "the client reconnected with its old pairing (same key, same pinned certificate)"
+# The client's own status can still say "connected" from before the
+# server's restart (its QUIC idle timeout hasn't fired yet): the restarted
+# server listing slate7 connected is what proves the reconnect.
+if wait_for 90 "client reconnected" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/api/clients | jq -e '.[] | select(.name == \"slate7\" and .connected)'"; then
+  ok "server lists slate7 connected"
 else
-  bad "client after restore: $(capi "http://$API/api/status" | jq -c '{state, error}')"
+  bad "server clients: $(sapi "http://$API/api/clients")"
 fi
-sapi "http://$API/api/clients" | jq -e '.[] | select(.name == "slate7" and .connected)' >/dev/null && ok "server lists slate7 connected" || bad "server clients: $(sapi "http://$API/api/clients")"
+# the client's status follows within its 1 s poll
+wait_for 10 "client status connected" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
+  && ok "the client reconnected with its old pairing (same key, same pinned certificate)" \
+  || bad "client after restore: $(capi "http://$API/api/status" | jq -c '{state, error}')"
 
 echo
 printf '\033[1mresult: %d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

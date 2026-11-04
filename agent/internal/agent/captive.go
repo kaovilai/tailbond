@@ -164,6 +164,9 @@ func (a *Agent) captiveRound(ctx context.Context) {
 	var glDNS []string
 	seen := map[string]bool{}
 	for dev, it := range cs.ifs {
+		if it.Kind == netif.KindShared {
+			continue // a share has no interface to probe; its sharer's network is its own
+		}
 		ps, ok := effectiveSetting(cfg, it)
 		key := it.Key()
 		usable := ok && ps.Enabled && it.Usable()

@@ -81,6 +81,12 @@ data class AppSettings(
     val websites: List<WebsiteRule> = emptyList(),
     /** `update.policy` (docs/architecture.md, "Updates"): tell me (check once a day) or off. */
     val updatePolicy: UpdatePolicy = UpdatePolicy.NOTIFY,
+    /** Pair & Share: stop sharing mobile data below this battery percent unless charging (0 = never). */
+    val shareMinBattery: Int = 20,
+    /** Pair & Share: monthly limit on shared mobile data in MB (0 = none). */
+    val shareCapMb: Long = 0,
+    /** Pair & Share: hubs (their device names) that may use the share; empty = any device paired with the same server. */
+    val shareAllowedHubs: List<String> = emptyList(),
 ) {
     val failoverTiming: FailoverTiming
         get() = FailoverTiming(

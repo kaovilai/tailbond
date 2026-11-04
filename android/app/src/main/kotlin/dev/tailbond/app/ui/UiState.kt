@@ -101,6 +101,8 @@ data class UiState(
     val sdkInt: Int = 35,
     val update: UpdateUi = UpdateUi(),
     val backup: BackupUi = BackupUi(),
+    /** Pair & Share: "Share my mobile data". */
+    val share: dev.tailbond.app.share.ShareLive = dev.tailbond.app.share.ShareLive(),
 ) {
     /** The server the tunnel uses (or will use): failover's active one, else the main one. */
     val activeServer: ServerProfile?
@@ -192,6 +194,13 @@ interface UiActions {
     fun pushBackup(passphrase: String) {}
     /** Closes whatever backup dialog is open. */
     fun dismissBackup() {}
+
+    // Pair & Share
+    fun startShare() {}
+    fun stopShare() {}
+    fun setShareMinBattery(pct: Int) {}
+    fun setShareCapMb(mb: Long) {}
+    fun setShareAllowedHubs(hubs: List<String>) {}
 }
 
 object NoActions : UiActions

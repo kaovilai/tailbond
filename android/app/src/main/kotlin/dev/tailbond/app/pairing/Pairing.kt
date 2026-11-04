@@ -29,6 +29,8 @@ data class PairingPayload(
     @SerialName("server_name") val serverName: String? = null,
     /** Additive: the server's IPv4 tunnel subnet ("10.77.0.0/24"). */
     val subnet: String? = null,
+    /** Additive (Pair & Share): the server's share key; devices paired with it share mobile data with each other. */
+    @SerialName("share_key") val shareKey: String? = null,
 ) {
     /** Host part of [server] (brackets stripped for IPv6 literals). */
     val host: String get() = splitHostPort(server).first

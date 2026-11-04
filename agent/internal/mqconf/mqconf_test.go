@@ -196,3 +196,26 @@ func TestValidUserName(t *testing.T) {
 		}
 	}
 }
+
+func TestClientMTU(t *testing.T) {
+	p := clientParams("speed")
+	ini, err := Client(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ini, "MTU") {
+		t.Fatalf("MTU 0 must leave mqvpn's default, got:\n%s", ini)
+	}
+	// the TUN gets 1280 in every mode: Speed reorders, and mqvpn takes the
+	// 8-byte reorder header off after the cap (1272 would break IPv6)
+	for mode, want := range map[string]string{"speed": "MTU = 1288", "failover": "MTU = 1280", "streaming": "MTU = 1280"} {
+		p := clientParams(mode)
+		p.MTU = 1280
+		if ini, err = Client(p); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(ini, want+"\n") {
+			t.Fatalf("%s: want %q under [Interface], got:\n%s", mode, want, ini)
+		}
+	}
+}
