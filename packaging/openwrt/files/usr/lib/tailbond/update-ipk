@@ -76,6 +76,14 @@ if [ "$pkgname" != tailbond ] || [ -z "$VERSION" ]; then
 fi
 ROLE="${TB_ROLE:-$(uci -q get tailbond.main.role || echo client)}"
 log "updating $FROM -> $VERSION (role $ROLE, was connected: ${TB_WAS_CONNECTED:-0})"
+# opkg treats the same version as already installed and replaces nothing (and
+# --force-reinstall would run the removal scripts), so a "successful" update
+# would leave the running build as it is: e.g. a build from source whose
+# package version equals the release's.
+if [ -n "$FROM" ] && [ "$FROM" = "$VERSION" ]; then
+	result failed "$VERSION" "$FROM" "$VERSION is already the installed package version; nothing was replaced"
+	exit 1
+fi
 
 if [ -z "$PREV" ] && [ -n "$FROM" ]; then
 	# No rollback copy yet (installed by hand): save the running package.

@@ -52,6 +52,8 @@ rm "$D/linux-bundle/tailbond-linux-aarch64.tar.gz"
 if "$ROOT/scripts/release/collect-assets.sh" "$D" "$T/b" >"$T/log" 2>&1; then bad "no aarch64 bundle, but it passed"; else ok "a missing bundle fails it"; fi
 echo arm >"$D/linux-bundle/tailbond-linux-aarch64.tar.gz"
 rm "$D/android-release-apk/tailbond-1.2.3.apk"
+mkdir -p "$T/used/brand" && echo x >"$T/used/icon.svg"
+if "$ROOT/scripts/release/collect-assets.sh" "$D" "$T/used" >"$T/log" 2>&1; then bad "a non-empty OUT (like the repo's assets/), but it passed"; else grep -q "isn't empty" "$T/log" && ok "a non-empty OUT is refused" || bad "non-empty OUT message: $(cat "$T/log")"; fi
 if "$ROOT/scripts/release/collect-assets.sh" "$D" "$T/c" >"$T/log" 2>&1; then bad "no APK, but it passed"; else grep -q 'signing secrets' "$T/log" && ok "no release APK fails with the signing hint" || bad "APK message: $(cat "$T/log")"; fi
 
 [ "$fail" = 0 ] && echo "RESULT: PASS" || { echo "RESULT: FAIL"; exit 1; }
