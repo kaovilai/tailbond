@@ -64,8 +64,14 @@ func newFakeGitHub(t *testing.T, version string) *fakeGitHub {
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		switch {
+		case r.URL.Path == "/repos/kaovilai/tailbond":
+			w.Write([]byte(`{"full_name":"kaovilai/tailbond"}`))
 		case r.URL.Path == "/repos/kaovilai/tailbond/releases/latest":
 			g.calls++
+			if g.version == "" { // no release published yet: GitHub answers 404
+				http.NotFound(w, r)
+				return
+			}
 			if r.Header.Get("If-None-Match") == g.etag() {
 				g.notModified++
 				w.WriteHeader(http.StatusNotModified)
@@ -634,5 +640,63 @@ func TestImmediateFakeClock(t *testing.T) {
 	minute(2 * 60)
 	if g.calls != before+1 {
 		t.Fatalf("notify: %d checks in 25h", g.calls-before)
+	}
+}
+
+// A build from source (version not semver, e.g. a git hash) moves onto
+// releases with "Update now"; before any release exists, the check isn't an
+// error, just "no release yet".
+func TestUpdateDevBuildAndNoRelease(t *testing.T) {
+	ctx := context.Background()
+	g := newFakeGitHub(t, "0.2.0")
+	a, calls := updAgent(t, g, methodStatic)
+	a.opts.Version = "8051e4f"
+	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "notify"})
+
+	g.mu.Lock()
+	g.version = ""
+	g.mu.Unlock()
+	a.updateTick(ctx, true, false)
+	if v := a.updateView(); v.Error != "" || !v.NoRelease || v.Available != "" {
+		t.Fatalf("no release yet: %+v", v)
+	}
+
+	g.publish(t, "0.2.0")
+	a.updateTick(ctx, true, false)
+	if v := a.updateView(); v.NoRelease || v.Available != "0.2.0" || len(*calls) != 0 {
+		t.Fatalf("dev build should show 0.2.0 and not install by itself: %+v %v", v, *calls)
+	}
+	if w := req(t, a, "POST", "/api/update/install", "127.0.0.1:1", "", map[string]any{}); w.Code != http.StatusAccepted {
+		t.Fatalf("Update now on a dev build: %d %s", w.Code, w.Body)
+	}
+	a.updateTick(ctx, false, true) // what the install request triggers
+	if len(*calls) != 1 {
+		t.Fatalf("Update now on a dev build didn't install: %v", *calls)
+	}
+
+	// the release disappears (404 again): the cached one is forgotten, so a
+	// policy that installs by itself has nothing left to install
+	a.opts.Version = "0.1.0"
+	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "immediate"})
+	g.mu.Lock()
+	g.version = ""
+	g.mu.Unlock()
+	a.updateTick(ctx, true, false)
+	a.upd.mu.Lock()
+	cached := a.upd.rel
+	a.upd.mu.Unlock()
+	if cached != nil {
+		t.Fatalf("release still cached after a 404: %+v", cached)
+	}
+	if _, install := a.updateDue(); install {
+		t.Fatal("would install a release that's gone")
+	}
+
+	// no_release is always in the JSON, so false clears a cached true
+	g.publish(t, "0.2.0")
+	a.updateTick(ctx, true, false)
+	b, _ := json.Marshal(a.updateView())
+	if !strings.Contains(string(b), `"no_release":false`) {
+		t.Fatalf("no_release:false missing: %s", b)
 	}
 }

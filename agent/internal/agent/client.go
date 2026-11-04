@@ -384,7 +384,10 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	}
 	serverIP := addrs[0]
 
-	if p.Insecure {
+	// mqvpn enforces the pin on every handshake (CertSHA256 in client.conf);
+	// this check only turns a mismatch into a clear error before mqvpn
+	// starts, instead of a TLS failure in its log.
+	if p.CertSHA256 != "" {
 		if err := tlsutil.CheckPin(ctx, p.Server, p.SNI, p.CertSHA256); err != nil {
 			return err
 		}
@@ -404,7 +407,7 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 		}
 	}
 	ini, err := mqconf.Client(mqconf.ClientParams{
-		Server: p.Server, ServerName: p.SNI, Insecure: p.Insecure, Key: p.Key, DNS: dns,
+		Server: p.Server, ServerName: p.SNI, CertSHA256: p.CertSHA256, Insecure: p.Insecure, Key: p.Key, DNS: dns,
 		Paths: specs, TunName: config.DefaultTunName, MTU: mtu, Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
 		ManageRoutes: cfg.Client.RoutesManaged(), KillSwitch: cfg.Client.KillSwitch, LogLevel: cfg.LogLevel,
 	})

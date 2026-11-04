@@ -15,3 +15,6 @@ local.properties
 
 # SwiftPM build trees (macos/TailbondMenu, ios/TailbondShareKit)
 .build/
+
+# Compose settings (deploy/docker/compose.yaml): addresses, the dashboard password
+deploy/docker/.env
