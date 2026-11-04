@@ -88,7 +88,7 @@ jobs:
         run: scripts/ci/check-tracked-files.sh
       - name: Brand SVGs draw (beam gradient in user space, web copies match)
         run: scripts/brand/check-svgs.sh
-      - name: Release asset names (stable latest/download names, SHA256SUMS)
+      - name: Release asset names (stable latest/download names, SHA256SUMS, signed opkg feed)
         run: scripts/release/test-collect-assets.sh
 
   e2e:
@@ -508,7 +508,7 @@ jobs:
           # tailbond_<version>-r1_<arch>.ipk on v* tags (else 0.1.0-r<n>)
           TB_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}-r1', github.ref_name) || '' }}
         run: packaging/openwrt/build-ipk.sh
-      - name: Install test in OpenWrt 23.05 arm64
+      - name: Install test in OpenWrt 23.05 arm64 (and the signed opkg feed)
         env:
           # rootful: the container needs the OpenWrt feed (lua, uhttpd)
           PODMAN: sudo podman
@@ -761,8 +761,13 @@ jobs:
         with:
           path: dist/
       # stable names (releases/latest/download/<name>) plus the versioned
-      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
-      - name: Collect assets and SHA256SUMS
+      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh. With
+      # secret TB_OPKG_SIGNING_KEY (scripts/release/gen-opkg-key.sh) also the
+      # signed opkg feed (Packages, Packages.gz, Packages.sig); without it a
+      # warning and no feed.
+      - name: Collect assets, opkg feed and SHA256SUMS
+        env:
+          TB_OPKG_SIGNING_KEY: ${{ secrets.TB_OPKG_SIGNING_KEY }}
         # not "assets/": the repo has one (logos), which would end up in the release
         run: scripts/release/collect-assets.sh dist release-assets
       # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.

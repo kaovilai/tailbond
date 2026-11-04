@@ -46,9 +46,12 @@ Releases appear once the first release is published; until then,
 [build it from source](#build-from-source).
 
 
-GL's **APPLICATIONS → Plug-ins** page installs from GL's repository only; it
-has no upload ([GL docs: Plug-ins][gl-plugins]). A local package goes
-through LuCI, which GL 4.x ships ([GL docs: Advanced Settings][gl-adv]):
+GL's **APPLICATIONS → Plug-ins** page has no upload ([GL docs:
+Plug-ins][gl-plugins]); it installs from software sources, and tailbond's
+signed feed can be one ([Install and update from GL's Plug-ins
+page](#install-and-update-from-gls-plug-ins-page)), once the router trusts
+its key. A local package goes through LuCI, which GL 4.x ships ([GL docs:
+Advanced Settings][gl-adv]):
 
 1. Get the package: the GL.iNet download above (the file ending in
    `_neon-vfpv4.ipk`). A home server offers it too: the Fedora page's
@@ -92,6 +95,63 @@ A Flint 3 serves the package without having the file: `GET
 (`/usr/lib/opkg/info/tailbond.{control,list,postinst,…}`), using pristine
 copies of the files that change after install
 (`/usr/share/tailbond/pristine/…`) and never including `/etc/tailbond/`.
+
+## Install and update from GL's Plug-ins page
+
+Each release is also a signed opkg feed. GL's Plug-ins page can use it as
+a custom software source, then installs and upgrades tailbond like any
+other plug-in. GL firmware checks feed signatures (`option check_signature`
+in `/etc/opkg.conf`) and refuses a feed signed by a key that isn't in
+`/etc/opkg/keys/`, so the router has to trust tailbond's key first.
+
+1. **The key**, one of:
+   - Install tailbond once by hand ([above](#install-without-ssh)). The
+     package installs its key as `/etc/opkg/keys/<fingerprint>`.
+   - With SSH, before the first install:
+
+     ```sh
+     wget -O /tmp/tailbond-opkg.pub https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-opkg.pub && opkg-key add /tmp/tailbond-opkg.pub
+     ```
+
+     `usign -F -p /tmp/tailbond-opkg.pub` prints the key's fingerprint.
+     It must match the file name in
+     [`packaging/openwrt/files/etc/opkg/keys/`](../packaging/openwrt/files/etc/opkg/keys/)
+     in this repository.
+2. **APPLICATIONS → Plug-ins → Manage Sources → Add Custom Software
+   Source**:
+
+   | Field | Value |
+   |---|---|
+   | Name | `tailbond` |
+   | URL | `https://github.com/kaovilai/tailbond/releases/latest/download` |
+
+   GL writes `src/gz tailbond https://github.com/kaovilai/tailbond/releases/latest/download`
+   to `/etc/opkg/customfeeds.conf`. tailbond never adds this line itself.
+3. Update the plug-in list, find **tailbond**, and **Install** it (or
+   **Upgrade** it when a new release is out). Then open **VPN → tailbond**
+   as above.
+
+The feed is three files next to each release's packages: `Packages`,
+`Packages.gz` and `Packages.sig`. It lists both
+`tailbond_<version>-r1_<arch>.ipk` packages, and opkg picks the one for
+the router's architecture. `releases/latest/download` always points at
+the newest release. A release that comes out between a list update and an
+install moves the files: update the list again. Releases from before the
+feed key existed have no feed.
+
+**To update, the tailbond panel is still better.** A Plug-ins upgrade is a
+plain `opkg upgrade`. opkg checks the file against the signed list's
+SHA-256, but nothing checks that the new agent comes up, and nothing puts
+the old package back if it doesn't. The panel's updates (**Update now**,
+**Right away**, **Automatic**) wait for a quiet moment and roll back a
+package whose agent doesn't come up ([updates.md](updates.md)). The two
+work side by side: after either one installs a version, the other sees it
+as current. A firmware upgrade still reinstalls a version the Plug-ins page
+installed ([Firmware upgrades](#firmware-upgrades)).
+
+Removing tailbond also removes its key. The source stays until you delete
+it under **Manage Sources**. Until then, GL's list update reports a
+failed signature check for it.
 
 ## Build from source
 

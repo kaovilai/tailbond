@@ -25,6 +25,7 @@ panel or the app. Each platform then updates the way it normally does:
 | VPS / any Linux (bundle, `install.sh`) | **Right away** (new installs): by itself, as soon as it's safe. Or **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update` | Settings → Updates → Off, or `install.sh --update-policy off` |
 | VPS with Ansible | `tailbond_update_policy` (empty: new servers get Right away, existing ones keep theirs); a pinned `tailbond_version` wins on the next role run ([vps.md](vps.md#updates)) | `tailbond_update_policy: off` |
 | GL.iNet travel router | **Right away** (new installs), **Automatic (night)**, or **Update now** in the tailbond panel | tailbond panel → Updates → Off |
+| GL.iNet router, Plug-ins page (custom source) | **APPLICATIONS → Plug-ins → Upgrade** from tailbond's signed opkg feed ([glinet.md](glinet.md#install-and-update-from-gls-plug-ins-page)). It's a plain `opkg upgrade`: no health check and no rollback. The panel's updates (row above) keep working alongside it | Plug-ins → Manage Sources → delete the `tailbond` source |
 | Mac (bundle, `install.sh`) | **Right away** (new installs), or **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update` | Updates → Off |
 | Mac (Homebrew) | the dashboard shows the commands: the release's `tailbond.rb` into the local tap, `brew reinstall local/tailbond/tailbond`, `sudo brew services start tailbond` ([macos.md](macos.md#updates)) | Updates → Off |
 | Android phone | **Right away** (new installs): an hourly check and a notification, *Update ready: tap to install* (Android always asks before installing an app). Hands-off: [Obtainium](android.md#updates) set to check every hour | Settings → Updates → Off; remove the app from Obtainium |
@@ -110,3 +111,14 @@ Push a `v*` tag. CI builds everything, writes `SHA256SUMS`, attests the files
 COPR build when the `COPR_CONFIG` secret is set
 ([fedora-server.md](fedora-server.md#copr)). The release fails if the Android
 signing secrets are missing ([android.md](android.md#updates), "The release key").
+
+**The opkg feed key**, made once: `scripts/release/gen-opkg-key.sh --backup
+DIR` creates a usign key pair. It sets the secret key as repository secret
+`TB_OPKG_SIGNING_KEY`, writes the public key to
+`packaging/openwrt/files/etc/opkg/keys/<fingerprint>` (commit it: the
+package installs it on routers), and saves an encrypted backup in DIR
+(`--restore FILE.gpg` puts the key back). With the secret set, each
+release publishes `Packages`, `Packages.gz`, `Packages.sig` and
+`tailbond-opkg.pub` ([glinet.md](glinet.md#install-and-update-from-gls-plug-ins-page)).
+Without it, the release goes out with no feed and a warning. If the
+secret's public key isn't in the package, the release fails.
