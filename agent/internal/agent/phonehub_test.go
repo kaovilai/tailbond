@@ -353,3 +353,35 @@ func TestRouterCandidates(t *testing.T) {
 		t.Fatal("possessive")
 	}
 }
+
+// "Use" right after a round that missed the hub (a probe that failed, or
+// the list dropped while nobody looked): it looks again instead of
+// refusing with "isn't around any more".
+func TestPhoneHubUseLooksAgain(t *testing.T) {
+	a, _, cands, mu := hubAgent(t)
+	_, hubAddr := fakeHub(t, "home-share-key")
+	mu.Lock()
+	*cands = []hubCand{{ID: "pixel", Label: "Pixel", Via: "mdns", KeyID: kid, addrs: []string{hubAddr}}}
+	mu.Unlock()
+	a.mu.Lock()
+	a.client.hub.found = nil // the last round had nothing
+	a.mu.Unlock()
+	var st status.PhoneHub
+	w := req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"use": "pixel", "pac": true})
+	decode(t, w, &st)
+	if w.Code != 200 || st.Using == nil || st.Using.Mode != "pac" {
+		t.Fatalf("use after an empty round: %d %s", w.Code, w.Body)
+	}
+	// still refused for a hub that really isn't there
+	req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"use": ""})
+	mu.Lock()
+	*cands = nil
+	mu.Unlock()
+	a.mu.Lock()
+	a.client.hub.found = nil
+	a.mu.Unlock()
+	w = req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"use": "pixel"})
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "isn't around") {
+		t.Fatalf("gone hub: %d %s", w.Code, w.Body)
+	}
+}

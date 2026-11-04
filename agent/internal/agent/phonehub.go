@@ -450,19 +450,33 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 	}
 	hs.op.Lock()
 	defer hs.op.Unlock()
-	if len(a.hubLogins()) == 0 {
+	logins := a.hubLogins()
+	if len(logins) == 0 {
 		return errors.New("connect to your home server once first: the phone hub's password comes from it")
 	}
-	a.mu.Lock()
-	var cand *hubCand
-	for i := range hs.found {
-		if hs.found[i].ID == id {
-			c := hs.found[i]
-			cand = &c
+	lookup := func() (*hubCand, *hubUse) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		var cand *hubCand
+		for i := range hs.found {
+			if hs.found[i].ID == id {
+				c := hs.found[i]
+				cand = &c
+			}
 		}
+		return cand, hs.use
 	}
-	cur := hs.use
-	a.mu.Unlock()
+	cand, cur := lookup()
+	if cand == nil {
+		// the last round may have missed it (one probe that failed, or the
+		// list was dropped while nobody looked): look again before saying no
+		found := a.findHubs(ctx, logins)
+		a.mu.Lock()
+		hs.found = found
+		hs.asked = time.Now()
+		a.mu.Unlock()
+		cand, cur = lookup()
+	}
 	if cand == nil {
 		return errors.New("that phone hub isn't around any more; check the phone is sharing and on the same network")
 	}
