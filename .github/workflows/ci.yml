@@ -848,6 +848,8 @@ jobs:
           submodules: recursive
       - name: mqvpn's C libraries (versions from the submodules)
         run: python3 scripts/sbom/sbom.py components
+      - name: sbom.py self-test (STATIC_LINK direction, SHA256SUMS, the APK inside the ipk)
+        run: python3 scripts/sbom/test-sbom.py
       - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         id: syft
         with:
@@ -945,7 +947,7 @@ jobs:
       - name: Check (SPDX schema; every file and its SHA256; mqvpn's libraries with versions)
         run: |
           "$RUNNER_TEMP/venv/bin/python" scripts/sbom/sbom.py check "${{ steps.sbom.outputs.spdx }}" \
-            --assets release-assets --schema "$RUNNER_TEMP/spdx-schema.json" --require-android-deps
+            --assets release-assets --schema "$RUNNER_TEMP/spdx-schema.json" --require-android-deps --require-sums
       - uses: actions/upload-artifact@v7
         with:
           name: sbom
@@ -987,15 +989,18 @@ jobs:
         with:
           name: sbom
           path: sbom/
-      - name: The SBOM matches the published files
+      # The attestation's subjects come from SHA256SUMS: it must match the
+      # published files, and list exactly the files the SBOM describes.
+      - name: SHA256SUMS and the SBOM match the published files
         id: files
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D release-assets
+          (cd release-assets && sha256sum --strict -c SHA256SUMS)
           spdx="$(ls sbom/*.spdx.json)"
-          python3 scripts/sbom/sbom.py check "$spdx" --assets release-assets --require-android-deps
+          python3 scripts/sbom/sbom.py check "$spdx" --assets release-assets --require-android-deps --require-sums
           echo "spdx=$spdx" >>"$GITHUB_OUTPUT"
       # subjects: every file in SHA256SUMS, i.e. every release file
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

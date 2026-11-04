@@ -27,6 +27,7 @@ Stdlib only (jsonschema for check --schema). Needs syft on PATH (SYFT), and
 for an rpm bsdtar or rpm2cpio + cpio.
 """
 import argparse
+import collections
 import datetime
 import hashlib
 import json
@@ -400,8 +401,9 @@ def build(a):
                 pkgs += cp.values()
                 for c in comps:
                     if c["name"] != "mqvpn":
-                        prels.append({"spdxElementId": cp[c["name"]]["SPDXID"], "relationshipType": "STATIC_LINK",
-                                      "relatedSpdxElement": cp["mqvpn"]["SPDXID"]})
+                        # SPDX: A STATIC_LINK B = A statically links B
+                        prels.append({"spdxElementId": cp["mqvpn"]["SPDXID"], "relationshipType": "STATIC_LINK",
+                                      "relatedSpdxElement": cp[c["name"]]["SPDXID"]})
                 levels = {}
                 for b in bins:
                     kind, ver = libevent_of(b)
@@ -415,8 +417,8 @@ def build(a):
                 for ver, rp in sorted(levels.items()):
                     lp = component_package(libevent_component(ver), prefix + ("" if len(levels) == 1 else "-" + ver))
                     pkgs.append(lp)
-                    prels.append({"spdxElementId": lp["SPDXID"], "relationshipType": "STATIC_LINK",
-                                  "relatedSpdxElement": cp["mqvpn"]["SPDXID"]})
+                    prels.append({"spdxElementId": cp["mqvpn"]["SPDXID"], "relationshipType": "STATIC_LINK",
+                                  "relatedSpdxElement": lp["SPDXID"]})
             # release files shipped inside this one (the APK in the ipk/rpm)
             for dirpath, _, files in os.walk(dest):
                 for f in files:
@@ -455,6 +457,67 @@ def purl_of(p):
     return ""
 
 
+def graph(doc):
+    """(packages by id, described ids, CONTAINS children by id, COPY_OF)."""
+    pk = {p["SPDXID"]: p for p in doc["packages"]}
+    described = [r["relatedSpdxElement"] for r in doc["relationships"] if r["relationshipType"] == "DESCRIBES"]
+    contains, copy_of = {}, {}
+    for r in doc["relationships"]:
+        if r["relationshipType"] == "CONTAINS":
+            contains.setdefault(r["spdxElementId"], []).append(r["relatedSpdxElement"])
+        elif r["relationshipType"] == "COPY_OF":
+            copy_of[r["spdxElementId"]] = r["relatedSpdxElement"]
+    return pk, described, contains, copy_of
+
+
+def reach(sid, contains, copy_of):
+    """Everything SID ships, through nested release files (the APK in the
+    ipk/rpm) and COPY_OF aliases: {id: depth}, 1 = directly inside."""
+    root = copy_of.get(sid, sid)
+    out, seen, todo = {}, {root}, collections.deque([(root, 0)])
+    while todo:
+        s, d = todo.popleft()
+        for c in contains.get(s, []):
+            c = copy_of.get(c, c)
+            if c in seen:
+                continue
+            seen.add(c)
+            out[c] = d + 1
+            todo.append((c, d + 1))
+    return out
+
+
+def manifests(doc):
+    """Dependency snapshot manifests: one per release file (copies skipped),
+    every package it ships with a purl, tailbond's own excepted."""
+    pk, described, contains, copy_of = graph(doc)
+    out = {}
+    for sid in described:
+        if sid in copy_of:
+            continue
+        name = pk[sid]["name"]
+        resolved = {}
+        for c, depth in sorted(reach(sid, contains, copy_of).items(), key=lambda x: x[1]):
+            purl = purl_of(pk[c])
+            if purl and not purl.startswith(OWN_PURLS) and purl not in resolved:
+                resolved[purl] = {"package_url": purl, "relationship": "direct" if depth == 1 else "indirect",
+                                  "scope": "runtime"}
+        if resolved:
+            out[name] = {"name": name, "file": {"source_location": "release/" + name}, "resolved": resolved}
+    return out
+
+
+def read_sums(path):
+    """SHA256SUMS (sha256sum's output) as {file name: hash}."""
+    sums = {}
+    for line in open(path):
+        m = re.fullmatch(r"([0-9a-f]{64}) [ *](.+)", line.rstrip("\n"))
+        if not m:
+            die(f"{path}: not a sha256sum line: {line.rstrip()!r}")
+        sums[m.group(2)] = m.group(1)
+    return sums
+
+
 def check(a):
     doc = json.load(open(a.doc))
     errs = []
@@ -469,17 +532,41 @@ def check(a):
         for k in ("spdxElementId", "relatedSpdxElement"):
             if r[k] not in ids:
                 errs.append(f"relationship to unknown {r[k]}")
-    described = {r["relatedSpdxElement"] for r in doc["relationships"] if r["relationshipType"] == "DESCRIBES"}
-    contains, copy_of = {}, {}
-    for r in doc["relationships"]:
-        if r["relationshipType"] == "CONTAINS":
-            contains.setdefault(r["spdxElementId"], []).append(pk.get(r["relatedSpdxElement"], {}))
-        elif r["relationshipType"] == "COPY_OF":
-            copy_of[r["spdxElementId"]] = r["relatedSpdxElement"]
+    _, described, kids, copy_of = graph(doc)
+    contains = {k: [pk.get(c, {}) for c in v] for k, v in kids.items()}
     byname = {pk[i]["name"]: pk[i] for i in described if i in pk}
-    for n in sorted(os.listdir(a.assets)):
-        if n == "SHA256SUMS" or n.endswith((".spdx.json", ".cdx.json")):
-            continue
+    # SPDX: A STATIC_LINK B = A statically links B; only mqvpn links anything
+    links = set()
+    for r in doc["relationships"]:
+        if r["relationshipType"] == "STATIC_LINK":
+            links.add((r["spdxElementId"], r["relatedSpdxElement"]))
+            if pk.get(r["spdxElementId"], {}).get("name") != "mqvpn":
+                errs.append(f"{r['spdxElementId']} STATIC_LINK {r['relatedSpdxElement']}: the source must be mqvpn (mqvpn STATIC_LINK <library>)")
+    files = sorted(n for n in os.listdir(a.assets)
+                   if n != "SHA256SUMS" and not n.endswith((".spdx.json", ".cdx.json")))
+    # SHA256SUMS is what the attestation's subjects come from: it must list
+    # exactly these files with their hashes, as the SBOM does.
+    sumsf = os.path.join(a.assets, "SHA256SUMS")
+    if a.require_sums and not os.path.isfile(sumsf):
+        errs.append("no SHA256SUMS")
+    elif os.path.isfile(sumsf):
+        sums = read_sums(sumsf)
+        for n in sorted(set(sums) - set(files)):
+            errs.append(f"SHA256SUMS lists {n}, which isn't a release file here")
+        for n in files:
+            if n not in sums:
+                errs.append(f"{n}: not in SHA256SUMS")
+            elif sums[n] != sha256(os.path.join(a.assets, n)):
+                errs.append(f"{n}: SHA256SUMS says {sums[n]}, the file is {sha256(os.path.join(a.assets, n))}")
+        for n, p in sorted(byname.items()):
+            got = [c["checksumValue"] for c in p.get("checksums", []) if c["algorithm"] == "SHA256"]
+            if n not in sums:
+                errs.append(f"SBOM package {n} is not in SHA256SUMS")
+            elif got != [sums[n]]:
+                errs.append(f"SBOM package {n}: SHA256 {got}, SHA256SUMS {sums[n]}")
+    apks = [byname[n]["SPDXID"] for n in files if n.endswith(".apk") and n in byname]
+    snap = manifests(doc)
+    for n in files:
         p = byname.get(n)
         if not p:
             errs.append(f"{n}: not described")
@@ -505,6 +592,20 @@ def check(a):
         if n.endswith(".apk") and a.require_android_deps:
             if sum(purl_of(c).startswith("pkg:maven/") for c in inside.values()) < 10:
                 errs.append(f"{n}: fewer than 10 Maven dependencies (the Gradle dependency graph)")
+        mq = inside.get("mqvpn")
+        if mq:
+            for lib in MQVPN_LIBS[1:] + ("libevent",):
+                c = inside.get(lib)
+                if c and (mq["SPDXID"], c["SPDXID"]) not in links:
+                    errs.append(f"{n}: no mqvpn STATIC_LINK {lib}")
+        # the ipk and rpm ship the APK: it, and its Maven libraries, are in them
+        if re.search(r"\.(ipk|rpm)$", n) and apks:
+            if not set(apks) & {copy_of.get(c, c) for c in kids.get(sid, [])}:
+                errs.append(f"{n}: doesn't CONTAIN the release APK")
+            m = snap.get(pk[sid]["name"], {})  # a copy: its original's manifest
+            maven = sum(k.startswith("pkg:maven/") for k in m.get("resolved", {}))
+            if a.require_android_deps and maven < 10:
+                errs.append(f"{n}: its dependency snapshot manifest has {maven} Maven libraries (the APK's)")
     if errs:
         for e in errs[:60]:
             print("::error::sbom check: " + e, file=sys.stderr)
@@ -531,25 +632,7 @@ def check(a):
 
 def snapshot(a):
     doc = json.load(open(a.doc))
-    pk = {p["SPDXID"]: p for p in doc["packages"]}
-    described = [r["relatedSpdxElement"] for r in doc["relationships"] if r["relationshipType"] == "DESCRIBES"]
-    copies = {r["spdxElementId"] for r in doc["relationships"] if r["relationshipType"] == "COPY_OF"}
-    contains = {}
-    for r in doc["relationships"]:
-        if r["relationshipType"] == "CONTAINS" and r["relatedSpdxElement"] not in described:
-            contains.setdefault(r["spdxElementId"], []).append(pk[r["relatedSpdxElement"]])
-    manifests = {}
-    for sid in described:
-        if sid in copies or sid not in contains:
-            continue
-        name = pk[sid]["name"]
-        resolved = {}
-        for c in contains[sid]:
-            purl = purl_of(c)
-            if purl and not purl.startswith(OWN_PURLS):
-                resolved[purl] = {"package_url": purl, "relationship": "direct", "scope": "runtime"}
-        if resolved:
-            manifests[name] = {"name": name, "file": {"source_location": "release/" + name}, "resolved": resolved}
+    manifests_ = manifests(doc)
     snap = {
         "version": 0,
         "sha": a.sha,
@@ -557,11 +640,11 @@ def snapshot(a):
         "job": {"correlator": a.correlator, "id": str(a.run_id)},
         "detector": {"name": "tailbond-release-sbom", "version": "1", "url": f"https://github.com/{a.repo}/blob/main/docs/sbom.md"},
         "scanned": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "manifests": manifests,
+        "manifests": manifests_,
     }
     json.dump(snap, sys.stdout, indent=1)
     sys.stdout.write("\n")
-    print(f"{len(manifests)} manifests, {sum(len(m['resolved']) for m in manifests.values())} dependencies", file=sys.stderr)
+    print(f"{len(manifests_)} manifests, {sum(len(m['resolved']) for m in manifests_.values())} dependencies", file=sys.stderr)
 
 
 def main():
@@ -582,6 +665,7 @@ def main():
     s.add_argument("--assets", required=True)
     s.add_argument("--schema")
     s.add_argument("--require-android-deps", action="store_true")
+    s.add_argument("--require-sums", action="store_true", help="SHA256SUMS must exist (it always is checked when present)")
     s = sub.add_parser("snapshot")
     s.add_argument("doc")
     s.add_argument("--sha", required=True)

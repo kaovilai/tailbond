@@ -44,7 +44,8 @@ a report in the run summary that never fails the build.
 GitHub raises Dependabot alerts only for the default branch's dependency
 graph. Releases are tagged from `main` ([updates](updates.md)), so on every
 push to `main` CI submits the SBOM of that build (job `dependency-snapshot`,
-one manifest per release file) to the dependency graph. Alerts then cover
+one manifest per release file, which includes the libraries of the APK
+the ipk and rpm ship) to the dependency graph. Alerts then cover
 what is actually shipped:
 
 | Dependencies | In the graph | Dependabot alerts |
