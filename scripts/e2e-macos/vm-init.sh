@@ -15,6 +15,7 @@ mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 mount -t tmpfs tmp /tmp
 for m in /lib/modules/*.ko; do insmod "$m" || echo "vm: insmod $m failed"; done
+echo "vm: modules: $(ls /lib/modules | tr '\n' ' ')"
 mkdir -p /dev/net
 [ -c /dev/net/tun ] || mknod /dev/net/tun c 10 200
 
@@ -24,6 +25,7 @@ T="$(arg time)"; TOKEN="$(arg token)"; PUBLIC="$(arg public)"; PORT="$(arg port)
 : "${PUBLIC:=127.0.0.1}" "${PORT:=4443}"
 
 ip link set lo up
+ip link show eth0 >/dev/null 2>&1 || { echo "vm: no eth0"; ls /sys/class/net; }
 ip link set eth0 up
 ip addr add 10.0.2.15/24 dev eth0
 ip route add default via 10.0.2.2
@@ -38,7 +40,7 @@ cat >/etc/tailbond/tailbond.json <<JSON
  "server": {"port": $PORT, "public_addr": "$PUBLIC", "subnet": "10.77.0.0/24", "use_tailscale_cert": false}}
 JSON
 tailbondd -config /etc/tailbond/tailbond.json -quiet >/tmp/server.log 2>&1 &
-httpd -p 8080 -h /www
+/bin/busybox-extras httpd -p 8080 -h /www || echo "vm: httpd failed"
 echo "vm: up ($(uname -r)), public $PUBLIC:$PORT"
 # the server's log on the console (the e2e prints it on failure)
 tail -F /tmp/server.log &

@@ -34,13 +34,17 @@ mkdir -p "$OUT/root"
 # Kernel, the modules it needs for the tunnel and the NIC (dependencies
 # first, decompressed: busybox insmod takes plain .ko), static busybox.
 "$PODMAN" run --rm --arch arm64 -v "$OUT:/out" "$IMAGE" sh -euc '
-  apk add --no-cache --no-scripts linux-virt busybox-static kmod xz zstd >/dev/null
+  apk add --no-cache --no-scripts linux-virt busybox-static busybox-extras kmod xz zstd >/dev/null
   kver="$(ls /lib/modules | head -n1)"
   cp /boot/vmlinuz-virt /out/vmlinuz
   mkdir -p /out/root/bin /out/root/lib/modules
   cp /bin/busybox.static /out/root/bin/busybox
+  # httpd (the token server) is in busybox-extras, linked against musl
+  mkdir -p /out/root/lib
+  cp /bin/busybox-extras /out/root/bin/busybox-extras
+  cp /lib/ld-musl-aarch64.so.1 /out/root/lib/
   n=0
-  modprobe -S "$kver" --show-depends tun virtio_net virtio_pci virtio_rng 2>/dev/null |
+  modprobe -a -S "$kver" --show-depends tun virtio_net virtio_pci virtio_rng |
   while read -r what path _; do
     [ "$what" = insmod ] || continue
     n=$((n + 1))
