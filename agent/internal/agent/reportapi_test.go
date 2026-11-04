@@ -105,13 +105,21 @@ func TestMqvpnCrashSignal(t *testing.T) {
 func TestReportRedactsWorkNames(t *testing.T) {
 	a := pairServer(t)
 	a.mu.Lock()
-	a.snap = &status.Status{Role: "client", Coexist: &status.Coexist{DNSDomains: []string{"corp.example.", "netbird.cloud"}}}
+	a.snap = &status.Status{Role: "client", Coexist: &status.Coexist{DNSDomains: []string{"corp.example.", "netbird.cloud"},
+		Foreign: []status.CoexistForeign{
+			{Name: "NetBird", Kind: "netbird", Iface: "utun100", Addrs: []string{"100.92.1.2/16"}, Prefixes: []string{"100.92.0.0/16", "10.20.0.0/16"}},
+			{Name: "Tailscale", Kind: "tailscale", Iface: "utun4", Addrs: []string{"100.101.1.1/32"}, Prefixes: []string{"100.64.0.0/10"}},
+		}}}
 	a.mu.Unlock()
 	a.Logf("resolving git.eu.corp.example via 10.92.0.5; peer laptop.netbird.cloud; not notcorp.example.org")
+	a.Logf("netbird 100.92.1.2 routes 10.20.0.0/16 (host 10.20.3.4); tailnet 100.101.1.1; home 192.168.8.1")
 	var got map[string]string
 	json.Unmarshal(req(t, a, "GET", "/api/report", "127.0.0.1:1", "", nil).Body.Bytes(), &got)
 	if !strings.Contains(got["logs"], "resolving [work name] via 10.92.0.5; peer [work name];") {
 		t.Errorf("logs: %q", got["logs"])
+	}
+	if !strings.Contains(got["logs"], "netbird [work address] routes [work network] (host [work address]); tailnet 100.101.1.1; home 192.168.8.1") {
+		t.Errorf("work addresses: %q", got["logs"])
 	}
 	if got["account_note"] != report.AccountNote {
 		t.Errorf("account note: %q", got["account_note"])

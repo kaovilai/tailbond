@@ -11,4 +11,4 @@
   "foreign":[{"name":"NetBird","kind":"netbird","iface":"utun100","addrs":["100.92.1.2/16"],"prefixes":["100.92.0.0/16","10.20.0.0/16"]}],
   "split_dns":true,"dns_domains":["corp.example","netbird.cloud"],"tailnet_via_tailscale_app":false,
   "work_vpn":"direct","work_vpn_effective":"direct","tailnet_routes":6,"direct_routes":3,
-  "warnings":["Bonded isn't possible on this connection: NetBird's packets (1280 bytes) plus tailbond's wrapping (80) are more than this connection carries inside tailbond (1180). Work traffic goes Direct."]}}
+  "bonded_blocked":"Bonded isn't possible on this connection (en0): NetBird's packets need 1360 bytes inside tailbond (1280 + 80), and this connection (en0) carries 1180. Work traffic goes Direct, which works."}}

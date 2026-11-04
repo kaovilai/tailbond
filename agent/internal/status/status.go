@@ -154,6 +154,8 @@ type Coexist struct {
 	DirectRoutes           int              `json:"direct_routes"`
 	Skipped                []string         `json:"skipped,omitempty"`
 	Warnings               []string         `json:"warnings,omitempty"`
+	// BondedBlocked: why Bonded can't work here (Direct is used, and works)
+	BondedBlocked string `json:"bonded_blocked,omitempty"`
 	// Conflicts: something in the routing table steps on another VPN.
 	Conflicts []string `json:"conflicts,omitempty"`
 	Error     string   `json:"error,omitempty"`

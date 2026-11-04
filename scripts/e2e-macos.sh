@@ -471,13 +471,13 @@ if wait_for 90 "Bonded: MTU raised" sh -c "curl -fsS -m 2 http://$API/api/coexis
   fi
   wait_for 20 "no host route" sh -c "! netstat -rn -f inet | grep -q '^203.0.113.50 '" && ok "Bonded: NetBird's endpoints have no host route via $UP" || bad "host route still there"
 else
-  bad "Bonded: $(cxj | jq -c '{work_vpn_effective, want_mtu, warnings}')"
+  bad "Bonded: $(cxj | jq -c '{work_vpn_effective, want_mtu, bonded_blocked, warnings}')"
 fi
 ifconfig "$WG" mtu 1420
-if wait_for 60 "Bonded can't fit" sh -c "curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"direct\" and (.warnings | length) > 0'"; then
+if wait_for 60 "Bonded can't fit" sh -c "curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"direct\" and ((.bonded_blocked // \"\") | length) > 0'"; then
   ok "$WG at 1420 needs 1500: back to Direct, warned: $(cxj | jq -r '.warnings[0]' | cut -c1-100)"
 else
-  bad "no fallback: $(cxj | jq -c '{work_vpn_effective, want_mtu, warnings}')"
+  bad "no fallback: $(cxj | jq -c '{work_vpn_effective, want_mtu, bonded_blocked, warnings}')"
 fi
 hapi -X POST -d '{"work_vpn": "direct"}' "http://$API/api/coexist" >/dev/null
 ifconfig "$WG" mtu 1280

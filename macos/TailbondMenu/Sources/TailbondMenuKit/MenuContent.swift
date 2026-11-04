@@ -112,14 +112,24 @@ public struct MenuContent: View {
                 .font(.caption)
             }
             if s.workVPNChoice {
-                Picker("Work VPN traffic", selection: Binding(get: { s.workVPN }, set: { model.setWorkVPN($0) })) {
-                    Text("Direct").tag("direct")
-                    Text("Bonded").tag("bonded")
+                if s.bondedBlocked.isEmpty {
+                    Picker("Work VPN traffic", selection: Binding(get: { s.workVPN }, set: { model.setWorkVPN($0) })) {
+                        Text("Direct").tag("direct")
+                        Text("Bonded").tag("bonded")
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(model.busy)
                 }
-                .pickerStyle(.segmented)
-                .disabled(model.busy)
-                Text("Now: \(s.workVPN == "bonded" ? "Bonded" : "Direct")").font(.caption.weight(.semibold))
-                ForEach(s.workExplain, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                Text("Work VPN traffic now: \(s.workVPN == "bonded" ? "Bonded" : "Direct")").font(.caption.weight(.semibold))
+                if !s.bondedBlocked.isEmpty {
+                    Label { Text(s.bondedBlocked).fixedSize(horizontal: false, vertical: true) } icon: {
+                        Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                }
+                ForEach(s.bondedBlocked.isEmpty ? s.workExplain : Array(s.workExplain.prefix(1)), id: \.self) {
+                    Text($0).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }

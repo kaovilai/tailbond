@@ -155,11 +155,13 @@ public struct CoexistInfo: Decodable, Equatable {
     public var workVPN = "", workVPNEffective = ""
     public var warnings: [String] = []
     public var conflicts: [String] = []
+    /// why Bonded can't work here (Direct is in force, and works)
+    public var bondedBlocked = ""
     public var error = ""
     public init() {}
     enum CodingKeys: String, CodingKey {
         case netbird, foreign, splitDNS = "split_dns", dnsDomains = "dns_domains", tailnetViaTailscaleApp = "tailnet_via_tailscale_app"
-        case workVPN = "work_vpn", workVPNEffective = "work_vpn_effective", warnings, conflicts, error
+        case workVPN = "work_vpn", workVPNEffective = "work_vpn_effective", warnings, conflicts, bondedBlocked = "bonded_blocked", error
     }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -172,6 +174,7 @@ public struct CoexistInfo: Decodable, Equatable {
         workVPNEffective = try c.decodeIfPresent(String.self, forKey: .workVPNEffective) ?? ""
         warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
         conflicts = try c.decodeIfPresent([String].self, forKey: .conflicts) ?? []
+        bondedBlocked = try c.decodeIfPresent(String.self, forKey: .bondedBlocked) ?? ""
         error = try c.decodeIfPresent(String.self, forKey: .error) ?? ""
     }
 }

@@ -49,7 +49,7 @@ for (const [vp, opts] of Object.entries(vps)) {
   await page.waitForSelector('#rep-what');
   await page.waitForFunction(() => document.querySelector('#rep-logs').value.includes('mqvpn') || document.querySelector('#rep-logs').value.includes('path wifi'));
   const notice = await page.textContent('#rep-notice');
-  ok(notice.startsWith('Nothing is sent automatically'), 'the notice is shown');
+  ok(notice.startsWith('Once you submit this issue on GitHub, it is public.') && notice.includes('Nothing is sent automatically'), 'the notice is shown, "public" first');
   const logs = await page.inputValue('#rep-logs');
   const crash = await page.inputValue('#rep-crash');
   ok(logs.includes('[public IPv4]:443') && logs.includes('token=[redacted]'), 'logs are shown redacted');
@@ -77,6 +77,10 @@ for (const [vp, opts] of Object.entries(vps)) {
   await page.waitForTimeout(500);
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   ok(clip === file, 'Copy full report copies the same text');
+  // the Mac menu's "Report a problem…" opens /#report: the form, not just the dashboard
+  const p2 = await ctx.newPage();
+  await p2.goto(agent + '/#report');
+  ok(await p2.waitForSelector('#rep-what', { timeout: 10000 }).then(() => true, () => false), '/#report opens the report form directly (the menu bar link)');
   await ctx.close();
 }
 

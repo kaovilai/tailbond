@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -190,13 +191,49 @@ func (a *Agent) reportLogs(n int) string {
 	return b.String()
 }
 
+var reAddrToken = regexp.MustCompile(`\b[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?:/[0-9]{1,2})?\b|[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?:/[0-9]{1,3})?`)
+
 // redactLocal: what only this machine knows is private, on top of
-// report.Redact: the work VPN's internal names (the split-DNS domains,
-// docs/macos.md "Using tailbond with NetBird"), as [work name].
+// report.Redact (docs/macos.md "Using tailbond with NetBird"): the work
+// VPN's addresses and the networks it routes (NetBird's range, the company
+// subnets it pushes) as [work address] / [work network], and its internal
+// names (the split-DNS domains) as [work name].
 func (a *Agent) redactLocal(s string) string {
 	st := a.Snapshot()
 	if st == nil || st.Coexist == nil {
 		return s
+	}
+	var work []netip.Prefix
+	for _, f := range st.Coexist.Foreign {
+		if f.Kind == "tailscale" {
+			continue // the tailnet's own addresses stay, as everywhere
+		}
+		for _, p := range append(append([]string{}, f.Prefixes...), f.Addrs...) {
+			if pf, err := netip.ParsePrefix(p); err == nil {
+				work = append(work, pf.Masked())
+			}
+		}
+	}
+	if len(work) > 0 {
+		s = reAddrToken.ReplaceAllStringFunc(s, func(m string) string {
+			addr, isNet := m, false
+			if i := strings.IndexByte(m, '/'); i >= 0 {
+				addr, isNet = m[:i], true
+			}
+			ip, err := netip.ParseAddr(addr)
+			if err != nil {
+				return m
+			}
+			for _, p := range work {
+				if p.Contains(ip.Unmap()) {
+					if isNet {
+						return "[work network]"
+					}
+					return "[work address]"
+				}
+			}
+			return m
+		})
 	}
 	for _, d := range st.Coexist.DNSDomains {
 		d = strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".")

@@ -935,15 +935,15 @@ capi -X POST -d '{"work_vpn": "bonded"}' "http://$API/api/coexist" >/dev/null
 if wait_for 60 "tb0 MTU 1360" sh -c "ip -n $NS_C link show tb0 | grep -Eq 'mtu 13(52|60) '"; then
   ok "tailbond's MTU raised for wt0 1280 + 80: $(ip -n "$NS_C" link show tb0 | grep -o 'mtu [0-9]*') (want_mtu $(cx | jq .want_mtu))"
 else
-  bad "tb0 MTU: $(ip -n "$NS_C" link show tb0 | grep -o 'mtu [0-9]*'); $(cx | jq -c '{work_vpn_effective, want_mtu, warnings}')"
+  bad "tb0 MTU: $(ip -n "$NS_C" link show tb0 | grep -o 'mtu [0-9]*'); $(cx | jq -c '{work_vpn_effective, want_mtu, bonded_blocked, warnings}')"
 fi
 wait_for 30 "endpoints no longer direct" sh -c "! ip -n $NS_C route show 198.51.100.50 | grep -q 'via 10.200.1.1'" \
   && ok "Bonded: NetBird's endpoints follow tailbond's tunnel ($(via 198.51.100.50))" || bad "still direct: $(ip -n "$NS_C" route show 198.51.100.50)"
 ip -n "$NS_C" link set wt0 mtu 1420
-if wait_for 45 "Bonded can't fit" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"direct\" and (.warnings | length) > 0'"; then
+if wait_for 45 "Bonded can't fit" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"direct\" and ((.bonded_blocked // \"\") | length) > 0'"; then
   ok "wt0 at 1420 needs 1500 > the uplink allows: back to Direct, warned: $(cx | jq -r '.warnings[0]' | cut -c1-110)"
 else
-  bad "no fallback: $(cx | jq -c '{work_vpn_effective, want_mtu, warnings}')"
+  bad "no fallback: $(cx | jq -c '{work_vpn_effective, want_mtu, bonded_blocked, warnings}')"
 fi
 capi -X POST -d '{"work_vpn": "direct"}' "http://$API/api/coexist" >/dev/null
 

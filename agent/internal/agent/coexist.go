@@ -407,7 +407,7 @@ func (a *Agent) coexistStatus() *status.Coexist {
 	st := &status.Coexist{
 		NetBird: cx.nb, Foreign: []status.CoexistForeign{}, SplitDNS: pl.SplitDNS, TailnetViaTailscaleApp: pl.TailnetDirect,
 		WorkVPN: cfg.Client.WorkVPNOrDefault(), WorkVPNEffective: pl.WorkEffective, WantMTU: pl.WantMTU,
-		TailnetRoutes: len(pl.TunRoutes), DirectRoutes: len(pl.DirectRoutes), Warnings: pl.Warnings, Conflicts: pl.Conflicts,
+		TailnetRoutes: len(pl.TunRoutes), DirectRoutes: len(pl.DirectRoutes), Warnings: pl.Warnings, BondedBlocked: pl.BondedBlocked, Conflicts: pl.Conflicts,
 		Error: cx.err,
 	}
 	for _, f := range pl.Foreign {

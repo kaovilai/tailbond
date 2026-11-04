@@ -239,7 +239,7 @@ func TestPlanBondedMTU(t *testing.T) {
 	}
 	in.OurMTU, in.Uplink.MTU = 1280, 1420 // 1320 max < 1360
 	pl = Make(in)
-	if pl.WorkEffective != WorkDirect || len(pl.Warnings) == 0 || len(pl.DirectRoutes) == 0 {
+	if pl.WorkEffective != WorkDirect || pl.BondedBlocked == "" || len(pl.DirectRoutes) == 0 {
 		t.Fatalf("bonded can't fit: %+v", pl)
 	}
 }

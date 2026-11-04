@@ -32,6 +32,8 @@ public struct MenuSummary: Equatable {
     public let workVPN: String
     /// what Direct and Bonded each mean here (shown under the switch)
     public let workExplain: [String]
+    /// Bonded can't work here: why (the switch is replaced by this, Direct stays)
+    public let bondedBlocked: String
     public let update: Line
     public let updatePolicy: String
     /// an update is ready and this install can install it on request (Install now)
@@ -80,7 +82,7 @@ public struct MenuSummary: Equatable {
             title = "tailbond isn't running"
             subtitle = unreachable ?? "Nothing answers on 127.0.0.1:8077. Start it: sudo launchctl kickstart -k system/com.tailbond.tailbondd"
             tone = .bad; symbol = "exclamationmark.triangle"; rates = ""; links = []; coexist = []
-            workVPNChoice = false; workVPN = ""; workExplain = []; update = Line(text: "", warn: false); updatePolicy = ""
+            workVPNChoice = false; workVPN = ""; workExplain = []; bondedBlocked = ""; update = Line(text: "", warn: false); updatePolicy = ""
             canInstall = false; crash = nil; connected = false
             return
         }
@@ -110,7 +112,8 @@ public struct MenuSummary: Equatable {
         }
         rates = connected ? "↓ \(Self.rate(s.totals.rxBps))  ↑ \(Self.rate(s.totals.txBps))" : ""
         links = s.paths.map { p in
-            let name = p.label.isEmpty ? Self.kindLabel(p.kind) : p.label
+            var name = p.label.isEmpty ? Self.kindLabel(p.kind) : p.label
+            if p.kind == "shared-cellular" && !p.label.isEmpty { name += ", mobile data it shares" }
             var detail: String
             var tone: Tone
             if !p.enabled {
@@ -164,9 +167,10 @@ public struct MenuSummary: Equatable {
         let netWords = nets.isEmpty ? "" : " and its networks (\(nets.prefix(3).joined(separator: ", "))\(nets.count > 3 ? ", …" : ""))"
         let home = short.isEmpty ? "your home server" : short
         workExplain = choice ? [
-            "Direct: the work VPN\(netWords) use this Mac's own internet, as without tailbond.",
+            "Direct: the work VPN\(netWords), and its own connections to its servers and peers, use this Mac's own internet, as without tailbond.",
             "Bonded: they go through tailbond to \(home), then out to your company: steadier, but through your home.",
         ] : []
+        bondedBlocked = s.coexist?.bondedBlocked ?? ""
 
         // updates (docs/updates.md)
         let u = s.update ?? UpdateInfo()
@@ -180,11 +184,11 @@ public struct MenuSummary: Equatable {
         case u.state == "failed":
             update = Line(text: "An update didn't install; still on \(cur)", warn: true)
         case available:
-            var t = "Update available: tailbond \(u.available)\(u.security ? " (a security fix)" : "")."
+            var t = "Update available: tailbond \(u.available)\(u.security ? ", a security fix" : "") (you have \(cur))."
             if u.method == "brew" {
                 t += " Update with Homebrew (the dashboard has the commands)."
             } else if updatePolicy == "immediate" && !u.waiting.isEmpty {
-                t += " It installs by itself as soon as no call or big download is running (within 30 minutes)."
+                t += " It installs by itself as soon as no call or big download is running (within 30 minutes); tailbond restarts, a few seconds without the tunnel."
             } else if updatePolicy == "auto" {
                 t += " It installs by itself tonight (03:00-05:00)."
             }

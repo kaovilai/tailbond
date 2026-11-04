@@ -360,6 +360,10 @@ type Plan struct {
 	PassIfaces []string     `json:"pass_ifaces,omitempty"`
 	PassHosts  []netip.Addr `json:"pass_hosts,omitempty"`
 	Warnings   []string     `json:"warnings,omitempty"`
+	// BondedBlocked: why Bonded can't be used here (work traffic goes
+	// Direct, which works); not a warning, a fact the UI shows next to the
+	// choice.
+	BondedBlocked string `json:"bonded_blocked,omitempty"`
 	// Conflicts: found in the table, not caused by this plan (health).
 	Conflicts []string `json:"conflicts,omitempty"`
 }
@@ -525,9 +529,9 @@ func Make(in Input) Plan {
 				pl.WantMTU = need
 			default:
 				pl.WorkEffective = WorkDirect
-				pl.Warnings = append(pl.Warnings, fmt.Sprintf(
-					"Bonded isn't possible on this connection: NetBird's packets (%d bytes) plus tailbond's wrapping (%d) are more than this connection carries inside tailbond (%d). Work traffic goes Direct.",
-					nbMTU, BondedOverhead, max(in.Uplink.MTU-TailbondOverhead, 0)))
+				pl.BondedBlocked = fmt.Sprintf(
+					"Bonded isn't possible on %s: NetBird's packets need %d bytes inside tailbond (%d + %d), and %s carries %d. Work traffic goes Direct, which works.",
+					uplinkName(in.Uplink.Iface), need, nbMTU, BondedOverhead, uplinkName(in.Uplink.Iface), max(in.Uplink.MTU-TailbondOverhead, 0))
 			}
 		}
 		if pl.WorkEffective == WorkDirect {
@@ -614,4 +618,11 @@ func DNSDomains(suffix string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+func uplinkName(n string) string {
+	if n == "" {
+		return "this connection"
+	}
+	return "this connection (" + n + ")"
 }
