@@ -471,7 +471,9 @@ func (a *Agent) updateTick(ctx context.Context, check, force bool) {
 		rel = a.upd.rel
 		a.upd.mu.Unlock()
 	}
-	if rel == nil || !update.Newer(rel.Version, a.opts.Version) {
+	// "Update now" on a dev build (not semver) installs the latest release:
+	// that's how a build from source moves onto releases.
+	if rel == nil || !(update.Newer(rel.Version, a.opts.Version) || (force && !isRelease(a.opts.Version))) {
 		a.setUpdate(func(v *status.Update) { v.Waiting = "" })
 		return
 	}
@@ -563,6 +565,11 @@ func (a *Agent) check(ctx context.Context) *update.Release {
 		}
 		if v.State == "checking" {
 			v.State = "idle"
+		}
+		v.NoRelease = errors.Is(err, update.ErrNoRelease)
+		if v.NoRelease {
+			v.Error, v.Available = "", ""
+			return
 		}
 		if err != nil {
 			v.Error = "couldn't check for updates: " + err.Error()

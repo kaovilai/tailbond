@@ -171,6 +171,10 @@ func (c Client) http() *http.Client {
 // resource unchanged.
 var errNotModified = errors.New("not modified")
 
+// ErrNoRelease: the repository has no published release yet. A check that
+// gets it worked; there's just nothing to install.
+var ErrNoRelease = errors.New("no release yet")
+
 func (c Client) get(ctx context.Context, u string, api bool, w io.Writer, max int64) error {
 	_, err := c.getETag(ctx, u, api, "", w, max)
 	return err
@@ -208,7 +212,7 @@ func (c Client) getETag(ctx context.Context, u string, api bool, etag string, w 
 	case resp.StatusCode == http.StatusNotModified && etag != "":
 		return etag, errNotModified
 	case resp.StatusCode == http.StatusNotFound && api:
-		return "", errors.New("no release yet")
+		return "", ErrNoRelease
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
 		return "", fmt.Errorf("GitHub said HTTP %d (rate limit?)", resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:

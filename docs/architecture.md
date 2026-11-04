@@ -634,7 +634,11 @@ isn't a release asset: it's built from source with a free Apple ID
 semver, leading `v` dropped), `html_url` (changelog), `assets[].name` /
 `browser_download_url`. A newer version than the running one is `available`.
 A build whose own version isn't semver (`dev`, `-dirty`, a git hash) shows
-what's available but never installs by itself.
+the latest release as available but never installs it by itself; **Update
+now** (`POST /api/update/install`) installs it, which is how a build from
+source moves onto releases. A repository with no release yet (`404` from
+`releases/latest`) isn't a failed check: `error` stays empty and
+`no_release` is `true`.
 
 **Verification**: the asset and `SHA256SUMS` are downloaded over HTTPS (http
 only when `api_url` itself is http, for tests); the asset's SHA-256 must match
