@@ -93,7 +93,12 @@ type hubCand struct {
 	// Bonded: "1" the phone's upstream is its bonded tunnel, "0" not (an
 	// iPhone: mobile data only), "" unknown
 	Bonded string `json:"bonded,omitempty"`
-	addrs  []string
+	// KeyID: the phone's share key id (its advert, the server's list); ""
+	// for a router found without one (every pass is tried)
+	KeyID string `json:"key_id,omitempty"`
+	addrs []string
+	// the login that worked (Credentials of this hub's pass for the phone)
+	user, pass string
 }
 
 type hubUse struct {
@@ -193,17 +198,27 @@ func (a *Agent) phoneHubWatcher(ctx context.Context) {
 	}
 }
 
-// hubCreds is the proxy user and password for this machine's server.
-func (a *Agent) hubCreds() (string, string, bool) {
+// hubLogin is one way to log in to a phone's proxy: the pass the home
+// server gave this machine (the hub) for one device, as proxy credentials.
+type hubLogin struct {
+	keyID, user, pass string
+}
+
+// hubLogins: this machine's logins, by the phone's key id (Pair & Share's
+// passes, shares.go).
+func (a *Agent) hubLogins() map[string]hubLogin {
 	a.mu.Lock()
 	p := a.client.payload
 	a.mu.Unlock()
-	key := a.clientShareKey(p)
-	if len(key) == 0 {
-		return "", "", false
+	if p == nil {
+		return nil
 	}
-	u, pw := proxy.Credentials(key)
-	return u, pw, true
+	out := map[string]hubLogin{}
+	for kid, hp := range a.hubPasses(p) {
+		u, pw := proxy.Credentials(hp.key, p.User, hp.exp)
+		out[kid] = hubLogin{kid, u, pw}
+	}
+	return out
 }
 
 // hubAsked notes that someone is looking at the status.
@@ -229,14 +244,14 @@ func (a *Agent) hubRound(ctx context.Context) {
 	if idle {
 		return
 	}
-	user, pass, ok := a.hubCreds()
-	if !ok {
+	logins := a.hubLogins()
+	if len(logins) == 0 {
 		a.mu.Lock()
 		hs.found = nil
 		a.mu.Unlock()
 		return
 	}
-	found := a.findHubs(ctx, user, pass)
+	found := a.findHubs(ctx, logins)
 	a.mu.Lock()
 	hs.found = found
 	u := hs.use
@@ -253,6 +268,7 @@ func (a *Agent) hubRound(ctx context.Context) {
 				a.Logf("phone hub: %q is now at %s", cur.Label, cur.Addr)
 			}
 			u.cand = *cur // the forwarder dials the new address from now on
+			u.user, u.pass = cur.user, cur.pass
 		} else {
 			u.missed++
 		}
@@ -283,7 +299,7 @@ func (a *Agent) hubRound(ctx context.Context) {
 }
 
 // findHubs lists the phone hubs that take our password.
-func (a *Agent) findHubs(ctx context.Context, user, pass string) []hubCand {
+func (a *Agent) findHubs(ctx context.Context, logins map[string]hubLogin) []hubCand {
 	cfg := a.store.Get()
 	skip := []string{config.DefaultTunName}
 	ifaces := share.MulticastIfaces(skip...)
@@ -295,14 +311,14 @@ func (a *Agent) findHubs(ctx context.Context, user, pass string) []hubCand {
 			if f, err := share.BrowseService(ctx, proxy.Service, ifaces, 1500*time.Millisecond); err == nil {
 				for _, x := range f {
 					if x.Addr != nil {
-						cands = append(cands, hubCand{ID: x.ID, Label: x.Label, Via: "mdns", Bonded: x.Bonded, addrs: []string{x.Addr.String()}})
+						cands = append(cands, hubCand{ID: x.ID, Label: x.Label, Via: "mdns", Bonded: x.Bonded, KeyID: x.KeyID, addrs: []string{x.Addr.String()}})
 					}
 				}
 			}
 		}
 		cands = append(cands, a.registryHubs(cfg, ifaces)...)
 	}
-	found := probeAll(ctx, cands, user, pass)
+	found := probeAll(ctx, cands, logins)
 	if len(found) == 0 {
 		var rc []hubCand
 		if a.hubRouters != nil {
@@ -310,7 +326,7 @@ func (a *Agent) findHubs(ctx context.Context, user, pass string) []hubCand {
 		} else {
 			rc = routerHubs(ctx)
 		}
-		found = probeAll(ctx, rc, user, pass)
+		found = probeAll(ctx, rc, logins)
 	}
 	sort.Slice(found, func(i, j int) bool { return found[i].Label+found[i].ID < found[j].Label+found[j].ID })
 	return found
@@ -326,15 +342,13 @@ func (a *Agent) registryHubs(cfg *config.Config, ifaces []net.Interface) []hubCa
 	if reg == nil || p == nil {
 		return nil
 	}
-	key := a.clientShareKey(p)
-	kid := share.KeyID(key)
 	subnets := localSubnets(ifaces)
 	var out []hubCand
 	for _, r := range reg.Sharers {
-		if r.Kind != "proxy" || r.KeyID != kid {
+		if r.Kind != "proxy" || r.Client == p.User { // a phone hub's proxy, not our own
 			continue
 		}
-		c := hubCand{ID: r.ID, Label: r.Label, Via: "server"}
+		c := hubCand{ID: r.ID, Label: r.Label, Via: "server", KeyID: r.KeyID}
 		for _, ip := range r.LAN {
 			if ad, err := netip.ParseAddr(ip); err == nil && inAny(subnets, ad) {
 				c.addrs = append(c.addrs, net.JoinHostPort(ip, strconv.Itoa(r.Port)))
@@ -347,20 +361,32 @@ func (a *Agent) registryHubs(cfg *config.Config, ifaces []net.Interface) []hubCa
 	return out
 }
 
-// probeAll tries each candidate's addresses in parallel; the first that
-// takes the password is the hub's address. Same id twice: the first wins
-// (mDNS before the server's list).
-func probeAll(ctx context.Context, cands []hubCand, user, pass string) []hubCand {
-	res := make([]string, len(cands))
+// probeAll tries each candidate's addresses in parallel, with the login
+// for its key id (every login when it has none); the first address and
+// login that work are the hub's. Same id twice: the first wins (mDNS
+// before the server's list).
+func probeAll(ctx context.Context, cands []hubCand, logins map[string]hubLogin) []hubCand {
+	type hit struct{ addr, user, pass string }
+	res := make([]hit, len(cands))
 	var wg sync.WaitGroup
 	for i, c := range cands {
+		var try []hubLogin
+		if l, ok := logins[c.KeyID]; ok {
+			try = []hubLogin{l}
+		} else if c.KeyID == "" {
+			for _, l := range logins {
+				try = append(try, l)
+			}
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for _, ad := range c.addrs {
-				if probeHub(ctx, ad, user, pass) == nil {
-					res[i] = ad
-					return
+				for _, l := range try {
+					if probeHub(ctx, ad, l.user, l.pass) == nil {
+						res[i] = hit{ad, l.user, l.pass}
+						return
+					}
 				}
 			}
 		}()
@@ -369,11 +395,11 @@ func probeAll(ctx context.Context, cands []hubCand, user, pass string) []hubCand
 	seen := map[string]bool{}
 	var out []hubCand
 	for i, c := range cands {
-		if res[i] == "" || seen[c.ID] {
+		if res[i].addr == "" || seen[c.ID] {
 			continue
 		}
 		seen[c.ID] = true
-		c.Addr = res[i]
+		c.Addr, c.user, c.pass = res[i].addr, res[i].user, res[i].pass
 		out = append(out, c)
 	}
 	return out
@@ -424,9 +450,8 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 	}
 	hs.op.Lock()
 	defer hs.op.Unlock()
-	user, pass, ok := a.hubCreds()
-	if !ok {
-		return errors.New("pair this Mac with your home server first: the phone hub's password comes from it")
+	if len(a.hubLogins()) == 0 {
+		return errors.New("connect to your home server once first: the phone hub's password comes from it")
 	}
 	a.mu.Lock()
 	var cand *hubCand
@@ -452,7 +477,7 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 		// another phone, or the other mode: the forwarder stays, the
 		// target and the setting change
 		a.mu.Lock()
-		cur.cand, cur.user, cur.pass, cur.missed = *cand, user, pass, 0
+		cur.cand, cur.user, cur.pass, cur.missed = *cand, cand.user, cand.pass, 0
 		a.mu.Unlock()
 		if mode != cur.mode && mode != "manual" {
 			if err := a.applySysProxy(ctx, cur.service, mode, cur.ln.Addr().String()); err != nil {
@@ -465,7 +490,7 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 		a.Logf("phone hub: using %q at %s", cand.Label, cand.Addr)
 		return nil
 	}
-	if err := probeHub(ctx, cand.Addr, user, pass); err != nil {
+	if err := probeHub(ctx, cand.Addr, cand.user, cand.pass); err != nil {
 		return fmt.Errorf("can't reach %s: %v", cand.Label, err)
 	}
 	local := a.hubLocal
@@ -476,7 +501,7 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 	if err != nil {
 		return fmt.Errorf("the local proxy port %s: %v", local, err)
 	}
-	u := &hubUse{cand: *cand, since: time.Now(), mode: mode, user: user, pass: pass, ln: ln}
+	u := &hubUse{cand: *cand, since: time.Now(), mode: mode, user: cand.user, pass: cand.pass, ln: ln}
 	u.srv = &proxy.Server{
 		Allow: func(ad netip.Addr) bool { return ad.Unmap().IsLoopback() },
 		Dial:  a.hubDial,

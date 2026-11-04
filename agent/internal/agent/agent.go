@@ -48,8 +48,9 @@ type Agent struct {
 	rater *status.Rater
 	role  string
 
-	hookq  chan func()
-	pollMu sync.Mutex // serializes poll (the rater is not concurrency-safe)
+	hookq    chan func()
+	pollMu   sync.Mutex // serializes poll (the rater is not concurrency-safe)
+	secretMu sync.Mutex // stateSecret: each secret is created once
 
 	mu       sync.Mutex
 	snap     *status.Status
@@ -557,12 +558,28 @@ func genKey() (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
+// writeFileAtomic replaces path with data through a temp file of its own,
+// so concurrent writers never share (or rename away) each other's.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 var errClientOnly = errors.New("client role only")

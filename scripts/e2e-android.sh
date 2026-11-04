@@ -172,9 +172,9 @@ if [ -n "$TUN" ]; then
   ok "$TUN has $(sh_ ip -o -4 addr show dev "$TUN" | awk '{print $4}')"
   # from the ip addr dump: SELinux closes /sys/class/net to adb's shell
   MTU="$(sed -n "s/^[0-9]*: $TUN: .* mtu \([0-9]*\) .*/\1/p" "$OUT/ip-addr-connected.txt")"
-  # 1280 (the client default, like tailbondd's client.mtu), less the 8-byte
-  # reorder header when the mode negotiates reordering (Speed)
-  if [ "$MTU" = 1280 ] || [ "$MTU" = 1272 ]; then ok "$TUN MTU $MTU (1280 cap)"; else bad "$TUN MTU is $MTU, not 1280 (1272 with reorder)"; fi
+  # 1280 in every mode (like tailbondd's client.mtu, IPv6's minimum): in
+  # Speed the cap covers mqvpn's 8-byte reorder header
+  if [ "$MTU" = 1280 ]; then ok "$TUN MTU $MTU"; else bad "$TUN MTU is $MTU, not 1280"; fi
 else
   bad "no interface with a 10.77.0.x address: $(sh_ ip -o -4 addr show | awk '{print $2, $4}' | tr '\n' ' ')"
 fi
@@ -249,21 +249,23 @@ fi
 # 1888 = 0x0760 in /proc/net/tcp6 (listening on "::")
 # (informational: the SOCKS5 round trip below is the proof it listens)
 sh_ cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ':0760 .* 0A ' && ok "listening on TCP 1888" || note "TCP 1888 not seen in /proc/net/tcp*"
+# the login of a laptop "e2e-laptop" holding its server's pass for this phone
+HUBUSER="$(app_status | jq -r '.hub.user // empty')"
 HUBPASS="$(app_status | jq -r '.hub.pass // empty')"
 TIP="$(app_status | jq -r '.tunnel_ip // empty' | cut -d/ -f1)"
 adb forward tcp:18888 tcp:1888 >/dev/null
 # the token server answers only through the tunnel, so getting the token
 # through the hub means the hub's upstream went into the phone's tunnel
-GOT="$(curl -fsS -m 20 --socks5-hostname 127.0.0.1:18888 -U "tailbond:$HUBPASS" "http://10.77.0.1:8099$TOKEN_URL_PATH?via=phone-hub-socks" || true)"
+GOT="$(curl -fsS -m 20 --socks5-hostname 127.0.0.1:18888 -U "$HUBUSER:$HUBPASS" "http://10.77.0.1:8099$TOKEN_URL_PATH?via=phone-hub-socks" || true)"
 [ "$GOT" = "$TOKEN" ] && ok "SOCKS5 through the phone hub reached the tunnel-only token server" || bad "SOCKS5 through the hub: got '${GOT:0:80}'"
-GOT="$(curl -fsS -m 20 -p -x "http://tailbond:$HUBPASS@127.0.0.1:18888" "http://10.77.0.1:8099$TOKEN_URL_PATH?via=phone-hub-connect" || true)"
+GOT="$(curl -fsS -m 20 -p -x "http://${HUBUSER//\//%2F}:$HUBPASS@127.0.0.1:18888" "http://10.77.0.1:8099$TOKEN_URL_PATH?via=phone-hub-connect" || true)"
 [ "$GOT" = "$TOKEN" ] && ok "HTTP CONNECT through the phone hub reached it too" || bad "HTTP CONNECT through the hub: got '${GOT:0:80}'"
 if [ -n "$TIP" ] && grep -E "^$TIP .*GET $TOKEN_URL_PATH\?via=phone-hub-socks" "$WORK/www.log" >/dev/null; then
   ok "the token server saw the phone's tunnel address ($TIP) as the client: $(grep -E "via=phone-hub" "$WORK/www.log" | tail -n 1 | cut -c1-120)"
 else
   bad "the token server didn't log the phone's tunnel address '$TIP': $(grep -E 'via=phone-hub' "$WORK/www.log" | tail -n 2 | tr '\n' ' ')"
 fi
-if curl -fsS -m 10 --socks5-hostname 127.0.0.1:18888 -U "tailbond:wrong-password" "http://10.77.0.1:8099$TOKEN_URL_PATH" >/dev/null 2>&1; then
+if curl -fsS -m 10 --socks5-hostname 127.0.0.1:18888 -U "$HUBUSER:wrong-password" "http://10.77.0.1:8099$TOKEN_URL_PATH" >/dev/null 2>&1; then
   bad "the hub let a wrong password through"
 else
   ok "a wrong password is refused"
@@ -281,7 +283,9 @@ wait_for 10 app_is '.hub.status == "OFF"' && ok "hub stops" || bad "hub didn't s
 
 say "Pair & Share hub: a nearby phone's shared data (tb-sharesim on the host) as a relay path of the app's tunnel"
 if [ -s "$WORK/sharer.pid" ]; then
-  sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.SHARE_HUB_ADD --es addr 10.0.2.2:47077 >/dev/null
+  # its key id: the app links it with the pass the server gave it for that
+  SKID="$(grep -o 'key id [0-9a-f]*' "$WORK/sharer.log" | head -n1 | awk '{print $3}')"
+  sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.SHARE_HUB_ADD --es addr 10.0.2.2:47077 --es keyid "$SKID" >/dev/null
   if wait_for 45 app_is '[.hub_shares[]? | select(.state == "ready")] | length == 1'; then
     ok "link to the sharer ready: $(app_status | jq -c '[.hub_shares[] | {label, addr, via, state, path}]')"
   else

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"net"
 	"strconv"
@@ -12,8 +13,9 @@ import (
 
 	xproxy "golang.org/x/net/proxy"
 
-	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/pairing"
 	"github.com/kaovilai/tailbond/agent/internal/proxy"
+	"github.com/kaovilai/tailbond/agent/internal/share"
 	"github.com/kaovilai/tailbond/agent/internal/status"
 	"github.com/kaovilai/tailbond/agent/internal/sysproxy"
 )
@@ -113,11 +115,11 @@ func echoServer(t *testing.T) string {
 	return ln.Addr().String()
 }
 
-// fakeHub is a phone's proxy with the credentials of key.
+// fakeHub is the proxy of the phone whose own share key is key: it takes
+// the logins of hubs holding a pass for it.
 func fakeHub(t *testing.T, key string) (*proxy.Server, string) {
 	t.Helper()
-	u, p := proxy.Credentials([]byte(key))
-	s := &proxy.Server{User: u, Pass: p}
+	s := &proxy.Server{Auth: proxy.Verifier([]byte(key), time.Now, nil)}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -127,9 +129,19 @@ func fakeHub(t *testing.T, key string) (*proxy.Server, string) {
 	return s, ln.Addr().String()
 }
 
+var kid = share.KeyID([]byte("home-share-key"))
+
 func hubAgent(t *testing.T) (*Agent, *fakeSysProxy, *[]hubCand, *sync.Mutex) {
 	t.Helper()
-	a := clientAgent(t, func(c *config.Config) { c.Client.ShareKey = "home-share-key" })
+	a := clientAgent(t, nil)
+	// this Mac ("mac"), paired, with the server's pass for the phone's key
+	// ("home-share-key", key id kid) in its share cache
+	pp := &pairing.Payload{V: pairing.Version, Server: "198.51.100.1:443", User: "mac", Key: "k", Subnet: "10.77.0.0/24"}
+	exp := uint64(time.Now().Add(48 * time.Hour).Unix())
+	a.mu.Lock()
+	a.client.payload = pp
+	a.mu.Unlock()
+	a.setShareCache(pp, shareCacheEntry{Passes: []sharePass{{KeyID: kid, Key: hex.EncodeToString(share.PassKey([]byte("home-share-key"), "mac", exp)), Exp: exp}}})
 	fs := &fakeSysProxy{service: "Wi-Fi"}
 	a.sysProxy = fs
 	a.hubLocal = "127.0.0.1:0"
@@ -170,8 +182,8 @@ func TestPhoneHubUseMoveGone(t *testing.T) {
 	target := echoServer(t)
 	mu.Lock()
 	*cands = []hubCand{
-		{ID: "pixel", Label: "Pixel", Via: "mdns", addrs: []string{"127.0.0.1:1", hubAddr}},
-		{ID: "stranger", Label: "Not ours", Via: "mdns", addrs: []string{otherAddr}},
+		{ID: "pixel", Label: "Pixel", Via: "mdns", KeyID: kid, addrs: []string{"127.0.0.1:1", hubAddr}},
+		{ID: "stranger", Label: "Not ours", Via: "mdns", KeyID: share.KeyID([]byte("someone-elses-key")), addrs: []string{otherAddr}},
 	}
 	mu.Unlock()
 	a.hubRound(context.Background())
@@ -200,7 +212,7 @@ func TestPhoneHubUseMoveGone(t *testing.T) {
 	// the phone's address changes (a new hotspot session): the forwarder follows
 	hub2, hub2Addr := fakeHub(t, "home-share-key")
 	mu.Lock()
-	*cands = []hubCand{{ID: "pixel", Label: "Pixel", Via: "mdns", addrs: []string{hub2Addr}}}
+	*cands = []hubCand{{ID: "pixel", Label: "Pixel", Via: "mdns", KeyID: kid, addrs: []string{hub2Addr}}}
 	mu.Unlock()
 	a.hubRound(context.Background())
 	if got := throughForwarder(t, local, target); got != "re:hello" {
@@ -238,7 +250,7 @@ func TestPhoneHubStopPACAndStartupRestore(t *testing.T) {
 	a, fs, cands, mu := hubAgent(t)
 	_, hubAddr := fakeHub(t, "home-share-key")
 	mu.Lock()
-	*cands = []hubCand{{ID: "pixel", Label: "Pixel", Via: "server", addrs: []string{hubAddr}}}
+	*cands = []hubCand{{ID: "pixel", Label: "Pixel", Via: "server", KeyID: kid, addrs: []string{hubAddr}}}
 	mu.Unlock()
 	a.apiPort = "8077"
 	w := req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"refresh": true, "use": "pixel", "pac": true})
@@ -288,7 +300,7 @@ func TestPhoneHubManual(t *testing.T) {
 	a.sysProxy = nil
 	_, hubAddr := fakeHub(t, "home-share-key")
 	mu.Lock()
-	*cands = []hubCand{{ID: "pixel", Label: "Pixel", Via: "mdns", addrs: []string{hubAddr}}}
+	*cands = []hubCand{{ID: "pixel", Label: "Pixel", Via: "mdns", KeyID: kid, addrs: []string{hubAddr}}}
 	mu.Unlock()
 	w := req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"refresh": true, "use": "pixel"})
 	var st status.PhoneHub

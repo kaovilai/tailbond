@@ -89,8 +89,11 @@ final class ShareModel: ObservableObject {
         do {
             let p = try SharePairing.parse(text)
             Keychain.save(try JSONEncoder().encode(p))
+            let wasSharing = sharing
+            if wasSharing { stop() } // the relay holds the old pairing's key and server
             pairing = p
             pairError = nil
+            if wasSharing { start() }
         } catch SharePairing.ParseError.noShareKey {
             pairError = "This pairing is from an older home server. Update tailbond on it, then make a new code."
         } catch {
@@ -140,6 +143,14 @@ final class ShareModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.status = st
+                if self.usedMonth != self.month {
+                    // a new month while sharing: the relay's count and the
+                    // stored one start over together
+                    self.usedMonth = self.month
+                    self.usedBytesStored = 0
+                    self.relay?.resetUsage()
+                    return
+                }
                 self.usedBytesStored = Double(st.used)
             }
         }
@@ -179,9 +190,11 @@ final class ShareModel: ObservableObject {
             pairError = "Open tailbond on a device paired with your home server once, then pair this iPhone again: the pairing has no sharing key."
             return
         }
-        let c = ProxyCore.credentials(shareKey: Array(key.utf8))
         let name = p.name.isEmpty ? (p.user.isEmpty ? "iPhone" : p.user) : p.name
-        let s = ProxyServer(user: c.user, pass: c.pass, dialer: DirectDialer(interface: .cellular),
+        // hubs log in with the pass their home server gave them for this iPhone
+        let allowed = allowedHubs
+        let s = ProxyServer(auth: ProxyCore.verifier(ownKey: Array(key.utf8), allowed: allowed.isEmpty ? nil : { allowed.contains($0) }),
+                            dialer: DirectDialer(interface: .cellular),
                             advert: .init(name: name, id: shareID + "-hub", keyID: ShareProtocol.keyID(Array(key.utf8))))
         s.onChange = { [weak self] st in Task { @MainActor in self?.proxyStatus = st } }
         do {

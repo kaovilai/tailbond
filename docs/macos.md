@@ -144,7 +144,7 @@ over USB, then **Connections → Use a phone's connection → Use**. The
 card says *Using Pixel's bonded connection (proxy)*, and the top of the
 page says *via Pixel (proxy)*. The Mac's own tunnel can stay off. tailbondd points
 the Mac's SOCKS proxy at its own forwarder (127.0.0.1:1889), which relays
-to the phone with a password derived from your home server's share key.
+to the phone with a login derived from the pass your home server gave this Mac for that phone.
 
 - **Stop using it** puts your previous proxy setting back exactly. So does
   quitting tailbondd. The Mac may still be on the phone's hotspot

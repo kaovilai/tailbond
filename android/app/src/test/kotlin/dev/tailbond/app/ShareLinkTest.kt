@@ -54,8 +54,10 @@ class ShareLinkTest {
         return r to InetSocketAddress(lo, lan.localPort)
     }
 
-    private fun link(at: InetSocketAddress, key: ByteArray = this.key): ShareLink {
-        val l = ShareLink(ShareLink.Config(sharer = at, key = key, hubId = "pixel-hub", openLan = { DatagramSocket(0, lo) }))
+    /** A link with the server's pass for the sharer holding [sharerKey] (this hub: "pixel-hub"). */
+    private fun link(at: InetSocketAddress, sharerKey: ByteArray = this.key, exp: Long = System.currentTimeMillis() / 1000 + 86_400): ShareLink {
+        val pass = P.passKey(sharerKey, "pixel-hub", exp)
+        val l = ShareLink(ShareLink.Config(sharer = at, key = pass, exp = exp, hubId = "pixel-hub", openLan = { DatagramSocket(0, lo) }))
         l.start()
         closers += { l.stop() }
         return l
@@ -89,11 +91,17 @@ class ShareLinkTest {
         assertTrue(waitFor(1_000) { l.status.up >= 4 && l.status.down >= 7 })
     }
 
-    @Test fun anotherServersKeyIsRefused() {
-        val (_, at) = sharer(key = "another home server's share key!".toByteArray())
-        val l = link(at)
+    @Test fun aPassForAnotherDeviceIsRefused() {
+        val (_, at) = sharer(key = "another device's share key......".toByteArray())
+        val l = link(at) // a pass for this.key, not that sharer's
         assertTrue("refused: ${l.status}", waitFor(8_000) { l.status.state == ShareLink.REFUSED })
         assertTrue(l.status.reason.isNotEmpty())
+    }
+
+    @Test fun anExpiredPassIsRefused() {
+        val (_, at) = sharer()
+        val l = link(at, exp = System.currentTimeMillis() / 1000 - 60)
+        assertTrue("refused: ${l.status}", waitFor(8_000) { l.status.state == ShareLink.REFUSED })
     }
 
     @Test fun nobodyThereIsUnreachable() {

@@ -9,11 +9,17 @@ object TunnelPlan {
     val TUNNEL_SUBNET = ServerList.DEFAULT_SUBNET
     const val DEFAULT_DNS = "10.77.0.1"
     /**
-     * TUN MTU cap, the same as tailbondd's client default (client.mtu 1280):
-     * mqvpn's auto value (1382) assumes a 1500-byte uplink, and cellular and
-     * hotel Wi-Fi often carry less, so larger packets were lost.
+     * The tunnel's MTU, the same as tailbondd's client default (client.mtu
+     * 1280, IPv6's minimum): mqvpn's auto value (1382) assumes a 1500-byte
+     * uplink, and cellular and hotel Wi-Fi often carry less, so larger
+     * packets were lost.
      */
     const val TUN_MTU = 1280
+    /**
+     * mqvpn applies the cap, then takes its reorder header off (modes that
+     * reorder: Speed); the cap includes it, so the TUN still gets [TUN_MTU].
+     */
+    const val REORDER_HEADER = 8
 
     /** The pairing's DNS, else the server's own tunnel address (x.y.z.1 of its subnet). */
     fun dns(p: PairingPayload): List<String> = p.dns.ifEmpty { listOf(ServerList.serverTunnelIp(p)) }
@@ -35,9 +41,9 @@ object TunnelPlan {
             cellularPathEnabled = s.path(PathKind.CELLULAR).enabled,
             ethernetPathEnabled = s.path(PathKind.ETHERNET).enabled,
             reconnect = true,
-            tunMtu = TUN_MTU,
         )
-        return effectiveMode(p, s).applyTo(base, s.experimentalBackupFec)
+        val c = effectiveMode(p, s).applyTo(base, s.experimentalBackupFec)
+        return c.copy(tunMtu = TUN_MTU + if (c.reorderEnabled) REORDER_HEADER else 0)
     }
 
     /** Routes for VpnService.Builder.addRoute. */

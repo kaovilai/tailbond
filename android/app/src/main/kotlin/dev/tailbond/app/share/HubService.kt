@@ -144,7 +144,6 @@ class HubService : Service() {
             notifyNow()
             return
         }
-        val (user, pass) = ProxyServer.credentials(key.toByteArray(Charsets.UTF_8))
         val ss = try {
             ServerSocket().apply {
                 reuseAddress = true
@@ -158,7 +157,11 @@ class HubService : Service() {
         }
         val p = ProxyServer(
             ProxyServer.Config(
-                user = user, pass = pass, dial = ::dialThroughTunnel, allowLocal = ::onLan,
+                // hubs log in with the pass their server gave them for this phone
+                auth = ProxyServer.verifier(key.toByteArray(Charsets.UTF_8), allowed = { hub ->
+                    repo.settings.value.shareAllowedHubs.let { it.isEmpty() || hub in it }
+                }),
+                dial = ::dialThroughTunnel, allowLocal = ::onLan,
                 log = { Log.i(TAG, it) },
             ),
         )

@@ -29,8 +29,9 @@ import (
 type clientState struct {
 	payload  *pairing.Payload
 	serverIP string
-	active   []string // Path interfaces in the running config
-	pending  []string // desired set awaiting debounce
+	active   []string        // Path interfaces in the running config
+	relayed  map[string]bool // those of them that are share relay paths
+	pending  []string        // desired set awaiting debounce
 	pendingN int
 	usage    usageFile
 	lastCtr  map[string][2]uint64
@@ -317,18 +318,7 @@ func (a *Agent) reconcilePaths(immediate bool) {
 	cs.remember(ifs)
 	want := desiredPaths(cfg, ifs, cs.capReached, cs.captiveBlocked)
 	active := cs.active
-	change := false
-	for _, w := range want {
-		if !slices.Contains(active, w) {
-			change = true
-		}
-	}
-	for _, x := range active {
-		if present[x] && !slices.Contains(want, x) {
-			change = true
-		}
-	}
-	if !change {
+	if !pathSetChanged(active, want, present, cs.relayed) {
 		cs.pending, cs.pendingN = nil, 0
 		a.mu.Unlock()
 		return
@@ -348,6 +338,24 @@ func (a *Agent) reconcilePaths(immediate bool) {
 	a.mu.Unlock()
 	a.Logf("path set %v -> %v, restarting mqvpn", active, want)
 	a.sup.Restart()
+}
+
+// pathSetChanged: mqvpn's running paths (active) must change to give want.
+// A vanished interface is left to mqvpn, but a share's relay path is not an
+// interface: once its link is gone (sharing off, the sharer left) mqvpn
+// would keep sending to a closed relay port, so it is reconciled too.
+func pathSetChanged(active, want []string, present, relayed map[string]bool) bool {
+	for _, w := range want {
+		if !slices.Contains(active, w) {
+			return true
+		}
+	}
+	for _, x := range active {
+		if (present[x] || relayed[x]) && !slices.Contains(want, x) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) clientPreStart(ctx context.Context) error {
@@ -388,9 +396,16 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	if cfg.Client.NoDNS || split {
 		dns = nil
 	}
+	specs := a.pathSpecs(paths)
+	relayed := map[string]bool{}
+	for i, sp := range specs {
+		if sp != paths[i] { // NAME@127.0.0.1:PORT
+			relayed[paths[i]] = true
+		}
+	}
 	ini, err := mqconf.Client(mqconf.ClientParams{
 		Server: p.Server, ServerName: p.SNI, Insecure: p.Insecure, Key: p.Key, DNS: dns,
-		Paths: a.pathSpecs(paths), TunName: config.DefaultTunName, MTU: mtu, Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
+		Paths: specs, TunName: config.DefaultTunName, MTU: mtu, Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
 		ManageRoutes: cfg.Client.RoutesManaged(), KillSwitch: cfg.Client.KillSwitch, LogLevel: cfg.LogLevel,
 	})
 	if err != nil {
@@ -400,7 +415,7 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 		return err
 	}
 	a.mu.Lock()
-	a.client.active = paths
+	a.client.active, a.client.relayed = paths, relayed
 	a.client.serverIP = serverIP
 	a.mu.Unlock()
 	return nil

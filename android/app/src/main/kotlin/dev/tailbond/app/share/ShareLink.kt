@@ -16,12 +16,20 @@ import java.security.SecureRandom
  *
  * Plain JVM: the app gives it [Config.openLan], a socket bound to the Wi-Fi
  * network and kept out of tailbond's own VPN.
+ *
+ * Keys (internal/share): [Config.key] is this hub's pass for the sharer,
+ * from the home server (ShareProtocol.passKey of the sharer's own key, this
+ * hub's name, [Config.exp]); HELLO carries exp, and the sharer derives the
+ * same pass from its own key to check it.
  */
 class ShareLink(private val cfg: Config) {
     data class Config(
         val sharer: InetSocketAddress,
+        /** The pass for this sharer. */
         val key: ByteArray,
         val hubId: String,
+        /** The pass's expiry, unix seconds. */
+        val exp: Long = 0,
         /** The LAN socket toward the sharer. */
         val openLan: () -> DatagramSocket = { DatagramSocket() },
         /** Keep mqvpn's relay port when the sharer moves (0 = any). */
@@ -142,7 +150,7 @@ class ShareLink(private val cfg: Config) {
         var u = st.unanswered + 1
         val state = if (u >= 3 && st.state != LOST && st.state != REFUSED) UNREACHABLE else st.state
         st = st.copy(unanswered = u, state = state)
-        send(P.hello(hubNonce, cfg.hubId))
+        send(P.hello(hubNonce, cfg.exp, cfg.hubId))
     }
 
     private fun fromLan() {

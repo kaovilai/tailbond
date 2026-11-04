@@ -14,7 +14,8 @@
 //
 // -proxy ADDR:PORT runs the phone hub's proxy instead (docs/phone-hub.md):
 // internal/proxy's SOCKS5 + HTTP CONNECT server with the credentials derived
-// from the pairing's share key, advertised as _tailbond-proxy._tcp and
+// from this device's share key (hubs log in with their pass for it),
+// advertised as _tailbond-proxy._tcp and
 // registered with kind "proxy". Its upstream sockets use the normal route,
 // so on a Mac running tailbondd they go into the tunnel, as a phone's do.
 package main
@@ -168,7 +169,7 @@ func main() {
 		log.Fatal(err)
 	}
 	go func() { _ = sh.Serve(ctx, conn) }()
-	logf("sharing as %q on %s, upstream %s", *label, la, server)
+	logf("sharing as %q on %s, upstream %s, key id %s", *label, la, server, share.KeyID(key))
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
@@ -210,14 +211,14 @@ func resolve(network, s string) (addr, error) {
 // runProxy is the phone hub's proxy until ctx ends, logging each client's
 // byte counts (scripts/e2e-macos.sh reads them: the hub carried the traffic).
 func runProxy(ctx context.Context, la addr, key []byte, logf func(string, ...any)) {
-	user, pass := proxy.Credentials(key)
 	ln, err := net.Listen("tcp4", la.String())
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := &proxy.Server{User: user, Pass: pass, Logf: logf}
+	// hubs log in with the pass their server gave them for this device
+	s := &proxy.Server{Auth: proxy.Verifier(key, time.Now, nil), Logf: logf}
 	go func() { _ = s.Serve(ln) }()
-	logf("proxy on %s (user %s)", la, user)
+	logf("proxy on %s (key id %s)", la, share.KeyID(key))
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	last := ""

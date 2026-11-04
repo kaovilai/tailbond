@@ -15,7 +15,7 @@ doesn't touch `third_party/mqvpn/ios`.
 - **Pair:** scan the QR code from your home server (dashboard → Devices →
   Add a device), open the `tailbond://pair?d=…` link on the iPhone, or paste
   it. The pairing is kept in the iPhone's Keychain (this device only). Only
-  its server address and share key are used.
+  its server address and this iPhone's own share key are used.
 - **Share mobile data:** one big button. While on, the app listens on the
   Wi-Fi (UDP 47077, advertised over Bonjour as `_tailbond-share._udp`) and
   sends what the hub gives it to your home server over **cellular only**

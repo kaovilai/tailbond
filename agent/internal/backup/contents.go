@@ -16,9 +16,10 @@ import (
 )
 
 // StateFiles are the state_dir files a backup carries: the self-signed TLS
-// certificate and key (clients pin it) and the private global mqvpn key.
+// certificate and key (clients pin it), the private global mqvpn key and
+// the Pair & Share secret (devices' share keys derive from it).
 // Tailscale certificates are left out: Tailscale reissues them.
-var StateFiles = []string{"server.crt", "server.key", "global.key"}
+var StateFiles = []string{"server.crt", "server.key", "global.key", "share.key"}
 
 // A server's backup also carries the backups its clients pushed to it
 // (client-backups/<client>/<file>.tbbackup, each still locked with its own

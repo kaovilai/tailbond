@@ -107,6 +107,12 @@ class ShareService : Service() {
     private var lastRegister = 0L
     private var ticker: Thread? = null
     @Volatile private var running = false
+    /** The month the running relay counts in, and the limits it was given. */
+    private var relayMonth = ""
+    private var appliedCap = 0L
+    private var appliedHubs = emptySet<String>()
+    /** Stopped for want of a share key (an older pairing, not yet fetched). */
+    private var waitingForKey = false
 
     private val cellCb = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -189,6 +195,7 @@ class ShareService : Service() {
         val key = repo.shareKey(server?.payload)
         val cell = cellular
         val lanNet = wifi
+        waitingForKey = server == null || key == null
         when {
             server == null || key == null -> return status(ShareStatus.NO_KEY)
             cell == null -> return status(ShareStatus.NO_CELLULAR)
@@ -208,10 +215,13 @@ class ShareService : Service() {
             return status(ShareStatus.NO_WIFI)
         }
         val serverAddr = InetSocketAddress(payload.host, payload.port)
+        relayMonth = repo.shareMonth()
+        appliedCap = s.shareCapMb * 1_000_000
+        appliedHubs = s.shareAllowedHubs.toSet()
         val r = ShareRelay(
             ShareRelay.Config(
                 id = repo.shareId(), label = label(), key = key!!.toByteArray(Charsets.UTF_8),
-                capBytes = s.shareCapMb * 1_000_000, usedBytes = repo.sharedBytes(), allowedHubs = s.shareAllowedHubs.toSet(),
+                capBytes = appliedCap, usedBytes = repo.sharedBytes(), allowedHubs = appliedHubs,
                 openUpstream = {
                     val net = cellular ?: throw IllegalStateException("no mobile data")
                     DatagramSocket(null).also { d ->
@@ -237,7 +247,7 @@ class ShareService : Service() {
     @Synchronized
     private fun stopRelay() {
         relay?.let {
-            repo.setSharedBytes(it.usedBytes)
+            repo.setSharedBytes(relayMonth, it.usedBytes)
             it.stop()
         }
         relay = null
@@ -321,15 +331,45 @@ class ShareService : Service() {
             } catch (_: InterruptedException) {
                 return
             }
+            tick()
             relay?.let { r ->
                 changed()
-                if (System.currentTimeMillis() % 60_000 < 1_000) repo.setSharedBytes(r.usedBytes)
+                if (System.currentTimeMillis() % 60_000 < 1_000) repo.setSharedBytes(relayMonth, r.usedBytes)
             }
             val now = System.currentTimeMillis()
             if (relay != null && now - lastRegister > 60_000 && LiveState.live.value.state == ConnState.CONNECTED) {
                 lastRegister = now
                 register()
             }
+        }
+    }
+
+    /**
+     * Settings and time, applied to the running relay: a changed cap or
+     * allowed list at once (dropping hubs no longer allowed), a new month's
+     * counter, and a share key that arrived while sharing waited for one.
+     */
+    @Synchronized
+    private fun tick() {
+        if (!running) return
+        val r = relay
+        if (r == null) {
+            if (waitingForKey && repo.shareKey(repo.servers.value.firstOrNull()?.payload) != null) restartRelay()
+            return
+        }
+        val month = repo.shareMonth()
+        if (month != relayMonth) {
+            relayMonth = month
+            r.resetUsage()
+            repo.setSharedBytes(month, 0)
+        }
+        val s = repo.settings.value
+        val cap = s.shareCapMb * 1_000_000
+        val hubs = s.shareAllowedHubs.toSet()
+        if (cap != appliedCap || hubs != appliedHubs) {
+            appliedCap = cap
+            appliedHubs = hubs
+            r.updateLimits(cap, hubs)
         }
     }
 

@@ -3,15 +3,22 @@
 // or a Linux client), which bonds it as one more mqvpn path.
 //
 // The sharer runs a small UDP relay. The hub opens a session with an HMAC
-// challenge over a key every device paired with the same home server holds
-// (the server's share key, docs/architecture.md "Pair & Share"); then each
-// mqvpn datagram travels as a DATA frame hub → sharer → (cellular) → home
-// server and back. The relay only ever talks to its own home server, so it
-// can't be used to reach anything else.
+// challenge, then each mqvpn datagram travels as a DATA frame hub → sharer
+// → (cellular) → home server and back. The relay only ever talks to its own
+// home server, so it can't be used to reach anything else.
+//
+// Keys (docs/architecture.md "Pair & Share"): every paired device has its
+// own share key, derived by the server from a secret only it holds, the
+// device's name and its pairing (ClientKey). A sharer holds its own. A hub
+// gets from the server, for each other device, a pass: PassKey(that
+// device's key, hub name, expiry). The sharer derives the same pass from
+// its own key and the hub's name and expiry in HELLO, so it checks the hub
+// offline; a hub can't claim another hub's name, and a revoked one gets no
+// new passes, so its access ends when its last pass expires.
 //
 // Wire format (all integers big-endian):
 //
-//	HELLO      01 ver hub_nonce[16] idlen id
+//	HELLO      01 ver hub_nonce[16] exp[8] idlen id
 //	CHALLENGE  02 ver hub_nonce[16] sharer_nonce[16] idlen id lablen label
 //	AUTH       03 ver hub_nonce[16] sharer_nonce[16] mac[32]
 //	WELCOME    04 ver hub_nonce[16] session[8] cap_left[8] mac[32]
@@ -21,8 +28,9 @@
 //	KA_ACK     12 session[8] seq[4] up[8] down[8] cap_left[8] battery flags
 //	BYE        13 session[8] reason
 //
-// mac = HMAC-SHA256(share key, label ‖ hub_nonce ‖ sharer_nonce ‖ …), see
-// the mac* functions. cap_left is in bytes, ^0 = no cap.
+// mac = HMAC-SHA256(pass, label ‖ hub_nonce ‖ sharer_nonce ‖ …), see the
+// mac* functions; exp is the pass's expiry (unix seconds). cap_left is in
+// bytes, ^0 = no cap.
 package share
 
 import (
@@ -71,6 +79,7 @@ const (
 	ReasonNoCellular = 5 // the sharer has no cellular network right now
 	ReasonReplaced   = 6 // a newer session from the same hub
 	ReasonIdle       = 7 // no keepalive
+	ReasonExpired    = 8 // the hub's pass expired
 )
 
 // ReasonText is a reason in plain words.
@@ -90,6 +99,8 @@ func ReasonText(r byte) string {
 		return "replaced by a newer connection"
 	case ReasonIdle:
 		return "no answer"
+	case ReasonExpired:
+		return "the pass from the home server expired"
 	}
 	return "stopped"
 }
@@ -99,6 +110,7 @@ var errShort = errors.New("share: short frame")
 // Hello opens a handshake.
 type Hello struct {
 	HubNonce [NonceLen]byte
+	Exp      uint64 // the hub's pass expiry, unix seconds
 	HubID    string
 }
 
@@ -108,13 +120,13 @@ type Challenge struct {
 	SharerID, Label       string
 }
 
-// Auth proves the hub holds the share key.
+// Auth proves the hub holds a pass for this sharer.
 type Auth struct {
 	HubNonce, SharerNonce [NonceLen]byte
 	MAC                   [MACLen]byte
 }
 
-// Welcome opens the session and proves the sharer holds the key.
+// Welcome opens the session and proves the sharer holds its key.
 type Welcome struct {
 	HubNonce [NonceLen]byte
 	Session  [SessionLen]byte
@@ -169,16 +181,18 @@ func head(t byte, b []byte) ([]byte, error) {
 
 func (m *Hello) Marshal() []byte {
 	b := append([]byte{TypeHello, Version}, m.HubNonce[:]...)
+	b = binary.BigEndian.AppendUint64(b, m.Exp)
 	return putStr(b, m.HubID)
 }
 
 func (m *Hello) Unmarshal(b []byte) error {
 	r, err := head(TypeHello, b)
-	if err != nil || len(r) < NonceLen {
+	if err != nil || len(r) < NonceLen+8 {
 		return errShort
 	}
 	copy(m.HubNonce[:], r)
-	m.HubID, _, err = getStr(r[NonceLen:])
+	m.Exp = binary.BigEndian.Uint64(r[NonceLen:])
+	m.HubID, _, err = getStr(r[NonceLen+8:])
 	return err
 }
 
@@ -318,7 +332,23 @@ func mac(key []byte, label string, parts ...[]byte) [MACLen]byte {
 	return out
 }
 
-// AuthMAC is the hub's proof in AUTH.
+// ClientKey is a device's share key (hex), derived by the server from its
+// secret, the device's name and its pairing key: a new pairing under the
+// same name gets a new one, and a removed device's key opens nothing.
+func ClientKey(secret []byte, name, pairingKey string) string {
+	m := mac(secret, "tbs1-client", []byte(name), []byte{0}, []byte(pairingKey))
+	return hex.EncodeToString(m[:])
+}
+
+// PassKey is hub hubID's pass for the sharer whose share key is sharerKey,
+// valid until exp (unix seconds). The server hands it to the hub; the
+// sharer derives it from its own key and HELLO.
+func PassKey(sharerKey []byte, hubID string, exp uint64) []byte {
+	m := mac(sharerKey, "tbs1-pass", []byte(hubID), binary.BigEndian.AppendUint64(nil, exp))
+	return m[:]
+}
+
+// AuthMAC is the hub's proof in AUTH (key: the pass).
 func AuthMAC(key []byte, hubNonce, sharerNonce [NonceLen]byte, hubID string) [MACLen]byte {
 	return mac(key, "tbs1-auth", hubNonce[:], sharerNonce[:], []byte(hubID))
 }
@@ -333,8 +363,9 @@ func RefuseMAC(key []byte, hubNonce, sharerNonce [NonceLen]byte, reason byte) [M
 	return mac(key, "tbs1-refuse", hubNonce[:], sharerNonce[:], []byte{reason})
 }
 
-// KeyID is a short public tag of a share key (mDNS TXT "k="), so a hub only
-// talks to sharers of its own home server. It reveals nothing of the key.
+// KeyID is a short public tag of a sharer's share key (mDNS TXT "k="): the
+// hub picks the pass for it, and skips sharers it has none for (another
+// home server's, or removed). It reveals nothing of the key.
 func KeyID(key []byte) string {
 	m := mac(key, "tbs1-keyid")
 	return hex.EncodeToString(m[:4])

@@ -9,7 +9,13 @@ import javax.crypto.spec.SecretKeySpec
  * Share"; the Go reference is agent/internal/share/proto.go, and
  * agent/internal/share/testdata/vectors.json pins both).
  *
- *     HELLO      01 ver hub_nonce[16] idlen id
+ * The sharer holds its own share key (from its pairing). A hub proves it
+ * holds a pass the home server gave it for this sharer, [passKey] of that
+ * key, the hub's name and the pass's expiry (exp in HELLO): MACs use the
+ * pass, so a hub can't claim another hub's name, and a removed one's access
+ * ends when its last pass expires.
+ *
+ *     HELLO      01 ver hub_nonce[16] exp[8] idlen id
  *     CHALLENGE  02 ver hub_nonce[16] sharer_nonce[16] idlen id lablen label
  *     AUTH       03 ver hub_nonce[16] sharer_nonce[16] mac[32]
  *     WELCOME    04 ver hub_nonce[16] session[8] cap_left[8] mac[32]
@@ -51,10 +57,12 @@ object ShareProtocol {
     const val R_NO_CELLULAR = 5
     const val R_REPLACED = 6
     const val R_IDLE = 7
+    const val R_EXPIRED = 8
 
     const val FLAG_CHARGING = 1
 
-    class Hello(val hubNonce: ByteArray, val hubId: String)
+    /** [exp]: the hub's pass expiry, unix seconds. */
+    class Hello(val hubNonce: ByteArray, val exp: Long, val hubId: String)
     class Auth(val hubNonce: ByteArray, val sharerNonce: ByteArray, val mac: ByteArray)
 
     private fun idBytes(s: String): ByteArray {
@@ -63,10 +71,11 @@ object ShareProtocol {
     }
 
     fun parseHello(b: ByteArray, n: Int = b.size): Hello? {
-        if (n < 2 + NONCE + 1 || b[0] != HELLO || b[1].toInt() != VERSION) return null
-        val len = b[2 + NONCE].toInt() and 0xff
-        if (n < 3 + NONCE + len) return null
-        return Hello(b.copyOfRange(2, 2 + NONCE), String(b, 3 + NONCE, len, Charsets.UTF_8))
+        val at = 2 + NONCE + 8 // the id's length byte
+        if (n < at + 1 || b[0] != HELLO || b[1].toInt() != VERSION) return null
+        val len = b[at].toInt() and 0xff
+        if (n < at + 1 + len) return null
+        return Hello(b.copyOfRange(2, 2 + NONCE), ByteBuffer.wrap(b, 2 + NONCE, 8).long, String(b, at + 1, len, Charsets.UTF_8))
     }
 
     fun parseAuth(b: ByteArray, n: Int = b.size): Auth? {
@@ -74,9 +83,9 @@ object ShareProtocol {
         return Auth(b.copyOfRange(2, 2 + NONCE), b.copyOfRange(2 + NONCE, 2 + 2 * NONCE), b.copyOfRange(2 + 2 * NONCE, 2 + 2 * NONCE + MAC))
     }
 
-    fun hello(hubNonce: ByteArray, hubId: String): ByteArray {
+    fun hello(hubNonce: ByteArray, exp: Long, hubId: String): ByteArray {
         val id = idBytes(hubId)
-        return byteArrayOf(HELLO, VERSION.toByte()) + hubNonce + byteArrayOf(id.size.toByte()) + id
+        return byteArrayOf(HELLO, VERSION.toByte()) + hubNonce + long(exp) + byteArrayOf(id.size.toByte()) + id
     }
 
     fun challenge(hubNonce: ByteArray, sharerNonce: ByteArray, sharerId: String, label: String): ByteArray {
@@ -127,6 +136,10 @@ object ShareProtocol {
         return m.doFinal()
     }
 
+    /** Hub [hubId]'s pass for the sharer holding [sharerKey], until [exp] (unix seconds): the key of the MACs below. */
+    fun passKey(sharerKey: ByteArray, hubId: String, exp: Long): ByteArray =
+        mac(sharerKey, "tbs1-pass", hubId.toByteArray(Charsets.UTF_8), long(exp))
+
     fun authMac(key: ByteArray, hubNonce: ByteArray, sharerNonce: ByteArray, hubId: String): ByteArray =
         mac(key, "tbs1-auth", hubNonce, sharerNonce, hubId.toByteArray(Charsets.UTF_8))
 
@@ -136,7 +149,7 @@ object ShareProtocol {
     fun refuseMac(key: ByteArray, hubNonce: ByteArray, sharerNonce: ByteArray, reason: Int): ByteArray =
         mac(key, "tbs1-refuse", hubNonce, sharerNonce, byteArrayOf(reason.toByte()))
 
-    /** Public tag of a share key (mDNS TXT "k="): hubs skip other servers' sharers. */
+    /** Public tag of a sharer's share key (mDNS TXT "k="): hubs pick their pass by it. */
     fun keyId(key: ByteArray): String = mac(key, "tbs1-keyid").copyOf(4).joinToString("") { "%02x".format(it) }
 
     fun macEquals(a: ByteArray, b: ByteArray): Boolean = java.security.MessageDigest.isEqual(a, b)
@@ -149,6 +162,7 @@ object ShareProtocol {
         R_NO_CELLULAR -> "no mobile data"
         R_REPLACED -> "replaced"
         R_IDLE -> "no answer"
+        R_EXPIRED -> "pass expired"
         else -> "stopped"
     }
 }

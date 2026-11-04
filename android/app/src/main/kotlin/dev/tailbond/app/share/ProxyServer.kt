@@ -20,8 +20,13 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * The phone hub's proxy (docs/phone-hub.md): SOCKS5 (RFC 1928, password
  * RFC 1929; CONNECT only) and HTTP CONNECT on one port. A port of the Go
- * reference, agent/internal/proxy; the password derivation is pinned by its
+ * reference, agent/internal/proxy; the login derivation is pinned by its
  * testdata/vectors.json (ProxyServerTest).
+ *
+ * Login: a hub (the Mac) has the home server's pass for this phone,
+ * ShareProtocol.passKey(this phone's key, hub name, expiry); its user is
+ * "<hub>/<expiry>" and its password [credentials] of that pass. The phone
+ * checks it offline from its own key ([verifier]).
  *
  * Plain JVM (no Android classes): HubService gives it [Config.dial], which
  * opens upstream sockets on tailbond's VPN network, so the traffic goes into
@@ -29,9 +34,8 @@ import javax.crypto.spec.SecretKeySpec
  */
 class ProxyServer(private val cfg: Config) {
     data class Config(
-        /** Required when set (SOCKS5 method 0x02, Proxy-Authorization: Basic). */
-        val user: String = "",
-        val pass: String = "",
+        /** Required when set (SOCKS5 method 0x02, Proxy-Authorization: Basic): checks a login ([verifier]). */
+        val auth: ((user: String, pass: String) -> Boolean)? = null,
         /** Opens the upstream TCP connection. */
         val dial: (host: String, port: Int) -> Socket = { h, p -> Socket().apply { connect(InetSocketAddress(h, p), 20_000) } },
         /** May this source connect at all? Default: private, link-local, loopback, CGNAT. */
@@ -166,13 +170,12 @@ class ProxyServer(private val cfg: Config) {
         return b
     }
 
-    private fun eq(a: String, b: String) = MessageDigest.isEqual(a.toByteArray(), b.toByteArray())
 
     /** SOCKS5 handshake; null when refused (already answered). */
     private fun socks(i: InputStream, o: OutputStream): Triple<String, Int, (Boolean) -> Unit>? {
         val hdr = readFully(i, 2)
         val methods = readFully(i, hdr[1].toInt() and 0xff)
-        val want: Byte = if (cfg.user.isNotEmpty()) 2 else 0
+        val want: Byte = if (cfg.auth != null) 2 else 0
         if (want !in methods) {
             o.write(byteArrayOf(5, 0xff.toByte())); o.flush()
             return null
@@ -182,7 +185,7 @@ class ProxyServer(private val cfg: Config) {
             if (readByte(i) != 1) return null
             val u = String(readFully(i, readByte(i)))
             val p = String(readFully(i, readByte(i)))
-            val ok = eq(u, cfg.user) && eq(p, cfg.pass)
+            val ok = cfg.auth?.invoke(u, p) == true
             o.write(byteArrayOf(1, if (ok) 0 else 1)); o.flush()
             if (!ok) return null
         }
@@ -229,12 +232,13 @@ class ProxyServer(private val cfg: Config) {
             o.write("HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n".toByteArray()); o.flush()
             return null
         }
-        if (cfg.user.isNotEmpty()) {
+        val check = cfg.auth
+        if (check != null) {
             val auth = headers["proxy-authorization"].orEmpty()
             val ok = auth.startsWith("Basic ") && try {
                 val dec = String(Base64.getDecoder().decode(auth.removePrefix("Basic ").trim()))
                 val c = dec.indexOf(':')
-                c > 0 && eq(dec.substring(0, c), cfg.user) && eq(dec.substring(c + 1), cfg.pass)
+                c > 0 && check(dec.substring(0, c), dec.substring(c + 1))
             } catch (_: IllegalArgumentException) {
                 false
             }
@@ -257,18 +261,35 @@ class ProxyServer(private val cfg: Config) {
     companion object {
         const val SERVICE_TYPE = "_tailbond-proxy._tcp"
         const val DEFAULT_PORT = 1888
-        const val USER = "tailbond"
 
         /**
-         * The password from the home server's share key: the first 16
-         * characters of base32(HMAC-SHA256(key, "tbp1-proxy")), lower case.
+         * A hub's login for a phone, from the pass the home server gave the
+         * hub: user "<hubId>/<exp>", password the first 16 characters of
+         * base32(HMAC-SHA256(pass, "tbp1-proxy")), lower case.
          */
-        fun credentials(shareKey: ByteArray): Pair<String, String> {
+        fun credentials(pass: ByteArray, hubId: String, exp: Long): Pair<String, String> {
             val mac = Mac.getInstance("HmacSHA256")
-            mac.init(SecretKeySpec(shareKey, "HmacSHA256"))
+            mac.init(SecretKeySpec(pass, "HmacSHA256"))
             val sum = mac.doFinal("tbp1-proxy".toByteArray())
-            return USER to base32(sum).substring(0, 16).lowercase()
+            return "$hubId/$exp" to base32(sum).substring(0, 16).lowercase()
         }
+
+        /**
+         * The phone's check of a login: the pass derived from its own share
+         * key for the hub and expiry in user, not expired ([nowSec]: unix
+         * seconds); [allowed] (optional) limits the hubs by name.
+         */
+        fun verifier(ownKey: ByteArray, nowSec: () -> Long = { System.currentTimeMillis() / 1000 }, allowed: ((String) -> Boolean)? = null): (String, String) -> Boolean =
+            check@{ user, pass ->
+                val i = user.indexOf('/')
+                if (i <= 0) return@check false
+                val hub = user.substring(0, i)
+                val exp = user.substring(i + 1).toLongOrNull() ?: return@check false
+                if (exp < 0 || exp < nowSec()) return@check false
+                if (allowed != null && !allowed(hub)) return@check false
+                val want = credentials(ShareProtocol.passKey(ownKey, hub, exp), hub, exp).second
+                MessageDigest.isEqual(pass.toByteArray(), want.toByteArray())
+            }
 
         /** RFC 4648 base32, no padding. */
         fun base32(b: ByteArray): String {

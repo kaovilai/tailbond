@@ -8,14 +8,31 @@ import Foundation
 public enum ProxyCore {
     public static let serviceType = "_tailbond-proxy._tcp"
     public static let defaultPort: UInt16 = 1888
-    public static let user = "tailbond"
 
-    /// The password from the home server's share key: the first 16
-    /// characters of base32(HMAC-SHA256(key, "tbp1-proxy")), lower case.
-    /// Pinned by agent/internal/proxy/testdata/vectors.json.
-    public static func credentials(shareKey: [UInt8]) -> (user: String, pass: String) {
-        let mac = HMAC<SHA256>.authenticationCode(for: Array("tbp1-proxy".utf8), using: SymmetricKey(data: shareKey))
-        return (user, String(base32(Array(mac)).prefix(16)).lowercased())
+    /// A hub's login for a phone, from the pass the home server gave the hub
+    /// (ShareProtocol.passKey of the phone's key, hub name, expiry): user
+    /// "<hubID>/<exp>", password the first 16 characters of
+    /// base32(HMAC-SHA256(pass, "tbp1-proxy")), lower case. Pinned by
+    /// agent/internal/proxy/testdata/vectors.json.
+    public static func credentials(pass: [UInt8], hubID: String, exp: UInt64) -> (user: String, pass: String) {
+        let mac = HMAC<SHA256>.authenticationCode(for: Array("tbp1-proxy".utf8), using: SymmetricKey(data: pass))
+        return ("\(hubID)/\(exp)", String(base32(Array(mac)).prefix(16)).lowercased())
+    }
+
+    /// The phone's check of a login: the pass derived from its own share key
+    /// for the hub and expiry in user, not expired; `allowed` (optional)
+    /// limits the hubs by name.
+    public static func verifier(ownKey: [UInt8], now: @escaping () -> Date = Date.init,
+                                allowed: ((String) -> Bool)? = nil) -> (String, String) -> Bool {
+        return { user, pass in
+            guard let slash = user.firstIndex(of: "/") else { return false }
+            let hub = String(user[..<slash])
+            guard !hub.isEmpty, let exp = UInt64(user[user.index(after: slash)...]),
+                  Double(exp) >= now().timeIntervalSince1970 else { return false }
+            if let allowed, !allowed(hub) { return false }
+            let want = credentials(pass: ShareProtocol.passKey(sharerKey: ownKey, hubID: hub, exp: exp), hubID: hub, exp: exp).pass
+            return Handshake.eq(pass, want)
+        }
     }
 
     /// RFC 4648 base32, no padding.
@@ -51,14 +68,13 @@ public enum ProxyCore {
 
     /// One client's handshake. Feed it what arrives; act on each step.
     public struct Handshake {
-        let user: String
-        let pass: String
+        /// Checks a login (`verifier`); nil = no login asked.
+        let auth: ((String, String) -> Bool)?
         var buf: [UInt8] = []
         var phase = 0 // SOCKS: 0 greeting, 1 password, 2 request
 
-        public init(user: String, pass: String) {
-            self.user = user
-            self.pass = pass
+        public init(auth: ((String, String) -> Bool)?) {
+            self.auth = auth
         }
 
         public mutating func feed(_ b: [UInt8]) -> Step {
@@ -67,7 +83,7 @@ public enum ProxyCore {
             return first == 5 || phase > 0 ? socks() : http()
         }
 
-        private static func eq(_ a: String, _ b: String) -> Bool {
+        static func eq(_ a: String, _ b: String) -> Bool {
             let x = Array(a.utf8), y = Array(b.utf8)
             guard x.count == y.count else { return false }
             var d: UInt8 = 0
@@ -79,7 +95,7 @@ public enum ProxyCore {
             if phase == 0 {
                 guard buf.count >= 2, buf.count >= 2 + Int(buf[1]) else { return .more }
                 let methods = buf[2..<2 + Int(buf[1])]
-                let want: UInt8 = user.isEmpty ? 0 : 2
+                let want: UInt8 = auth == nil ? 0 : 2
                 buf.removeFirst(2 + Int(buf[1]))
                 guard methods.contains(want) else { return .refuse([5, 0xff]) }
                 phase = want == 2 ? 1 : 2
@@ -95,7 +111,7 @@ public enum ProxyCore {
                 let u = String(decoding: buf[2..<2 + ul], as: UTF8.self)
                 let p = String(decoding: buf[3 + ul..<3 + ul + pl], as: UTF8.self)
                 buf.removeFirst(3 + ul + pl)
-                guard Self.eq(u, user), Self.eq(p, pass) else { return .refuse([1, 1]) }
+                guard auth?(u, p) == true else { return .refuse([1, 1]) }
                 phase = 2
                 return .reply([1, 0])
             }
@@ -142,7 +158,7 @@ public enum ProxyCore {
             guard parts.count >= 2, parts[0] == "CONNECT" else {
                 return .refuse(Array("HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n".utf8))
             }
-            if !user.isEmpty {
+            if let auth {
                 var ok = false
                 for l in lines.dropFirst() {
                     let kv = l.split(separator: ":", maxSplits: 1)
@@ -150,7 +166,7 @@ public enum ProxyCore {
                     let v = kv[1].trimmingCharacters(in: .whitespaces)
                     if v.hasPrefix("Basic "), let d = Data(base64Encoded: String(v.dropFirst(6))),
                        let s = String(data: d, encoding: .utf8), let c = s.firstIndex(of: ":") {
-                        ok = Self.eq(String(s[..<c]), user) && Self.eq(String(s[s.index(after: c)...]), pass)
+                        ok = auth(String(s[..<c]), String(s[s.index(after: c)...]))
                     }
                 }
                 guard ok else {

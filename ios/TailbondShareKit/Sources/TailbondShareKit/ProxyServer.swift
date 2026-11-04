@@ -80,8 +80,7 @@ public final class ProxyServer {
     }
 
     private let queue = DispatchQueue(label: "tailbond.proxy")
-    private let user: String
-    private let pass: String
+    private let auth: ((String, String) -> Bool)?
     private let port: NWEndpoint.Port
     private let dialer: ProxyDialer
     private let advert: Advert?
@@ -93,9 +92,9 @@ public final class ProxyServer {
     public var onChange: ((Status) -> Void)?
 
     /// port 0: any (tests read `status.port`).
-    public init(user: String, pass: String, port: UInt16 = ProxyCore.defaultPort, dialer: ProxyDialer, advert: Advert? = nil) {
-        self.user = user
-        self.pass = pass
+    /// auth: checks a login (ProxyCore.verifier); nil = no login asked (tests).
+    public init(auth: ((String, String) -> Bool)?, port: UInt16 = ProxyCore.defaultPort, dialer: ProxyDialer, advert: Advert? = nil) {
+        self.auth = auth
         self.port = port == 0 ? .any : (NWEndpoint.Port(rawValue: port) ?? .any)
         self.dialer = dialer
         self.advert = advert
@@ -173,7 +172,7 @@ public final class ProxyServer {
         }
         track(c)
         c.start(queue: queue)
-        var hs = ProxyCore.Handshake(user: user, pass: pass)
+        var hs = ProxyCore.Handshake(auth: auth)
         func readMore() {
             c.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, done, err in
                 guard let self else { return }

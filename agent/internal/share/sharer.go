@@ -24,7 +24,8 @@ type SharerConfig struct {
 	// ID identifies this sharer (stable per device); Label is what hubs show
 	// ("Pixel's 5G").
 	ID, Label string
-	// Key is the home server's share key.
+	// Key is this device's own share key (from its pairing): hubs' passes
+	// are derived from it.
 	Key []byte
 	// Server is the home server's mqvpn address (host:port). The relay
 	// forwards to it and nowhere else.
@@ -43,11 +44,14 @@ type SharerConfig struct {
 	Check func() (reason byte, battery byte, charging bool)
 	// Logf (optional) logs.
 	Logf func(format string, args ...any)
+	// Now (optional) is the clock passes are checked against.
+	Now func() time.Time
 }
 
 type pending struct {
 	sharerNonce [NonceLen]byte
 	hubID       string
+	exp         uint64
 	addr        string
 	at          time.Time
 }
@@ -56,6 +60,7 @@ type session struct {
 	id       [SessionLen]byte
 	hubID    string
 	hubAddr  net.Addr
+	exp      uint64 // the hub's pass expiry (unix seconds)
 	up       net.Conn
 	upBytes  atomic.Uint64
 	dnBytes  atomic.Uint64
@@ -92,6 +97,9 @@ func NewSharer(cfg SharerConfig) (*Sharer, error) {
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
 	s := &Sharer{
 		cfg:      cfg,
@@ -177,13 +185,11 @@ func (s *Sharer) handle(ctx context.Context, b []byte, from net.Addr) {
 			return
 		}
 		p := b[DataHeader:]
-		// counted before it leaves, so the counters and the cap are current
-		// by the time anyone sees the datagram's effect; undone on failure
-		x.upBytes.Add(uint64(len(p)))
-		s.used.Add(uint64(len(p)))
+		// counted before it goes: the reply can reach the hub before Write
+		// returns, and the counters must already include it
+		s.count(&x.upBytes, len(p))
 		if _, err := x.up.Write(p); err != nil {
-			x.upBytes.Add(^uint64(len(p) - 1))
-			s.used.Add(^uint64(len(p) - 1))
+			s.count(&x.upBytes, -len(p))
 		}
 		x.lastSeen.Store(time.Now().UnixNano())
 	case TypeKeepalive:
@@ -222,7 +228,7 @@ func (s *Sharer) handle(ctx context.Context, b []byte, from net.Addr) {
 			s.mu.Unlock()
 			return
 		}
-		s.pending[h.HubNonce] = pending{sharerNonce: sn, hubID: h.HubID, addr: from.String(), at: time.Now()}
+		s.pending[h.HubNonce] = pending{sharerNonce: sn, hubID: h.HubID, exp: h.Exp, addr: from.String(), at: time.Now()}
 		s.mu.Unlock()
 		c := Challenge{HubNonce: h.HubNonce, SharerNonce: sn, SharerID: s.cfg.ID, Label: s.cfg.Label}
 		_, _ = s.conn.WriteTo(c.Marshal(), from)
@@ -237,12 +243,21 @@ func (s *Sharer) handle(ctx context.Context, b []byte, from net.Addr) {
 			delete(s.pending, a.HubNonce)
 		}
 		s.mu.Unlock()
+		if !ok {
+			return
+		}
+		// the hub's pass for us: bound to its name and expiry, so it can't
+		// claim another hub's name
+		pass := PassKey(s.cfg.Key, p.hubID, p.exp)
 		// a wrong key, a replay or a stranger gets no answer at all
-		if !ok || p.sharerNonce != a.SharerNonce || p.addr != from.String() ||
-			!Equal(a.MAC, AuthMAC(s.cfg.Key, a.HubNonce, a.SharerNonce, p.hubID)) {
+		if p.sharerNonce != a.SharerNonce || p.addr != from.String() ||
+			!Equal(a.MAC, AuthMAC(pass, a.HubNonce, a.SharerNonce, p.hubID)) {
 			return
 		}
 		reason, _, _ := s.check()
+		if s.expired(p.exp) {
+			reason = ReasonExpired
+		}
 		if reason == ReasonNone && len(s.cfg.AllowedHubs) > 0 && !slices.Contains(s.cfg.AllowedHubs, p.hubID) {
 			reason = ReasonNotAllowed
 		}
@@ -250,23 +265,29 @@ func (s *Sharer) handle(ctx context.Context, b []byte, from net.Addr) {
 			reason = ReasonCap
 		}
 		if reason != ReasonNone {
-			r := Refuse{HubNonce: a.HubNonce, Reason: reason, MAC: RefuseMAC(s.cfg.Key, a.HubNonce, a.SharerNonce, reason)}
+			r := Refuse{HubNonce: a.HubNonce, Reason: reason, MAC: RefuseMAC(pass, a.HubNonce, a.SharerNonce, reason)}
 			_, _ = s.conn.WriteTo(r.Marshal(), from)
 			s.cfg.Logf("share: refused hub %s (%s)", p.hubID, ReasonText(reason))
 			return
 		}
-		x, err := s.open(ctx, p.hubID, from)
+		x, err := s.open(ctx, p.hubID, p.exp, from)
 		if err != nil {
-			r := Refuse{HubNonce: a.HubNonce, Reason: ReasonNoCellular, MAC: RefuseMAC(s.cfg.Key, a.HubNonce, a.SharerNonce, ReasonNoCellular)}
+			r := Refuse{HubNonce: a.HubNonce, Reason: ReasonNoCellular, MAC: RefuseMAC(pass, a.HubNonce, a.SharerNonce, ReasonNoCellular)}
 			_, _ = s.conn.WriteTo(r.Marshal(), from)
 			s.cfg.Logf("share: no upstream for hub %s: %v", p.hubID, err)
 			return
 		}
 		capLeft := s.capLeft()
-		w := Welcome{HubNonce: a.HubNonce, Session: x.id, CapLeft: capLeft, MAC: WelcomeMAC(s.cfg.Key, a.HubNonce, a.SharerNonce, x.id, capLeft)}
+		w := Welcome{HubNonce: a.HubNonce, Session: x.id, CapLeft: capLeft, MAC: WelcomeMAC(pass, a.HubNonce, a.SharerNonce, x.id, capLeft)}
 		_, _ = s.conn.WriteTo(w.Marshal(), from)
 		s.cfg.Logf("share: hub %s (%s) connected", p.hubID, from)
 	}
+}
+
+// expired: a pass that ran out (exp in unix seconds).
+func (s *Sharer) expired(exp uint64) bool {
+	now := s.cfg.Now().Unix()
+	return now < 0 || uint64(now) > exp
 }
 
 // sessionFrom finds the frame's session, from its own hub's address only.
@@ -284,14 +305,14 @@ func (s *Sharer) sessionFrom(b []byte, from net.Addr) *session {
 	return x
 }
 
-func (s *Sharer) open(ctx context.Context, hubID string, from net.Addr) (*session, error) {
+func (s *Sharer) open(ctx context.Context, hubID string, exp uint64, from net.Addr) (*session, error) {
 	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	up, err := s.cfg.Dial(dctx, s.cfg.Server)
 	cancel()
 	if err != nil {
 		return nil, err
 	}
-	x := &session{hubID: hubID, hubAddr: from, up: up, since: time.Now()}
+	x := &session{hubID: hubID, hubAddr: from, exp: exp, up: up, since: time.Now()}
 	_, _ = rand.Read(x.id[:])
 	x.lastSeen.Store(time.Now().UnixNano())
 	s.mu.Lock()
@@ -326,15 +347,22 @@ func (s *Sharer) pumpDown(x *session) {
 			return
 		}
 		out = Data(out, x.id, buf[DataHeader:DataHeader+n])
-		// counted first, as upstream: the hub may ask for the counters
-		// (KEEPALIVE) the moment this frame reaches it
-		x.dnBytes.Add(uint64(n))
-		s.used.Add(uint64(n))
+		s.count(&x.dnBytes, n) // before it goes, as upstream
 		if _, err := s.conn.WriteTo(out, x.hubAddr); err != nil {
-			x.dnBytes.Add(^uint64(n - 1))
-			s.used.Add(^uint64(n - 1))
+			s.count(&x.dnBytes, -n)
 		}
 	}
+}
+
+// count adds n payload bytes (negative: takes them back) to a session's
+// counter and to the total.
+func (s *Sharer) count(c *atomic.Uint64, n int) {
+	d := uint64(n)
+	if n < 0 {
+		d = ^uint64(-n - 1) // two's complement: Add subtracts
+	}
+	c.Add(d)
+	s.used.Add(d)
 }
 
 // end closes a session; bye tells the hub why.
@@ -379,7 +407,7 @@ func (s *Sharer) janitor(ctx context.Context) {
 		case <-t.C:
 		}
 		now := time.Now()
-		var idle []*session
+		var idle, expired []*session
 		s.mu.Lock()
 		for k, p := range s.pending {
 			if now.Sub(p.at) > handshakeTTL {
@@ -387,13 +415,20 @@ func (s *Sharer) janitor(ctx context.Context) {
 			}
 		}
 		for _, x := range s.sessions {
-			if now.Sub(time.Unix(0, x.lastSeen.Load())) > sessionIdle {
+			switch {
+			case s.expired(x.exp):
+				// a revoked hub gets no new pass: its sessions end with the last one
+				expired = append(expired, x)
+			case now.Sub(time.Unix(0, x.lastSeen.Load())) > sessionIdle:
 				idle = append(idle, x)
 			}
 		}
 		s.mu.Unlock()
 		for _, x := range idle {
 			s.end(x, ReasonIdle, true)
+		}
+		for _, x := range expired {
+			s.end(x, ReasonExpired, true)
 		}
 		if reason, _, _ := s.check(); reason != ReasonNone {
 			s.closeAll(reason)

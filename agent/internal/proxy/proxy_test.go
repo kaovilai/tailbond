@@ -5,15 +5,19 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"io"
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kaovilai/tailbond/agent/internal/share"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata/vectors.json")
@@ -106,9 +110,17 @@ func roundTrip(t *testing.T, c net.Conn) string {
 	return string(b[:n])
 }
 
+// phoneKey is the phone's own share key; the Mac ("mac") has a pass for it.
+var phoneKey = []byte("0123456789abcdef0123456789abcdef")
+
+func macLogin(exp uint64) (string, string) {
+	return Credentials(share.PassKey(phoneKey, "mac", exp), "mac", exp)
+}
+
 func TestSocksWithCredentials(t *testing.T) {
-	user, pass := Credentials([]byte("share-key"))
-	s := &Server{User: user, Pass: pass}
+	exp := uint64(time.Now().Add(24 * time.Hour).Unix())
+	user, pass := macLogin(exp)
+	s := &Server{Auth: Verifier(phoneKey, time.Now, nil)}
 	p := serve(t, s)
 	target := echo(t)
 	c, step := socksConnect(t, p, user, pass, target)
@@ -125,6 +137,25 @@ func TestSocksWithCredentials(t *testing.T) {
 	if _, step := socksConnect(t, p, "", "", target); step != "method" {
 		t.Errorf("no auth offered: failed at %q, want method", step)
 	}
+	// another hub's name with the Mac's password: the pass is per hub
+	if _, step := socksConnect(t, p, "laptop/"+strconv.FormatUint(exp, 10), pass, target); step != "auth" {
+		t.Errorf("borrowed password: %q", step)
+	}
+	// an expired pass
+	ou, op := macLogin(uint64(time.Now().Add(-time.Minute).Unix()))
+	if _, step := socksConnect(t, p, ou, op, target); step != "auth" {
+		t.Errorf("expired pass: %q", step)
+	}
+	// another server's devices: a pass for a different phone key
+	xu, xp := Credentials(share.PassKey([]byte("some other phone"), "mac", exp), "mac", exp)
+	if _, step := socksConnect(t, p, xu, xp, target); step != "auth" {
+		t.Errorf("other key: %q", step)
+	}
+	// only allowed hubs
+	only := &Server{Auth: Verifier(phoneKey, time.Now, func(h string) bool { return h == "laptop" })}
+	if _, step := socksConnect(t, serve(t, only), user, pass, target); step != "auth" {
+		t.Errorf("hub not allowed: %q", step)
+	}
 	time.Sleep(50 * time.Millisecond)
 	up, down, clients := s.Stats()
 	if up < 5 || down < 8 || len(clients) != 1 || clients[0].Up < 5 {
@@ -133,7 +164,7 @@ func TestSocksWithCredentials(t *testing.T) {
 }
 
 func TestHTTPConnect(t *testing.T) {
-	s := &Server{User: "tailbond", Pass: "pw"}
+	s := &Server{Auth: func(u, p string) bool { return u == "mac/9" && p == "pw" }}
 	p := serve(t, s)
 	target := echo(t)
 	try := func(auth string) (net.Conn, string) {
@@ -153,7 +184,7 @@ func TestHTTPConnect(t *testing.T) {
 	if _, line := try(""); !strings.Contains(line, "407") {
 		t.Errorf("no auth: %q", line)
 	}
-	c, line := try("tailbond:pw")
+	c, line := try("mac/9:pw")
 	if !strings.Contains(line, "200") {
 		t.Fatalf("auth: %q", line)
 	}
@@ -220,18 +251,28 @@ func TestDialHook(t *testing.T) {
 	}
 }
 
-// The Kotlin and Swift servers derive the same password (vectors.json).
+// The Kotlin and Swift servers derive the same login (vectors.json).
 func TestCredentialVectors(t *testing.T) {
 	type vec struct {
-		ShareKey string `json:"share_key"`
+		ShareKey string `json:"share_key"` // the phone's own key
+		Hub      string `json:"hub"`
+		Exp      uint64 `json:"exp"`
+		PassKey  string `json:"pass_key"` // hex: what the server gives the hub
 		User     string `json:"user"`
 		Pass     string `json:"pass"`
 	}
-	keys := []string{"0123456789abcdef0123456789abcdef", "k", "a much longer share key, 64 bytes or so, as the server makes it."}
+	in := []struct {
+		key, hub string
+		exp      uint64
+	}{{"0123456789abcdef0123456789abcdef", "mac", 1793836800}, {"k", "slate7", 1}, {"a much longer share key, 64 bytes or so, as the server makes it.", "dana-macbook", 4102444800}}
 	var vs []vec
-	for _, k := range keys {
-		u, p := Credentials([]byte(k))
-		vs = append(vs, vec{k, u, p})
+	for _, x := range in {
+		pk := share.PassKey([]byte(x.key), x.hub, x.exp)
+		u, p := Credentials(pk, x.hub, x.exp)
+		vs = append(vs, vec{x.key, x.hub, x.exp, hex.EncodeToString(pk), u, p})
+		if !Verifier([]byte(x.key), func() time.Time { return time.Unix(0, 0) }, nil)(u, p) {
+			t.Errorf("%s: the phone doesn't accept its own derivation", x.hub)
+		}
 	}
 	path := "testdata/vectors.json"
 	if *update {

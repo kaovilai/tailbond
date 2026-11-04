@@ -1,0 +1,28 @@
+# tailbond server with Docker Compose or Podman Compose. UNTESTED TEMPLATE.
+#   TAILBOND_PUBLIC_ADDR=vps.example.net TAILBOND_UI_PASSWORD=change-me docker compose up -d --build
+# See docs/deploy.md.
+services:
+  tailbond:
+    build: .
+    image: tailbond-server:local
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv6.conf.all.forwarding: "1"
+    environment:
+      TAILBOND_PUBLIC_ADDR: ${TAILBOND_PUBLIC_ADDR:?set TAILBOND_PUBLIC_ADDR}
+      TAILBOND_PORT: ${TAILBOND_PORT:-443}
+      TAILBOND_SUBNET: ${TAILBOND_SUBNET:-10.77.0.0/24}
+      TAILBOND_MODE: ${TAILBOND_MODE:-speed}
+      TAILBOND_UI_PASSWORD: ${TAILBOND_UI_PASSWORD:-}
+    ports:
+      - "${TAILBOND_PORT:-443}:${TAILBOND_PORT:-443}/udp"
+      # Dashboard: keep it off the internet; reach it over SSH tunnel or a VPN.
+      - "127.0.0.1:8077:8077/tcp"
+    volumes:
+      - tailbond-data:/data
+
+volumes:
+  tailbond-data:

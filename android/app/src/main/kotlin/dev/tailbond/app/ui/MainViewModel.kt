@@ -232,8 +232,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val list = PeersClient.fetch(key, host, dev.tailbond.app.BuildConfig.VERSION_NAME)
                 repo.savePeers(list)
                 Log.i(TAG, "machine list from $host: ${list.peers.size} machines")
-                // pairings older than Pair & Share: learn the share key the same way
-                if (repo.shareKey(server.payload) == null) dev.tailbond.app.share.ShareKey.fetch(key, host)?.let(repo::saveShareKey)
+                // pairings older than Pair & Share: learn this pairing's share key the
+                // same way (sharing waiting for it starts within a second)
+                if (repo.shareKey(server.payload) == null) {
+                    dev.tailbond.app.share.ShareKey.fetch(key, host)?.let { repo.saveShareKey(server.payload, it) }
+                }
                 null
             } catch (e: Exception) {
                 (e.message ?: e.javaClass.simpleName).also { Log.w(TAG, "machine list from $host failed: $it") }

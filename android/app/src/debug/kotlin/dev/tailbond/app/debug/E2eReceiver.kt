@@ -23,7 +23,7 @@ import kotlinx.serialization.json.put
  *     → result data: {"state":"CONNECTED","tunnel_ip":…,"paths":[…],"servers":1,"peers":{…}}
  *   … -a dev.tailbond.app.debug.HUB --ez on true|false
  *     → starts/stops "Share bonded connection" (phone hub proxy)
- *   … -a dev.tailbond.app.debug.SHARE_HUB_ADD --es addr 10.0.2.2:47077
+ *   … -a dev.tailbond.app.debug.SHARE_HUB_ADD --es addr 10.0.2.2:47077 --es keyid <the sharer's key id>
  *     → bonds the sharer at that address (Pair & Share, hub side)
  *   … -a dev.tailbond.app.debug.PAIR --es uri 'tailbond://pair?d=…'
  *     → stores the pairing as the "Add phone" button does (fallback when the
@@ -43,7 +43,9 @@ class E2eReceiver : BroadcastReceiver() {
                 val a = intent.getStringExtra("addr").orEmpty()
                 val i = a.lastIndexOf(':')
                 if (i > 0) {
-                    dev.tailbond.app.share.ShareHubState.manual += java.net.InetSocketAddress(a.substring(0, i), a.substring(i + 1).toInt())
+                    // with its key id: the server's pass for it is picked by that
+                    dev.tailbond.app.share.ShareHubState.manual[java.net.InetSocketAddress(a.substring(0, i), a.substring(i + 1).toInt())] =
+                        intent.getStringExtra("keyid").orEmpty()
                     resultData = "ok"
                 } else {
                     resultData = "addr host:port"
@@ -114,7 +116,15 @@ class E2eReceiver : BroadcastReceiver() {
                             hub.clients.forEach { c -> add(buildJsonObject { put("addr", c.addr); put("up", c.up); put("down", c.down) }) }
                         })
                         // debug builds only, to adb's shell: the test proxies with it
-                        if (key != null) put("pass", dev.tailbond.app.share.ProxyServer.credentials(key.toByteArray()).second)
+                        // a login for a test hub "e2e-laptop" (what its server's pass
+                        // would give it), so the host can stand in for that laptop
+                        if (key != null) {
+                            val exp = System.currentTimeMillis() / 1000 + 86_400
+                            val pk = dev.tailbond.app.share.ShareProtocol.passKey(key.toByteArray(), "e2e-laptop", exp)
+                            val (u, pw) = dev.tailbond.app.share.ProxyServer.credentials(pk, "e2e-laptop", exp)
+                            put("user", u)
+                            put("pass", pw)
+                        }
                     })
                     put("peers", if (peers == null) JsonNull else buildJsonObject {
                         put("server", peers.server)

@@ -22,6 +22,11 @@ public final class ShareRelay {
     private let port: NWEndpoint.Port
     private var listener: NWListener?
     private var hubs: [String: NWConnection] = [:]
+    /// When each LAN peer last sent anything: peers with no session or
+    /// handshake are forgotten after a while, and there are at most maxPeers.
+    private var hubSeen: [String: Date] = [:]
+    private static let maxPeers = 64
+    private static let peerIdle: TimeInterval = 15
     private var upstreams: [[UInt8]: NWConnection] = [:]
     private var timer: DispatchSourceTimer?
     private var status = Status()
@@ -72,19 +77,29 @@ public final class ShareRelay {
         t.setEventHandler { [weak self] in
             guard let self else { return }
             self.run(self.core.tick())
-            self.changed()
+            self.forgetIdlePeers(Date())
+            self.changed() // counters: published here, not per datagram
         }
         t.resume()
         timer = t
     }
 
-    /// Changes the cap and allowed hubs while sharing (they apply at once).
+    /// Changes the cap and allowed hubs while sharing (they apply at once:
+    /// hubs no longer allowed are dropped, a raised cap lets hubs back in).
     public func updateLimits(capBytes: UInt64, allowedHubs: Set<String>) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.core.config.capBytes = capBytes
-            self.core.config.allowedHubs = allowedHubs
-            self.run(self.core.tick())
+            self.run(self.core.updateLimits(capBytes: capBytes, allowedHubs: allowedHubs))
+            self.changed()
+        }
+    }
+
+    /// A new month: the cap counts from zero again.
+    public func resetUsage() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.core.resetUsage()
+            self.changed()
         }
     }
 
@@ -99,6 +114,7 @@ public final class ShareRelay {
             listener = nil
             hubs.values.forEach { $0.cancel() }
             hubs = [:]
+            hubSeen = [:]
             upstreams.values.forEach { $0.cancel() }
             upstreams = [:]
         }
@@ -107,7 +123,14 @@ public final class ShareRelay {
     private func key(_ c: NWConnection) -> String { "\(c.endpoint)" }
 
     private func accept(_ c: NWConnection) {
+        let now = Date()
+        if hubs.count >= Self.maxPeers { forgetIdlePeers(now, all: true) }
+        guard hubs.count < Self.maxPeers else {
+            c.cancel()
+            return
+        }
         hubs[key(c)] = c
+        hubSeen[key(c)] = now
         c.start(queue: queue)
         receiveHub(c)
     }
@@ -115,8 +138,26 @@ public final class ShareRelay {
     private func receiveHub(_ c: NWConnection) {
         c.receiveMessage { [weak self] data, _, _, err in
             guard let self else { return }
-            if let data, !data.isEmpty { self.run(self.core.handle([UInt8](data), from: self.key(c))) }
-            if err == nil { self.receiveHub(c) } else { self.hubs.removeValue(forKey: self.key(c)) }
+            let k = self.key(c)
+            if let data, !data.isEmpty {
+                self.hubSeen[k] = Date()
+                self.run(self.core.handle([UInt8](data), from: k))
+            }
+            guard self.hubs[k] === c else { return } // forgotten, maybe replaced
+            if err == nil { self.receiveHub(c) } else { self.forget(k) }
+        }
+    }
+
+    private func forget(_ k: String) {
+        hubs.removeValue(forKey: k)?.cancel()
+        hubSeen.removeValue(forKey: k)
+    }
+
+    /// Cancels LAN peers with no session or handshake: quiet for a while,
+    /// or (all) any of them, to make room.
+    private func forgetIdlePeers(_ now: Date, all: Bool = false) {
+        for (k, seen) in hubSeen where !core.knows(k) && (all || now.timeIntervalSince(seen) > Self.peerIdle) {
+            forget(k)
         }
     }
 
@@ -141,19 +182,23 @@ public final class ShareRelay {
     }
 
     private func run(_ actions: [SharerCore.Action]) {
+        var hubsChanged = false
         for a in actions {
             switch a {
             case let .toHub(hub, bytes):
                 hubs[hub]?.send(content: Data(bytes), completion: .contentProcessed { _ in })
             case let .openUpstream(session):
+                hubsChanged = true
                 openUpstream(session)
             case let .toUpstream(session, bytes):
                 upstreams[session]?.send(content: Data(bytes), completion: .contentProcessed { _ in })
             case let .closeUpstream(session):
+                hubsChanged = true
                 upstreams.removeValue(forKey: session)?.cancel()
             }
         }
-        if !actions.isEmpty { changed() }
+        // a hub came or went: say so now; byte counters wait for the timer
+        if hubsChanged { changed() }
     }
 
     private func changed() {

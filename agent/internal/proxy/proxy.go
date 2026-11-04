@@ -9,11 +9,15 @@
 // and iPhone (TailbondShareKit) servers follow it, pinned by
 // testdata/vectors.json (the credentials).
 //
-// Auth: every device paired with the same home server holds its share key
-// (Pair & Share); the proxy's password is derived from it (Credentials), so
-// a Mac paired with that server can use a phone's hub with no setup, and
-// nobody else can. Only private, link-local and loopback sources are
-// accepted at all.
+// Auth (Pair & Share's keys, internal/share): every paired device has its
+// own share key, and a hub (the Mac) gets from the home server a pass for
+// each other device, PassKey(that device's key, hub name, expiry). The
+// proxy's user is "<hub name>/<expiry>" and its password is derived from
+// the pass (Credentials); the phone derives the same pass from its own key
+// and checks it offline (Verifier). So a Mac paired with the same server
+// can use a phone's hub with no setup, a removed device's access ends when
+// its last pass expires, and nobody else gets in. Only private, link-local
+// and loopback sources are accepted at all.
 package proxy
 
 import (
@@ -34,6 +38,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/kaovilai/tailbond/agent/internal/share"
 )
 
 // Service is the mDNS service type a hub advertises.
@@ -42,25 +48,44 @@ const Service = "_tailbond-proxy._tcp"
 // DefaultPort is the proxy's port (the phone's).
 const DefaultPort = 1888
 
-// User is the SOCKS / HTTP proxy user name.
-const User = "tailbond"
-
-// Credentials derives the proxy password from the home server's share key:
-// the first 16 characters of base32(HMAC-SHA256(key, "tbp1-proxy")),
-// lower case, no padding.
-func Credentials(shareKey []byte) (user, pass string) {
-	m := hmac.New(sha256.New, shareKey)
+// Credentials is a hub's proxy login for one phone, from the pass the home
+// server gave the hub for that phone: user "<hubID>/<exp>", password the
+// first 16 characters of base32(HMAC-SHA256(pass, "tbp1-proxy")), lower
+// case, no padding.
+func Credentials(pass []byte, hubID string, exp uint64) (user, password string) {
+	m := hmac.New(sha256.New, pass)
 	m.Write([]byte("tbp1-proxy"))
 	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(m.Sum(nil))
-	return User, strings.ToLower(enc[:16])
+	return hubID + "/" + strconv.FormatUint(exp, 10), strings.ToLower(enc[:16])
+}
+
+// Verifier checks a login on the phone: the pass derived from the phone's
+// own share key (share.PassKey) for the hub and expiry in user, not
+// expired. allowed (optional) limits the hubs, by name.
+func Verifier(ownKey []byte, now func() time.Time, allowed func(hub string) bool) func(user, pass string) bool {
+	return func(user, pass string) bool {
+		hub, e, ok := strings.Cut(user, "/")
+		if !ok || hub == "" {
+			return false
+		}
+		exp, err := strconv.ParseUint(e, 10, 64)
+		if err != nil || int64(exp) < now().Unix() {
+			return false
+		}
+		if allowed != nil && !allowed(hub) {
+			return false
+		}
+		_, want := Credentials(share.PassKey(ownKey, hub, exp), hub, exp)
+		return hmac.Equal([]byte(pass), []byte(want))
+	}
 }
 
 // Server is one proxy. Zero values: no auth (tests), any private source,
 // net.Dialer.
 type Server struct {
-	// User/Pass, when set, are required (SOCKS5 method 0x02, HTTP
-	// Proxy-Authorization: Basic).
-	User, Pass string
+	// Auth, when set, is required (SOCKS5 method 0x02, HTTP
+	// Proxy-Authorization: Basic) and checks a login (Verifier).
+	Auth func(user, pass string) bool
 	// Dial opens the upstream connection; nil = net.Dialer. On a phone the
 	// default (the app's own sockets) is what puts the traffic into the
 	// VPN tunnel.
@@ -245,7 +270,7 @@ func (s *Server) socks(br *bufio.Reader, w io.Writer) (string, func(bool) error,
 		return "", nil, err
 	}
 	want := byte(0x00)
-	if s.User != "" {
+	if s.Auth != nil {
 		want = 0x02
 	}
 	if !contains(methods, want) {
@@ -260,7 +285,7 @@ func (s *Server) socks(br *bufio.Reader, w io.Writer) (string, func(bool) error,
 		if err != nil {
 			return "", nil, err
 		}
-		ok := hmac.Equal([]byte(u), []byte(s.User)) && hmac.Equal([]byte(p), []byte(s.Pass))
+		ok := s.Auth(u, p)
 		st := byte(0)
 		if !ok {
 			st = 1
@@ -369,9 +394,9 @@ func (s *Server) httpConnect(br *bufio.Reader, w io.Writer) (string, func(bool) 
 		_, _ = io.WriteString(w, "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n")
 		return "", nil, errors.New("only CONNECT")
 	}
-	if s.User != "" {
+	if s.Auth != nil {
 		u, p, ok := proxyBasicAuth(req.Header.Get("Proxy-Authorization"))
-		if !ok || !hmac.Equal([]byte(u), []byte(s.User)) || !hmac.Equal([]byte(p), []byte(s.Pass)) {
+		if !ok || !s.Auth(u, p) {
 			_, _ = io.WriteString(w, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"tailbond\"\r\nContent-Length: 0\r\n\r\n")
 			return "", nil, errAuth
 		}

@@ -143,5 +143,27 @@ if command -v tailscale >/dev/null && is_true "$(tbcfg_or server.advertise_route
 	esac
 fi
 
+# Tailscale may have no address yet (at boot it can start after us): the
+# phone page redirect above needs it, and nothing else runs this hook when
+# Tailscale comes up. Wait for it in the background, then run again.
+if [ -z "$ts4" ] && [ -z "$TB_TS_WAITED" ] && [ "$(tbcfg_or main.landing_port 8078)" != 0 ] &&
+	command -v tailscale >/dev/null; then
+	hook="$0"
+	(
+		i=0
+		while [ "$i" -lt 90 ]; do
+			sleep 10
+			i=$((i + 1))
+			# the server stopped meanwhile (server-down cleaned up)
+			ip link show dev "$TB_TUN" >/dev/null 2>&1 || exit 0
+			[ -n "$(tailscale ip -4 2>/dev/null | head -n1)" ] || continue
+			log "tailscale is up: applying server-up again"
+			TB_TS_WAITED=1 "$hook"
+			exit 0
+		done
+	) </dev/null >/dev/null 2>&1 &
+	log "tailscale has no address yet: the phone page waits for it"
+fi
+
 log "server-up: mqvpn on udp/$port, subnet $subnet via $TB_TUN"
 exit 0

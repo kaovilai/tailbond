@@ -39,14 +39,19 @@ no tunnel of its own, or whose own connections are poor.
     code 7 (see *Limits*).
   - The reference implementation is `agent/internal/proxy`. The Android
     (`ProxyServer.kt`) and iPhone (`TailbondShareKit`) servers follow it.
-- **Password:**
-  - The user is `tailbond`.
+- **Login** (Pair & Share's keys, [architecture.md](architecture.md#pair--share)):
+  - Every paired device has its own share key. A hub (the Mac) gets a pass
+    from the home server for each other device: `PassKey(that device's
+    key, hub name, expiry)`, the same pass it uses for that device's relay.
+  - The user is `<hub name>/<expiry>`, e.g. `dana-macbook/1793836800`.
   - The password is the first 16 characters of
-    `base32(HMAC-SHA256(share_key, "tbp1-proxy"))`, lower case, with no
-    padding.
-  - `share_key` is the home server's Pair & Share key. Every device paired
-    with that server already has it, so there is nothing to set up.
-    Devices paired with another server, or not paired at all, are refused.
+    `base32(HMAC-SHA256(pass, "tbp1-proxy"))`, lower case, with no padding.
+  - The phone re-derives the pass from its own key and the user's hub name
+    and expiry, and checks it offline. An expired pass, another device's
+    pass, or a hub not on the phone's allowed list is refused. A removed
+    device gets no new passes, so its access ends within two days.
+  - There is nothing to set up: a Mac paired with the same home server has
+    its passes already.
   - `agent/internal/proxy/testdata/vectors.json` pins the derivation for
     all three implementations.
 - **Who may connect:**
@@ -56,7 +61,8 @@ no tunnel of its own, or whose own connections are poor.
     mobile data.
 - **Discovery:**
   - mDNS service `_tailbond-proxy._tcp`, with the TXT keys of Pair & Share
-    (`id`, `label`, `kid` = the share key's id).
+    (`id`, `label`, `kid` = the phone's share key id, which tells the hub
+    which pass to use).
   - Also the home server's registry `POST /api/shares` with `"kind":
     "proxy"`. Pair & Share hubs ignore those entries.
 - **Upstream:** the proxy's outgoing sockets are the phone app's own. The
@@ -204,7 +210,7 @@ and is tested.
 
 **tailbond Share → For a Mac → Share mobile data with a Mac** runs the same proxy on
 the iPhone (`TailbondShareKit`: `ProxyCore` and `ProxyServer`, with the
-same password from the share key). It advertises `_tailbond-proxy._tcp`,
+same login, checked from the iPhone's own share key). It advertises `_tailbond-proxy._tcp`,
 so a Mac finds it like an Android hub. Its advert says `b=0`: the Mac
 labels it *mobile data only, not bonded*, and says how to bond an iPhone
 over USB instead.

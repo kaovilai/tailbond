@@ -71,9 +71,20 @@ func startSharer(t *testing.T, cfg SharerConfig) *rig {
 	return &rig{sharer: s, lanAt: lan.LocalAddr().(*net.UDPAddr), cancel: cancel}
 }
 
-func startLink(t *testing.T, at *net.UDPAddr, key []byte, hub string) *Link {
+// passExp is a pass expiry an hour from now.
+func passExp() uint64 { return uint64(time.Now().Add(time.Hour).Unix()) }
+
+// startLink starts hub's link with the pass the server would give it for
+// the sharer holding sharerKey.
+func startLink(t *testing.T, at *net.UDPAddr, sharerKey []byte, hub string) *Link {
 	t.Helper()
-	l, err := NewLink(LinkConfig{Sharer: at, Key: key, HubID: hub})
+	exp := passExp()
+	return startLinkPass(t, at, PassKey(sharerKey, hub, exp), exp, hub)
+}
+
+func startLinkPass(t *testing.T, at *net.UDPAddr, pass []byte, exp uint64, hub string) *Link {
+	t.Helper()
+	l, err := NewLink(LinkConfig{Sharer: at, Key: pass, Exp: exp, HubID: hub})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +137,7 @@ func roundTrip(t *testing.T, c *net.UDPConn, msg string) {
 func TestFramesRoundTrip(t *testing.T) {
 	var hn, sn [NonceLen]byte
 	hn[0], sn[15] = 1, 2
-	h := Hello{HubNonce: hn, HubID: "slate7"}
+	h := Hello{HubNonce: hn, Exp: 1767225600, HubID: "slate7"}
 	var h2 Hello
 	if err := h2.Unmarshal(h.Marshal()); err != nil || h2 != h {
 		t.Fatalf("hello: %v %+v", err, h2)
@@ -178,6 +189,67 @@ func TestMACsBindEverything(t *testing.T) {
 	}
 	if KeyID(testKey) == KeyID([]byte("other")) || len(KeyID(testKey)) != 8 {
 		t.Fatal("key id")
+	}
+	// passes: bound to the sharer's key, the hub's name and the expiry
+	p := PassKey(testKey, "slate7", 100)
+	if string(p) == string(PassKey(testKey, "laptop", 100)) || string(p) == string(PassKey(testKey, "slate7", 101)) ||
+		string(p) == string(PassKey([]byte("k2"), "slate7", 100)) {
+		t.Fatal("pass ignores the hub, the expiry or the sharer's key")
+	}
+	// device keys: per name and per pairing
+	ck := ClientKey([]byte("secret"), "pixel", "pk1")
+	if ck == ClientKey([]byte("secret"), "pixel", "pk2") || ck == ClientKey([]byte("secret"), "tab", "pk1") ||
+		ck == ClientKey([]byte("other"), "pixel", "pk1") || len(ck) != 64 {
+		t.Fatal("client key ignores the name, the pairing or the server secret")
+	}
+}
+
+// A hub with a pass of its own can't use it under another hub's name: the
+// allowed list means that hub, not whoever says so.
+func TestForgedHubNameGetsNothing(t *testing.T) {
+	r := startSharer(t, SharerConfig{AllowedHubs: []string{"slate7"}})
+	exp := passExp()
+	laptopPass := PassKey(testKey, "laptop", exp)
+	l := startLinkPass(t, r.lanAt, laptopPass, exp, "slate7")
+	st := waitState(t, l, StateRefused, 6*time.Second)
+	if !strings.Contains(st.Reason, "different home server") {
+		t.Fatalf("reason %q", st.Reason)
+	}
+	// nor can it stretch its pass's expiry
+	l2 := startLinkPass(t, r.lanAt, laptopPass, exp+3600, "laptop")
+	waitState(t, l2, StateRefused, 6*time.Second)
+	if len(r.sharer.Sessions()) != 0 {
+		t.Fatal("a forged pass opened a session")
+	}
+}
+
+func TestExpiredPassIsRefused(t *testing.T) {
+	r := startSharer(t, SharerConfig{})
+	exp := uint64(time.Now().Add(-time.Minute).Unix())
+	l := startLinkPass(t, r.lanAt, PassKey(testKey, "slate7", exp), exp, "slate7")
+	if st := waitState(t, l, StateRefused, 3*time.Second); st.Reason != ReasonText(ReasonExpired) {
+		t.Fatalf("reason %q", st.Reason)
+	}
+	// a fresh pass from the server: in again at once
+	fresh := passExp()
+	l.SetPass(PassKey(testKey, "slate7", fresh), fresh)
+	waitState(t, l, StateReady, 3*time.Second)
+}
+
+// A revoked hub gets no new pass: its running session ends when the pass
+// it opened with runs out.
+func TestSessionEndsWhenThePassExpires(t *testing.T) {
+	var skew atomic.Int64
+	r := startSharer(t, SharerConfig{Now: func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }})
+	l := startLink(t, r.lanAt, testKey, "slate7")
+	waitState(t, l, StateReady, 3*time.Second)
+	skew.Store(int64(2 * time.Hour))
+	st := waitState(t, l, StateRefused, 6*time.Second)
+	if st.Reason != ReasonText(ReasonExpired) {
+		t.Fatalf("reason %q", st.Reason)
+	}
+	if len(r.sharer.Sessions()) != 0 {
+		t.Fatal("session outlived its pass")
 	}
 }
 

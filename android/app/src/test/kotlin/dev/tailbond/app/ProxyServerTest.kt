@@ -1,6 +1,7 @@
 package dev.tailbond.app
 
 import dev.tailbond.app.share.ProxyServer
+import dev.tailbond.app.share.ShareProtocol
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -31,9 +32,15 @@ class ProxyServerTest {
         assertTrue(vs.size >= 3)
         for (v in vs) {
             val o = v.jsonObject
-            val (u, p) = ProxyServer.credentials(o["share_key"]!!.jsonPrimitive.content.toByteArray())
+            val key = o["share_key"]!!.jsonPrimitive.content.toByteArray()
+            val hub = o["hub"]!!.jsonPrimitive.content
+            val exp = o["exp"]!!.jsonPrimitive.content.toLong()
+            val pk = ShareProtocol.passKey(key, hub, exp)
+            assertEquals(o["pass_key"]!!.jsonPrimitive.content, pk.joinToString("") { "%02x".format(it) })
+            val (u, p) = ProxyServer.credentials(pk, hub, exp)
             assertEquals(o["user"]!!.jsonPrimitive.content, u)
             assertEquals(o["pass"]!!.jsonPrimitive.content, p)
+            assertTrue("the phone accepts it", ProxyServer.verifier(key, { 0L })(u, p))
         }
         // RFC 4648 test vectors (no padding)
         assertEquals("MZXW6YTBOI", ProxyServer.base32("foobar".toByteArray()))
@@ -97,8 +104,10 @@ class ProxyServerTest {
     }
 
     @Test fun socksWithThePassword() {
-        val (u, p) = ProxyServer.credentials("share-key".toByteArray())
-        val (srv, port) = serve(ProxyServer.Config(user = u, pass = p))
+        val phone = "0123456789abcdef0123456789abcdef".toByteArray()
+        val exp = System.currentTimeMillis() / 1000 + 86_400
+        val (u, p) = ProxyServer.credentials(ShareProtocol.passKey(phone, "mac", exp), "mac", exp)
+        val (srv, port) = serve(ProxyServer.Config(auth = ProxyServer.verifier(phone)))
         val target = echo()
         val (c, step) = socks(port, u, p, target)
         assertEquals("", step)
@@ -106,6 +115,10 @@ class ProxyServerTest {
         c.close()
         assertEquals("auth", socks(port, u, "wrong", target).second)
         assertEquals("method", socks(port, "", "", target).second)
+        assertEquals("auth", socks(port, "laptop/$exp", p, target).second) // another hub's name
+        val old = System.currentTimeMillis() / 1000 - 60
+        val (ou, op) = ProxyServer.credentials(ShareProtocol.passKey(phone, "mac", old), "mac", old)
+        assertEquals("auth", socks(port, ou, op, target).second) // expired
         Thread.sleep(100)
         assertTrue("up ${srv.upBytes}", srv.upBytes >= 5)
         assertTrue("down ${srv.downBytes}", srv.downBytes >= 8)
@@ -113,7 +126,7 @@ class ProxyServerTest {
     }
 
     @Test fun httpConnect() {
-        val (_, port) = serve(ProxyServer.Config(user = "tailbond", pass = "pw"))
+        val (_, port) = serve(ProxyServer.Config(auth = { u, p -> u == "mac/9" && p == "pw" }))
         val target = echo()
         fun attempt(auth: String?): Pair<Socket, String> {
             val c = Socket(lo, port)
@@ -126,7 +139,7 @@ class ProxyServerTest {
             return c to String(b, 0, maxOf(n, 0))
         }
         assertTrue(attempt(null).second.contains("407"))
-        val (c, line) = attempt("tailbond:pw")
+        val (c, line) = attempt("mac/9:pw")
         assertTrue(line, line.contains("200"))
         assertEquals("re:hello", roundTrip(c))
         c.close()

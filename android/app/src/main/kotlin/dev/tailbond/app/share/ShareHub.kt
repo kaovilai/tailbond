@@ -48,8 +48,11 @@ object ShareHubState {
     private val _live = MutableStateFlow<List<HubShare>>(emptyList())
     val live: StateFlow<List<HubShare>> = _live.asStateFlow()
     internal fun set(v: List<HubShare>) { _live.value = v }
-    /** Sharer addresses added by hand (debug builds: the emulator e2e, where mDNS can't reach the host). */
-    val manual: MutableSet<InetSocketAddress> = ConcurrentHashMap.newKeySet()
+    /**
+     * Sharers added by hand, address → their key id (debug builds: the
+     * emulator e2e, where mDNS can't reach the host).
+     */
+    val manual: MutableMap<InetSocketAddress, String> = ConcurrentHashMap()
 }
 
 /**
@@ -60,7 +63,9 @@ object ShareHubState {
  * link's local port, as tailbondd does on a travel router or a Mac.
  *
  * The link's LAN socket is bound to the Wi-Fi network and protect()ed, so it
- * never goes into tailbond's own VPN. [round] runs on an IO thread while the
+ * never goes into tailbond's own VPN. Keys: the home server gives this hub a
+ * pass per other device (GET /api/shares "passes", by key id); a sharer
+ * without a pass here isn't linked. [round] runs on an IO thread while the
  * tunnel runs; [setRelays] hands the ready set to the VPN service.
  */
 class ShareHub(
@@ -71,10 +76,13 @@ class ShareHub(
 ) {
     private class Found(val id: String, val label: String, val keyId: String, val addr: InetSocketAddress, val via: String)
     private class Entry(val link: ShareLink, val found: Found, var seen: Long)
+    private class Pass(val key: ByteArray, val exp: Long)
 
     private val cm: ConnectivityManager = ctx.getSystemService()!!
     private val links = HashMap<String, Entry>()
     private val mdns = ConcurrentHashMap<String, Found>()
+    /** The server's passes for this hub, by sharer key id (kept while it can't be reached). */
+    @Volatile private var passes: Map<String, Pass> = emptyMap()
     private var discovery: NsdManager.DiscoveryListener? = null
     @Volatile private var resolving = false
     private val pending = java.util.ArrayDeque<NsdServiceInfo>()
@@ -94,24 +102,25 @@ class ShareHub(
             return
         }
         startDiscovery()
-        val keyBytes = key.toByteArray(Charsets.UTF_8)
-        val kid = P.keyId(keyBytes)
-        val own = repo.shareId()
+        val own = P.keyId(key.toByteArray(Charsets.UTF_8))
         val found = ArrayList<Found>()
         found += mdns.values
-        found += registry(server.payload, kid)
-        for (a in ShareHubState.manual) found += Found("manual-${a.hostString}:${a.port}", "", kid, a, "manual")
+        found += registry(server.payload)
+        for ((a, k) in ShareHubState.manual) found += Found("manual-${a.hostString}:${a.port}", "", k, a, "manual")
+        val nowSec = System.currentTimeMillis() / 1000
+        val usable = passes.filterValues { it.exp > nowSec }
         val now = System.currentTimeMillis()
         for (f in found) {
-            if (f.keyId != kid || f.id == own) continue
+            if (f.keyId == own) continue // this phone's own share
+            val pass = usable[f.keyId] ?: continue // no pass from the server for it
             val e = links[f.id]
             if (e != null && e.found.addr != f.addr && (f.via == "mdns" || e.found.via != "mdns")) {
                 // moved: a new link on the same local port, so mqvpn's relay path stays
                 val port = e.link.localPort
                 e.link.stop()
-                links[f.id] = Entry(newLink(f, keyBytes, server.payload.user, port), f, now)
+                links[f.id] = Entry(newLink(f, pass, server.payload.user, port), f, now)
             } else if (e == null) {
-                links[f.id] = Entry(newLink(f, keyBytes, server.payload.user, 0), f, now)
+                links[f.id] = Entry(newLink(f, pass, server.payload.user, 0), f, now)
                 Log.i(TAG, "share hub: found ${f.label.ifEmpty { f.addr.toString() }} (${f.via})")
             } else {
                 e.seen = now
@@ -130,10 +139,10 @@ class ShareHub(
         }.sortedBy { it.id })
     }
 
-    private fun newLink(f: Found, key: ByteArray, hubId: String, localPort: Int): ShareLink {
+    private fun newLink(f: Found, pass: Pass, hubId: String, localPort: Int): ShareLink {
         val l = ShareLink(
             ShareLink.Config(
-                sharer = f.addr, key = key, hubId = hubId.ifEmpty { repo.shareId() }, localPort = localPort,
+                sharer = f.addr, key = pass.key, exp = pass.exp, hubId = hubId.ifEmpty { repo.shareId() }, localPort = localPort,
                 openLan = {
                     DatagramSocket(null).also { d ->
                         protect(d) // never into our own tunnel
@@ -152,11 +161,13 @@ class ShareHub(
         return l
     }
 
-    /** The home server's list: sharers on this phone's Wi-Fi subnet (through the tunnel, with the pairing's token). */
-    private fun registry(p: dev.tailbond.app.pairing.PairingPayload, kid: String): List<Found> {
+    /**
+     * The home server's list (through the tunnel, with the pairing's token):
+     * this hub's passes, and the sharers on this phone's Wi-Fi subnet.
+     */
+    private fun registry(p: dev.tailbond.app.pairing.PairingPayload): List<Found> {
         val subnets = wifi()?.let { cm.getLinkProperties(it) }?.linkAddresses
             ?.filter { it.address is Inet4Address }?.map { it.address to it.prefixLength }.orEmpty()
-        if (subnets.isEmpty()) return emptyList()
         val (code, body) = try {
             PairRequestClient.socketExchange(
                 InetAddress.getByName(ServerList.serverTunnelIp(p)), PairRequestClient.PORT, "GET", "/api/shares", null,
@@ -167,8 +178,19 @@ class ShareHub(
         }
         if (code != 200) return emptyList()
         return try {
+            val root = Json.parseToJsonElement(body).jsonObject
+            val ps = HashMap<String, Pass>()
+            for (x in root["passes"]?.jsonArray.orEmpty()) {
+                val o = x.jsonObject
+                val k = o["key"]?.jsonPrimitive?.content ?: continue
+                val id = o["key_id"]?.jsonPrimitive?.content ?: continue
+                val exp = o["exp"]?.jsonPrimitive?.content?.toLongOrNull() ?: continue
+                ps[id] = Pass(k.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), exp)
+            }
+            if (ps.isNotEmpty()) passes = ps
+            if (subnets.isEmpty()) return emptyList()
             val out = ArrayList<Found>()
-            for (s in Json.parseToJsonElement(body).jsonObject["sharers"]?.jsonArray.orEmpty()) {
+            for (s in root["sharers"]?.jsonArray.orEmpty()) {
                 val o = s.jsonObject
                 if (o["kind"]?.jsonPrimitive?.content == "proxy") continue // phone hubs' proxies aren't relays
                 if (o["client"]?.jsonPrimitive?.content == p.user) continue
@@ -182,7 +204,7 @@ class ShareHub(
                     o["key_id"]?.jsonPrimitive?.content.orEmpty(), InetSocketAddress(ip, port), "server",
                 )
             }
-            out.filter { it.keyId == kid }
+            out
         } catch (e: Exception) {
             Log.i(TAG, "share hub: server list: ${e.message}")
             emptyList()

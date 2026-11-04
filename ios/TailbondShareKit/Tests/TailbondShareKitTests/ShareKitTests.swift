@@ -28,13 +28,16 @@ final class ProtocolTests: XCTestCase {
         func s(_ k: String) -> String { v[k] as! String }
         let P = ShareProtocol.self
         let key = Array(s("key").utf8)
+        let exp = (v["exp"] as! NSNumber).uint64Value
+        let pass = P.passKey(sharerKey: key, hubID: s("hub_id"), exp: exp)
         let hn = hex(s("hub_nonce")), sn = hex(s("sharer_nonce")), sess = hex(s("session"))
         let cap = (v["cap_left"] as! NSNumber).uint64Value
         XCTAssertEqual(P.keyID(key), s("key_id"))
-        XCTAssertEqual(P.authMAC(key: key, hubNonce: hn, sharerNonce: sn, hubID: s("hub_id")), hex(s("auth_mac")))
-        XCTAssertEqual(P.welcomeMAC(key: key, hubNonce: hn, sharerNonce: sn, session: sess, capLeft: cap), hex(s("welcome_mac")))
-        XCTAssertEqual(P.refuseMAC(key: key, hubNonce: hn, sharerNonce: sn, reason: .battery), hex(s("refuse_mac")))
-        XCTAssertEqual(P.helloFrame(hubNonce: hn, hubID: s("hub_id")), hex(s("hello")))
+        XCTAssertEqual(pass, hex(s("pass_key")))
+        XCTAssertEqual(P.authMAC(key: pass, hubNonce: hn, sharerNonce: sn, hubID: s("hub_id")), hex(s("auth_mac")))
+        XCTAssertEqual(P.welcomeMAC(key: pass, hubNonce: hn, sharerNonce: sn, session: sess, capLeft: cap), hex(s("welcome_mac")))
+        XCTAssertEqual(P.refuseMAC(key: pass, hubNonce: hn, sharerNonce: sn, reason: .battery), hex(s("refuse_mac")))
+        XCTAssertEqual(P.helloFrame(hubNonce: hn, exp: exp, hubID: s("hub_id")), hex(s("hello")))
         XCTAssertEqual(P.challengeFrame(hubNonce: hn, sharerNonce: sn, sharerID: s("sharer_id"), label: s("label")), hex(s("challenge")))
         XCTAssertEqual(P.authFrame(hubNonce: hn, sharerNonce: sn, mac: hex(s("auth_mac"))), hex(s("auth")))
         XCTAssertEqual(P.welcomeFrame(hubNonce: hn, session: sess, capLeft: cap, mac: hex(s("welcome_mac"))), hex(s("welcome")))
@@ -43,7 +46,7 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(P.keepaliveFrame(session: sess, seq: 7), hex(s("keepalive")))
         XCTAssertEqual(P.kaAckFrame(session: sess, seq: 7, up: 1000, down: 2000, capLeft: P.noCap, battery: 63, flags: P.flagCharging), hex(s("ka_ack")))
         XCTAssertEqual(P.byeFrame(session: sess, reason: .cap), hex(s("bye")))
-        XCTAssertEqual(P.parseHello(hex(s("hello"))), ShareProtocol.Hello(hubNonce: hn, hubID: "slate7"))
+        XCTAssertEqual(P.parseHello(hex(s("hello"))), ShareProtocol.Hello(hubNonce: hn, exp: exp, hubID: "slate7"))
         XCTAssertNil(P.parseHello(Array(hex(s("hello")).prefix(5))))
     }
 }
@@ -60,20 +63,25 @@ final class SharerCoreTests: XCTestCase {
         a.compactMap { if case let .toHub(h, b) = $0, h == hub { return b } else { return nil } }
     }
 
-    /// Hub side of the handshake; the session id, or the refusal reason.
-    func handshake(_ c: SharerCore, hub: String = "192.168.8.1:5000", id: String = "slate7", key k: [UInt8]? = nil) -> ([UInt8]?, UInt8?) {
+    static let hour = UInt64(Date().timeIntervalSince1970) + 3600
+
+    /// Hub side of the handshake; the session id, or the refusal reason. The
+    /// hub's pass is what the server derives from `key` (the sharer's), or `pass`.
+    func handshake(_ c: SharerCore, hub: String = "192.168.8.1:5000", id: String = "slate7", key k: [UInt8]? = nil,
+                   exp: UInt64 = hour, pass: [UInt8]? = nil) -> ([UInt8]?, UInt8?) {
         let hn = [UInt8](repeating: 7, count: 16)
-        let ch = frames(c.handle(P.helloFrame(hubNonce: hn, hubID: id), from: hub), to: hub)
+        let pk = pass ?? P.passKey(sharerKey: k ?? key, hubID: id, exp: exp)
+        let ch = frames(c.handle(P.helloFrame(hubNonce: hn, exp: exp, hubID: id), from: hub), to: hub)
         XCTAssertEqual(ch.first?.first, P.challenge)
         let sn = Array(ch[0][(2 + 16)..<(2 + 32)])
-        let out = c.handle(P.authFrame(hubNonce: hn, sharerNonce: sn, mac: P.authMAC(key: k ?? key, hubNonce: hn, sharerNonce: sn, hubID: id)), from: hub)
+        let out = c.handle(P.authFrame(hubNonce: hn, sharerNonce: sn, mac: P.authMAC(key: pk, hubNonce: hn, sharerNonce: sn, hubID: id)), from: hub)
         guard let reply = frames(out, to: hub).last else { return (nil, nil) }
         if reply[0] == P.refuse { return (nil, reply[2 + 16]) }
         XCTAssertEqual(reply[0], P.welcome)
         let sess = Array(reply[(2 + 16)..<(2 + 16 + 8)])
         let capLeft = P.read64(reply, 2 + 16 + 8)
         let mac = Array(reply[(2 + 16 + 16)...])
-        XCTAssertTrue(P.macEqual(mac, P.welcomeMAC(key: key, hubNonce: hn, sharerNonce: sn, session: sess, capLeft: capLeft)), "the sharer proves the key")
+        XCTAssertTrue(P.macEqual(mac, P.welcomeMAC(key: pk, hubNonce: hn, sharerNonce: sn, session: sess, capLeft: capLeft)), "the sharer proves the key")
         XCTAssertTrue(out.contains(.openUpstream(session: sess)))
         return (sess, nil)
     }
@@ -130,6 +138,52 @@ final class SharerCoreTests: XCTestCase {
         let out = c.handle(P.dataFrame(session: sess, payload: [1]), from: "192.168.8.1:5000")
         XCTAssertTrue(out.contains(.toHub("192.168.8.1:5000", P.byeFrame(session: sess, reason: .cap))))
         XCTAssertEqual(handshake(c).1, ShareProtocol.Reason.cap.rawValue)
+    }
+
+    func testAnotherHubsNameGetsNothing() {
+        let c = core(allowed: ["slate7"])
+        let laptopPass = P.passKey(sharerKey: key, hubID: "laptop", exp: Self.hour)
+        let forged = handshake(c, id: "slate7", pass: laptopPass)
+        XCTAssertNil(forged.0)
+        XCTAssertNil(forged.1, "not even a refusal")
+        let stretched = handshake(c, hub: "a:1", id: "laptop", exp: Self.hour + 3600, pass: laptopPass)
+        XCTAssertNil(stretched.0)
+        XCTAssertNil(stretched.1)
+        XCTAssertTrue(c.hubs.isEmpty)
+    }
+
+    func testExpiredPassIsRefusedAndEndsTheSession() {
+        let c = core()
+        let past = UInt64(Date().timeIntervalSince1970) - 60
+        XCTAssertEqual(handshake(c, exp: past).1, ShareProtocol.Reason.expired.rawValue)
+        let sess = handshake(c).0!
+        let out = c.tick(now: Date().addingTimeInterval(7200))
+        XCTAssertTrue(out.contains(.toHub("192.168.8.1:5000", P.byeFrame(session: sess, reason: .expired))))
+        XCTAssertTrue(c.hubs.isEmpty)
+    }
+
+    func testRestrictingHubsDropsTheOthersAtOnce() {
+        let c = core()
+        let laptop = handshake(c, hub: "a:1", id: "laptop").0!
+        XCTAssertNotNil(handshake(c, hub: "b:1", id: "slate7").0)
+        let out = c.updateLimits(capBytes: 0, allowedHubs: ["slate7"])
+        XCTAssertTrue(out.contains(.toHub("a:1", P.byeFrame(session: laptop, reason: .notAllowed))))
+        XCTAssertEqual(c.hubs.map(\.hub), ["slate7"])
+        XCTAssertEqual(handshake(c, hub: "a:1", id: "laptop").1, ShareProtocol.Reason.notAllowed.rawValue)
+    }
+
+    func testCapChangesAndANewMonthApplyAtOnce() {
+        let c = core()
+        let sess = handshake(c).0!
+        _ = c.fromUpstream(session: sess, [UInt8](repeating: 2, count: 30))
+        let out = c.updateLimits(capBytes: 20, allowedHubs: [])
+        XCTAssertTrue(out.contains(.toHub("192.168.8.1:5000", P.byeFrame(session: sess, reason: .cap))))
+        XCTAssertEqual(handshake(c).1, ShareProtocol.Reason.cap.rawValue)
+        c.resetUsage()
+        XCTAssertNotNil(handshake(c).0)
+        _ = c.updateLimits(capBytes: 0, allowedHubs: [])
+        XCTAssertTrue(c.knows("192.168.8.1:5000"))
+        XCTAssertFalse(c.knows("10.0.0.9:1"))
     }
 
     func testIdleHubIsDropped() {
