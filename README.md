@@ -11,6 +11,12 @@
 [![Go version](https://img.shields.io/github/go-mod/go-version/kaovilai/tailbond?filename=agent%2Fgo.mod&color=0D9488)](agent/go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-GL.iNet%20%C2%B7%20OpenWrt%20%C2%B7%20Fedora%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20(Share)-C6F432?labelColor=071A1D)](#platforms)
 
+**Deploy a server:**
+[![Any VPS (cloud-init)](https://img.shields.io/badge/deploy-cloud--init-0D9488)](docs/deploy.md#any-vps-cloud-init)
+[![Docker / Podman](https://img.shields.io/badge/deploy-Docker%20%2F%20Podman-0D9488)](docs/deploy.md#docker--podman)
+[![Fly.io](https://img.shields.io/badge/deploy-Fly.io-0D9488)](docs/deploy.md#flyio)  
+Untested templates. The tested paths are the Fedora RPM, the VPS installer and GL.iNet routers. Heroku, Vercel, Cloudflare and Railway can't host a server (no inbound UDP or TUN); see [docs/deploy.md](docs/deploy.md).
+
 **Speedify-style bonding to your own server:** tailbond joins Wi-Fi, mobile data, Ethernet and nearby phones into one faster, steadier tunnel to a server you run, with your [Tailscale](https://tailscale.com) tailnet reachable through it.
 
 > **Status: early.** Every part is built and tested in CI: unit tests, network-namespace end-to-end tests, an OpenWrt install test in a container, an Android emulator test, a macOS runner test against a Linux server VM, and simulated user testing. On real hardware, only the **GL.iNet Flint 3 as a home server** has run so far; travel routers, phones, Macs and VPSes have not. Expect rough edges and please [file issues](https://github.com/kaovilai/tailbond/issues/new/choose).
