@@ -168,7 +168,8 @@ EOF
 fake_ts "$WORK/ts-srv" '{"BackendState":"Running","MagicDNSSuffix":"tail1234.ts.net","CurrentTailnet":{"Name":"alex@example.com"},
  "Self":{"HostName":"homebox","DNSName":"homebox.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.1.1"],"Online":true},
  "Peer":{"n1":{"HostName":"slate7","DNSName":"slate7.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.9.9"],"Online":true},
-         "n2":{"HostName":"nas","DNSName":"nas.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.2.2"],"Online":true}}}'
+         "n2":{"HostName":"nas","DNSName":"nas.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.2.2"],"Online":true},
+         "n3":{"HostName":"build","DNSName":"build.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.92.5.5"],"Online":true}}}'
 fake_ts "$WORK/ts-cli" '{"BackendState":"Running","MagicDNSSuffix":"tail1234.ts.net","CurrentTailnet":{"Name":"alex@example.com"},
  "Self":{"HostName":"slate7","DNSName":"slate7.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.9.9"],"Online":true},
  "Peer":{"n1":{"HostName":"homebox","DNSName":"homebox.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.1.1"],"Online":true},
@@ -374,6 +375,7 @@ cat >"$WORK/cli/tailbond.json" <<EOF
   "hooks_dir": "$WORK/hooks",
   "listen": "$API",
   "client": {"pairing_uri": "", "paths": [], "no_dns": true, "manage_routes": false, "captive_probe_urls": ["http://10.200.9.9/generate_204"],
+             "coexist": "off",
              "leases_file": "$WORK/dhcp.leases",
              "failover": {"switch_after_sec": 6, "failback_after_sec": 20, "probe_every_sec": 2}}
 }
@@ -388,7 +390,7 @@ jq -e '.tailbond == true and .role == "server" and .name == "homebox"' <<<"$HELL
   && ok "GET /api/hello on the server's Tailscale IP: $HELLO" || bad "hello: $HELLO"
 say "phone page on the server's Tailscale IP, port 80 (http://homebox/)"
 if wait_for 10 "phone page" ip netns exec "$NS_C" curl -fsS -m 3 -A "Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile" -o "$WORK/landing.html" http://100.101.1.1/; then
-  grep -q 'Get tailbond on' "$WORK/landing.html" && grep -q 'href="/tailbond.apk"' "$WORK/landing.html" \
+  grep -q 'Get tailbond' "$WORK/landing.html" && grep -q 'href="/tailbond.apk"' "$WORK/landing.html" \
     && grep -q 'intent://ask?server=homebox.tail1234.ts.net' "$WORK/landing.html" \
     && ok "http://100.101.1.1/ serves the phone page (app download + ask link)" || bad "phone page content: $(head -c 300 "$WORK/landing.html")"
 else
@@ -396,6 +398,15 @@ else
 fi
 [ "$(ip netns exec "$NS_C" curl -s -m 3 http://100.101.1.1/tailbond.apk)" = "$(cat "$WORK/srv/tailbond.apk")" ] \
   && ok "the APK downloads from the phone page" || bad "APK not served on port 80"
+# the Mac section (/#mac: same HTML, the fragment picks the section) and its
+# download: 200 when the server has the bundle, 404 when it can't get it
+# (this test server has no internet to fetch it from GitHub)
+ip netns exec "$NS_C" curl -fsS -m 3 -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15" -o "$WORK/landing-mac.html" "http://100.101.1.1/#mac" \
+  && grep -q 'id="mac"' "$WORK/landing-mac.html" && grep -q 'class="plat first" id="mac"' "$WORK/landing-mac.html" \
+  && grep -q 'localhost:8077/?ask=homebox.tail1234.ts.net' "$WORK/landing-mac.html" \
+  && ok "/#mac: the Mac section (shown first for a Mac), with the ask link" || bad "Mac section: $(grep -c 'id=\"mac\"' "$WORK/landing-mac.html" 2>/dev/null)"
+MCODE="$(ip netns exec "$NS_C" curl -s -m 20 -o /dev/null -w '%{http_code}' http://100.101.1.1/tailbond-macos-arm64.tar.gz)"
+case "$MCODE" in 200|404) ok "macOS download endpoint answers ($MCODE)" ;; *) bad "macOS download: HTTP $MCODE" ;; esac
 LCODE="$(ip netns exec "$NS_C" curl -s -m 3 -o /dev/null -w '%{http_code} %{redirect_url}' http://100.101.1.1/api/status)"
 [ "$LCODE" = "302 http://100.101.1.1/" ] && ok "port 80 serves no API (/api/status → redirect to the page)" || bad "port 80 /api/status: $LCODE"
 ip netns exec "$NS_S" curl -fsS -m 3 http://127.0.0.1:8077/api/settings | jq -e '.landing_url == "http://homebox.tail1234.ts.net/" and .landing_typed == "homebox/" and (.landing_qr_svg | startswith("<svg"))' >/dev/null \
@@ -623,7 +634,7 @@ ip netns exec "$NS_C" curl -fsS -m 3 --interface wlan0 http://10.200.9.9/hotspot
 ip -n "$NS_C" route get 10.200.9.9 oif wlan0 2>&1 | grep -q 'dev wlan0' && ok "router traffic bound to wlan0 not hijacked by tb0" || bad "oif route"
 gl_repeater '{"ssid":"Hotel-Guest","state":2,"portal":false,"portal_detecting":false,"portal_url":"","bare_mode":false,"auto_portal":true}'
 wait_for 10 "portal-close (GL)" test -e "$WORK/hook-portal-close.done" && ok "GL left Login Mode: bypass reverted" || bad "no portal-close"
-! ip -n "$NS_C" rule | grep -q 'lookup 78' && ok "LAN rule removed" || bad "rule left"
+wait_for 10 "LAN rule removed" sh -c "! ip -n $NS_C rule | grep -q 'lookup 78'" && ok "LAN rule removed" || bad "rule left"
 wait_for 30 "wlan0 back in bonding" grep -q '^Path = wlan0' "$WORK/cli/state/client.conf" && ok "wlan0 rejoined bonding, no action in either UI" || bad "wlan0 not rejoined"
 [ "$(grep -c '^wwan /generate_204' "$WORK/portal.log")" = 0 ] && ok "still no tailbond probe over wlan0" || bad "probed wlan0"
 kill "$PORTAL_PID" 2>/dev/null || true
@@ -852,6 +863,124 @@ wait_for 10 "phone through home" sh -c "ip netns exec tb-e2e-phone curl -fsS -m 
 [ "$(grep -c ' client-up ' "$WORK/hook-history.log")" -ge 3 ] && ok "client-up ran for homebox, vps, homebox" || bad "hook history: $(grep client- "$WORK/hook-history.log")"
 capi -X DELETE "http://$API/api/bypass/$BANK" | jq -e .ok >/dev/null && wait_for 10 "drop-in updated" sh -c "! grep -q bank.example $WORK/dnsmasq.d/tailbond-bypass.conf" \
   && ok "deleting the website rule removes it from dnsmasq" || bad "delete rule"
+
+say "Linux client next to NetBird: wt0 owns 100.92.0.0/16; only /32s for the tailnet, split DNS on tb0, NetBird's endpoints direct"
+# the router-sim becomes a plain Linux laptop: no router hooks, Tailscale
+# off here, DNS on, coexistence on. Kill switch off: mqvpn's own iptables
+# kill switch doesn't come up in this runner's namespaces; the allowances
+# tailbond adds with it are unit tested (internal/coexist)
+kill "$CLI_PID"; wait "$CLI_PID" 2>/dev/null || true
+mkdir -p "$WORK/hooks-none" "$WORK/cx-bin"
+ip -n "$NS_C" link add wt0 type dummy
+ip -n "$NS_C" addr add 100.92.1.2/16 dev wt0
+ip -n "$NS_C" link set wt0 up
+cat >"$WORK/cx-bin/netbird" <<'NB'
+#!/bin/sh
+# netbird CLI stand-in: `netbird status --json` of a logged-in NetBird
+[ "$1 $2" = "status --json" ] || exit 0
+cat <<'J'
+{"peers":{"total":1,"connected":1,"details":[{"fqdn":"laptop.netbird.cloud","netbirdIp":"100.92.4.9","status":"Connected",
+  "iceCandidateEndpoint":{"local":"10.200.1.2:51820","remote":"198.51.100.50:51820"},"relayAddress":""}]},
+ "management":{"url":"https://192.0.2.10:443","connected":true},"signal":{"url":"https://192.0.2.11:443","connected":true},
+ "relays":{"total":1,"available":1,"details":[{"uri":"rels://198.51.100.77:443","available":true}]},
+ "netbirdIp":"100.92.1.2/16","networks":[],"dnsServers":[{"servers":["100.92.255.254:53"],"domains":["corp.example"],"enabled":true}]}
+J
+NB
+cat >"$WORK/cx-bin/resolvectl" <<RV
+#!/bin/sh
+# resolvectl stand-in: the netns shares the host's systemd-resolved; record instead
+echo "\$*" >>"$WORK/resolvectl.log"
+RV
+chmod +x "$WORK/cx-bin/netbird" "$WORK/cx-bin/resolvectl"
+: >"$WORK/resolvectl.log"
+jq --arg h "$WORK/hooks-none" '.hooks_dir = $h | .disable_tailscale = true | .client.no_dns = false | .client.kill_switch = false | del(.client.coexist)' \
+  "$WORK/cli/tailbond.json" >"$WORK/cli/tb.tmp" && mv "$WORK/cli/tb.tmp" "$WORK/cli/tailbond.json"
+start_laptop() {
+  ip netns exec "$NS_C" env PATH="$WORK/cx-bin:$PATH" "$TAILBONDD" -config "$WORK/cli/tailbond.json" >>"$WORK/client.log" 2>&1 &
+  CLI_PID=$!
+}
+start_laptop
+cx() { capi "http://$API/api/coexist"; }
+wait_for 60 "client connected again" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
+  && ok "the Linux client connected next to wt0" || bad "not connected: $(cstatus | jq -c '{state, error}')"
+routes_on() { ip -n "$NS_C" route show dev "$1" 2>/dev/null; }
+if wait_for 30 "tailnet /32s on tb0" sh -c "ip -n $NS_C route show dev tb0 | grep -q '^100.92.5.5 '"; then
+  ok "tailnet machines by /32 on tb0: $(routes_on tb0 | awk '{print $1}' | tr '\n' ' ')"
+else
+  bad "no tailnet /32s: tb0 has $(routes_on tb0 | tr '\n' ';'); coexist $(cx | jq -c .)"
+fi
+routes_on tb0 | grep -Eq '^100\.(64\.0\.0/10|92\.0\.0/16) ' && bad "a covering route on tb0: $(routes_on tb0 | tr '\n' ';')" \
+  || ok "nothing on tb0 covers wt0's 100.92.0.0/16"
+[ "$(ip -n "$NS_C" route get 100.92.5.5 | grep -o 'dev [^ ]*')" = "dev tb0" ] && [ "$(ip -n "$NS_C" route get 100.92.9.9 | grep -o 'dev [^ ]*')" = "dev wt0" ] \
+  && ok "100.92.5.5 (tailnet) via tb0, the rest of 100.92/16 via wt0" || bad "route get: $(ip -n "$NS_C" route get 100.92.5.5); $(ip -n "$NS_C" route get 100.92.9.9)"
+grep -q 'domain tb0 ~ts.net' "$WORK/resolvectl.log" && grep -q 'default-route tb0 false' "$WORK/resolvectl.log" && ! grep -qE 'domain (eth0|wlan0|wt0)' "$WORK/resolvectl.log" \
+  && ok "split DNS on tb0 only: $(tr '\n' ';' <"$WORK/resolvectl.log")" || bad "resolvectl: $(tr '\n' ';' <"$WORK/resolvectl.log")"
+grep -Eq '^DNS *=' "$WORK/cli/state/client.conf" \
+  && bad "mqvpn got DNS servers (global DNS): $(grep -E '^DNS' "$WORK/cli/state/client.conf")" || ok "mqvpn runs without DNS servers (no global DNS takeover)"
+via() { ip -n "$NS_C" route get "$1" | grep -o 'dev [^ ]*' | head -n1; }
+if wait_for 20 "NetBird endpoints direct" sh -c "ip -n $NS_C route show 198.51.100.50 | grep -q 'via 10.200.1.1'"; then
+  ok "Direct: NetBird's endpoints via the uplink: 198.51.100.50 $(via 198.51.100.50), 198.51.100.77 $(via 198.51.100.77), 192.0.2.10 $(via 192.0.2.10)"
+else
+  bad "NetBird endpoints: $(ip -n "$NS_C" route show | grep -E '198.51|192.0.2' | tr '\n' ';')"
+fi
+ip netns exec "$NS_C" iptables -S OUTPUT 2>/dev/null | grep -q tailbond-coexist \
+  && bad "kill-switch allowances added with the kill switch off" || ok "kill switch off: no iptables allowances"
+cx | jq -e '.foreign | any(.iface == "wt0" and .kind == "netbird")' >/dev/null && cx | jq -e '.work_vpn == "direct" and .split_dns' >/dev/null \
+  && ok "API: NetBird on wt0 detected, Work VPN traffic Direct, split DNS" || bad "API: $(cx | jq -c .)"
+
+say "Bonded: NetBird's traffic through tailbond; the MTU rule"
+ip -n "$NS_C" link set wt0 mtu 1280
+capi -X POST -d '{"work_vpn": "bonded"}' "http://$API/api/coexist" >/dev/null
+# 1360, less the 8-byte reorder header when the mode negotiates reordering
+if wait_for 60 "tb0 MTU 1360" sh -c "ip -n $NS_C link show tb0 | grep -Eq 'mtu 13(52|60) '"; then
+  ok "tailbond's MTU raised for wt0 1280 + 80: $(ip -n "$NS_C" link show tb0 | grep -o 'mtu [0-9]*') (want_mtu $(cx | jq .want_mtu))"
+else
+  bad "tb0 MTU: $(ip -n "$NS_C" link show tb0 | grep -o 'mtu [0-9]*'); $(cx | jq -c '{work_vpn_effective, want_mtu, bonded_blocked, warnings}')"
+fi
+wait_for 30 "endpoints no longer direct" sh -c "! ip -n $NS_C route show 198.51.100.50 | grep -q 'via 10.200.1.1'" \
+  && ok "Bonded: NetBird's endpoints follow tailbond's tunnel ($(via 198.51.100.50))" || bad "still direct: $(ip -n "$NS_C" route show 198.51.100.50)"
+ip -n "$NS_C" link set wt0 mtu 1420
+if wait_for 45 "Bonded can't fit" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"direct\" and ((.bonded_blocked // \"\") | length) > 0'"; then
+  ok "wt0 at 1420 needs 1500 > the uplink allows: back to Direct, warned: $(cx | jq -r '.warnings[0]' | cut -c1-110)"
+else
+  bad "no fallback: $(cx | jq -c '{work_vpn_effective, want_mtu, bonded_blocked, warnings}')"
+fi
+capi -X POST -d '{"work_vpn": "direct"}' "http://$API/api/coexist" >/dev/null
+
+say "stop and crash: routes, DNS and kill-switch allowances go"
+kill "$CLI_PID"; wait "$CLI_PID" 2>/dev/null || true
+: >"$WORK/resolvectl.log"
+start_laptop
+wait_for 60 "connected" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" || true
+wait_for 30 "direct routes back" sh -c "ip -n $NS_C route show 198.51.100.50 | grep -q 'via 10.200.1.1'" || true
+kill -9 "$CLI_PID"; wait "$CLI_PID" 2>/dev/null || true
+pkill -9 -f "mqvpn.*$WORK/cli" 2>/dev/null || true
+sleep 1
+ip -n "$NS_C" route show 198.51.100.50 | grep -q 'via 10.200.1.1' && ok "after kill -9 the direct routes are still there (nobody to take them away yet)" \
+  || bad "direct routes gone before the restart?"
+jq '.client.disconnected = true' "$WORK/cli/tailbond.json" >"$WORK/cli/tb.tmp" && mv "$WORK/cli/tb.tmp" "$WORK/cli/tailbond.json"
+N0="$(grep -c 'took away the routes and resolver files' "$WORK/client.log")"
+start_laptop
+# a new line (the log is appended: earlier stops logged it too)
+if wait_for 20 "restored at start" sh -c "[ \$(grep -c 'took away the routes and resolver files' '$WORK/client.log') -gt $N0 ]"; then
+  ! ip -n "$NS_C" route show 198.51.100.50 | grep -q . && grep -q 'revert tb0' "$WORK/resolvectl.log" \
+    && ok "restart after kill -9 took them away (direct routes; resolvectl revert tb0)" \
+    || bad "left after restart: $(ip -n "$NS_C" route show | grep -E '198.51|192.0.2' | tr '\n' ';') $(ip netns exec "$NS_C" iptables -S OUTPUT | grep tailbond)"
+else
+  bad "no restore at start: $(tail -n 5 "$WORK/client.log" | tr '\n' ' ')"
+fi
+kill "$CLI_PID"; wait "$CLI_PID" 2>/dev/null || true
+# the killed mqvpn's own kill-switch rules (not tailbond's): gone before the
+# router simulation carries on
+ip netns exec "$NS_C" iptables -F OUTPUT
+ip -n "$NS_C" link del wt0
+jq '.client.disconnected = false | .client.coexist = "off" | .client.kill_switch = false | .client.no_dns = true | .disable_tailscale = false' "$WORK/cli/tailbond.json" >"$WORK/cli/tb.tmp" \
+  && mv "$WORK/cli/tb.tmp" "$WORK/cli/tailbond.json"
+jq --arg h "$WORK/hooks" '.hooks_dir = $h' "$WORK/cli/tailbond.json" >"$WORK/cli/tb.tmp" && mv "$WORK/cli/tb.tmp" "$WORK/cli/tailbond.json"
+ip netns exec "$NS_C" env PATH="$WORK/ts-cli:$PATH" "$TAILBONDD" -config "$WORK/cli/tailbond.json" >>"$WORK/client.log" 2>&1 &
+CLI_PID=$!
+wait_for 60 "router-sim connected again" sh -c "ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
+  && ok "back to the router simulation" || bad "router-sim not connected again"
 
 say "revoke"
 sapi -X DELETE "http://$API/api/clients/e2e-router" | jq -e .ok >/dev/null && ok "DELETE /api/clients/e2e-router" || bad "revoke failed"

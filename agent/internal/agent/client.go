@@ -59,6 +59,10 @@ type clientState struct {
 	bypass bypassState
 	// Pair & Share (shares.go)
 	share *shareState
+	// Use phone hub (phonehub.go)
+	hub *phoneHubState
+	// other VPNs (coexist.go)
+	cx *coexistState
 }
 
 type usageFile struct {
@@ -69,7 +73,7 @@ type usageFile struct {
 func newClientState() *clientState {
 	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState(),
 		probing: map[string]bool{}, lastProbe: map[string]time.Time{}, probeOK: map[string]bool{},
-		silence: failover.Silence{After: 5 * time.Second}, share: newShareState()}
+		silence: failover.Silence{After: 5 * time.Second}, share: newShareState(), hub: &phoneHubState{}}
 }
 
 func (a *Agent) usagePath() string { return filepath.Join(a.store.Get().StateDir, "usage.json") }
@@ -91,6 +95,14 @@ func (a *Agent) startClient(ctx context.Context) {
 	go a.serverWatcher(ctx)
 	go a.bypassWatcher(ctx)
 	go a.shareWatcher(ctx)
+	// before mqvpn starts: its own networksetup calls (DNS) at start-up
+	// would race this change to the same preferences, and the last
+	// writer wins
+	a.initSysProxy()
+	a.restoreSysProxy()
+	a.coexistRestore() // left by a crash: before mqvpn starts
+	go a.phoneHubWatcher(ctx)
+	go a.coexistWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
 	} else if !a.paired() {
@@ -162,6 +174,10 @@ func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.
 	for _, it := range ifs {
 		p, ok := effectiveSetting(cfg, it)
 		if !ok || !p.Enabled || capReached(p) || (blocked != nil && blocked(it)) {
+			continue
+		}
+		// "Use this Mac's connections" off: only the phones' shares
+		if it.Kind != netif.KindShared && !cfg.Client.LocalUsed() {
 			continue
 		}
 		// a share is a path only while its session is open: mqvpn can't
@@ -374,7 +390,10 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 		}
 	}
 	dns := p.DNS
-	if cfg.Client.NoDNS {
+	// another VPN here (NetBird, the Tailscale app): mqvpn leaves the
+	// system's DNS alone, tailbondd sets up split DNS (coexist.go)
+	split, mtu := a.coexistPreStart(ctx, cfg)
+	if cfg.Client.NoDNS || split {
 		dns = nil
 	}
 	specs := a.pathSpecs(paths)
@@ -386,8 +405,8 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	}
 	ini, err := mqconf.Client(mqconf.ClientParams{
 		Server: p.Server, ServerName: p.SNI, Insecure: p.Insecure, Key: p.Key, DNS: dns,
-		Paths: specs, TunName: config.DefaultTunName, MTU: clientMTU(cfg), Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
-		ManageRoutes: cfg.Client.RoutesManaged(), LogLevel: cfg.LogLevel,
+		Paths: specs, TunName: config.DefaultTunName, MTU: mtu, Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
+		ManageRoutes: cfg.Client.RoutesManaged(), KillSwitch: cfg.Client.KillSwitch, LogLevel: cfg.LogLevel,
 	})
 	if err != nil {
 		return err
@@ -473,7 +492,10 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	if !st.ControlAPI && running {
 		// Unpatched mqvpn: totals from the tun device, per-path bytes from the
 		// kernel counters of each bound interface, RTT from the 30 s log lines.
-		if tx, rx, ok := netif.Counters(config.DefaultTunName); ok {
+		a.mu.Lock()
+		tun := a.tunDevLocked()
+		a.mu.Unlock()
+		if tx, rx, ok := netif.Counters(tun); ok {
 			st.Totals.TxBytes, st.Totals.RxBytes = tx, rx
 			st.Totals.TxBps, st.Totals.RxBps, _ = a.rater.Rate("totals", now, tx, rx, 0, 0)
 		}
@@ -565,6 +587,8 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	}
 	a.serversView(st, a.workingFrom(st, now))
 	a.shareStatus(st)
+	st.PhoneHub = a.phoneHubStatus()
+	st.Coexist = a.coexistStatus()
 	return st
 }
 

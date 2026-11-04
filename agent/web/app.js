@@ -119,11 +119,15 @@ function drawSpark(svg, series, w, hgt, opts = {}) {
   const rx = linePath(series.rx, w, hgt, max);
   const tx = linePath(series.tx, w, hgt, max);
   const id = svg.dataset.gid || (svg.dataset.gid = 'g' + Math.random().toString(36).slice(2, 8));
+  // the area under the download line is the brand beam (teal → volt),
+  // fading toward the baseline
   svg.innerHTML =
-    `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1">` +
-    `<stop offset="0" style="stop-color:var(--down);stop-opacity:.35"/><stop offset="1" style="stop-color:var(--down);stop-opacity:0"/></linearGradient></defs>` +
+    `<defs><linearGradient id="${id}" x1="0" x2="1" y1="0" y2="0">` +
+    `<stop offset="0" style="stop-color:var(--tb-beam-a)"/><stop offset="1" style="stop-color:var(--tb-beam-b)"/></linearGradient>` +
+    `<linearGradient id="${id}f" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>` +
+    `<mask id="${id}m" maskContentUnits="userSpaceOnUse"><rect width="${w}" height="${hgt}" fill="url(#${id}f)"/></mask></defs>` +
     (opts.grid ? `<line x1="0" x2="${w}" y1="${hgt / 2}" y2="${hgt / 2}" style="stroke:var(--line)" stroke-dasharray="4 6" vector-effect="non-scaling-stroke"/>` : '') +
-    `<path d="${rx} L${w} ${hgt} L0 ${hgt}Z" fill="url(#${id})"/>` +
+    `<path d="${rx} L${w} ${hgt} L0 ${hgt}Z" fill="url(#${id})" mask="url(#${id}m)"/>` +
     `<path d="${rx}" fill="none" style="stroke:var(--down)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
     `<path d="${tx}" fill="none" style="stroke:var(--up)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
     (opts.label ? `<text x="${w - 4}" y="12" text-anchor="end" font-size="11" style="fill:var(--muted)">${rateStr(max)}</text>` : '');
@@ -148,6 +152,13 @@ function render(st) {
   const chip = $('#state-chip');
   chip.textContent = st.state;
   chip.className = 'state-chip s-' + st.state;
+  // a phone hub in use while this machine's own tunnel is off: say what
+  // actually carries the traffic, not just "disconnected"
+  const hubUse = st.role === 'client' && st.phone_hub && st.phone_hub.using;
+  if (hubUse && st.state !== 'connected') {
+    chip.textContent = `via ${hubUse.label} (proxy)`;
+    chip.className = 'state-chip s-connected';
+  }
   drawSpark($('#spark-total'), push('total', st.totals.rx_bps, st.totals.tx_bps), 600, 120, { grid: true, sw: 2.2 });
 
   const sub = st.role === 'server'
@@ -165,7 +176,7 @@ function render(st) {
     const p = $('#power');
     p.setAttribute('aria-pressed', String(on));
     p.classList.toggle('busy', st.state === 'connecting');
-    $('#power-label').textContent = { connected: 'Connected', connecting: 'Connecting…', error: 'Retrying…', disconnected: st.role === 'server' ? 'Stopped' : 'Disconnected' }[st.state] || st.state;
+    $('#power-label').textContent = { connected: 'Connected', connecting: 'Connecting…', error: 'Retrying…', disconnected: st.role === 'server' ? 'Stopped' : (hubUse ? 'Own tunnel off' : 'Disconnected') }[st.state] || st.state;
   }
 
   if (!state.modeBusy) {
@@ -173,6 +184,11 @@ function render(st) {
   }
 
   renderPairRequests(st);
+  if (st.role === 'client') {
+    if (st.join) state.askShown = true;
+    renderAsk(st.join || (state.askShown ? { state: 'idle' } : null));
+    if (state.pendingTab) { const t = state.pendingTab; state.pendingTab = null; const b = $(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
+  }
   if (st.role === 'client') renderClientPaths(st); else renderServerPaths(st);
   if (st.role === 'server' && state.tab === 'clients') renderClients(st);
   renderMaint(st);
@@ -231,8 +247,11 @@ function fillPathCard(el, p, key, opts) {
     ki.className = 'kind-ico ' + p.kind;
     ki.replaceChildren(icon(p.kind in KIND_LABEL ? p.kind : 'unknown'));
   }
-  $('.path-title b', el).textContent = opts.title || p.iface || `Path ${p.id}`;
-  $('.path-title small', el).textContent = opts.subtitle || `${KIND_LABEL[p.kind] || 'Link'}${p.priority ? ' · ' + p.priority : ''}`;
+  // the agent's label ("iPhone (USB)", "Pixel's 5G (shared)") when it has
+  // one, the interface name under it
+  const named = p.label && p.label !== p.iface;
+  $('.path-title b', el).textContent = opts.title || (named ? p.label : p.iface) || `Path ${p.id}`;
+  $('.path-title small', el).textContent = opts.subtitle || `${KIND_LABEL[p.kind] || 'Link'}${named ? ' · ' + p.iface : ''}${p.priority ? ' · ' + p.priority : ''}`;
   const chip = $('.chip', el);
   const st = p.enabled === false ? 'off' : p.state;
   chip.textContent = p.cap_reached ? 'cap reached' : (st === 'off' ? 'disabled' : st);
@@ -313,22 +332,69 @@ function renderClientPaths(st) {
     els.push(el);
   }
   syncChildren($('#paths'), els);
+  renderLocalHead(st);
   renderShares(st);
+  renderPhoneHub(st);
+  renderCoexist(st);
   const empty = $('#paths-empty');
   if (!els.length) {
-    empty.innerHTML = st.paired
-      ? '<b>No connections yet</b>Waiting for mqvpn to bring up its paths.'
-      : '<b>Not paired</b>Open the Setup tab and paste the pairing link from your home server.';
+    const hub = st.phone_hub && st.phone_hub.using;
+    const escHTML = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    empty.innerHTML = hub && st.state !== 'connected'
+      ? `<b>This machine's own tunnel is off</b>That's fine: browsing goes through ${escHTML(possessive(hub.label))} connection (below). The switch at the top would bond this machine's own connections instead.`
+      : st.paired
+        ? '<b>No connections yet</b>Waiting for tailbond to bring up its connections.'
+        : '<b>Not paired</b>Open the Setup tab and paste the pairing link from your home server.';
     empty.classList.remove('hidden');
   } else empty.classList.add('hidden');
+}
+
+// A section on/off switch (client): POST /api/share {<key>: on}.
+function sectionToggle(key, on, label) {
+  const input = h('input', { type: 'checkbox', 'aria-label': label });
+  input.checked = on;
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    try {
+      await api('POST', '/api/share', { [key]: input.checked });
+      toast(input.checked ? `${label}: on` : `${label}: off`);
+    } catch (e) {
+      input.checked = !input.checked;
+      toast(e.message, true);
+    } finally {
+      input.disabled = false;
+    }
+  });
+  return h('label', { class: 'toggle', title: label }, input, h('span'));
+}
+
+// "Use this Mac's connections": bond this machine's own Wi-Fi, Ethernet,
+// iPhone over USB (client.use_local, default on).
+function renderLocalHead(st) {
+  const box = $('#local-head');
+  if (!box) return;
+  const mac = st.platform === 'darwin';
+  const label = mac ? "Use this Mac's connections" : "Use this machine's connections";
+  const on = st.use_local !== false;
+  const cur = box.querySelector('input');
+  if (cur && document.activeElement === cur) return;
+  box.replaceChildren(
+    h('div', { class: 'row between' }, h('h3', { text: label }), sectionToggle('use_local', on, label)),
+    h('p', { class: 'muted small', text: on
+      ? (mac ? 'Wi-Fi, Ethernet and USB-C adapters, and an iPhone plugged in over USB (Personal Hotspot on) are bonded with the phones below.' : 'Its own uplinks are bonded with the phones below.')
+      : "Off: only nearby phones' shared data is bonded. With no phone sharing, tailbond connects over the default route." }));
+  // the Mac's own switch; elsewhere the per-connection switches do it
+  box.classList.toggle('hidden', st.role !== 'client' || !mac);
 }
 
 // Pair & Share: phones on this machine's network lending their mobile data
 function renderShares(st) {
   const box = $('#shares');
   if (!box) return;
+  if (box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   const shares = st.shares || [];
-  const kids = [h('h3', { text: 'Shared by nearby phones' })];
+  const kids = [h('div', { class: 'row between' }, h('h3', { text: 'Shared by nearby phones' }),
+    sectionToggle('use_shares', st.use_shares !== false, "Use phones' shared data"))];
   if (st.share_note) kids.push(h('div', { class: 'banner warn', text: st.share_note }));
   const words = { ready: 'Sharing', connecting: 'Connecting…', refused: 'Stopped', unreachable: "Can't reach it", lost: 'Stopped answering' };
   for (const s of shares) {
@@ -338,9 +404,106 @@ function renderShares(st) {
     bits.push(s.via === 'server' ? 'listed by the home server' : 'found on this network');
     kids.push(h('div', { class: 'share-row' }, h('b', { text: s.label }), h('span', { class: 'muted small', text: ' · ' + bits.join(' · ') })));
   }
-  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Share my mobile data. On iPhone: tailbond Share → Share mobile data.' }));
+  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Sharing → Share my mobile data. On iPhone: tailbond Share → Share mobile data (a cable is better: plug the iPhone in with Personal Hotspot on).' }));
   box.replaceChildren(...kids);
   box.classList.toggle('hidden', st.role !== 'client');
+}
+
+// Use phone hub (docs/phone-hub.md): a phone sharing its bonded connection
+// as a proxy; the system proxy points at tailbondd's forwarder.
+function possessive(s) { return /s$/.test(s) ? s + "'" : s + "'s"; }
+
+function renderPhoneHub(st) {
+  const box = $('#phone-hub');
+  if (!box) return;
+  const ph = st.phone_hub;
+  box.classList.toggle('hidden', st.role !== 'client' || !ph);
+  if (!ph || box.contains(document.activeElement)) return;
+  const mac = st.platform === 'darwin';
+  const self = mac ? 'this Mac' : 'this computer';
+  const post = async (body, okMsg) => {
+    try {
+      await api('POST', '/api/phone-hub', body);
+      if (okMsg) toast(okMsg);
+      pollOnce();
+    } catch (e) { toast(e.message, true); }
+  };
+  const what = (x) => x.bonded ? 'bonded connection' : 'mobile data';
+  const where = (x) => x.iface ? ` · reached over ${x.iface}` : '';
+  const kids = [h('h3', { text: "Use a phone's connection" })];
+  if (ph.note) kids.push(h('div', { class: 'banner warn', text: ph.note }));
+  const u = ph.using;
+  if (u) {
+    const stop = h('button', { class: 'btn small', text: 'Stop using it' });
+    stop.addEventListener('click', () => post({ use: '' }, `Back to ${self}'s own connection`));
+    const how = u.mode === 'manual'
+      ? `Set your apps' SOCKS5 proxy to ${u.local}.`
+      : `Browsers and most apps on ${self} now go through the phone${u.mode === 'pac' ? ` (home, local and Tailscale addresses stay on ${self}'s own network)` : ''}.`;
+    kids.push(h('div', { class: 'banner ok' },
+      h('b', { text: `Using ${possessive(u.label)} ${what(u)} (proxy)` }),
+      h('div', { class: 'small', text: `${how} ${fmtBytes(u.up_bytes)} up, ${fmtBytes(u.down_bytes)} down.` })));
+    if (!u.bonded) kids.push(h('div', { class: 'banner warn', text: `${u.label} shares its mobile data only: this isn't bonded. For bonding with an iPhone, stop using it here and plug the iPhone in over USB with Personal Hotspot on.` }));
+    kids.push(h('p', { class: 'muted small', text: `Video calls, games and other non-web traffic don't go through the phone: they go out directly over the network ${self} is on (the phone's hotspot, not bonded). To undo: Stop using it here, rejoin your usual Wi-Fi on ${self}, then turn off the hotspot and "Share bonded connection" on the phone. If the phone goes away, ${self} goes back to its own connection by itself.` }));
+    kids.push(stop);
+  } else {
+    const pac = h('input', { type: 'checkbox' });
+    pac.checked = true;
+    for (const f of ph.found) {
+      const use = h('button', { class: 'btn small primary', text: 'Use' });
+      use.addEventListener('click', () => post({ use: f.id, pac: pac.checked }, `Using ${possessive(f.label)} ${what(f)}`));
+      const via = { mdns: 'found nearby', server: 'listed by your home server', router: 'the hotspot you are on' }[f.via] || f.via;
+      kids.push(h('div', { class: 'share-row row between' },
+        h('span', {}, h('b', { text: f.label }), h('span', { class: 'muted small', text: ` · ${f.bonded ? 'bonded connection' : 'mobile data only, not bonded'} · ${via}${where(f)}` })), use));
+    }
+    if (ph.found.length) {
+      kids.push(h('label', { class: 'small muted' }, pac, document.createTextNode(` Keep home, local and Tailscale addresses on ${self}'s own network (recommended). Off: everything a browser opens goes through the phone.`)));
+      kids.push(h('p', { class: 'muted small', text: 'Only phones paired with your home server show up here, and only devices paired with it can use them.' }));
+      if (mac && ph.found.some((f) => !f.bonded)) kids.push(h('p', { class: 'muted small', text: 'For an iPhone, a cable is better: plug it in with Personal Hotspot on and turn tailbond on (switch at the top). This Mac then bonds it with the Wi-Fi as iPhone (USB).' }));
+    } else {
+      const again = h('button', { class: 'btn small', text: 'Look again' });
+      again.addEventListener('click', () => post({ refresh: true }));
+      kids.push(h('p', { class: 'muted small', text: `Android phone: in tailbond, Settings → Sharing → Share bonded connection. Then turn on its hotspot (or USB tethering) and join it from ${self}.` }));
+      if (mac) kids.push(h('p', { class: 'muted small', text: 'iPhone: no hub needed. Plug it in over USB with Personal Hotspot on and turn tailbond on (switch at the top): this Mac bonds it itself, as iPhone (USB) with the connections above.' }));
+      kids.push(h('p', { class: 'muted small', text: 'Not found? A VPN with a kill switch can block local devices: allow local network access in it.' }), again);
+    }
+  }
+  box.replaceChildren(...kids);
+}
+
+// Other VPNs on this machine (docs/macos.md "Using tailbond with NetBird"):
+// what was found, that tailbond leaves its addresses and DNS alone, and the
+// work VPN's own traffic (Direct / Bonded).
+function renderCoexist(st) {
+  const box = $('#coexist');
+  if (!box) return;
+  const cx = st.coexist;
+  const nb = cx && cx.netbird || {};
+  const others = (cx && cx.foreign) || [];
+  const show = st.role === 'client' && cx && (others.length || nb.cli || (cx.conflicts || []).length);
+  box.classList.toggle('hidden', !show);
+  if (!show || box.contains(document.activeElement)) return;
+  const kids = [h('h3', { text: 'Other VPNs on this ' + (st.platform === 'darwin' ? 'Mac' : 'machine') })];
+  for (const c of cx.conflicts || []) kids.push(h('div', { class: 'banner', text: `Conflict: ${c}. tailbond won't add routes like this; turn tailbond off and on to clear it.` }));
+  for (const w of cx.warnings || []) kids.push(h('div', { class: 'banner warn', text: w }));
+  const nbOn = others.some((f) => f.kind === 'netbird');
+  if (nbOn) {
+    const f = others.find((x) => x.kind === 'netbird');
+    kids.push(h('p', {}, h('b', { text: 'NetBird detected (work VPN): ' }), `its addresses and DNS are left alone (${f.iface}${nb.addr ? ', ' + nb.addr : ''}).`));
+    const seg2 = seg([['direct', 'Direct'], ['bonded', 'Bonded']], cx.work_vpn, async (v) => {
+      try { await api('POST', '/api/coexist', { work_vpn: v }); toast('Saved'); pollOnce(); } catch (e) { toast(e.message, true); }
+    }, 'Work VPN traffic');
+    kids.push(h('div', { class: 'row ub-seg-row' }, h('span', { class: 'small', text: 'Work VPN traffic' }), seg2));
+    kids.push(h('p', { class: 'muted small', text: cx.work_vpn_effective === 'bonded'
+      ? `Bonded: NetBird's own traffic goes through tailbond's bonded tunnel${cx.want_mtu ? ` (tailbond's MTU raised to ${cx.want_mtu} to fit it)` : ''}.`
+      : "Direct: NetBird's own traffic (to its peers, relays and servers) goes straight out over this machine's connection, not bonded. The most compatible choice." }));
+  } else if (nb.cli) {
+    kids.push(h('p', { class: 'muted small', text: `NetBird is installed${nb.error ? ` (${nb.error})` : ''}. When it's connected, tailbond leaves its addresses and DNS alone.` }));
+  }
+  if (cx.tailnet_via_tailscale_app) kids.push(h('p', { class: 'small', text: 'The Tailscale app is running: it reaches your tailnet machines itself, so tailbond doesn\'t route them.' }));
+  for (const f of others.filter((x) => x.kind === 'vpn')) kids.push(h('p', { class: 'muted small', text: `Another VPN on ${f.iface}${f.prefixes && f.prefixes.length ? ` (${f.prefixes.slice(0, 3).join(', ')})` : ''}: its routes are left alone.` }));
+  if (cx.split_dns) kids.push(h('p', { class: 'muted small', text: `DNS: only tailnet names (${(cx.dns_domains || ['ts.net']).join(', ')}) go to tailbond; everything else keeps this machine's DNS.` }));
+  kids.push(h('p', { class: 'muted small', text: `${cx.tailnet_routes} tailnet route(s) and ${cx.direct_routes} direct route(s) in place.` }));
+  box.replaceChildren(...kids);
 }
 
 function renderServerPaths(st) {
@@ -785,7 +948,49 @@ function setupAddPhone() {
   });
 }
 
+// "Ask your home server" (POST /api/join): the phone page links here as
+// /?ask=<server>, which fills the name in and opens Setup.
+function setupAsk() {
+  const input = $('#ask-server'), btn = $('#ask-btn');
+  const label = () => { const n = input.value.trim().split('.')[0]; btn.textContent = n ? `Ask ${n}` : 'Ask'; };
+  input.addEventListener('input', label);
+  $('#ask-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const server = input.value.trim();
+    if (!server) return input.focus();
+    try {
+      await api('POST', '/api/join', { server });
+      state.askShown = true;
+      renderAsk({ state: 'asking', server_name: server.split('.')[0] });
+    } catch (err) { toast(err.message, true); }
+  });
+  const ask = new URLSearchParams(location.search).get('ask');
+  if (ask) {
+    input.value = ask;
+    label();
+    history.replaceState(null, '', location.pathname + location.hash);
+    state.pendingTab = 'setup';
+  }
+}
+
+function renderAsk(j) {
+  const box = $('#ask-status');
+  if (!box || !j || (!state.askShown && j.state === 'idle')) return;
+  const n = j.server_name || j.server || 'the server';
+  const words = {
+    asking: `Asking ${n}…`,
+    waiting: `Waiting for ${n} to say yes: whoever looks after ${n} taps Approve on its page (http://${n}:8077, the request is at the top). If that's you, open it now. This page connects by itself once approved.`,
+    approved: `${n} said yes: tailbond is connecting.`,
+    declined: `${n} declined.`,
+    expired: `Nobody approved in time. Ask again.`,
+    error: `Couldn't ask ${n}${j.error ? ': ' + j.error : ''}. Is Tailscale on, and is the name right?`,
+  };
+  box.textContent = words[j.state] || '';
+  box.className = 'small ' + (j.state === 'error' || j.state === 'declined' || j.state === 'expired' ? 'warn-text' : 'muted');
+}
+
 function setupPairing() {
+  setupAsk();
   $('#pair-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const uri = $('#pair-uri').value.trim();
@@ -882,6 +1087,11 @@ function releasesUrl(u) {
   const r = String(u.repo || 'kaovilai/tailbond').replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
   return `https://github.com/${r}/releases`;
 }
+// Homebrew (macOS): the release's formula, reinstalled (docs/macos.md)
+function brewCmd(u) {
+  // the root service left the keg root-owned; brew needs it back first
+  return `sudo brew services stop tailbond && sudo chown -R "$USER" "$(brew --prefix)/Cellar/tailbond" && curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" ${releasesUrl(u)}/latest/download/tailbond.rb && brew reinstall local/tailbond/tailbond && sudo brew services start tailbond`;
+}
 // methods that install by themselves (one click, or Automatic)
 const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg';
 
@@ -916,6 +1126,7 @@ function renderMaint(st) {
   badge.textContent = bad ? '!' : String(n);
   badge.className = 'tab-badge' + (bad ? ' bad' : '') + (n || bad ? '' : ' hidden');
   renderUpdBanner(st);
+  renderCrashBanner(st);
   if (state.tab !== 'maint') return;
   renderUpdates(st);
 }
@@ -1017,9 +1228,12 @@ function renderUpdates(st) {
   else if (off) now.push(h('p', { class: 'ub-big', text: 'Updates are off' }),
     h('p', { class: 'muted small', text: "tailbond doesn't check for new versions. Choose Tell me below to hear about them." }));
   else if (u.available && !retry) {
-    now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, notes ? ' · ' : '', notes));
+    now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, u.security ? ' (security fix)' : '', notes ? ' · ' : '', notes));
+    if (u.waiting) now.push(h('p', { class: 'muted small', text: `It ${u.waiting}.` }));
     if (u.method === 'dnf') {
       now.push(h('p', { class: 'small', text: 'Updates for this server come from dnf. In a terminal on this server, run:' }), cmdRow(DNF_CMD));
+    } else if (u.method === 'brew') {
+      now.push(h('p', { class: 'small', text: 'Installed with Homebrew. In Terminal, run:' }), cmdRow(brewCmd(u)));
     } else if (selfUpdates(u)) {
       now.push(h('p', { class: 'muted small', text: 'You can update now or later; everything keeps working meanwhile.' }));
     } else {
@@ -1028,7 +1242,7 @@ function renderUpdates(st) {
     }
   } else if (noCheck) {
     now.push(h('p', { class: 'ub-big', text: "Couldn't check for updates" }),
-      h('p', { class: 'small warn-text', text: `Couldn't reach GitHub (${u.error}). tailbond tries again tomorrow; Check now tries again now.` }));
+      h('p', { class: 'small warn-text', text: `Couldn't reach GitHub (${u.error}). tailbond tries again later by itself; Check now tries again now.` }));
   } else if (!retry) now.push(h('p', { class: 'ub-big', text: 'Up to date' }));
 
   const meta = [];
@@ -1088,11 +1302,15 @@ function renderUpdates(st) {
     else set.push(h('p', { class: 'small' }, auto, 'they come from dnf-automatic, which updates every package on this computer.'));
     set.push(h('p', { class: 'muted small' }, 'These are done on the computer itself, by whoever looks after it. A new version reaches dnf shortly after the release. If an update misbehaves: ', h('code', { text: 'sudo dnf downgrade tailbond-server' })));
   } else {
-    const opts = selfUpdates(u) ? [['notify', 'Tell me'], ['auto', 'Automatic'], ['off', 'Off']] : [['notify', 'Tell me'], ['off', 'Off']];
-    set.push(seg(opts, policy, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
-    set.push(h('p', { class: 'muted small', text: policy === 'off' ? "Doesn't check for new versions."
-      : policy === 'auto' ? `Installs new versions by itself between ${win[0]} and ${win[1] || '05:00'} (this machine's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself.`
-      : `Checks GitHub once a day and shows new versions here${selfUpdates(u) ? '; nothing installs until you click Update now' : ''}.` }));
+    const self = selfUpdates(u);
+    const opts = self ? [['immediate', 'Right away'], ['auto', 'Automatic (night)'], ['notify', 'Tell me'], ['off', 'Off']] : [['notify', 'Tell me'], ['off', 'Off']];
+    // without self-install (Homebrew) Right away and Automatic mean Tell me
+    const shown = self ? policy : (policy === 'off' ? 'off' : 'notify');
+    set.push(seg(opts, shown, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
+    set.push(h('p', { class: 'muted small', text: shown === 'off' ? "Doesn't check for new versions."
+      : shown === 'immediate' ? "Checks every hour and installs a new version as soon as it's safe: after a call or a big download in progress ends (it waits at most 30 minutes; security fixes don't wait). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
+      : shown === 'auto' ? `Checks every hour and installs new versions by itself between ${win[0]} and ${win[1] || '05:00'} (this machine's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself.`
+      : `Checks GitHub once a day and shows new versions here${self ? '; nothing installs until you click Update now' : ''}.` }));
   }
   kids.push(h('div', { class: 'ub-sec' }, set));
   box.replaceChildren(...kids);
@@ -1105,6 +1323,100 @@ function confirmInstall(u) {
     h('div', { class: 'row end' },
       h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'),
       h('button', { class: 'btn primary', type: 'button', onclick: async () => { closeDlg(); await updAction('/api/update/install', {}, `Installing ${u.available}…`); } }, 'Update now')));
+}
+
+// ---- Report a problem (docs/reporting.md) ----
+// The agent redacts (GET /api/report) and builds the issue URL from the
+// user's edits (POST /api/report, redacted again). Nothing is sent: the
+// browser opens GitHub's form, which the user still edits and submits.
+function renderCrashBanner(st) {
+  const ban = $('#crash-banner');
+  if (!ban) return;
+  if (!st.crash) { ban.replaceChildren(); ban.classList.add('hidden'); return; }
+  const when = new Date(st.crash).toLocaleString();
+  ban.replaceChildren(
+    `tailbond stopped unexpectedly (${when}) and restarted. `,
+    h('a', { href: '#report', text: 'Report a problem', onclick: (e) => { e.preventDefault(); openReport(); } }),
+    ' · ',
+    h('a', { href: '#', text: 'Dismiss', onclick: async (e) => { e.preventDefault(); try { await api('POST', '/api/report/crash/dismiss'); ban.classList.add('hidden'); } catch (err) { toast(err.message, true); } } }));
+  ban.classList.remove('hidden');
+}
+
+async function copyText(text, area) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* http:// pages: no Clipboard API */ }
+  const ta = area || h('textarea', { style: 'position:fixed;opacity:0' });
+  if (!area) { ta.value = text; document.body.append(ta); }
+  const was = ta.value; ta.value = text; ta.select();
+  const ok = document.execCommand('copy');
+  ta.value = was;
+  if (!area) ta.remove();
+  return ok;
+}
+
+async function openReport() {
+  let rep;
+  try { rep = await api('GET', '/api/report'); } catch (e) { toast(e.message, true); return; }
+  const field = (label, el, hint) => h('label', { class: 'field' }, h('span', { text: label }), el, hint ? h('small', { class: 'muted', text: hint }) : null);
+  const what = h('textarea', { id: 'rep-what', rows: 3, required: true, placeholder: 'e.g. After plugging in the iPhone the tunnel drops; I expected it to add a connection.' });
+  const steps = h('textarea', { id: 'rep-steps', rows: 2, placeholder: 'e.g. 1. Plug in the iPhone  2. Open a video call' });
+  const comp = h('input', { id: 'rep-component', value: rep.component || '' });
+  const ver = h('input', { id: 'rep-version', value: rep.version || '' });
+  const dev = h('input', { id: 'rep-device', value: rep.device || '' });
+  const logs = h('textarea', { id: 'rep-logs', rows: 8, class: 'mono', spellcheck: 'false' });
+  logs.value = rep.logs || '';
+  const crash = h('textarea', { id: 'rep-crash', rows: 5, class: 'mono', spellcheck: 'false' });
+  crash.value = rep.crash || '';
+  const ok = h('input', { type: 'checkbox', id: 'rep-ok' });
+  const open = h('button', { class: 'btn primary', type: 'button', id: 'rep-open', disabled: true }, 'Open GitHub issue');
+  // why the button is off, until it isn't
+  const why = h('p', { class: 'muted small', id: 'rep-why' });
+  const gate = () => {
+    open.disabled = !(ok.checked && what.value.trim());
+    why.textContent = !what.value.trim() ? 'To open the issue: say what happened (the first box), then tick the box above.'
+      : !ok.checked ? 'To open the issue: tick the box above once you have read the report.' : '';
+  };
+  gate();
+  ok.addEventListener('change', gate);
+  what.addEventListener('input', gate);
+  const body = () => ({ component: comp.value, version: ver.value, device: dev.value, what: what.value, steps: steps.value, logs: logs.value, crash: crash.value });
+  const built = async () => api('POST', '/api/report', body());
+  open.addEventListener('click', async () => {
+    // a window opened in the click itself isn't blocked as a pop-up
+    const w = window.open('about:blank', '_blank');
+    try {
+      const r = await built();
+      if (w) { w.opener = null; w.location.href = r.url; } else window.location.href = r.url;
+      toast('Opened GitHub: check the issue there, then submit it.');
+    } catch (e) { if (w) w.close(); toast(e.message, true); }
+  });
+  dlg(
+    h('h3', { text: 'Report a problem' }),
+    h('p', { class: 'notice', id: 'rep-notice', text: rep.notice }),
+    h('p', { class: 'muted small' }, rep.security_note.replace(/\(.*\)\.?$/, ''), ' ', h('a', { href: rep.security_url, target: '_blank', rel: 'noopener', text: 'Report a vulnerability privately' }), '.'),
+    rep.crash ? h('p', { class: 'warn-text small', text: `tailbond stopped unexpectedly${rep.crash_at ? ' (' + new Date(rep.crash_at).toLocaleString() + ')' : ''}; its crash details are below.` }) : null,
+    field('What happened, and what did you expect?', what),
+    field('Steps to reproduce (optional)', steps),
+    h('div', { class: 'grid2' }, field('Where', comp), field('tailbond version', ver)),
+    field('Device and OS', dev),
+    rep.crash ? field('Crash details', crash, 'Edit or clear anything you don\'t want public.') : null,
+    field('Logs (newest last)', logs, 'A link holds about 7 KB, so the issue gets the newest lines; "Copy full report" and "Save report file" have all of them.'),
+    h('label', { class: 'check' }, ok, ' ', rep.confirm),
+    why,
+    h('p', { class: 'muted small', id: 'rep-account', text: rep.account_note || '' }),
+    h('div', { class: 'row end wrap' },
+      h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'),
+      h('button', { class: 'btn', type: 'button', id: 'rep-copy', onclick: async () => {
+        try { const r = await built(); toast(await copyText(r.full) ? 'Full report copied' : 'Copy failed: use Save report file', false); } catch (e) { toast(e.message, true); }
+      } }, 'Copy full report'),
+      h('button', { class: 'btn', type: 'button', id: 'rep-save', onclick: async () => {
+        try {
+          const r = await built();
+          const a = h('a', { href: URL.createObjectURL(new Blob([r.full], { type: 'text/plain' })), download: r.file_name });
+          document.body.append(a); a.click(); a.remove();
+        } catch (e) { toast(e.message, true); }
+      } }, 'Save report file'),
+      open));
+  what.focus();
 }
 
 // ---- generic dialog ----
@@ -1416,6 +1728,8 @@ setupTabs();
 setupClients();
 setupPassword();
 setupAddPhone();
+for (const id of ['#report-link', '#logs-report']) $(id).addEventListener('click', (e) => { e.preventDefault(); openReport(); });
+if (location.hash === '#report') openReport();
 setupPairing();
 setupLogin();
 connect();

@@ -103,6 +103,10 @@ class TailbondVpnService : MqvpnVpnService() {
     private val bypass = WebsiteBypassPlan(clock)
     private var bypassJob: Job? = null
 
+    // --- Pair & Share, hub side: nearby phones' shares as relay paths ---
+    private lateinit var shareHub: dev.tailbond.app.share.ShareHub
+    private var shareHubJob: Job? = null
+
     // metrics state (engine thread only)
     private val txMeter = RateMeter()
     private val rxMeter = RateMeter()
@@ -120,6 +124,7 @@ class TailbondVpnService : MqvpnVpnService() {
         instance = this
         repo = Repository.get(this)
         prober = ServerProber(this) { s -> protect(s) }
+        shareHub = dev.tailbond.app.share.ShareHub(this, repo, { d -> protect(d) }, { relays -> setRelayPaths(relays) })
         createChannel()
         main.launch {
             // live settings changes: re-gate paths, or rebuild the session when needed
@@ -228,9 +233,17 @@ class TailbondVpnService : MqvpnVpnService() {
     private fun multi(): Boolean = servers.size > 1
 
     /** Once a second: health in, switch decisions out. */
+    private var lastUpdateTick = 0L
+
     private fun tick() {
         val e = engine ?: return
         if (!running) return
+        // updates: Right away checks hourly also while the app isn't on screen
+        val t = clock()
+        if (t - lastUpdateTick >= 5 * 60_000L) {
+            lastUpdateTick = t
+            dev.tailbond.app.update.UpdateManager.get(this).onForeground()
+        }
         val live = LiveState.live.value
         val working = session != null && live.state == ConnState.CONNECTED && live.paths.any { it.status == PathGate.STATUS_ACTIVE }
         e.reportHealth(working)
@@ -460,13 +473,14 @@ class TailbondVpnService : MqvpnVpnService() {
                 }
                 notifyText(getString(R.string.notif_connected, session?.server?.name ?: getString(R.string.home_server)))
                 main.launch { startBypassLoop(force = true) }
+                main.launch { startShareHub() }
             }
             is MqvpnState.Error -> {
                 val kind = ErrorKind.of(newState.error)
                 val failed = session?.server
                 session = null
                 restartPending = false
-                main.launch { bypassJob?.cancel() }
+                main.launch { bypassJob?.cancel(); stopShareHub() }
                 val serverError = kind == ErrorKind.UNREACHABLE || kind == ErrorKind.IDENTITY || kind == ErrorKind.REJECTED
                 if (serverError && multi() && !stopping && repo.settings.value.failoverPolicy == FailoverPolicy.PREFER) {
                     // the failover engine decides: try this server again, or switch after switch_after
@@ -488,7 +502,7 @@ class TailbondVpnService : MqvpnVpnService() {
                 session = null
                 restartPending = false
                 resetMetrics()
-                main.launch { bypassJob?.cancel() }
+                main.launch { bypassJob?.cancel(); stopShareHub() }
                 if (restart) {
                     main.launch {
                         val server = serverById(next) ?: serverById(engine?.active) ?: repo.servers.value.firstOrNull()
@@ -611,8 +625,31 @@ class TailbondVpnService : MqvpnVpnService() {
         super.onRevoke()
     }
 
+    /** Pair & Share hub rounds while the tunnel is up (share/ShareHub.kt). */
+    private fun startShareHub() {
+        if (shareHubJob?.isActive == true) return
+        shareHubJob = main.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    shareHub.round()
+                } catch (e: Exception) {
+                    Log.w(TAG, "share hub: ${e.message}")
+                }
+                delay(SHARE_HUB_EVERY_MS)
+            }
+        }
+    }
+
+    private fun stopShareHub() {
+        shareHubJob?.cancel()
+        shareHubJob = null
+        Thread { shareHub.stopAll() }.start()
+    }
+
     override fun onDestroy() {
         if (instance === this) instance = null
+        shareHubJob?.cancel()
+        if (::shareHub.isInitialized) shareHub.stopAll()
         main.cancel()
         if (LiveState.live.value.state != ConnState.ERROR) LiveState.reset()
         super.onDestroy()
@@ -658,6 +695,7 @@ class TailbondVpnService : MqvpnVpnService() {
     }
 
     companion object {
+        private const val SHARE_HUB_EVERY_MS = 5_000L
         private const val TAG = "tailbond"
         private const val CHANNEL_ID = "tunnel"
         private const val NOTIFICATION_ID = 1

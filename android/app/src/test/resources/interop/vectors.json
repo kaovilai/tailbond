@@ -5,6 +5,6 @@
   "backup_nonce_b64": "sLGys7S1tre4ubq7",
   "backup_scrypt": {"n": 32768, "r": 8, "p": 1, "key_len": 32},
   "backup_key_hex": "45c6ce1212f6a0a73d5ad8a34c08d39ffabe29ef2c825faa74cf63d5c40ddf1e",
-  "backup_plaintext_sha256": "03424ee0815c05c30ed972677d6056c0e4e1a682b95443666ed03d2e2a89d07a",
+  "backup_plaintext_sha256": "a1aa5e6b62e780f7e02d86697a30330d9447a70707a105c5585fb042fe4dd2b4",
   "backup_plaintext_file": "android-backup-plaintext.json"
 }

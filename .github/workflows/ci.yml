@@ -34,6 +34,10 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
+      - name: Brand tokens in sync, contrast (docs/brand.md)
+        run: |
+          python3 scripts/brand/gen-tokens.py --check
+          python3 scripts/brand/contrast.py
       - name: go vet
         working-directory: agent
         run: go vet ./...
@@ -48,6 +52,15 @@ jobs:
         with:
           name: tailbondd
           path: out/agent/
+          if-no-files-found: error
+      # the stand-in sharer for the Android emulator's Pair & Share hub test
+      - name: tb-sharesim (linux/amd64)
+        working-directory: agent
+        run: CGO_ENABLED=0 go build -trimpath -o ../out/tools/tb-sharesim ./cmd/tb-sharesim
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tb-sharesim-linux-amd64
+          path: out/tools/tb-sharesim
           if-no-files-found: error
 
   shellcheck:
@@ -70,6 +83,13 @@ jobs:
         run: scripts/shellcheck.sh
       - name: Release gate covers every job
         run: python3 scripts/ci/check-release-needs.py
+      # release files live on GitHub Releases only, never in git
+      - name: No build outputs or files over 1 MB in git
+        run: scripts/ci/check-tracked-files.sh
+      - name: Brand SVGs draw (beam gradient in user space, web copies match)
+        run: scripts/brand/check-svgs.sh
+      - name: Release asset names (stable latest/download names, SHA256SUMS)
+        run: scripts/release/test-collect-assets.sh
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -141,9 +161,10 @@ jobs:
         with:
           # build-native.sh skips the NDK build when these prebuilt libs exist
           # (arm64-v8a for phones, x86_64 for the emulator)
-          path: third_party/mqvpn/android/sdk-native/prebuilt
-          key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-${{ github.sha }}
-          restore-keys: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-
+          # (from the patched copy of mqvpn, scripts/lib/mqvpn-src.sh)
+          path: out/mqvpn-android/src/android/sdk-native/prebuilt
+          key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh', 'patches/mqvpn/*.patch') }}-${{ github.sha }}
+          restore-keys: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh', 'patches/mqvpn/*.patch') }}-
       - name: Unit tests, lint, debug APK
         run: android/scripts/build-apk.sh
       - uses: actions/upload-artifact@v7
@@ -152,6 +173,14 @@ jobs:
           path: out/android/tailbond-debug.apk
           if-no-files-found: error
       # x86_64-only debug APK for the emulator (job android-e2e); phones get arm64 only
+      # Report a problem (docs/reporting.md): screen renders for review
+      - name: Report a problem screens (Robolectric renders)
+        run: android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.ReportScreens' -Ptailbond.uxOut="$PWD/out/ux/report/android"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: report-screens-android
+          path: out/ux/report/android/
+          if-no-files-found: error
       - name: x86_64 debug APK (emulator e2e)
         run: android/scripts/build-e2e-apk.sh
       - uses: actions/upload-artifact@v7
@@ -228,6 +257,10 @@ jobs:
         with:
           name: android-apk-x86_64
           path: out/android/
+      - uses: actions/download-artifact@v8
+        with:
+          name: tb-sharesim-linux-amd64
+          path: out/tools/
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -235,8 +268,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: tailbond server on the runner (static mqvpn, Tailscale off)
         run: |
-          chmod +x out/x86_64/mqvpn out/agent/linux-amd64/tailbondd
-          MQVPN="$PWD/out/x86_64/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/e2e-android-server.sh
+          chmod +x out/x86_64/mqvpn out/agent/linux-amd64/tailbondd out/tools/tb-sharesim
+          MQVPN="$PWD/out/x86_64/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" SHARESIM="$PWD/out/tools/tb-sharesim" scripts/e2e-android-server.sh
       - name: Emulator (API 34, x86_64) and the checks
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
@@ -258,6 +291,136 @@ jobs:
           name: android-e2e
           path: out/e2e-android/
           if-no-files-found: warn
+
+  # The macOS client (hub) role (docs/macos.md): patched mqvpn built natively
+  # on arm64 with mqvpn's own Darwin unit tests, tailbondd's Go tests on
+  # darwin, and the hub end to end on the runner (scripts/e2e-macos.sh).
+  # The e2e server for job macos: an aarch64 Linux VM image (kernel +
+  # initramfs) with the static mqvpn and tailbondd in the server role
+  # (scripts/e2e-macos/build-server-vm.sh). Native arm64: no qemu-user.
+  macos-e2e-server:
+    name: macOS e2e server VM image (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Install podman, cpio
+        run: |
+          if ! command -v podman || ! command -v cpio; then
+            sudo apt-get update -q && sudo apt-get install -y -q podman cpio
+          fi
+      - name: mqvpn submodule revision
+        id: mq
+        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+      # same tree and key as job openwrt: whichever runs first fills it
+      - name: Cache aarch64 mqvpn build tree
+        uses: actions/cache@v6
+        with:
+          path: out/build/mqvpn-aarch64
+          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
+          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+      - name: Static aarch64 mqvpn
+        run: scripts/build-mqvpn-aarch64-musl.sh
+      - name: tailbondd linux/arm64
+        run: agent/build.sh arm64
+      - name: Server VM image
+        run: scripts/e2e-macos/build-server-vm.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-e2e-server
+          path: out/e2e-vm/
+          if-no-files-found: error
+
+  macos:
+    name: macOS client (mqvpn, tailbondd, e2e)
+    runs-on: macos-latest
+    needs: macos-e2e-server
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Homebrew deps (libevent, GNU patch, rsvg-convert for the app icon)
+        run: brew install libevent gpatch librsvg
+      - name: mqvpn submodule revision
+        id: mq
+        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+      - name: Cache mqvpn build tree
+        uses: actions/cache@v6
+        with:
+          path: out/build/mqvpn-macos
+          key: mqvpn-macos-${{ runner.arch }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-macos.sh', 'scripts/lib/*.sh') }}
+      - name: Build patched mqvpn and run its Darwin unit tests
+        run: TB_TEST=1 scripts/build-mqvpn-macos.sh
+      - name: go vet + go test (darwin)
+        working-directory: agent
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build tailbondd (darwin/arm64) and the test sharer
+        run: |
+          agent/build.sh darwin/arm64
+          (cd agent && CGO_ENABLED=0 go build -trimpath -o ../out/agent/darwin-arm64/tb-sharesim ./cmd/tb-sharesim)
+          (cd agent && CGO_ENABLED=0 go build -trimpath -o ../out/agent/darwin-arm64/tb-dnsstub ./cmd/tb-dnsstub)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-arm64
+          path: |
+            out/macos/mqvpn
+            out/agent/darwin-arm64/tailbondd
+          if-no-files-found: error
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-e2e-server
+          path: out/e2e-vm/
+      - name: QEMU (the e2e server VM), wireguard-go (a second VPN's utun)
+        run: brew install qemu wireguard-go
+      # the real NetBird package, for a logged-out smoke test (no account)
+      - name: NetBird (not logged in)
+        run: brew install netbirdio/tap/netbird || echo "::warning::brew install netbirdio/tap/netbird failed; the e2e notes it"
+      - name: e2e-macos (hub on this Mac, 2 phone shares, server in a VM)
+        run: scripts/e2e-macos.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-macos-logs
+          path: out/e2e-macos/
+          if-no-files-found: ignore
+      # the menu bar app (macos/TailbondMenu): unit tests, the menu window
+      # rendered for each state (artifact menubar-screens), tailbond.app
+      - name: Menu bar app (tests, screens, ad-hoc signed tailbond.app)
+        run: |
+          TB_SNAPSHOT_DIR="$PWD/out/ux/menubar" swift test --package-path macos/TailbondMenu
+          ls out/ux/menubar/*.png
+          packaging/macos/build-app.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: menubar-screens
+          path: out/ux/menubar/
+          if-no-files-found: error
+      - name: macOS bundle and Homebrew formula
+        run: |
+          TB_REQUIRE_APP=1 packaging/macos/build-bundle.sh
+          tar -tzf out/macos/tailbond-macos-arm64.tar.gz | grep -qx 'tailbond-macos-arm64/tailbond.app/Contents/MacOS/tailbond'
+          tar -tzf out/macos/tailbond-macos-arm64.tar.gz | grep -qx 'tailbond-macos-arm64/icons/tailbond.icns'
+      - name: Install test (install.sh, --update, uninstall.sh, Homebrew formula)
+        run: scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-bundle
+          path: |
+            out/macos/tailbond-macos-arm64.tar.gz
+            out/macos/tailbond.rb
+          if-no-files-found: error
 
   # tailbond Share for iPhone (ios/, docs/ios.md): the relay core's unit
   # tests on macOS and on an iOS simulator, and an unsigned simulator build
@@ -348,6 +511,27 @@ jobs:
           path: out/ipk/*.ipk
           if-no-files-found: error
 
+  # Report a problem (docs/reporting.md) in a browser against a real
+  # tailbondd: the dashboard and the GL.iNet panel; redaction, the
+  # checkbox gate, the issue URL, the file and the clipboard.
+  report-ux:
+    name: Report a problem (dashboard + GL panel, Chromium)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Flow check and screenshots (Playwright in podman)
+        run: scripts/ux/report-screens.sh "$PWD/out/ux/report/web"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-screens-web
+          path: out/ux/report/web/
+          if-no-files-found: ignore
+
   mqvpn-x86_64:
     name: Static x86_64 mqvpn (musl)
     runs-on: ubuntu-24.04
@@ -372,10 +556,38 @@ jobs:
           path: out/x86_64/mqvpn
           if-no-files-found: error
 
+  # The aarch64 Linux bundle's mqvpn (a VPS or Linux laptop on arm64);
+  # native arm64 runner, same cache as job "openwrt".
+  mqvpn-aarch64:
+    name: Static aarch64 mqvpn (musl)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install podman
+        run: command -v podman || { sudo apt-get update -q && sudo apt-get install -y -q podman; }
+      - name: mqvpn submodule revision
+        id: mq
+        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+      - name: Cache aarch64 mqvpn build tree
+        uses: actions/cache/restore@v6
+        with:
+          path: out/build/mqvpn-aarch64
+          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
+          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+      - name: Build (native arm64 Alpine, podman)
+        run: scripts/build-mqvpn-aarch64-musl.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mqvpn-aarch64
+          path: out/aarch64/mqvpn
+          if-no-files-found: error
+
   linux-bundle:
     name: Generic Linux bundle (VPS)
     runs-on: ubuntu-24.04
-    needs: [agent, mqvpn-x86_64]
+    needs: [agent, mqvpn-x86_64, mqvpn-aarch64]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -388,10 +600,17 @@ jobs:
         with:
           name: mqvpn-x86_64
           path: out/x86_64/
-      - name: Build bundle
+      - uses: actions/download-artifact@v8
+        with:
+          name: mqvpn-aarch64
+          path: out/aarch64/
+      # release assets tailbond-linux-x86_64.tar.gz and -aarch64.tar.gz
+      - name: Build bundles
         run: |
-          chmod +x out/x86_64/mqvpn out/agent/linux-*/tailbondd
-          TB_ARCHS=x86_64 packaging/linux/build-bundle.sh
+          chmod +x out/x86_64/mqvpn out/aarch64/mqvpn out/agent/linux-*/tailbondd
+          TB_ARCHS="x86_64 aarch64" packaging/linux/build-bundle.sh
+          test -s out/linux/tailbond-linux-x86_64.tar.gz
+          tar -tzf out/linux/tailbond-linux-aarch64.tar.gz | grep -qx 'tailbond-linux-aarch64/bin/mqvpn'
       - uses: actions/upload-artifact@v7
         with:
           name: linux-bundle
@@ -517,7 +736,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, mqvpn-x86_64, openwrt, rpm, linux-bundle, vps-install]
+    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, macos-e2e-server, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -527,25 +746,16 @@ jobs:
       artifact-metadata: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          # the commits since the previous release (security marker below)
+          fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
           path: dist/
+      # stable names (releases/latest/download/<name>) plus the versioned
+      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
       - name: Collect assets and SHA256SUMS
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          mkdir -p assets
-          cp dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz assets/
-          if ! compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
-            # never publish an APK that can't update the installed app
-            echo "::error::no release APK: the Android signing secrets are missing (TB_RELEASE_KEYSTORE_B64 ...). Run scripts/release/gen-android-keystore.sh once (or --restore the key from its backup), then re-run this tag. docs/android.md, Release key."
-            exit 1
-          fi
-          cp dist/android-release-apk/tailbond-*.apk assets/
-          for d in dist/tailbondd/linux-*; do
-            tar -czf "assets/tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
-          done
-          (cd assets && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
+        run: scripts/release/collect-assets.sh dist assets
       # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
       # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
       - uses: actions/attest-build-provenance@v4
@@ -559,7 +769,17 @@ jobs:
           pre=()
           # v1.2.3-beta.1: a pre-release, which the update check never offers
           [[ "$TAG" == *-* ]] && pre=(--prerelease)
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag "${pre[@]}" assets/*
+          # A security release: a "Security: yes" trailer on any commit since
+          # the previous release. "[security]" in the notes makes "Right away"
+          # installs skip their wait for a quiet moment (docs/updates.md); a
+          # maintainer can also add it by editing the notes later.
+          prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$TAG^" 2>/dev/null || true)"
+          notes=()
+          if git log --format=%B "${prev:+$prev..}$TAG" | grep -qiE '^Security: *(yes|true) *$'; then
+            notes=(--notes "[security] This release fixes a security issue. Installs on Right away take it without waiting for a quiet moment.")
+            echo "security release (a Security: yes trailer since ${prev:-the start})"
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "${notes[@]}" --verify-tag "${pre[@]}" assets/*
 
   copr:
     name: COPR build (Fedora)

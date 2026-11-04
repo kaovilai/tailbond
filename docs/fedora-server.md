@@ -6,10 +6,31 @@ For a VPS as a second (backup) server, or another distribution (Debian, Ubuntu, 
 
 ## 1. Install
 
+**Download:** from COPR (updates come with `dnf upgrade`), or the release
+RPM [tailbond-server.x86_64.rpm](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-server.x86_64.rpm)
+([all versions](https://github.com/kaovilai/tailbond/releases)).
+
 ```sh
-sudo dnf install ./tailbond-server-*.rpm
+sudo dnf copr enable kaovilai/tailbond
+sudo dnf install tailbond-server
 sudo systemctl enable --now tailbond
 ```
+
+Or the release RPM, checked against the release's `SHA256SUMS` first:
+
+```sh
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-server.x86_64.rpm
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # tailbond-server.x86_64.rpm: OK
+sudo dnf install ./tailbond-server.x86_64.rpm
+sudo systemctl enable --now tailbond
+```
+
+(The release also has it as `tailbond-server-<version>.x86_64.rpm`.) An RPM
+installed from the release doesn't update by itself: switch to COPR, or
+install the next release's RPM the same way ([Updates](#updates)).
+Releases and COPR builds appear once the first release is published;
+until then, [build it from source](#build-from-source).
 
 The package contains:
 
@@ -234,6 +255,18 @@ On every `v*` tag CI then runs `copr-cli buildscm --method make_srpm` on the
 tag: COPR runs `.copr/Makefile` (builds mqvpn and tailbondd, then
 `packaging/fedora/build-rpm.sh` with `SRPM_OUT`) and builds the RPM from that
 SRPM. Without the secret CI skips the COPR step with a notice.
+
+## Build from source
+
+For contributors (Fedora, with the build tools `packaging/fedora/build-rpm.sh`
+lists):
+
+```sh
+git clone --recurse-submodules https://github.com/kaovilai/tailbond
+cd tailbond
+packaging/fedora/build-rpm.sh                 # → out/rpm/tailbond-server-<version>.x86_64.rpm
+sudo dnf install ./out/rpm/tailbond-server-*.rpm
+```
 
 ## Troubleshooting
 

@@ -14,9 +14,37 @@ It is built on mqvpn v0.19.0's Android SDK (`third_party/mqvpn/android`):
 | `sdk-native`, `sdk-core` | forked into `android/mqvpn-sdk/` with small marked patches, see [android/mqvpn-sdk/README.md](../android/mqvpn-sdk/README.md) |
 | `app` | tailbond's own UI and VPN service (`android/app`) |
 
-## Build
+## Install
 
-On Fedora (tested on Fedora 44 under WSL2):
+**Download:** [tailbond-android.apk](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk)
+(the latest release, signed with tailbond's release key;
+[all versions](https://github.com/kaovilai/tailbond/releases)).
+
+- **Easiest:** with Tailscale on, open your home server's page
+  (`homebox/`, its Tailscale name with the slash) in the phone's browser.
+  The "Get tailbond" page offers the same APK and walks you through it.
+- **From the release:** open the download link above on the phone, open
+  the file, and let the browser install apps when Android asks.
+- **[Obtainium](https://obtainium.imranr.dev/)** installs it and keeps it
+  up to date from the [releases](https://github.com/kaovilai/tailbond/releases): **Add App**, paste
+  `https://github.com/kaovilai/tailbond`, APK filter
+  `^tailbond-android\.apk$` ([Updates](#updates)).
+
+To check a download on a computer, against the release's `SHA256SUMS`:
+
+```sh
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # tailbond-android.apk: OK
+```
+
+Releases appear once the first release is published (after the first
+green `main` with the Android signing secrets set); until then, build it
+yourself (below).
+
+## Build from source
+
+For contributors. On Fedora (tested on Fedora 44 under WSL2):
 
 ```sh
 android/scripts/setup-sdk.sh           # JDK 21, SDK 37, build-tools 37, NDK 28.2.13676358, CMake 3.22.1 → ~/Android/Sdk
@@ -45,7 +73,7 @@ android/scripts/gradle.sh :app:lintDebug
 android/scripts/gradle.sh :app:assembleDebug
 ```
 
-## Install
+### Install your build
 
 ```sh
 adb install -r out/android/tailbond-debug.apk
@@ -69,7 +97,13 @@ install prompts look like (Chrome's "File might be harmful", *Install
 unknown apps → Allow from this source*, *Install*, Play Protect's scan),
 and then **Open tailbond and ask homebox**: an Android intent link to
 `tailbond://ask?server=homebox.<tailnet>.ts.net` that falls back to the
-page's install step when the app isn't installed yet. The app skips its intro
+page's install step when the app isn't installed yet. The same step offers
+[Obtainium](#updates) instead (an **Add tailbond to Obtainium** link,
+`obtainium://add/https://github.com/kaovilai/tailbond`, and its steps). The
+page is "Get tailbond" for every device, with a switcher (Android · Mac ·
+iPhone · Linux); on a phone it opens on the Android steps, and on a computer
+the Android section shows a QR code of `http://homebox/#android` to scan
+with the phone. The app skips its intro
 and asks the server right away (step 0 below), unless it's already paired.
 The admin's dashboard and the GL panel show the page's QR code under **Add
 an Android phone**. Those prompts are Android's own and can't be removed
@@ -193,6 +227,20 @@ its frames and MACs are checked against the Go reference
 (`agent/internal/share/testdata/vectors.json`). The phone never bonds other
 phones' shares: hubs are the travel router and Linux.
 
+## Share bonded connection (phone hub) and nearby phones' data
+
+- **Settings → Sharing → Share bonded connection:** a laptop on this phone's hotspot or
+  USB tethering uses the phone's whole bonded tunnel through a SOCKS5 /
+  HTTP CONNECT proxy on port 1888. The laptop logs in with the pass its home
+  server gave it for this phone (Pair & Share keys). On a Mac: **Use a phone's connection**. The
+  notification shows devices and bytes and has **Stop sharing**.
+- **Settings → Sharing → Use nearby phones' shared data** (on by default): while
+  tailbond is on, phones on the same Wi-Fi that share their mobile data are
+  bonded into this phone's tunnel as extra paths (relay paths, patch
+  0004).
+
+Details, what's tested and the limits: [phone-hub.md](phone-hub.md).
+
 ## Emulator end-to-end test
 
 CI job `android-e2e` runs the real app on an x86_64 Android 14 emulator
@@ -240,27 +288,39 @@ tests that used them are in [ux/summary.md](ux/summary.md) and
 ## Updates
 
 Like a typical open-source app: each release is a GitHub release with a
-release-signed `tailbond-<version>.apk` (and `SHA256SUMS`;
+release-signed `tailbond-android.apk` (and `SHA256SUMS`;
 [architecture.md](architecture.md#updates), [updates.md](updates.md)).
 Two ways to stay current:
 
 - **Recommended: [Obtainium](https://obtainium.imranr.dev/).** It tracks
   GitHub releases and installs updates for you. In Obtainium tap **Add App**,
   paste `https://github.com/kaovilai/tailbond`, keep the source "GitHub", and
-  set the APK filter to `^tailbond-[0-9.]+\.apk$` (leaves out `-debug` and
-  pre-release APKs). It works only with the release APK (same key as the
-  one installed), not a debug build.
-- **In the app**: Settings → **Updates**. About once a day (when the app
-  comes to the front or the page opens, and the last check is older than
-  24 h; **Check now** any time) it asks
+  set the APK filter to `^tailbond-android\.apk$` (the release APK's name
+  in every release; Obtainium takes the version from the release). Then set Obtainium to check often: **Obtainium →
+  Settings → Background update checking interval → 1 hour**, so a release
+  reaches the phone within the hour. It works only with the release APK
+  (same key as the one installed), not a debug build.
+- **In the app**: Settings → **Updates**. **Android never lets an app
+  install itself without your tap**, so "Right away" here means *tell me
+  within the hour*:
+  - **Right away** (the default on a new install) checks every hour, while
+    the app is on screen or the tunnel is on. When a new version is out, a
+    notification says **Update ready: tap to install**. Tapping it
+    downloads the APK, and Android asks you to install it. You're told once
+    per version.
+  - **Tell me** checks about once a day (when the app comes to the front and
+    the last check is older than 24 h) and shows it in the app only.
+  - **Off** doesn't check by itself.
+
+  **Check now** works any time. An install from before this keeps its
+  policy. Each check asks
   `GET https://api.github.com/repos/<repo>/releases/latest`. `<repo>` is
   built in: `BuildConfig.UPDATE_REPO`, from the Gradle property or env
   `TB_UPDATE_REPO` (default `kaovilai/tailbond`). A newer `tag_name` than
   the app's `versionName` shows **Update available: vX.Y.Z** with **What's
   new** (the release page) and **Download update**, which opens the APK in
   the browser; open the download and tap Update, and Android installs it over
-  the app because it's signed with the same key. Policy **Tell me**
-  (default) or **Off** (no checks by itself). A build whose version isn't a
+  the app because it's signed with the same key. A build whose version isn't a
   numbered release (`dev`, `-dirty`) shows the latest release but never
   says "Update available". A debug build says it can't take release APKs.
 
@@ -302,6 +362,10 @@ TB_RELEASE_KEYSTORE_PASSWORD=… TB_RELEASE_KEY_ALIAS=tailbond TB_VERSION=0.2.0 
 with every release: `MAJOR*1000000 + MINOR*10000 + PATCH*100` (0.2.0 →
 20000); a pre-release ending in a number N is that − 100 + N (1.2.3-beta.4 →
 1020204). MINOR and PATCH stay ≤ 99.
+
+## Report a problem
+
+**Settings → Help → Report a problem** (and a card on the home screen after a crash): a redacted report you check, then GitHub in the browser; nothing is sent by the app. Crashes are caught by an uncaught-exception handler and, on Android 11+, the system's native-crash and ANR records. [reporting.md](reporting.md).
 
 ## Backup and restore
 
@@ -516,6 +580,11 @@ Android's sign-in can't load: turn it off while you sign in, then on again
 [setup tips](setup-tips.md)).
 
 ## Known limitations
+
+- **One VPN at a time.** Android runs only one VPN app at once, so tailbond
+  can't run next to NetBird, the Tailscale app or another VPN on the same
+  phone. Turning one on turns the other off. On a Mac or a Linux laptop
+  both can run ([macos.md](macos.md#using-tailbond-with-netbird-or-another-work-vpn)).
 
 - **Untested on a device.** No phone or emulator was available while building
   (WSL2 has no KVM, so no emulator). Tested: unit tests, lint, a successful

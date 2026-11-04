@@ -219,3 +219,20 @@ func TestClientMTU(t *testing.T) {
 		}
 	}
 }
+
+// The kill switch is opt-in: no key unless asked for (mqvpn's default off).
+func TestClientKillSwitch(t *testing.T) {
+	p := clientParams("speed")
+	ini, err := Client(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ini, "KillSwitch") {
+		t.Fatalf("kill switch must be off by default, got:\n%s", ini)
+	}
+	p.KillSwitch = true
+	if ini, err = Client(p); err != nil {
+		t.Fatal(err)
+	}
+	one(t, parse(t, ini), "Interface", "KillSwitch", "true")
+}

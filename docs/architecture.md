@@ -10,16 +10,17 @@ Every component below MUST follow this document. Change it here first.
 
 | Component | Path | Runs on | Role |
 |---|---|---|---|
-| `tailbondd` agent + web UI | `agent/` (Go, UI embedded) | Fedora (x86_64/aarch64), GL.iNet (aarch64 musl) | supervises mqvpn, serves dashboard + API, Tailscale glue |
-| mqvpn patches | `patches/mqvpn/*.patch` | all | client-side control API (see below) |
+| `tailbondd` agent + web UI | `agent/` (Go, UI embedded) | Fedora (x86_64/aarch64), GL.iNet (aarch64 musl), macOS (arm64) | supervises mqvpn, serves dashboard + API, Tailscale glue |
+| mqvpn patches | `patches/mqvpn/*.patch` | all | client-side control API, relay paths, their macOS wiring (see below) |
 | Fedora package | `packaging/fedora/` | Fedora 43+ | RPM: `tailbond-server` (mqvpn + tailbondd + units + firewalld service) |
 | OpenWrt / GL.iNet package | `packaging/openwrt/` | Flint 3 (GL-BE9300), Slate 7 (GL-BE3600), any aarch64_cortex-a53 OpenWrt | `.ipk` with static musl mqvpn + tailbondd, init.d, UCI, GL admin panel (VPN → tailbond: oui view + `/rpc` Lua object, [glinet.md](glinet.md)) |
 | Android app | `android/` | Android 8+ arm64 | fork of mqvpn's Android app, rebranded `dev.tailbond.app` |
+| macOS client | `packaging/macos/` | Apple silicon Macs | the hub on a laptop: LaunchDaemon, `install.sh`, Homebrew formula, darwin hooks ([macos.md](macos.md)) |
 | Generic Linux server bundle | `packaging/linux/` (+ Ansible role `packaging/ansible/roles/tailbond/`) | Debian/Ubuntu, Alma/RHEL/Rocky 9–10, Fedora; x86_64 | static mqvpn + tailbondd, `install.sh` (ports, subnet, firewall, systemd memory limits), for a VPS server ([vps.md](vps.md)) |
 
 Roles of `tailbondd` (`--role` / config `role`):
 - `server`: home endpoint (Fedora box or Flint 3). Runs `mqvpn --mode server`.
-- `client`: travel router (Slate 7). Runs `mqvpn --mode client` over all WANs; routes LAN through the tunnel.
+- `client`: travel router (Slate 7), Linux laptop or Mac. Runs `mqvpn --mode client` over all WANs; routes LAN through the tunnel (router) or the machine's own traffic (laptop, Mac: mqvpn's `manage_routes`).
 
 ## Network layout (defaults)
 
@@ -89,6 +90,8 @@ must accept payloads without them):
 
 Upstream mqvpn only serves the control API in server mode. `patches/mqvpn/0001-client-control-api.patch` adds it to client mode on Linux: `[Control] Listen` / `--control-port` in client mode serve `get_status` and `get_stats` with the **same JSON shape as server mode**, as one client object whose path entries additionally carry `"iface"` (the bound interface name). Keep the patch upstreamable (small, confined to `src/platform/linux/` + `src/platform/posix/`).
 
+`patches/mqvpn/0003-darwin-client-control-and-relay-paths.patch` (on top of 0001 and 0002) does the same on macOS: the Darwin CLI compiles the same `control_socket.c` (plain POSIX + libevent; it stays in `src/platform/linux/`, a move to `posix/` being a pure rename) and serves the client API (no RX offload counters there), and a relay path (`NAME@HOST:PORT`) is wired into `platform_darwin.c`: its socket is not `IP_BOUND_IF`-pinned and is routed normally, and the route monitor, the reactivate re-pin and the scoped server pins (`#F1`) skip it, since its name is not an interface. Interface paths are unchanged. `test_control_socket` joins mqvpn's Darwin ctest set, which already runs the relay bind tests (`test_bind_posix_socket`).
+
 ## tailbondd HTTP API (served on `:8077`, UI at `/`)
 
 Auth: if `ui_password` is set, a session cookie from `POST /api/login {"password"}`. Without one (server role), requests from tailnet addresses get the admin API only when `tailscale whois` puts the device under the server's owner (the login of `tailscale status` Self's user; none for a tagged machine) or a login in `approvers`; others get 403 `{"ok":false,"error":"owner only","owner":"<allowed logins>"}`. Loopback and other sources, the phone page and the pair-request endpoints are unaffected; a tagged server with no `approvers` keeps the old rule (anyone who can reach it). `POST /api/settings` also takes `approvers` (list of logins); `GET` reports `owner` and `approvers`. Pair-request replies (to the requester) additionally carry `device`, `user`, `ip`: how the approval card shows it. Server role binds `127.0.0.1` plus the Tailscale IP by default (or the configured `listen` host), and always also its tunnel IP (`10.77.0.1:8077`, bound once `tb0` has it) unless `listen` is a wildcard. Client role binds the LAN.
@@ -119,14 +122,18 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/pair-requests` | server, additive (admin): every live request `{"id","name","kind","device","dns_name","hostname","os","user","user_name","ip","status","created","expires","client","repair"}` |
 | POST | `/api/pair-requests/{id}/approve`, `/decline` | server, additive (admin): body `{"name"}` optional. Refused (403) from the requesting address |
 | GET | `/api/discover?refresh=1` | client, additive: tailbond servers among online tailnet peers `{"tailscale_installed","tailscale_running","self","tailnet","servers":[{"name","dns_name","ip","os","version"}],"checked","at"}` |
-| GET/POST/DELETE | `/api/join` | client, additive: ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel. Additive: `"add": true` adds the approved server to the [server list](#multiple-servers-and-failover) as a backup instead of replacing the primary; `error` may then be `subnet_in_use` or `exists`, with `conflict` (the server already in the list) and `subnet` |
+| GET/POST/DELETE | `/api/join` | client, additive (the dashboard's Setup → **Ask your home server**; `/?ask=<server>` fills it in): ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel. Additive: `"add": true` adds the approved server to the [server list](#multiple-servers-and-failover) as a backup instead of replacing the primary; `error` may then be `subnet_in_use` or `exists`, with `conflict` (the server already in the list) and `subnet` |
 | DELETE | `/api/pair` | client, additive: forget the pairing, every server in the list (tunnel stops, LAN back on the WANs) |
 | GET | `/api/peers` | client, additive: the server's list (below), fetched through the tunnel with this client's token, cached 20 s |
 | POST/DELETE | `/api/captive/signin` | client, additive: `{"name": <network or device>}` sign-in mode on a WAN behind a portal (409 otherwise) / off ([captive portals](#captive-portals)) |
 | POST | `/api/captive/check` | client, additive: `{"name"}` re-check now (`""` = all) |
 | GET | `/api/health` | additive: [setup health](#setup-health) |
 | GET | `/tailbond-glinet.ipk` | additive: the GL router package, from `glinet_ipk` (default `/usr/share/tailbond/tailbond-glinet.ipk`) or rebuilt from opkg's records of the installed package |
+| GET | `/api/report` | additive: Report a problem ([reporting.md](reporting.md)): component, version, device, the newest log lines and the kept crash, redacted |
+| POST | `/api/report` | additive: `{component, version, device, what, steps, logs, crash}` → `{url, full, file_name}` (the GitHub issue link, ≤ 7000 characters, and the whole report), redacted again |
+| POST | `/api/report/crash/dismiss` | additive: forget the kept crash (`crash` in the status) |
 | GET | `/get` | server, additive, **unauthenticated**: the [phone page](#phone-page) (HTML), also served on port 80 |
+| GET | `/tailbond-macos-arm64.tar.gz` | server, additive, **unauthenticated**: the macOS bundle for the phone page's Mac section (`macos_bundle`, else a copy fetched once from the GitHub release and cached; 404 when there is none), also on port 80 |
 | GET | `/api/servers` | client, additive: `{"servers":[…],"active_server","failover":{…}}`, the same objects as in `/api/status` ([multiple servers](#multiple-servers-and-failover)) |
 | POST | `/api/servers` | client, additive: `{"uri", "name"?}` adds a server at the end of the list (a backup). 409 `{"error":"subnet_in_use","conflict":"<server>","subnet"}` when its tunnel subnet overlaps another server's; 409 `{"error":"exists","conflict"}` when it's the same server |
 | DELETE | `/api/servers/{name}` | client, additive: forget one server (the next one takes over if it was active) |
@@ -146,16 +153,42 @@ phone's browser, e.g. `homebox`) and `landing_qr_svg` (QR code of
 
 #### Phone page
 
-Server role: a page for phones that run Tailscale but not tailbond yet,
-served on **port 80 of the Tailscale IPs** (config `landing_port`, default
-80, `-1` = off; `landing_public_port` is the port tailnet devices use when a
-firewall redirect sits in between: OpenWrt binds 8078 and redirects tailnet
-tcp/80 to it). Typing the server's MagicDNS short name in a phone's browser
-opens it. It serves exactly `GET /` (HTML: the APK download with what
-Android's install prompts look like, and a link that opens the app asking
-this server), `GET /tailbond.apk` and `GET /icon.svg`; every other path
-redirects to `/`, whatever `ui_password` says. Binding failures (port in
-use) are logged once and the page stays at `/get` on the dashboard port.
+Server role: "Get tailbond", a page for devices that run Tailscale but not
+tailbond yet, served on **port 80 of the Tailscale IPs** (config
+`landing_port`, default 80, `-1` = off; `landing_public_port` is the port
+tailnet devices use when a firewall redirect sits in between: OpenWrt binds
+8078 and redirects tailnet tcp/80 to it). Typing the server's MagicDNS short
+name in a browser opens it. It serves exactly `GET /` (HTML), `GET
+/tailbond.apk`, `GET /tailbond-macos-arm64.tar.gz`, `GET /landing.js` and
+`GET /icon.svg`; every other path redirects to `/`, whatever `ui_password`
+says. Binding failures (port in use) are logged once and the page stays at
+`/get` on the dashboard port.
+
+The page has a section per platform behind a switcher: **Android** (the
+APK with what Android's install prompts look like, Obtainium as the
+alternative, a link that opens the app asking this server, and on other
+devices a QR code of `<page>#android` to scan with the phone), **Mac** (a
+one-line Terminal install from this server, the download button with its
+SHA-256, Homebrew through a local tap; then `http://localhost:8077/?ask=<full
+name>`, which opens the Mac's own dashboard with **Ask your home server**
+filled in), **iPhone** (bonded with no app over the router's Wi-Fi or USB;
+tailbond Share and docs/ios.md) and **Linux** (`install.sh --client` for a
+laptop, the RPM and `install.sh` for a server). `#android`, `#mac`,
+`#iphone`, `#linux` pick a section (CSS `:target`, no script needed);
+without one, the server's guess from `User-Agent` / `Sec-CH-UA-Platform`
+shows first (Windows: a note and the Android steps), refined in the browser
+by `landing.js` (an iPad that asks for the desktop site). `landing.js` also
+runs the copy buttons (with an `execCommand` fallback: `http://homebox/`
+isn't a secure context). No external assets.
+
+The Mac download: `macos_bundle` (default
+`/usr/share/tailbond/tailbond-macos-arm64.tar.gz`) when present, else
+`<state_dir>/downloads/tailbond-macos-arm64.tar.gz`, else the asset of this
+version's GitHub release (the latest for a non-release build) downloaded
+on the first request (or in the background when a Mac opens the page),
+checked against the release's `SHA256SUMS` like an update, and cached. One
+fetch at a time; after a failure none for 10 minutes; none at all with
+`update.policy` `off`.
 
 The app link is `intent://ask?server=<full MagicDNS name>#Intent;scheme=tailbond;package=dev.tailbond.app;S.browser_fallback_url=<page>#get-app;end`,
 i.e. **`tailbond://ask?server=<name>`**: the app asks that server to pair
@@ -253,7 +286,8 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 - `scripts/build-mqvpn-native.sh` → `third_party/mqvpn/build/mqvpn` (Fedora).
 - `scripts/build-mqvpn-musl.sh <aarch64|x86_64>` → static `out/<arch>/mqvpn` via `podman` + `docker.io/library/alpine` (native when the host has that arch, else qemu-user-static); `scripts/build-mqvpn-aarch64-musl.sh` is the aarch64 shorthand.
 - `packaging/linux/build-bundle.sh` → `out/linux/tailbond-linux-<arch>.tar.gz` (installer, static binaries, hooks, unit).
-- `agent`: `CGO_ENABLED=0 go build` for linux/amd64 and linux/arm64.
+- `agent`: `CGO_ENABLED=0 go build` for linux/amd64 and linux/arm64; `agent/build.sh darwin/arm64` for macOS.
+- `scripts/build-mqvpn-macos.sh` (on a Mac) → `out/macos/mqvpn`, arm64, libevent from Homebrew linked statically; `packaging/macos/build-bundle.sh` → `out/macos/tailbond-macos-arm64.tar.gz` and the formula `out/macos/tailbond.rb`.
 - RPM: `packaging/fedora/build-rpm.sh` → `out/rpm/`.
 - IPK: `packaging/openwrt/build-ipk.sh` → `out/ipk/tailbond_<ver>_aarch64_cortex-a53.ipk` (plain ar/tar ipk; no OpenWrt SDK needed since binaries are static).
 - APK: `android/` Gradle → `out/android/tailbond-debug.apk`. The RPM and the IPK carry it at `/usr/share/tailbond/tailbond.apk` when it exists at build time (or `TAILBOND_APK`).
@@ -279,6 +313,7 @@ Every hook also gets `TB_ROLE`, `TB_MODE`, `TB_STATE_DIR` and `TB_CONFIG` (path 
 - Fedora server hooks (`packaging/fedora/hooks/`): firewalld (open UDP port, `tb0` in a zone with masquerade toward the internet and `tailscale0`, `TB_WEB_PORTS` from tailnet source ranges only), `tailscale set --advertise-routes`. Without a running firewalld they fall back to mqvpn's NAT script plus iptables masquerade toward `tailscale0`.
 - Generic Linux hooks (`packaging/linux/hooks/`, installed to `/usr/local/lib/tailbond/hooks` and set as `hooks_dir`): firewalld like Fedora, else an nftables `table inet tailbond`, else iptables (plus FORWARD accepts when that policy is DROP); same Tailscale route handling.
 - OpenWrt hooks (`packaging/openwrt/hooks/`): UCI network/firewall zone `tailbond` for `tb0`, forwarding `lan → tailbond`, policy routing of LAN through `tb0`, server-role equivalents for Flint 3.
+- macOS hooks (`packaging/macos/hooks/`): `client-up` / `client-down` only flush the DNS cache; mqvpn's Darwin layer sets the routes (`manage_routes`), the DNS servers (`networksetup`) and the optional pf kill switch itself, and undoes them when it stops.
 - The agent runs mqvpn with `manage_routes = false` on OpenWrt and lets hooks route. On Fedora (server only), internet NAT comes from the firewalld `tailbond-out` policy, or from mqvpn's own NAT script when firewalld isn't running.
 
 ## Agent config file
@@ -310,6 +345,7 @@ Additive keys (all optional):
 - `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`;
 - `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing);
 - `glinet_ipk`: router package offered as `GET /tailbond-glinet.ipk`;
+- `macos_bundle`: the macOS bundle the phone page offers (default `/usr/share/tailbond/tailbond-macos-arm64.tar.gz`; without it, fetched from the GitHub release and cached);
 - `landing_port` (server: phone page bind port, default 80, `-1` = off), `landing_public_port` (the port tailnet devices use, default the same);
 - `server.users[].ts_node`: the Tailscale stable node ID that asked to pair (re-asking re-issues this user's key);
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;
@@ -561,13 +597,34 @@ Users' guide: [updates.md](updates.md).
 
 ### Release assets (CI job `release`, on `v*` tags)
 
-`tailbond-linux-x86_64.tar.gz`, `tailbond-linux-aarch64.tar.gz` (static
-bundle with `install.sh`), `tailbond_<v>-r1_aarch64_cortex-a53.ipk`,
-`tailbond_<v>-r1_aarch64_cortex-a53_neon-vfpv4.ipk`,
-`tailbond-server-<v>-1.fc44.x86_64.rpm`, `tailbond-<v>.apk` (release-signed),
-`tailbondd-<tag>-linux-<arch>.tar.gz`, and `SHA256SUMS` (`sha256sum` format
-over all of them). A `-pre` tag (`v1.2.3-beta.1`) is a GitHub pre-release,
-which the "latest release" API never returns.
+Built files live only on GitHub Releases, never in git
+(`scripts/ci/check-tracked-files.sh`). The names stay the same in every
+release, so `https://github.com/<repo>/releases/latest/download/<name>`
+always works (`scripts/release/collect-assets.sh`, tested by
+`scripts/release/test-collect-assets.sh`):
+
+| Asset | What |
+|---|---|
+| `tailbond-android.apk` | Android, release-signed |
+| `tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk` | GL.iNet stock firmware |
+| `tailbond-openwrt-aarch64_cortex-a53.ipk` | OpenWrt 23.05/24.10 aarch64 |
+| `tailbond-server.x86_64.rpm` | Fedora |
+| `tailbond-linux-x86_64.tar.gz`, `tailbond-linux-aarch64.tar.gz` | static bundle with `install.sh` (VPS, Linux client) |
+| `tailbond-macos-arm64.tar.gz`, `tailbond.rb` | Mac bundle with `install.sh`; Homebrew formula with that tarball's checksum |
+| `tailbondd-linux-amd64.tar.gz`, `tailbondd-linux-arm64.tar.gz` | the agent alone |
+| `SHA256SUMS` | `sha256sum` format, over all of them |
+
+Plus the same packages under versioned names, which package tools read the
+version from: `tailbond_<v>-r1_<arch>.ipk` (the router's package cache and
+its reinstall after a firmware upgrade; older routers' updaters look for
+it) and `tailbond-server-<v>-1.fc44.x86_64.rpm`. The updaters download the
+stable names: the bundle by `tailbond-linux-<arch>` / `tailbond-macos-<arch>`,
+the router `tailbond-glinet-<arch>.ipk` / `tailbond-openwrt-<arch>.ipk`
+(kept in the cache under the versioned name), the Android app
+`tailbond-android.apk`. A `-pre` tag (`v1.2.3-beta.1`) is a GitHub
+pre-release, which the "latest release" API never returns. The iPhone app
+isn't a release asset: it's built from source with a free Apple ID
+([ios.md](ios.md)).
 
 ### The check
 
@@ -588,8 +645,10 @@ its line in `SHA256SUMS`, else nothing is installed.
 | method | detected by | one-click / automatic install |
 |---|---|---|
 | `static` | `/etc/tailbond/install.env` (written by `install.sh`) | yes: download `tailbond-linux-<arch>.tar.gz` + check, unpack under `<state_dir>/update/`, run the new bundle's `install.sh --update --bundle-dir <dir>` detached (`systemd-run --unit tailbond-update`): it keeps `<bin>.prev`, replaces the binaries and hooks, restarts the service, and if the service isn't up on the new version within 60 s puts `.prev` back and restarts again |
-| `opkg` | OpenWrt (`/etc/openwrt_release` + `opkg`) | yes: download the ipk whose arch `opkg print-architecture` lists + check, keep it in `/etc/tailbond/pkg/`, run `/usr/lib/tailbond/update-ipk` detached (`opkg install`, health check, previous ipk back on failure) |
+| `opkg` | OpenWrt (`/etc/openwrt_release` + `opkg`) | yes: download the ipk whose arch `opkg print-architecture` lists (`tailbond-glinet-<arch>.ipk` / `tailbond-openwrt-<arch>.ipk`, else the versioned name) + check, keep it in `/etc/tailbond/pkg/` as `tailbond_<v>-r1_<arch>.ipk`, run `/usr/lib/tailbond/update-ipk` detached (`opkg install`, health check, previous ipk back on failure) |
 | `dnf` | `tailbondd` owned by an RPM | no: the status says so and the UI shows `sudo dnf upgrade tailbond-server` (COPR, `dnf-automatic`) |
+| `static` (macOS) | `/usr/local/etc/tailbond/install.env` (written by `packaging/macos/install.sh`) | yes: `tailbond-macos-<arch>.tar.gz`, its `install.sh --update` run in a new session (it restarts the LaunchDaemon), same `.prev` rollback |
+| `brew` | macOS, `tailbondd` resolves into Homebrew's Cellar | no: the UI shows the commands (the release's `tailbond.rb` into a local tap, `brew reinstall`, `sudo brew services start tailbond`) |
 | `none` | anything else (a dev build, a copied binary) | no: shown only |
 
 Both installers write `<state_dir>/update-result.json`
@@ -611,13 +670,24 @@ over the app (same signing key). Automatic updates: Obtainium.
 ### Config (`update`, all optional)
 
 ```json
-"update": {"policy": "notify", "repo": "kaovilai/tailbond", "check_every_hours": 24, "api_url": ""}
+"update": {"policy": "immediate", "repo": "kaovilai/tailbond", "check_every_hours": 24, "api_url": ""}
 ```
 
-- `policy`: `notify` (default: check and show; install on request), `auto`
-  (install when found, between 03:00 and 05:00 local time, methods `static`
-  and `opkg`; a version that rolled back isn't installed automatically
-  again), `off` (no checks).
+- `policy`:
+  - `immediate`: written into new configs. It checks hourly (plus up to 10
+    minutes of jitter) and at start, and installs as soon as traffic is
+    quiet. "Busy" is both directions at 48 kbit/s or more (a call), or
+    2 Mbit/s or more together; it waits at most 30 minutes. A release whose
+    notes carry `[security]` installs at once.
+  - `auto`: checks hourly, installs between 03:00 and 05:00 local time.
+  - `notify`: a config without a policy reads as this. It checks every
+    `check_every_hours`, and installs on request.
+  - `off`: no checks.
+  - `immediate` and `auto` install with methods `static` and `opkg`. A
+    version that rolled back isn't installed by itself again. A version is
+    installed by itself at most once an hour (the installer restarts
+    tailbondd).
+- Checks use `If-None-Match` with the last answer's ETag.
 - Older keys (`channel`, `window`, `pin`, `source`, `mirror`, …) are ignored.
 
 ### Status (`/api/status`, additive)
@@ -633,6 +703,9 @@ over the app (same signing key). Automatic updates: Obtainium.
 
 - `state`: `idle` | `checking` | `downloading` | `installing` | `failed` |
   `rolled_back` | `off`.
+- `waiting`: why a release that installs by itself hasn't yet ("installs
+  after the call or download in progress (at most 30 minutes)");
+  `security`: the available release is a security release; `next_check`.
 - `auto_window`: when `auto` installs (`"03:00-05:00"`); `dnf_automatic`
   (method `dnf`): `install` | `download` (a dnf-automatic timer with Fedora's
   default `apply_updates = no`) | `off`; it covers every package.
@@ -727,6 +800,43 @@ CLI:
 - `tailbondd backup --plain` prints the summary.
 - `tailbondd restore FILE [--yes] [--passphrase-file F]`: run it with the service stopped, or restart the service right after (the running agent would otherwise keep its settings in memory).
 
+## macOS (darwin) notes
+
+The client role on a Mac ([macos.md](macos.md)) is the same agent with a
+few platform pieces behind build tags:
+
+- **Interfaces** (`internal/netif`, `darwin.go`): candidates are the
+  interfaces `networksetup -listallhardwareports` names, kind and label from
+  the hardware port (Wi-Fi; Ethernet, Thunderbolt Ethernet and USB-C/USB LAN
+  adapters by their port name; "iPhone USB" → kind `usb`, label
+  *iPhone (USB)*; Bluetooth PAN → *Bluetooth tethering*); the Thunderbolt
+  bridge, `utun`, `awdl`, `llw`, `bridge`, `ap`, `feth` and the like never
+  are. Link state from `ifconfig` (`status: active`), byte counters from
+  `NET_RT_IFLIST2` (64-bit). A `client.paths[].iface` naming an interface
+  discovery skips is used as named (Linux too).
+- **Tunnel**: mqvpn asks for `utun` and the kernel picks the unit; the agent
+  takes the real name from mqvpn's `TUN utunN configured` line (`TB_TUN`).
+  Routes and DNS are mqvpn's (`manage_routes`, default on; `no_dns`), the
+  kill switch is mqvpn's pf anchor (`client.kill_switch`, off by default; it
+  blocks the LAN, so shares don't work with it on).
+- **Sockets pinned to a WAN** (captive probes, a sharer's upstream):
+  `internal/sockbind`, `SO_BINDTODEVICE` on Linux, `IP_BOUND_IF` /
+  `IPV6_BOUND_IF` on macOS.
+- **Shares**: the same hub logic (mDNS browse by legacy unicast, the
+  server's list, keepalive a second, 3.5 s to drop). The mDNS responder
+  (a Mac sharing, or the test sharer) shares port 5353 with mDNSResponder
+  through `SO_REUSEPORT`. Point-to-point links are never share LANs.
+- **No parent-death signal**: the supervisor records mqvpn's pid in
+  `<state_dir>/mqvpn.pid` and stops one a previous agent left running
+  before starting another (mqvpn holds a single-instance lock).
+- **Defaults**: config `/usr/local/etc/tailbond/tailbond.json`, state
+  `/usr/local/var/lib/tailbond`, hooks `/usr/local/lib/tailbond/hooks`,
+  mqvpn `/usr/local/bin/mqvpn`, `listen` `127.0.0.1:8077` (this Mac only).
+- **Service and updates**: LaunchDaemon `com.tailbond.tailbondd` (root);
+  update method `static` with `tailbond-macos-arm64.tar.gz`
+  (`/usr/local/etc/tailbond/install.env`), or `brew` for the Homebrew
+  formula (shown, not installed by the agent).
+
 ## Pair & Share
 
 User guide and design: [pair-and-share.md](pair-and-share.md). A **sharer**
@@ -803,7 +913,7 @@ uplink). Server registry, client token required (also over the tunnel):
 - `GET /api/shares` → `{"key","key_id","passes":[{"key_id","key","exp"}],"sharers":[{"id","label","key_id","client","lan","port","kind","seen"}]}`:
   `key`, `key_id` and `passes` (hex) only to a client token, for that device.
   On the client role it returns this hub's view: `{"shares","note","sharing"}`.
-- `POST /api/share` (client role): `{"use_shares": bool}` and/or
+- `POST /api/share` (client role): `{"use_shares": bool}`, `{"use_local": bool}` and/or
   `{"share": {"enabled","iface","port","label","cap_mb","allowed_hubs"}}`.
 
 **Hub paths.** Each sharer becomes path `sh` + hex(sha256(id))[:6], kind
@@ -820,10 +930,110 @@ there are delivered as the server's.
 **Status (client role, additive):** `shares[]`
 `{id,label,path,addr,via,state,reason,up_bytes,down_bytes,cap_left_bytes,battery,charging}`
 (state: connecting, ready, refused, unreachable, lost), `use_shares`,
-`share_note` (client isolation: *"This Wi-Fi blocks devices from talking to
+`use_local` (the machine's own connections are bonded; "Use this Mac's
+connections"), `platform` (`linux` | `darwin`), `share_note` (client isolation: *"This Wi-Fi blocks devices from talking to
 each other; sharing isn't available here."*), and `sharing`
 `{enabled,iface,label,port,state,error,used_bytes,cap_mb,hubs[]}` for this
 machine's own share.
+
+## Phone hub
+
+User guide and design: [phone-hub.md](phone-hub.md). A phone running
+tailbond lends its whole bonded tunnel to a laptop through a proxy.
+
+- **The proxy:** SOCKS5 + HTTP CONNECT on TCP 1888, with the reference
+  implementation in `agent/internal/proxy`, ported to Kotlin
+  (`ProxyServer.kt`) and Swift (`TailbondShareKit`).
+  - Login: user `<hub name>/<exp>`, password the first 16 characters of
+    `base32(HMAC-SHA256(pass, "tbp1-proxy"))`, lower case, where `pass` is
+    the hub's Pair & Share pass for the phone (`PassKey(phone's key, hub
+    name, exp)`). The phone checks it from its own key
+    (`proxy.Verifier`, `testdata/vectors.json`).
+  - Only LAN-arriving connections from private or link-local sources are
+    served.
+  - Upstream sockets are on the phone's VPN network (Android), so the
+    traffic goes into the tunnel.
+- **Discovery:** mDNS `_tailbond-proxy._tcp`, and the server's sharer
+  registry with `kind: "proxy"`.
+- **tailbondd (client role):**
+  - `GET/POST /api/phone-hub` and `GET /proxy.pac`, with
+    `phone_hub` in `/api/status`.
+  - A loopback forwarder on 127.0.0.1:1889 relays to the hub with the
+    password.
+  - On macOS the system SOCKS proxy (or the PAC URL) of the default route's
+    network service points at it: `internal/sysproxy`, with a restore record
+    in `state_dir/phone-hub-proxy.json` put back on stop and at the next
+    start.
+  - `tailbondd restore-proxy` does the same for `uninstall.sh`.
+- **Android as a Pair & Share hub:** relay paths through
+  `mqvpn_android_reactor_add_relay_path` (patch 0004). The Android native
+  libraries are now built from the patched copy of mqvpn
+  (`android/scripts/build-native.sh`).
+
+## Living next to other VPNs
+
+On a Mac or a Linux client (not OpenWrt: a router's tailnet routes, DNS and
+bypass belong to its hooks), `internal/coexist` keeps tailbond out of other
+VPNs' way: NetBird, the Tailscale app, any VPN with its own tunnel
+interface. The user guide is [macos.md](macos.md#using-tailbond-with-netbird-or-another-work-vpn).
+
+- **Detection** (every 5 s; the NetBird CLI and name lookups every 30 s):
+  - `netbird status --json`: address, interface (by address), MTU, match
+    domains, endpoints (ICE remote candidates, relays, signal, management);
+  - the routing table (`netstat -rn`, `ip route`);
+  - the interfaces;
+  - `tailscale status` when Tailscale isn't disabled.
+  - Another VPN is a tunnel-like interface (utun, wt, tailscale, tun, wg,
+    ipsec, ppp, zt) other than tailbond's, with routes or addresses outside
+    link-local. One owning 100.64.0.0/10 or fd7a:115c:a1e0::/48, or holding
+    a /32 in 100.64/10, is Tailscale.
+- **Route ownership rules** (`coexist.Make`, pure):
+  - Tailnet machines get host routes (/32, /128) on tailbond's tunnel, from
+    the home server's `GET /api/peers` (refreshed every minute). None at all
+    while the Tailscale app runs.
+  - The tunnel subnet is routed too.
+  - Never a prefix that equals or covers a route another interface owns;
+    never another VPN's own address.
+  - The catch-alls `0/1` and `128/1` don't count as covering: any VPN's own
+    routes are more specific.
+  - A tailbond route found covering another VPN's is reported as a conflict
+    (dashboard health).
+- **Split DNS.** With another VPN present (or `client.split_dns`), mqvpn
+  starts without DNS servers, so it never sets the global resolver.
+  tailbondd points `ts.net` and the tailnet's suffix (when not under ts.net)
+  at the tunnel's DNS:
+  - macOS: `/etc/resolver/<domain>` files with a marker line, and files
+    without the marker are left alone;
+  - Linux: `resolvectl dns|domain ~ts.net|default-route false` on the
+    tunnel link only.
+  - Another VPN appearing or going away restarts mqvpn with or without DNS.
+- **Work VPN traffic** (`client.work_vpn`):
+  - `direct`: the endpoints get host routes via the uplink's gateway
+    (on-link LAN addresses excepted).
+  - `bonded`: the tunnel MTU must be at least the work VPN's MTU +
+    `BondedOverhead` (80). tailbond raises it (and restarts mqvpn) when
+    `uplink MTU - 100` allows, else it warns and uses `direct`.
+- **Kill switch.**
+  - macOS: a pf anchor `com.apple/249.tailbond` with quick passes for the
+    other VPNs' interfaces and the endpoints. pf evaluates `com.apple`
+    anchors in name order, so it comes before mqvpn's `250.mqvpn` block.
+  - Linux: `iptables -I OUTPUT … -m comment --comment tailbond-coexist -j
+    ACCEPT`.
+- **Bypass rules** of kind `ip` and `domain` with target `direct` become
+  host or network routes via the uplink (domains resolved).
+- **Restore record.** `state_dir/coexist.json` lists every route, resolver
+  domain and allowance before anything is added. Changes are applied as a
+  diff. A disconnect, a stop, and the next start after a crash (before mqvpn
+  starts) take everything away.
+- **API.**
+  - `GET /api/coexist`, and `coexist` in `/api/status`: `netbird`,
+    `foreign[]`, `split_dns`, `dns_domains`, `tailnet_via_tailscale_app`,
+    `work_vpn`, `work_vpn_effective`, `want_mtu`, `tailnet_routes`,
+    `direct_routes`, `skipped`, `warnings`, `conflicts`.
+  - `POST /api/coexist {"work_vpn", "split_dns"}`.
+- **Android** can't run two VPN apps at once (Android allows one VPN), so
+  this doesn't apply there. **Routers** aren't affected: their LAN devices
+  run their own VPNs.
 
 ## Captive portals
 

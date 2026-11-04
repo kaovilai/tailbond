@@ -2,12 +2,9 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
 	_ "embed"
-	"encoding/hex"
 	"fmt"
 	"html/template"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,16 +39,38 @@ type landingView struct {
 	URL       string // the landing page by full MagicDNS name
 	TypeName  string // what to type in a phone's browser
 	Dashboard string
-	APK       bool
-	APKSize   string
-	APKSHA256 string
 	Version   string
-	Android   bool
-	IOS       bool
-	Phone     bool
-	AskLink   string
-	Intent    template.URL // intent: isn't on html/template's safe-scheme list
-	QR        template.HTML
+	Repo      string // GitHub owner/name (update.repo)
+
+	// the visitor: the detected platform, the section shown first
+	Detected  string
+	Section   string
+	Windows   bool
+	OnAndroid bool
+	OnMac     bool
+
+	// Android
+	APK           bool
+	APKSize       string
+	APKSHA256     string
+	AskLink       string
+	Intent        template.URL // intent: isn't on html/template's safe-scheme list
+	ObtainiumLink template.URL // obtainium:// isn't either
+	QRAndroid     template.HTML
+
+	// Mac and Linux
+	MacBundle   string
+	MacSize     string
+	MacSHA256   string
+	MacOneLiner string
+	MacInstall  string
+	BrewCmds    []string
+	AskURL      string // the Mac's / laptop's own dashboard, the server filled in
+	LinuxClient string
+	LinuxServer string
+	// GitHub's release downloads (releases/latest/download/, or this
+	// version's): where the page falls back to GitHub
+	ReleaseBase string
 }
 
 // landingHandler serves the landing page on its own port.
@@ -59,9 +78,18 @@ func (a *Agent) landingHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.hLanding)
 	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
-	mux.HandleFunc("GET /icon.svg", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, web.FS, "icon.svg")
+	mux.HandleFunc("GET /"+macBundleName, a.hMacBundle)
+	mux.HandleFunc("GET /landing.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFileFS(w, r, web.FS, "landing.js")
 	})
+	// the brand: icon, favicon, wordmarks and the colour tokens (static)
+	for _, f := range []string{"icon.svg", "favicon.svg", "wordmark-dark.svg", "wordmark-light.svg", "tokens.css"} {
+		mux.HandleFunc("GET /"+f, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeFileFS(w, r, web.FS, f)
+		})
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 	})
@@ -123,16 +151,21 @@ func (a *Agent) hLanding(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
 	short, full := a.landingNames(r.Context(), r.Host)
 	u, typed := a.landingURL(r.Context(), r.Host)
-	ua := r.UserAgent()
+	plat := landingPlatform(r.UserAgent(), r.Header.Get("Sec-CH-UA-Platform"))
+	repo := a.updateRepo()
 	v := landingView{
-		Server:   short,
-		URL:      u,
-		TypeName: typed,
-		Version:  a.opts.Version,
-		Android:  strings.Contains(ua, "Android"),
-		IOS:      strings.Contains(ua, "iPhone") || strings.Contains(ua, "iPad"),
+		Server:    short,
+		URL:       u,
+		TypeName:  typed,
+		Version:   a.opts.Version,
+		Repo:      repo,
+		Detected:  plat,
+		Section:   landingSection(plat),
+		Windows:   plat == platWindows,
+		OnAndroid: plat == platAndroid,
+		OnMac:     plat == platMac,
+		MacBundle: macBundleName,
 	}
-	v.Phone = v.Android || v.IOS || strings.Contains(ua, "Mobile")
 	_, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
 		port = strings.TrimPrefix(cfg.Listen, ":")
@@ -140,46 +173,62 @@ func (a *Agent) hLanding(w http.ResponseWriter, r *http.Request) {
 	v.Dashboard = "http://" + net.JoinHostPort(short, port)
 	if st, err := os.Stat(cfg.APKPath()); err == nil && !st.IsDir() {
 		v.APK = true
-		v.APKSize = fmt.Sprintf("%.0f MB", float64(st.Size())/(1<<20))
-		if st.Size() < 1<<20 {
-			v.APKSize = "under 1 MB"
-		}
-		v.APKSHA256 = a.apkSum(cfg.APKPath(), st)
+		v.APKSize = sizeLabel(st.Size())
+		v.APKSHA256 = a.sumOf(cfg.APKPath(), st)
 	}
 	// The app asks the server by its full name (MagicDNS), like typing it.
 	v.AskLink = "tailbond://ask?server=" + url.QueryEscape(full)
 	back := u + "#get-app"
 	v.Intent = template.URL("intent://ask?server=" + url.QueryEscape(full) + "#Intent;scheme=tailbond;package=" + androidPackage +
 		";S.browser_fallback_url=" + url.QueryEscape(back) + ";end")
-	if svg, err := pairing.QRSVG(u); err == nil {
-		v.QR = template.HTML(svg) // generated from our own URL
+	v.ObtainiumLink = template.URL("obtainium://add/https://github.com/" + repo)
+	if plat != platAndroid {
+		if svg, err := pairing.QRSVG(u + "#android"); err == nil {
+			v.QRAndroid = template.HTML(svg) // generated from our own URL
+		}
 	}
+
+	// Mac: the bundle from this server (or GitHub's, fetched once), Homebrew
+	if p, sum, size := a.macBundle(); p != "" {
+		v.MacSHA256, v.MacSize = sum, sizeLabel(size)
+	} else if plat == platMac {
+		a.prefetchMacBundle() // ready, with its checksum, by the time they tap
+	}
+	base := strings.TrimSuffix(u, "get") // the page's own origin, /get or /
+	v.MacOneLiner = "cd ~/Downloads && curl -fLO " + base + macBundleName + " && tar -xzf " + macBundleName + " && sudo ./tailbond-macos-arm64/install.sh"
+	// Safari may unpack the archive by itself ("Open safe files")
+	v.MacInstall = "cd ~/Downloads && { [ -d tailbond-macos-arm64 ] || tar -xzf " + macBundleName + "; } && sudo ./tailbond-macos-arm64/install.sh"
+	rel := "https://github.com/" + repo + "/releases/latest/download/"
+	if isRelease(a.opts.Version) {
+		rel = "https://github.com/" + repo + "/releases/download/v" + a.opts.Version + "/"
+	}
+	v.ReleaseBase = rel
+	v.BrewCmds = []string{
+		"brew tap-new --no-git local/tailbond",
+		`curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" ` + rel + "tailbond.rb",
+		"brew install local/tailbond/tailbond",
+		"sudo brew services start tailbond",
+	}
+	v.AskURL = "http://localhost:8077/?ask=" + url.QueryEscape(full)
+	v.LinuxClient = "curl -fsSL " + rel + "tailbond-linux-$(uname -m).tar.gz | tar -xz && sudo ./tailbond-linux-$(uname -m)/install.sh --client"
+	v.LinuxServer = "curl -fsSL " + rel + "tailbond-linux-$(uname -m).tar.gz | tar -xz && sudo ./tailbond-linux-$(uname -m)/install.sh"
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	// the platform the page picks depends on these
+	w.Header().Set("Vary", "User-Agent, Sec-CH-UA-Platform")
+	w.Header().Set("Accept-CH", "Sec-CH-UA-Platform")
 	if err := landingTmpl.Execute(w, v); err != nil {
 		a.Logf("landing page: %v", err)
 	}
 }
 
-// apkSum is the APK's SHA-256 (hex), cached until the file changes.
-func (a *Agent) apkSum(path string, st os.FileInfo) string {
-	key := fmt.Sprintf("%s|%d|%d", path, st.Size(), st.ModTime().UnixNano())
-	a.apkHash.Lock()
-	defer a.apkHash.Unlock()
-	if a.apkHash.key == key {
-		return a.apkHash.sum
+// sizeLabel: "27 MB", "under 1 MB".
+func sizeLabel(n int64) string {
+	if n < 1<<20 {
+		return "under 1 MB"
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return ""
-	}
-	a.apkHash.key, a.apkHash.sum = key, hex.EncodeToString(h.Sum(nil))
-	return a.apkHash.sum
+	return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
 }
 
 // landingAddrs: the Tailscale IPs, on the landing port (server role only).

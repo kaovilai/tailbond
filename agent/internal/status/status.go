@@ -124,6 +124,89 @@ type Status struct {
 	UseShares *bool    `json:"use_shares,omitempty"`
 	ShareNote string   `json:"share_note,omitempty"`
 	Sharing   *Sharing `json:"sharing,omitempty"`
+	// Client role: whether this machine's own connections are bonded
+	// ("Use this Mac's connections"), and the OS the agent runs on
+	// ("linux", "darwin"), for the dashboard's wording.
+	UseLocal *bool  `json:"use_local,omitempty"`
+	Platform string `json:"platform,omitempty"`
+	// Client role: phone hubs nearby and the one in use (docs/phone-hub.md).
+	PhoneHub *PhoneHub `json:"phone_hub,omitempty"`
+	// Client role on a Mac or Linux: other VPNs and how tailbond keeps out
+	// of their way (docs/macos.md "Using tailbond with NetBird").
+	Coexist *Coexist `json:"coexist,omitempty"`
+	// When tailbondd or mqvpn last crashed (RFC 3339), until the user
+	// reports or dismisses it (GET /api/report, docs/reporting.md).
+	Crash string `json:"crash,omitempty"`
+}
+
+// Coexist: other VPNs found, and what tailbond does about them.
+type Coexist struct {
+	// NetBird: what its CLI said (cli false: not installed).
+	NetBird                any              `json:"netbird"`
+	Foreign                []CoexistForeign `json:"foreign"`
+	SplitDNS               bool             `json:"split_dns"`
+	DNSDomains             []string         `json:"dns_domains,omitempty"`
+	TailnetViaTailscaleApp bool             `json:"tailnet_via_tailscale_app"`
+	WorkVPN                string           `json:"work_vpn"`
+	WorkVPNEffective       string           `json:"work_vpn_effective"`
+	WantMTU                int              `json:"want_mtu,omitempty"`
+	TailnetRoutes          int              `json:"tailnet_routes"`
+	DirectRoutes           int              `json:"direct_routes"`
+	Skipped                []string         `json:"skipped,omitempty"`
+	Warnings               []string         `json:"warnings,omitempty"`
+	// BondedBlocked: why Bonded can't work here (Direct is used, and works)
+	BondedBlocked string `json:"bonded_blocked,omitempty"`
+	// Conflicts: something in the routing table steps on another VPN.
+	Conflicts []string `json:"conflicts,omitempty"`
+	Error     string   `json:"error,omitempty"`
+}
+
+// CoexistForeign is another VPN's interface.
+type CoexistForeign struct {
+	Name     string   `json:"name"`
+	Kind     string   `json:"kind"`
+	Iface    string   `json:"iface"`
+	Addrs    []string `json:"addrs,omitempty"`
+	Prefixes []string `json:"prefixes,omitempty"`
+}
+
+// PhoneHub is "Use phone hub": phones sharing their bonded connection as a
+// proxy, and the one this machine's system proxy points at.
+type PhoneHub struct {
+	Found []PhoneHubFound `json:"found"`
+	Using *PhoneHubUse    `json:"using,omitempty"`
+	// Note says why the hub in use was dropped (it went away).
+	Note string `json:"note,omitempty"`
+	// Manual: this OS's proxy setting isn't set for you (not macOS).
+	Manual bool `json:"manual,omitempty"`
+}
+
+// PhoneHubFound is a phone hub that took this machine's password.
+type PhoneHubFound struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Addr  string `json:"addr"`
+	Via   string `json:"via"` // mdns, server, router
+	// Bonded: its upstream is the phone's bonded tunnel (false: an iPhone,
+	// mobile data only)
+	Bonded bool   `json:"bonded"`
+	Iface  string `json:"iface,omitempty"` // the Mac's interface it's reached on (en0)
+}
+
+// PhoneHubUse is the hub in use.
+type PhoneHubUse struct {
+	ID      string    `json:"id"`
+	Label   string    `json:"label"`
+	Addr    string    `json:"addr"`
+	Mode    string    `json:"mode"` // socks, pac, manual
+	Bonded  bool      `json:"bonded"`
+	Iface   string    `json:"iface,omitempty"`
+	Service string    `json:"service,omitempty"` // the macOS network service
+	Local   string    `json:"local"`             // the forwarder, 127.0.0.1:1889
+	Since   time.Time `json:"since"`
+	UpBytes uint64    `json:"up_bytes"`
+	DnBytes uint64    `json:"down_bytes"`
+	Conns   int       `json:"conns"`
 }
 
 // Share is a nearby device's shared mobile data, as the hub sees it.
@@ -168,7 +251,7 @@ type Update struct {
 	Current   string `json:"current"`
 	Available string `json:"available,omitempty"`
 	NotesURL  string `json:"notes_url,omitempty"` // the release page (changelog)
-	Policy    string `json:"policy"`              // notify | auto | off
+	Policy    string `json:"policy"`              // immediate | auto | notify | off
 	Repo      string `json:"repo,omitempty"`
 	// Method: static (install.sh bundle) | opkg (OpenWrt) | dnf (RPM: dnf
 	// upgrade) | none; one-click install for static and opkg
@@ -184,6 +267,12 @@ type Update struct {
 	Error             string `json:"error,omitempty"`
 	// AutoWindow: when policy auto installs (local time, "03:00-05:00")
 	AutoWindow string `json:"auto_window,omitempty"`
+	// Waiting: why a release that will install by itself hasn't yet
+	// ("waiting for a quiet moment", "waiting for 03:00")
+	Waiting string `json:"waiting,omitempty"`
+	// Security: the available release is a security release
+	Security  bool       `json:"security,omitempty"`
+	NextCheck *time.Time `json:"next_check,omitempty"`
 	// DnfAutomatic (method dnf): install | download (Fedora's default: a
 	// dnf-automatic timer that only downloads) | off; for every package
 	DnfAutomatic string     `json:"dnf_automatic,omitempty"`
@@ -392,7 +481,20 @@ func Server(r *Rater, now time.Time, st *mqctl.Status, stats *mqctl.Stats, regis
 	}
 	var live []Client
 	if st != nil {
-		for _, c := range st.Clients {
+		// One device runs one session; a reconnect can leave the previous
+		// one on the server until its idle timeout (its close went out on a
+		// path that had just died). Only the newest session per user counts:
+		// the ghost would show the device twice with paths it no longer has.
+		newest := map[string]int{}
+		for i, c := range st.Clients {
+			if j, ok := newest[c.User]; !ok || c.ConnectedSec < st.Clients[j].ConnectedSec {
+				newest[c.User] = i
+			}
+		}
+		for i, c := range st.Clients {
+			if newest[c.User] != i {
+				continue
+			}
 			key := "c/" + c.User + "/" + c.Endpoint
 			txb, rxb, _ := r.Rate(key, now, c.BytesTx, c.BytesRx, 0, 0)
 			cl := Client{

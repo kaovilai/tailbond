@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kaovilai/tailbond/agent/internal/coexist"
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/glrepeater"
 	"github.com/kaovilai/tailbond/agent/internal/hooks"
@@ -37,6 +38,7 @@ type Options struct {
 }
 
 type Agent struct {
+	crash *crashState // Report a problem: the kept crash (reportapi.go)
 	opts  Options
 	store *config.Store
 	logs  *supervisor.Ring
@@ -74,11 +76,21 @@ type Agent struct {
 	outside *outsideSeen // server: last client seen from the internet (a.mu)
 	// listIfs discovers interfaces (tests stub it).
 	listIfs func() ([]netif.Iface, error)
-	wc      whoisCache // admin requests from the tailnet: who sent them
-	apkHash struct {   // the phone page's APK checksum
-		sync.Mutex
-		key, sum string
-	}
+	// lookupIf describes an interface a path setting names (tests leave it nil).
+	lookupIf func(string) (netif.Iface, bool)
+	wc       whoisCache // admin requests from the tailnet: who sent them
+	// phone hub (phonehub.go): the OS proxy setting (nil: not set for
+	// you), and test hooks for discovery and the forwarder's address
+	sysProxy   systemProxy
+	hubBrowse  func(context.Context) []hubCand
+	hubRouters func(context.Context) []hubCand
+	hubLocal   string
+	hubRecheck []time.Duration
+	// other VPNs (coexist.go): test hooks for commands and /etc/resolver
+	cxRun         coexist.Runner
+	cxResolverDir string
+	cxIfaces      func() map[string][]netip.Prefix
+	dl            dlState // the phone page's downloads: checksums, the macOS bundle fetch
 	// landingUp: the phone landing page listens on a Tailscale IP.
 	landingUp atomic.Bool
 	// glRead reads GL firmware's repeater portal state (tests stub it).
@@ -103,6 +115,7 @@ type Agent struct {
 
 // runtime is reset every time mqvpn starts.
 type runtime struct {
+	tunName     string // the tunnel device mqvpn made (macOS: utunN, the kernel's pick)
 	tunnelIP    string
 	peerIP      string
 	ready       bool // server: "server ready" / client: ESTABLISHED
@@ -148,6 +161,7 @@ func New(store *config.Store, opts Options) *Agent {
 		bypassNow:   make(chan struct{}, 1),
 		upd:         newUpdater(),
 		restart:     make(chan struct{}, 1),
+		crash:       &crashState{},
 	}
 	if opts.Echo {
 		a.logs.Echo = os.Stderr
@@ -158,6 +172,7 @@ func New(store *config.Store, opts Options) *Agent {
 	a.hello = a.fetchHello
 	a.glRead = glrepeater.Read
 	a.listIfs = netif.Discover
+	a.lookupIf = netif.Lookup
 	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
 	mqvpnBin := cfg.MqvpnBin
 	a.sup = supervisor.New(supervisor.Spec{
@@ -167,6 +182,7 @@ func New(store *config.Store, opts Options) *Agent {
 		OnLine:   a.onLine,
 		OnStart:  a.onStart,
 		OnExit:   a.onExit,
+		PidFile:  filepath.Join(cfg.StateDir, "mqvpn.pid"),
 	}, a.logs)
 	if a.role == config.RoleClient {
 		a.client = newClientState()
@@ -206,6 +222,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	go a.hookWorker(ctx)
 	a.Logf("tailbondd %s starting, role=%s mode=%s config=%s", a.opts.Version, cfg.Role, cfg.Mode, a.store.Path())
+	a.setupCrash()
 
 	switch cfg.Role {
 	case config.RoleServer:
@@ -233,6 +250,8 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.drainHooks()
 			if a.client != nil {
 				a.clearBypass()
+				a.stopHub("")
+				a.coexistRestore()
 			}
 			return nil
 		case err := <-srvErr:
@@ -245,6 +264,8 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.drainHooks()
 			if a.client != nil {
 				a.clearBypass()
+				a.stopHub("")
+				a.coexistRestore()
 			}
 			return ErrRestart
 		case <-t.C:
@@ -296,6 +317,7 @@ func (a *Agent) preStart(ctx context.Context) error {
 func (a *Agent) onStart() {}
 
 func (a *Agent) onExit(err error) {
+	a.noteChildCrash(err)
 	a.mu.Lock()
 	fired := a.rt.upHookFired
 	env := a.downEnvLocked()
@@ -333,11 +355,11 @@ func (a *Agent) onLine(line string) {
 		if a.rt.tunnelIP != m[2] {
 			a.logs.Add("agent", "tunnel address "+m[2])
 		}
-		a.rt.tunnelIP, a.rt.peerIP = m[2], m[3]
+		a.rt.tunName, a.rt.tunnelIP, a.rt.peerIP = m[1], m[2], m[3]
 		return
 	}
 	if m := reServerTun.FindStringSubmatch(line); m != nil {
-		a.rt.tunnelIP = m[2]
+		a.rt.tunName, a.rt.tunnelIP = m[1], m[2]
 		return
 	}
 	if reReady.MatchString(line) && a.role == config.RoleServer {
@@ -418,10 +440,19 @@ func webPorts(cfg *config.Config) string {
 	return port
 }
 
+// tunDevLocked is the tunnel device: the one mqvpn reported, else the name
+// it is asked for. Caller holds a.mu.
+func (a *Agent) tunDevLocked() string {
+	if a.rt.tunName != "" {
+		return a.rt.tunName
+	}
+	return config.DefaultTunName
+}
+
 func (a *Agent) hookEnvLocked() map[string]string {
 	cfg := a.store.Get()
 	env := map[string]string{
-		"TB_TUN":       config.DefaultTunName,
+		"TB_TUN":       a.tunDevLocked(),
 		"TB_ROLE":      cfg.Role,
 		"TB_MODE":      cfg.Mode,
 		"TB_STATE_DIR": cfg.StateDir,
@@ -482,6 +513,7 @@ func (a *Agent) poll(ctx context.Context) {
 	st.Version = a.opts.Version
 	st.Protocol = update.Protocol
 	st.Update = a.updateView()
+	st.Crash = a.crashAt()
 	a.mu.Lock()
 	a.snap = st
 	a.mu.Unlock()

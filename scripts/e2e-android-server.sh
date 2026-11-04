@@ -3,7 +3,8 @@
 # CI job "android-e2e"): tailbondd in the server role with mqvpn on this host,
 # for an emulator that reaches the host at 10.0.2.2.
 #
-#   MQVPN=/path/to/mqvpn TAILBONDD=/path/to/tailbondd scripts/e2e-android-server.sh [stop]
+#   MQVPN=/path/to/mqvpn TAILBONDD=/path/to/tailbondd [SHARESIM=/path/to/tb-sharesim] \
+#     scripts/e2e-android-server.sh [stop]
 #
 # - Tailscale is off; a fake `tailscale` CLI on the agent's PATH answers the
 #   machine list (GET /api/peers): homebox (self), nas, laptop.
@@ -13,6 +14,12 @@
 # - A token web server on 10.77.0.1:8099 (the tunnel address) that only
 #   answers through the tunnel: TCP 8099 arriving on lo (the host itself, and
 #   so the emulator's NAT, which connects from the host) is rejected.
+#
+# - With SHARESIM: a nearby phone sharing its mobile data, for the app as a
+#   Pair & Share hub: tb-sharesim (the reference sharer, its own pairing
+#   "sharer-e2e") on UDP 47077 of every host address (the emulator reaches
+#   it at 10.0.2.2), relaying to the server at 127.0.0.1:$PORT. Log:
+#   $WORK/sharer.log.
 #
 # Runs as root (mqvpn's TUN). Leaves everything running; "stop" ends it.
 set -euo pipefail
@@ -24,11 +31,11 @@ TOKEN_PORT=8099
 API=127.0.0.1:8077
 
 if [ "$(id -u)" -ne 0 ]; then
-  exec sudo --preserve-env=TB_E2E_DIR,TB_E2E_PORT MQVPN="${MQVPN:-}" TAILBONDD="${TAILBONDD:-}" "$0" "$@"
+  exec sudo --preserve-env=TB_E2E_DIR,TB_E2E_PORT MQVPN="${MQVPN:-}" TAILBONDD="${TAILBONDD:-}" SHARESIM="${SHARESIM:-}" "$0" "$@"
 fi
 
 stop() {
-  for f in "$WORK/server.pid" "$WORK/www.pid"; do
+  for f in "$WORK/server.pid" "$WORK/www.pid" "$WORK/sharer.pid"; do
     [ -s "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
   done
   iptables -D INPUT -p tcp --dport "$TOKEN_PORT" -i lo -j REJECT 2>/dev/null || true
@@ -113,4 +120,16 @@ if curl -fsS -m 3 "http://10.77.0.1:$TOKEN_PORT/token.txt" >/dev/null 2>&1; then
   echo "the token server answers outside the tunnel"; exit 1
 fi
 echo "token server up, refused from the host itself"
+
+if [ -n "${SHARESIM:-}" ]; then
+  say "a nearby phone sharing its mobile data (tb-sharesim on UDP 47077, upstream 127.0.0.1:$PORT)"
+  [ -x "$SHARESIM" ] || { echo "tb-sharesim not found at $SHARESIM"; exit 2; }
+  SURI="$(api -X POST -d '{"name":"sharer-e2e"}' "http://$API/api/clients" | jq -r .uri)"
+  [[ "$SURI" == tailbond://pair\?d=* ]] || { echo "no pairing for the sharer"; exit 1; }
+  setsid "$SHARESIM" -pairing "$SURI" -listen 0.0.0.0:47077 -upstream "127.0.0.1:$PORT" -label "Sam's phone" \
+    -id sim-sam -mdns - >"$WORK/sharer.log" 2>&1 </dev/null &
+  echo $! >"$WORK/sharer.pid"
+  wait_for 10 sh -c "ss -lun | grep -q ':47077 '" || { echo "the sharer did not start"; cat "$WORK/sharer.log"; exit 1; }
+  echo "sharer up: $(head -n 1 "$WORK/sharer.log")"
+fi
 chmod -R a+rX "$WORK"

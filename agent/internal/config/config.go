@@ -27,19 +27,13 @@ const (
 	PrioritySecondary = "secondary"
 	PriorityBackup    = "backup"
 
-	DefaultPath    = "/etc/tailbond/tailbond.json"
-	DefaultTunName = "tb0"
 	// DefaultClientMTU is the tunnel's MTU: IPv6's minimum, safe on any
 	// IPv4/IPv6 uplink (the Android app uses it too).
 	DefaultClientMTU = 1280
 	DefaultCtlAddr   = "127.0.0.1:9077"
-	DefaultListen    = ":8077"
 	DefaultPort      = 443
 	DefaultSubnet    = "10.77.0.0/24"
 	DefaultSubnet6   = "fd77:77::/112"
-	DefaultStateDir  = "/var/lib/tailbond"
-	DefaultHooksDir  = "/usr/lib/tailbond/hooks"
-	DefaultMqvpnBin  = "/usr/bin/mqvpn"
 )
 
 // TailnetRoutes are the tailnet prefixes bonded clients reach through the server.
@@ -132,6 +126,22 @@ type Client struct {
 	// the server are cached per pairing in the state dir (share-cache.json).
 	UseShares *bool        `json:"use_shares,omitempty"`
 	Share     *ShareConfig `json:"share,omitempty"`
+	// Additive: bond this machine's own connections (Wi-Fi, Ethernet, a
+	// phone over USB; default on). Off: only nearby phones' shares are
+	// bonded, and with none of those mqvpn uses the default route.
+	UseLocal *bool `json:"use_local,omitempty"`
+	// Additive: mqvpn's kill switch (macOS: pf; Linux: nftables): nothing
+	// leaves outside the tunnel while it runs. Off by default; it also
+	// blocks the LAN, so phones' shares don't work with it on.
+	KillSwitch bool `json:"kill_switch,omitempty"`
+	// Living next to other VPNs (Mac, Linux client; docs/macos.md "Using
+	// tailbond with NetBird"). WorkVPN: the work VPN's own traffic, "direct"
+	// (default: via the physical uplink) or "bonded" (through tailbond).
+	// SplitDNS: split DNS even with no other VPN. Coexist "off": don't look
+	// for other VPNs at all.
+	WorkVPN  string `json:"work_vpn,omitempty"`
+	SplitDNS bool   `json:"split_dns,omitempty"`
+	Coexist  string `json:"coexist,omitempty"`
 }
 
 // ShareConfig: this machine lends Iface's data to hubs on its LAN.
@@ -148,6 +158,9 @@ type ShareConfig struct {
 
 // SharesUsed reports whether nearby devices' shared data is bonded (default on).
 func (c *Client) SharesUsed() bool { return c.UseShares == nil || *c.UseShares }
+
+// LocalUsed reports whether this machine's own connections are bonded (default on).
+func (c *Client) LocalUsed() bool { return c.UseLocal == nil || *c.UseLocal }
 
 // ServerEntry is one paired server in the client's list.
 type ServerEntry struct {
@@ -230,6 +243,20 @@ func (c *Client) CaptiveDetect() bool { return c.CaptivePortalDetect == nil || *
 
 func (c *Client) RoutesManaged() bool { return c.ManageRoutes == nil || *c.ManageRoutes }
 
+// Work VPN traffic and coexistence switches.
+const (
+	WorkVPNDirect = "direct"
+	WorkVPNBonded = "bonded"
+	CoexistOff    = "off"
+)
+
+func (c *Client) WorkVPNOrDefault() string {
+	if c.WorkVPN == "" {
+		return WorkVPNDirect
+	}
+	return c.WorkVPN
+}
+
 type Config struct {
 	Role       string `json:"role"`
 	MqvpnBin   string `json:"mqvpn_bin"`
@@ -251,6 +278,10 @@ type Config struct {
 	AndroidAPK string `json:"android_apk,omitempty"`
 	// Additive: GL.iNet router package offered as GET /tailbond-glinet.ipk.
 	GLiNetIPK string `json:"glinet_ipk,omitempty"`
+	// Additive: the macOS bundle the phone page offers as GET
+	// /tailbond-macos-arm64.tar.gz (default DefaultMacOSBundle when it
+	// exists, else a copy fetched from the GitHub release and cached).
+	MacOSBundle string `json:"macos_bundle,omitempty"`
 	// Additive (server role): the phone landing page ("Get tailbond") on
 	// the Tailscale IPs. LandingPort is the port it binds (0 = 80, -1 =
 	// off); LandingPublicPort the port tailnet devices use (0 = the same;
@@ -271,16 +302,19 @@ type Config struct {
 // Keys of older versions (channel, window, pin, source, mirror, …) are
 // ignored.
 type UpdateSettings struct {
-	Policy          string `json:"policy,omitempty"` // notify (default) | auto | off
-	Repo            string `json:"repo,omitempty"`   // owner/name or https://github.com/owner/name
+	// Policy: immediate (new installs) | auto | notify (configs without
+	// one: they keep Tell me) | off. docs/updates.md.
+	Policy          string `json:"policy,omitempty"`
+	Repo            string `json:"repo,omitempty"` // owner/name or https://github.com/owner/name
 	CheckEveryHours int    `json:"check_every_hours,omitempty"`
 	APIURL          string `json:"api_url,omitempty"` // default https://api.github.com
 }
 
 const (
-	UpdateNotify = "notify"
-	UpdateAuto   = "auto"
-	UpdateOff    = "off"
+	UpdateNotify    = "notify"
+	UpdateAuto      = "auto"
+	UpdateImmediate = "immediate" // "Right away": installs a release as soon as it's safe
+	UpdateOff       = "off"
 )
 
 type BackupSettings struct {
@@ -361,6 +395,17 @@ func (c *Config) GLiNetIPKPath() string {
 	return DefaultGLiNetIPK
 }
 
+// DefaultMacOSBundle is where packages may put the macOS bundle for download.
+const DefaultMacOSBundle = "/usr/share/tailbond/tailbond-macos-arm64.tar.gz"
+
+// MacOSBundlePath is the macOS bundle to offer, when it exists.
+func (c *Config) MacOSBundlePath() string {
+	if c.MacOSBundle != "" {
+		return c.MacOSBundle
+	}
+	return DefaultMacOSBundle
+}
+
 // APKPath is the Android APK to offer for download.
 func (c *Config) APKPath() string {
 	if c.AndroidAPK != "" {
@@ -383,6 +428,9 @@ func Default() *Config {
 			Subnet6:          DefaultSubnet6,
 			UseTailscaleCert: true,
 		},
+		// new installs update right away; a config without "update"
+		// (written by an older version) keeps Tell me (UpdateOrDefault)
+		Update: &UpdateSettings{Policy: UpdateImmediate},
 	}
 }
 
@@ -483,11 +531,21 @@ func (c *Config) Validate() error {
 	if _, err := c.Client.MarkMask(); err != nil {
 		return err
 	}
+	switch c.Client.WorkVPN {
+	case "", WorkVPNDirect, WorkVPNBonded:
+	default:
+		return fmt.Errorf("client.work_vpn must be direct or bonded, not %q", c.Client.WorkVPN)
+	}
+	switch c.Client.Coexist {
+	case "", CoexistOff:
+	default:
+		return fmt.Errorf("client.coexist must be empty or off, not %q", c.Client.Coexist)
+	}
 	if u := c.Update; u != nil {
 		switch u.Policy {
-		case "", UpdateNotify, UpdateAuto, UpdateOff:
+		case "", UpdateNotify, UpdateAuto, UpdateImmediate, UpdateOff:
 		default:
-			return fmt.Errorf("update.policy must be notify, auto or off, not %q", u.Policy)
+			return fmt.Errorf("update.policy must be immediate, auto, notify or off, not %q", u.Policy)
 		}
 		if u.Repo != "" && !updateRepoRE.MatchString(u.Repo) {
 			return fmt.Errorf("update.repo must be owner/name or https://github.com/owner/name, not %q", u.Repo)

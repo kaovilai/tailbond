@@ -308,13 +308,17 @@ if opkg install uhttpd >/dev/null 2>&1; then
 	mkdir -p $G/dl $G/repos/kaovilai/tailbond/releases/tags
 	cp $V99 $G/dl/$n
 	cp $V99 $G/dl/tailbond_99.0.0-r1_aarch64_generic.ipk
+	# the stable name (docs/glinet.md, Download): reinstall downloads it
+	# and keeps it under the versioned name
+	sn=tailbond-openwrt-aarch64_cortex-a53.ipk
+	cp $V99 $G/dl/$sn
 	chmod 644 $G/dl/* # uhttpd serves world-readable files only
-	rel() { # FILE: a release with both ipks and SHA256SUMS
-		printf '{"tag_name":"v99.0.0","assets":[{"name":"%s","browser_download_url":"http://127.0.0.1:8099/dl/%s"},{"name":"tailbond_99.0.0-r1_aarch64_generic.ipk","browser_download_url":"http://127.0.0.1:8099/dl/tailbond_99.0.0-r1_aarch64_generic.ipk"},{"name":"SHA256SUMS","browser_download_url":"http://127.0.0.1:8099/dl/SHA256SUMS"}]}\n' "$n" "$n" >"$1"
+	rel() { # FILE: a release with the ipks and SHA256SUMS
+		printf '{"tag_name":"v99.0.0","assets":[{"name":"%s","browser_download_url":"http://127.0.0.1:8099/dl/%s"},{"name":"%s","browser_download_url":"http://127.0.0.1:8099/dl/%s"},{"name":"tailbond_99.0.0-r1_aarch64_generic.ipk","browser_download_url":"http://127.0.0.1:8099/dl/tailbond_99.0.0-r1_aarch64_generic.ipk"},{"name":"SHA256SUMS","browser_download_url":"http://127.0.0.1:8099/dl/SHA256SUMS"}]}\n' "$n" "$n" "$sn" "$sn" >"$1"
 	}
 	rel $G/repos/kaovilai/tailbond/releases/tags/v99.0.0
 	rel $G/repos/kaovilai/tailbond/releases/latest
-	echo "0000000000000000000000000000000000000000000000000000000000000000  $n" >$G/dl/SHA256SUMS
+	printf '0000000000000000000000000000000000000000000000000000000000000000  %s\n' $n $sn >$G/dl/SHA256SUMS
 	chmod 644 $G/dl/SHA256SUMS $G/repos/kaovilai/tailbond/releases/latest $G/repos/kaovilai/tailbond/releases/tags/v99.0.0
 	uhttpd -f -p 127.0.0.1:8099 -h $G >/dev/null 2>&1 &
 	U1=$!
@@ -325,9 +329,10 @@ if opkg install uhttpd >/dev/null 2>&1; then
 	TB_API_URL=http://127.0.0.1:8099 TB_TRIES=1 /etc/tailbond/pkg/reinstall now 2>/tmp/reinstall.err
 	[ ! -f /usr/lib/opkg/info/tailbond.control ] && [ ! -e /etc/tailbond/pkg/$n ] && grep -q "doesn't match the release's SHA256SUMS" /tmp/reinstall.err \
 		&& ok "an ipk that doesn't match SHA256SUMS is refused" || { bad "bad sha256 check"; cat /tmp/reinstall.err; }
-	(cd $G/dl && sha256sum $n tailbond_99.0.0-r1_aarch64_generic.ipk >SHA256SUMS && chmod 644 SHA256SUMS)
+	(cd $G/dl && sha256sum $n $sn tailbond_99.0.0-r1_aarch64_generic.ipk >SHA256SUMS && chmod 644 SHA256SUMS)
 	TB_API_URL=http://127.0.0.1:8099 TB_TRIES=1 /etc/tailbond/pkg/reinstall now 2>/tmp/reinstall.err
 	[ "$(ver)" = 99.0.0-r1 ] && [ "$(cat /etc/tailbond/pkg/current)" = $n ] && [ "$(res detail)" = reinstalled_after_firmware_upgrade ] \
+		&& grep -q "downloaded $sn from the GitHub release (kept as $n)" /tmp/reinstall.err \
 		&& ok "downloaded that version's ipk from the GitHub release, checked it, installed it" || { bad "GitHub reinstall"; cat /tmp/reinstall.err /tmp/tailbond-reinstall.log; }
 	[ "$(uci -q get tailbond.main.keep_test)" = kept ] && ok "settings intact" || bad "settings lost"
 	# nothing cached at all: the latest release's ipk for this router (cortex-a53 beats generic)

@@ -23,7 +23,8 @@ rc=0
 # the .sh files under packaging/openwrt/files/ (busybox; .shellcheckrc).
 mapfile -t files < <(git ls-files 'scripts/*.sh' 'scripts/**/*.sh' 'agent/*.sh' \
     'android/scripts/*.sh' 'packaging/fedora/*.sh' 'packaging/fedora/hooks/*' \
-    'packaging/openwrt/*.sh' 'packaging/linux/*.sh' 'packaging/linux/hooks/*')
+    'packaging/openwrt/*.sh' 'packaging/linux/*.sh' 'packaging/linux/hooks/*' \
+    'packaging/macos/*.sh' 'packaging/macos/hooks/*')
 "$SC" -S warning "${files[@]}" || rc=1
 
 # OpenWrt hooks and init scripts (no .sh suffix): busybox ash

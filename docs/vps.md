@@ -14,15 +14,23 @@ than from home.
 
 ## 1. Install
 
+**Download:** [tailbond-linux-x86_64.tar.gz](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-x86_64.tar.gz)
+or [tailbond-linux-aarch64.tar.gz](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-aarch64.tar.gz)
+(the latest release; [all versions](https://github.com/kaovilai/tailbond/releases)). Both are static: any distribution
+with systemd.
+
 ```sh
-tar xzf tailbond-linux-x86_64.tar.gz
-cd tailbond-linux-x86_64
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-$(uname -m).tar.gz
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # tailbond-linux-<arch>.tar.gz: OK
+tar xzf tailbond-linux-$(uname -m).tar.gz
+cd tailbond-linux-$(uname -m)
 sudo ./install.sh --dry-run     # shows what it would do, changes nothing
 sudo ./install.sh
 ```
 
-The bundle comes from `packaging/linux/build-bundle.sh` (CI artifact
-`linux-bundle`). It installs:
+Releases appear once the first release is published; until then,
+[build the bundle from source](#build-from-source). It installs:
 
 | Path | What |
 |---|---|
@@ -53,9 +61,27 @@ The installer prints every decision. Override any of them:
 | `--no-tailscale` | Tailscale is used when `tailscale status` works |
 | `--landing-port N` | 80, or 8078 when something listens on `*:80`; `-1` = off |
 | `--memory-high`, `--memory-max` | `96M`, `160M` |
-| `--update-policy P` | `notify`: [Updates](#updates) |
+| `--update-policy P` | new installs `immediate`; an existing config keeps its own: [Updates](#updates) |
 | `--update [--version vX.Y.Z]` | update the binaries only (below) |
 | `--no-firewall`, `--no-start`, `--mqvpn`, `--tailbondd`, `--bundle-dir`, `--config` | |
+
+### A Linux laptop instead (client role)
+
+The same bundle installs the **client** on a laptop that bonds its own
+Wi-Fi, Ethernet and a tethered phone to your home server (the home
+server's "Get tailbond" page, **Linux** tab, has this line to copy):
+
+```sh
+curl -fsSL https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-$(uname -m).tar.gz | tar -xz
+sudo ./tailbond-linux-$(uname -m)/install.sh --client     # --pair 'tailbond://pair?d=…' to pair at once
+```
+
+It installs the binaries, a client config (`/etc/tailbond/tailbond.json`,
+dashboard on `127.0.0.1:8077` only) and a plain systemd unit; no firewall,
+NAT, sysctl or phone page. mqvpn sets the routes and DNS itself. Then open
+`http://localhost:8077` → **Setup** → **Ask your home server** (Tailscale
+on). `install.sh --update` and `--uninstall` work the same; the server
+installer refuses to run over a client's config and the other way round.
 
 ## 2. Ports on a box that already runs a web server
 
@@ -249,9 +275,12 @@ for `tailbond_firewall: ufw`).
 
 ## Updates
 
-The dashboard checks GitHub's latest release about once a day and shows it.
-**Update now** (or policy **Automatic**) runs the new bundle's
-`install.sh --update`; by hand:
+A new install updates **Right away**: it checks GitHub's latest release
+every hour and installs a new one as soon as no call or big transfer is
+going through (at most 30 minutes later; security releases at once). An
+install from before this keeps its policy (one that never chose: Tell me,
+once a day). **Update now**, Right away and **Automatic (night)** all run
+the new bundle's `install.sh --update`; by hand:
 
 ```sh
 sudo /usr/local/lib/tailbond/install.sh --update                   # the latest release
@@ -263,21 +292,43 @@ release, checks the SHA-256, replaces only the binaries and hooks (keeping
 `tailbondd.prev` / `mqvpn.prev`), restarts tailbond and puts the old
 binaries back if it isn't up on the new version within 60 seconds. Run from
 an unpacked bundle, `sudo ./install.sh --update` installs that bundle.
-`--update-policy notify|auto|off` sets the dashboard's policy. More:
-[updates.md](updates.md).
+`--update-policy immediate|auto|notify|off` sets the policy; a re-run
+without it keeps the config's. More: [updates.md](updates.md).
 
 **Ansible**: `tailbond_version` is the version; bump it and run the playbook
 (the role downloads that release's bundle and checks it against
-`SHA256SUMS`). `tailbond_update_policy` (default `notify`) is the dashboard's
-policy; with the role in charge keep it `notify` or `off`, since the next
-playbook run puts `tailbond_version` back.
+`SHA256SUMS`). `tailbond_update_policy` is the policy:
+
+- empty (the default): a new server gets `immediate`, an existing one
+  keeps what its config says;
+- or `immediate`, `auto`, `notify` or `off`.
+
+A pinned `tailbond_version` is the truth on every playbook run: it puts
+that version back after the server updated itself. To let a server follow
+releases by itself, run the role once with `tailbond_version` and then
+without it (an empty `tailbond_version` installs `tailbond_bundle` from the
+controller, so keep that run for upgrades you push yourself). Or keep
+pinning and set `notify`:
 
 ```yaml
     - role: tailbond
       vars:
         tailbond_version: "0.2.0"
-        tailbond_update_policy: notify
+        tailbond_update_policy: notify   # the playbook decides the version
 ```
+
+## Build from source
+
+For contributors (podman for the static mqvpn):
+
+```sh
+git clone --recurse-submodules https://github.com/kaovilai/tailbond
+cd tailbond
+scripts/build-mqvpn-musl.sh x86_64            # static mqvpn → out/x86_64/mqvpn (aarch64: scripts/build-mqvpn-aarch64-musl.sh)
+packaging/linux/build-bundle.sh               # → out/linux/tailbond-linux-<arch>.tar.gz (builds tailbondd when missing)
+```
+
+Then install from `out/linux/` as above.
 
 ## Troubleshooting
 

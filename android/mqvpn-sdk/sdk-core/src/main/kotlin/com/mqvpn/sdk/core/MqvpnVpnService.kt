@@ -422,6 +422,15 @@ abstract class MqvpnVpnService : VpnService(), TunnelCallbacks {
         networkMonitor?.activeNetworks?.values?.toList() ?: emptyList()
 
     /** tailbond: re-run [isPathWanted] over every available network (attach/detach). */
+    /**
+     * tailbond: the relay paths the tunnel should carry (Pair & Share hub):
+     * path name → the local port of its hub-side link. Replaces the set.
+     */
+    protected fun setRelayPaths(relays: Map<String, Int>) {
+        val pm = pathManager ?: return
+        scope.launch(Dispatchers.IO) { pm.setRelays(relays) }
+    }
+
     protected fun requestPathReconcile() {
         val pm = pathManager ?: return
         scope.launch(Dispatchers.IO) { pm.reconcile() }

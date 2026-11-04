@@ -33,6 +33,9 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", a.hStatus)
 	mux.HandleFunc("GET /api/events", a.hEvents)
 	mux.HandleFunc("GET /api/logs", a.hLogs)
+	mux.HandleFunc("GET /api/report", a.hReportGet)
+	mux.HandleFunc("POST /api/report", a.hReportPost)
+	mux.HandleFunc("POST /api/report/crash/dismiss", a.hReportDismiss)
 	mux.HandleFunc("POST /api/mode", a.hMode)
 	mux.HandleFunc("GET /api/paths", a.hPathsGet)
 	mux.HandleFunc("POST /api/paths", a.hPathsPost)
@@ -49,6 +52,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
 	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
 	mux.HandleFunc("GET /get", a.hLanding) // the phone landing page, also on :8077
+	mux.HandleFunc("GET /"+macBundleName, a.hMacBundle)
 	mux.HandleFunc("GET /tailbond-glinet.ipk", a.hIPK)
 	mux.HandleFunc("DELETE /api/pair", a.hUnpair)
 	// Pairing over Tailscale (docs/architecture.md).
@@ -76,6 +80,11 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/shares", a.hShares)
 	mux.HandleFunc("POST /api/shares", a.hShareRegister)
 	mux.HandleFunc("POST /api/share", a.hShareSettings)
+	mux.HandleFunc("GET /api/phone-hub", a.hPhoneHub)
+	mux.HandleFunc("POST /api/phone-hub", a.hPhoneHub)
+	mux.HandleFunc("GET /proxy.pac", a.hProxyPAC)
+	mux.HandleFunc("GET /api/coexist", a.hCoexist)
+	mux.HandleFunc("POST /api/coexist", a.hCoexist)
 	// Updates, the update mirror, backups (docs/architecture.md)
 	mux.HandleFunc("GET /api/update", a.hUpdateGet)
 	mux.HandleFunc("POST /api/update/check", a.hUpdateCheck)
@@ -246,6 +255,7 @@ func (a *Agent) hLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Agent) hStatus(w http.ResponseWriter, r *http.Request) {
+	a.hubAsked()
 	writeJSON(w, http.StatusOK, a.Snapshot())
 }
 
@@ -262,6 +272,7 @@ func (a *Agent) hEvents(w http.ResponseWriter, r *http.Request) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
+		a.hubAsked()
 		b, _ := json.Marshal(a.Snapshot())
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
 			return

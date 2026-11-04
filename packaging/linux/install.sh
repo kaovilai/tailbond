@@ -9,6 +9,8 @@
 #   sudo ./install.sh --dry-run              # print the decisions + files, change nothing
 #   sudo ./install.sh --no-tailscale --public-addr vps.example.net
 #   sudo ./install.sh --uninstall [--purge]
+#   sudo ./install.sh --client [--pair URI]   # a Linux laptop that bonds its own
+#                                             # links (client role, docs/vps.md)
 #   sudo /usr/local/lib/tailbond/install.sh --update    # the latest release
 #   sudo ./install.sh --update                # this unpacked bundle's version
 #
@@ -58,9 +60,11 @@ Options:
   --no-tailscale        don't use Tailscale even if it runs here
   --tailscale           use Tailscale on a re-run that had it off (re-pair after)
   --landing-port N      phone page port on the Tailscale IPs (-1 = off)
-  --update-policy P     notify (default: the dashboard shows new releases,
-                        "Update now" installs), auto (installs them by
-                        itself) or off; see docs/updates.md
+  --update-policy P     immediate (default for new installs: installs a
+                        release as soon as it's safe), auto (at night),
+                        notify (the dashboard shows it, "Update now"
+                        installs) or off; an existing config keeps its own
+                        unless this is given; see docs/updates.md
   --update              update the binaries only (see above)
   --version vX.Y.Z      with --update: that release instead of the latest
   --repo OWNER/NAME     with --update: where releases come from (default
@@ -76,6 +80,11 @@ Options:
   --tailbondd PATH      tailbondd binary (default: <bundle>/bin/tailbondd)
   --no-firewall         don't touch firewalld/ufw (the hooks still add NAT)
   --no-start            install, but don't enable/start the service
+  --client              install the client role instead (a laptop that bonds
+                        its own Wi-Fi, Ethernet, tethered phone): binaries, a
+                        client config with the dashboard on 127.0.0.1:8077,
+                        a systemd unit; no firewall, NAT or phone page
+  --pair URI            with --client: pair with this tailbond://pair link
   --dry-run             print decisions, rendered config/unit, planned actions
   --uninstall           remove tailbond (keeps /etc/tailbond, /var/lib/tailbond)
   --purge               with --uninstall: also remove config and state
@@ -91,7 +100,7 @@ TB_API_URL="${TB_API_URL:-https://api.github.com}"
 MEM_HIGH=96M MEM_MAX=160M GOMEMLIMIT=40MiB OOM_ADJ=-100
 PREFIX=/usr/local CONF=/etc/tailbond/tailbond.json
 BUNDLE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MQVPN_SRC="" TBD_SRC="" DRY=0 UNINSTALL=0 PURGE=0 NOFW=0 NOSTART=0
+MQVPN_SRC="" TBD_SRC="" DRY=0 UNINSTALL=0 PURGE=0 NOFW=0 NOSTART=0 CLIENT=0 OPT_PAIR=""
 
 need() { [ $# -ge 2 ] || { echo "install.sh: $1 needs a value" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
@@ -121,6 +130,8 @@ while [ $# -gt 0 ]; do
         --tailbondd) need "$@"; TBD_SRC="$2"; shift ;;
         --no-firewall) NOFW=1 ;;
         --no-start) NOSTART=1 ;;
+        --client) CLIENT=1 ;;
+        --pair) need "$@"; OPT_PAIR="$2"; shift ;;
         --dry-run) DRY=1 ;;
         --uninstall) UNINSTALL=1 ;;
         --purge) PURGE=1 ;;
@@ -130,7 +141,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-case "$OPT_UPOLICY" in ""|auto|notify|off) ;; *) echo "install.sh: --update-policy $OPT_UPOLICY: notify, auto or off" >&2; exit 2 ;; esac
+case "$OPT_UPOLICY" in ""|immediate|auto|notify|off) ;; *) echo "install.sh: --update-policy $OPT_UPOLICY: immediate, auto, notify or off" >&2; exit 2 ;; esac
 case "$OPT_UVERSION" in ""|v[0-9]*|[0-9]*) ;; *) echo "install.sh: --version $OPT_UVERSION: like v1.2.3" >&2; exit 2 ;; esac
 case "$OPT_REPO" in ""|[A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;; *) echo "install.sh: --repo $OPT_REPO: owner/name" >&2; exit 2 ;; esac
 
@@ -381,6 +392,83 @@ check_bins() {
     "$TBD_SRC" -version >/dev/null 2>&1 || die "$TBD_SRC does not run here ($(uname -m))"
 }
 check_bins
+
+# ---- client role (--client) -----------------------------------------------------------
+# A laptop or desktop that bonds its own links to a home server. mqvpn
+# manages its routes and DNS itself, so: the binaries, a client config, and
+# a plain unit (the server unit's ProtectSystem would keep mqvpn from
+# setting the resolver). Re-runs keep the config and pairing.
+do_client_install() {
+    local role=""
+    if [ -f "$CONF" ]; then
+        role="$(sed -n 's/^ *"role": *"\([a-z]*\)".*/\1/p' "$CONF" | head -n1)"
+        [ "$role" = server ] && die "$CONF is a server's config: this machine is a tailbond server already"
+    fi
+    say "tailbond $VERSION, client role ($OS_NAME)"
+    note "binaries: $BINDIR/tailbondd, $BINDIR/mqvpn"
+    note "config: $CONF$([ -f "$CONF" ] && echo " (kept)")"
+    note "dashboard: http://127.0.0.1:8077 (this machine only)"
+    [ "$DRY" = 1 ] && { say "dry run: nothing changed"; return 0; }
+    act install -d -m 0755 "$BINDIR" "$LIBDIR" "$HOOKS"
+    act install -d -m 0700 "$ETC" "$STATE"
+    act install -m 0755 "$MQVPN_SRC" "$BINDIR/mqvpn"
+    act install -m 0755 "$TBD_SRC" "$BINDIR/tailbondd"
+    act install -m 0755 "$BUNDLE/install.sh" "$LIBDIR/install.sh"
+    if [ ! -f "$CONF" ]; then
+        cat >"$CONF.tbnew" <<JSON
+{
+  "role": "client",
+  "mqvpn_bin": "$BINDIR/mqvpn",
+  "state_dir": "$STATE",
+  "hooks_dir": "$HOOKS",
+  "listen": "127.0.0.1:8077",
+  "mode": "speed",
+  "client": {"pairing_uri": "", "paths": []}
+}
+JSON
+        chmod 0600 "$CONF.tbnew" && mv -f "$CONF.tbnew" "$CONF"
+    fi
+    printf 'TB_PREFIX=%s\nTB_ROLE=client\nTB_VERSION=%s\n' "$PREFIX" "$VERSION" >"$MANIFEST"
+    if systemd_on; then
+        cat >"$UNIT" <<UNIT
+# tailbond client (a laptop bonding its own links), by install.sh --client.
+[Unit]
+Description=tailbond WAN bonding client (tailbondd + mqvpn)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$BINDIR/tailbondd -config $CONF -quiet
+Restart=on-failure
+RestartSec=3
+RestartForceExitStatus=75
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+        systemctl daemon-reload
+        if [ "$NOSTART" = 0 ]; then systemctl enable --now tailbond.service; fi
+    else
+        warn "no systemd: start it with $BINDIR/tailbondd -config $CONF"
+    fi
+    if [ -n "$OPT_PAIR" ] && [ "$NOSTART" = 0 ] && systemd_on; then
+        for _ in $(seq 1 20); do curl -fsS -m 2 http://127.0.0.1:8077/api/hello >/dev/null 2>&1 && break; sleep 1; done
+        if curl -fsS -m 10 -H 'Content-Type: application/json' -d "{\"uri\":\"$OPT_PAIR\"}" http://127.0.0.1:8077/api/pair >/dev/null; then
+            say "Paired: tailbond connects now."
+        else
+            warn "pairing failed: paste the link in the dashboard's Setup tab"
+        fi
+    fi
+    say "Done. Open http://127.0.0.1:8077: Setup → Ask your home server (Tailscale on), or paste a pairing link."
+    say "Update later: sudo $LIBDIR/install.sh --update    Remove: sudo $LIBDIR/install.sh --uninstall"
+}
+if [ "$CLIENT" = 1 ]; then do_client_install; exit 0; fi
+if [ -f "$CONF" ] && grep -Eq '^ *"role": *"client"' "$CONF"; then
+    die "$CONF is a client's config (install.sh --client); remove it first (--uninstall --purge) to make this a server"
+fi
 
 # ---- the existing config ----------------------------------------------------------
 # json_get FILE KEY.PATH: a string/number/bool, "" when missing.
@@ -682,8 +770,11 @@ jstr() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 # keeps the existing block. Nothing else in it is touched (repo,
 # check_every_hours; the dashboard sets those too).
 render_update() {
-    local u=""
-    [ -n "$OPT_UPOLICY" ] && u="\"policy\": $(jstr "$OPT_UPOLICY")"
+    local u="" p="$OPT_UPOLICY"
+    # a new install updates right away; an existing config keeps its own
+    # (one without a policy keeps Tell me: docs/updates.md)
+    [ -z "$p" ] && [ "$EXISTS" != 1 ] && p=immediate
+    [ -n "$p" ] && u="\"policy\": $(jstr "$p")"
     [ -n "$u" ] && printf '\n  "update": {%s},' "$u"
     return 0
 }
@@ -794,8 +885,11 @@ note "firewall: $FW"
 E_UPOLICY="$(json_get "$CONF" update.policy)"
 if [ -n "$OPT_UPOLICY" ]; then UP_WHY="--update-policy"
 elif [ -n "$E_UPOLICY" ]; then UP_WHY="kept from $CONF"
-else UP_WHY="default"; fi
-note "updates: ${OPT_UPOLICY:-${E_UPOLICY:-notify}}  [$UP_WHY]; update later with: sudo $LIBDIR/install.sh --update"
+elif [ "$EXISTS" = 1 ]; then UP_WHY="kept: this config never chose, so Tell me"
+else UP_WHY="default for new installs"; fi
+UP_NOW="${OPT_UPOLICY:-$E_UPOLICY}"
+[ -z "$UP_NOW" ] && { [ "$EXISTS" = 1 ] && UP_NOW=notify || UP_NOW=immediate; }
+note "updates: $UP_NOW  [$UP_WHY]; update later with: sudo $LIBDIR/install.sh --update"
 note "binaries: $BINDIR/{mqvpn,tailbondd}; hooks: $HOOKS; config: $CONF; state: $STATE"
 note "systemd: $UNIT (MemoryHigh=$MEM_HIGH MemoryMax=$MEM_MAX OOMScoreAdjust=$OOM_ADJ GOMEMLIMIT=$GOMEMLIMIT)"
 note "SELinux: $(selinux_on && echo "$(getenforce 2>/dev/null || echo on), contexts restored with restorecon" || echo "not enabled")"

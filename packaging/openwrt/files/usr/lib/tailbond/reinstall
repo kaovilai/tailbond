@@ -72,11 +72,23 @@ fetch() {
 	uclient-fetch -q -T 120 -O "$2" "$1" 2>/dev/null
 }
 
+# stable_ipk ARCH: the release asset with the same name in every release
+# (tailbond-glinet-<arch>.ipk for GL.iNet's stock firmware, else
+# tailbond-openwrt-<arch>.ipk); the agent's updater uses the same names
+stable_ipk() {
+	case "$1" in
+	*_neon-vfpv4) echo "tailbond-glinet-$1.ipk" ;;
+	*) echo "tailbond-openwrt-$1.ipk" ;;
+	esac
+}
+
 # from_github -> path of a checked ipk in $PKGDIR: the release of the
 # version the cache pointer names (tailbond_<v>-r<N>_<arch>.ipk), else the
-# latest release's ipk for this router, checked against SHA256SUMS
+# latest release's ipk for this router, checked against SHA256SUMS. It
+# downloads the stable asset name when the release has it and keeps the
+# file under the versioned name (the cache pointer reads the version).
 from_github() {
-	local repo name ver rel tmp a n url sums want
+	local repo name ver rel tmp a n url sums want names tag arch dl
 	repo="$(jsonfilter -i "$CONF" -e '@.update.repo' 2>/dev/null)"
 	repo="${repo#https://github.com/}"
 	repo="${repo%/}"
@@ -88,29 +100,37 @@ from_github() {
 	ver="$(echo "$name" | sed -n 's/^tailbond_\(.*\)-r[0-9]*_.*\.ipk$/\1/p')"
 	if [ -n "$ver" ]; then rel="$API/repos/$repo/releases/tags/v$ver"; else rel="$API/repos/$repo/releases/latest"; name=""; fi
 	fetch "$rel" "$tmp.json" || { log "can't reach $rel yet"; rm -f "$tmp.json"; return 1; }
+	names="$(jsonfilter -i "$tmp.json" -e '@.assets[*].name' 2>/dev/null)"
+	tag="$(jsonfilter -i "$tmp.json" -e '@.tag_name' 2>/dev/null)"
 	if [ -z "$name" ]; then
 		# opkg print-architecture lists by ascending priority: the last match wins
 		for a in $(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }'); do
-			n="$(jsonfilter -i "$tmp.json" -e '@.assets[*].name' 2>/dev/null | grep -E "^tailbond_.*_${a}\.ipk$" | head -1)"
+			n="$(echo "$names" | grep -E "^tailbond_.*_${a}\.ipk$" | head -1)"
+			if [ -z "$n" ] && [ -n "$tag" ] && echo "$names" | grep -qxF "$(stable_ipk "$a")"; then
+				n="tailbond_${tag#v}-r1_${a}.ipk"
+			fi
 			[ -n "$n" ] && name="$n"
 		done
 	fi
 	case "$name" in tailbond_*.ipk) ;; *) log "$rel: no ipk for this router"; rm -f "$tmp.json"; return 1 ;; esac
-	url="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='$name'].browser_download_url" 2>/dev/null | head -1)"
+	arch="$(echo "$name" | sed -n 's/^tailbond_.*-r[0-9]*_\(.*\)\.ipk$/\1/p')"
+	dl="$(stable_ipk "$arch")"
+	[ -n "$arch" ] && echo "$names" | grep -qxF "$dl" || dl="$name"
+	url="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='$dl'].browser_download_url" 2>/dev/null | head -1)"
 	sums="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='SHA256SUMS'].browser_download_url" 2>/dev/null | head -1)"
 	rm -f "$tmp.json"
-	[ -n "$url" ] && [ -n "$sums" ] || { log "$rel: no $name or no SHA256SUMS"; return 1; }
-	fetch "$sums" "$tmp.sums" && fetch "$url" "$tmp.ipk" || { log "download of $name failed"; rm -f "$tmp.sums" "$tmp.ipk"; return 1; }
-	want="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$tmp.sums" | head -1)"
+	[ -n "$url" ] && [ -n "$sums" ] || { log "$rel: no $dl or no SHA256SUMS"; return 1; }
+	fetch "$sums" "$tmp.sums" && fetch "$url" "$tmp.ipk" || { log "download of $dl failed"; rm -f "$tmp.sums" "$tmp.ipk"; return 1; }
+	want="$(awk -v n="$dl" '$2 == n || $2 == "*" n { print $1 }' "$tmp.sums" | head -1)"
 	if [ -n "$want" ] && [ "$(sha256sum "$tmp.ipk" | cut -d' ' -f1)" = "$want" ]; then
 		mv -f "$tmp.ipk" "$PKGDIR/$name"
 		echo "$name" >"$PKGDIR/current"
 		rm -f "$tmp.sums"
-		log "downloaded $name from the GitHub release"
+		log "downloaded $dl from the GitHub release (kept as $name)"
 		echo "$PKGDIR/$name"
 		return 0
 	fi
-	log "$name doesn't match the release's SHA256SUMS: not installing it"
+	log "$dl doesn't match the release's SHA256SUMS: not installing it"
 	rm -f "$tmp.sums" "$tmp.ipk"
 	return 1
 }

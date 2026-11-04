@@ -148,10 +148,10 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
 
   <section id="how">
     <h2>How it works</h2>
-    <p class="lead">A hub, which can be an Android phone or a travel router, opens one tunnel to your server over <em>every</em> connection it has, using Multipath QUIC (<a href="https://github.com/mp0rta/mqvpn">mqvpn</a>). Your server combines them and sends traffic on to the internet and your tailnet.</p>
+    <p class="lead">A hub, which can be an Android phone, a travel router or a Mac, opens one tunnel to your server over <em>every</em> connection it has, using Multipath QUIC (<a href="https://github.com/mp0rta/mqvpn">mqvpn</a>). Your server combines them and sends traffic on to the internet and your tailnet.</p>
     <ol class="steps five">
       <li><b>Connections</b><span>Hotel Wi-Fi, 5G, ethernet, a phone tethered over USB, or a friend's phone sharing its data.</span></li>
-      <li><b>Hub</b><span>The Android app, or a GL.iNet travel router that bonds for every device on its Wi-Fi. A Mac hub is in progress.</span></li>
+      <li><b>Hub</b><span>The Android app, a GL.iNet travel router that bonds for every device on its Wi-Fi, or a Mac (Apple silicon) with a menu bar app.</span></li>
       <li><b>Bonded tunnel</b><span>Faster together, or duplicated for calls that never drop. Fails over in seconds.</span></li>
       <li><b>Your server</b><span>A Flint 3 or Fedora box at home, or a VPS, with automatic failover between them.</span></li>
       <li><b>Internet + tailnet</b><span>Reach the NAS by its MagicDNS name, from anywhere.</span></li>
@@ -169,7 +169,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
       <div class="card"><h3>Hotel Wi-Fi friendly</h3><p>Sign-in pages are detected and kept out of the bond, and work with GL.iNet's Login Mode.</p></div>
       <div class="card"><h3>Bypass rules</h3><p>Send a banking site, a work laptop or Wi-Fi calling direct, or through one chosen connection.</p></div>
       <div class="card"><h3>Native GL.iNet panel</h3><p>Lives under VPN in GL's own admin, with GL's login. No reflashing.</p></div>
-      <div class="card"><h3>Updates &amp; backups</h3><p>Releases are cut automatically. Routers and servers tell you when one is out, or install it themselves if you turn that on. Encrypted config backups and restore.</p></div>
+      <div class="card"><h3>Updates &amp; backups</h3><p>Releases are cut automatically. New installs update themselves right away, never in the middle of a call (at most a 30-minute wait); installs from before keep their setting. Android asks you to tap install; Homebrew and dnf installs only tell you. Encrypted config backups and restore.</p></div>
     </div>
   </section>
 
@@ -184,7 +184,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
           <tr><td>GL.iNet Slate 7 / OpenWrt</td><td>Travel hub</td><td>Package install test in CI (emulated OpenWrt)</td></tr>
           <tr><td>Fedora</td><td>Home server (RPM)</td><td>RPM build, install and removal in CI</td></tr>
           <tr><td>Any Linux VPS</td><td>Server, failover backup</td><td>Installer tested in CI (AlmaLinux, Debian, Ubuntu); bonding and failover end to end in network namespaces</td></tr>
-          <tr><td>macOS</td><td>Hub (Wi-Fi, ethernet, iPhone USB, phone shares)</td><td>In progress, not released yet</td></tr>
+          <tr><td>macOS (Apple silicon)</td><td>Hub (Wi-Fi, ethernet, iPhone USB, phone shares), menu bar app</td><td>Bonding, nearby phones' shares, the phone hub and a work VPN (NetBird stand-in) end to end on a macOS runner against a Linux server VM; installer, Homebrew formula and menu bar app tested in CI. Not yet on a real Mac; next to the Tailscale app untested</td></tr>
           <tr><td>Android</td><td>Hub for itself (Wi-Fi + 5G), Pair &amp; Share sharer</td><td>Unit tests, plus connect-and-pass-traffic on an emulator in CI</td></tr>
           <tr><td>iPhone</td><td>Pair &amp; Share sharer (free-signed app you build)</td><td>Unit tests and build on an iOS simulator in CI</td></tr>
         </tbody>
@@ -207,7 +207,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
   <section id="faq">
     <h2>Questions</h2>
     <details><summary>Is this a Tailscale product?</summary><p>No. tailbond is an independent open-source project. It uses Tailscale (if you have it) for pairing, identity and reaching your tailnet; the bonded tunnel itself is mqvpn.</p></details>
-    <details><summary>Can I keep using the Tailscale app?</summary><p>On a phone, tailbond replaces the Tailscale VPN while it's on (Android allows one VPN at a time), and your tailnet stays reachable through your server. Servers and travel routers run both. Step by step for each device: <a href="https://github.com/kaovilai/tailbond/blob/main/docs/coming-from-tailscale.md">coming from Tailscale</a>.</p></details>
+    <details><summary>Can I keep using the Tailscale app?</summary><p>On a phone, tailbond replaces the Tailscale VPN while it's on (Android allows one VPN at a time), and your tailnet stays reachable through your server. Servers and travel routers run both. A Mac is built to run both too (tailbond leaves the Tailscale app's routes alone), but that isn't tested yet; don't use a Tailscale exit node while tailbond is connected. Step by step for each device: <a href="https://github.com/kaovilai/tailbond/blob/main/docs/coming-from-tailscale.md">coming from Tailscale</a>.</p></details>
     <details><summary>Why my own server?</summary><p>Your traffic goes to hardware you control, and it exits with your home IP. Speed is capped by your server's upload, so a VPS helps if home upload is slow.</p></details>
     <details><summary>Does it work on Heroku or Vercel?</summary><p>No. A server needs inbound UDP and a TUN device. There are untested <a href="https://github.com/kaovilai/tailbond/blob/main/docs/deploy.md">templates</a> for any VPS, Docker and Fly.io.</p></details>
   </section>

@@ -1,19 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Status bar / tile glyph: the launcher mark cropped to the letters. -->
+<!-- Status bar and quick-settings glyph: assets/brand/tailbond-mark-mono.svg
+     (one colour; the system tints it), cropped to the mark. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="46"
-    android:viewportHeight="46">
-  <group android:translateX="-31" android:translateY="-31">
-    <path
-        android:pathData="M48.3,46.8 C47.2,44.6 45,43.5 42,43.5 C38.3,43.5 35.8,45.6 35.8,48.6 C35.8,51.8 38.6,53 42,54 C45.6,55 48.4,56.3 48.4,59.6 C48.4,62.7 45.7,64.5 42,64.5 C38.8,64.5 36.4,63.3 35.4,61"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="5"
-        android:strokeLineCap="butt"
-        android:strokeLineJoin="round" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M57,41 H75 V46 H57 Z M63.5,46 H68.5 V67 H63.5 Z" />
+    android:viewportWidth="52"
+    android:viewportHeight="52">
+  <group android:translateX="-6.5" android:translateY="-6">
+    <path android:pathData="M12,18 C26,18 28,32 38,32 M12,46 C26,46 28,32 38,32" android:strokeColor="#FFFFFF" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M12,32 H50" android:strokeColor="#FFFFFF" android:strokeWidth="6.5" android:strokeLineCap="round" />
+    <path android:pathData="M45,23 L54,32 L45,41" android:strokeColor="#FFFFFF" android:strokeWidth="6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M8,18 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 M8,32 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 M8,46 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" android:fillColor="#FFFFFF" />
   </group>
 </vector>

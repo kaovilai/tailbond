@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -101,11 +102,22 @@ type CLI struct {
 }
 
 func (c *CLI) bin() string {
-	if c.Bin == "" {
-		return "tailscale"
+	if c.Bin != "" {
+		return c.Bin
 	}
-	return c.Bin
+	if _, err := exec.LookPath("tailscale"); err != nil {
+		// macOS: the Tailscale app keeps its CLI inside the app bundle
+		for _, p := range appCLIs {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+	}
+	return "tailscale"
 }
+
+// appCLIs: where a Tailscale app (not on PATH) keeps its CLI.
+var appCLIs = []string{"/Applications/Tailscale.app/Contents/MacOS/Tailscale"}
 
 func (c *CLI) run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)

@@ -4,7 +4,13 @@
 #   web-00*  the phone page ("Get tailbond", http://homebox/) on a phone,
 #            on a computer, and after the app link fell back to it;
 #   web-01..03  the dashboard's "Add this phone" flow at phone width;
-#   web-04   the dashboard's Devices tab with the phone QR card.
+#   web-04   the dashboard's Devices tab with the phone QR card;
+#   web-05   "Get tailbond" per platform tab (Android, Mac, iPhone, Linux) at
+#            phone and desktop widths; web-06 a Mac picking Android (QR);
+#   web-07   the Mac's / laptop's own dashboard opened by "Open tailbond and
+#            ask homebox" (/?ask=…: Setup, the server's name filled in);
+#   web-08   the Mac's "Use a phone's bonded connection" card: a phone found,
+#            none, in use, lost (phone_hub states patched into its status).
 #
 #   scripts/ux/web-screens.sh [outdir]
 #
@@ -22,7 +28,7 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:-$REPO/out/ux/web}"
 PW="${TAILBOND_UX_NODE:-$HOME/.cache/tailbond-ux}"
 TMP="$(mktemp -d)"
-trap 'kill "${AGENT_PID:-0}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+trap 'kill "${AGENT_PID:-0}" "${CLIENT_PID:-0}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
 if [[ ! -d "$PW/node_modules/playwright" ]]; then
     mkdir -p "$PW"
@@ -33,6 +39,7 @@ PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').versi
 (cd "$REPO/agent" && CGO_ENABLED=0 go build -ldflags "-X main.version=0.1.0-r42" -o "$TMP/tailbondd" ./cmd/tailbondd)
 mkdir -p "$TMP/state" "$TMP/hooks" "$TMP/bin" "$OUT"
 head -c 27800000 /dev/zero > "$TMP/tailbond.apk"  # offered as GET /tailbond.apk (size shown on the page)
+head -c 9400000 /dev/zero > "$TMP/tailbond-macos-arm64.tar.gz"  # GET /tailbond-macos-arm64.tar.gz
 printf '#!/bin/sh\necho "mqvpn server ready"\nexec sleep 3600\n' > "$TMP/mqvpn" && chmod +x "$TMP/mqvpn"
 cat > "$TMP/bin/tailscale" <<'SH'
 #!/bin/sh
@@ -48,16 +55,26 @@ SH
 chmod +x "$TMP/bin/tailscale"
 cat > "$TMP/tailbond.json" <<JSON
 {"role":"server","mqvpn_bin":"$TMP/mqvpn","state_dir":"$TMP/state","hooks_dir":"$TMP/hooks",
- "listen":"127.0.0.1:8077","android_apk":"$TMP/tailbond.apk","landing_port":18080,"landing_public_port":80,
+ "listen":"127.0.0.1:8077","android_apk":"$TMP/tailbond.apk","macos_bundle":"$TMP/tailbond-macos-arm64.tar.gz","landing_port":18080,"landing_public_port":80,
  "server":{"port":443,"public_addr":"home.example.net:443","subnet":"10.77.0.0/24","subnet6":"fd77:77::/112","use_tailscale_cert":false}}
 JSON
 PATH="$TMP/bin:$PATH" "$TMP/tailbondd" -config "$TMP/tailbond.json" -quiet &
 AGENT_PID=$!
 for _ in $(seq 50); do curl -fsS -o /dev/null http://127.0.0.1:18080/ && break; sleep 0.2; done
+# a client-role agent (the Mac or laptop being added), unpaired, for the
+# phone page's "Open tailbond and ask homebox" step: /?ask= on 127.0.0.1:18077
+mkdir -p "$TMP/cstate"
+cat > "$TMP/client.json" <<JSON
+{"role":"client","mqvpn_bin":"$TMP/mqvpn","state_dir":"$TMP/cstate","hooks_dir":"$TMP/hooks","listen":"127.0.0.1:18077",
+ "client":{"pairing_uri":"","paths":[],"captive_portal_detect":false}}
+JSON
+PATH="$TMP/bin:$PATH" "$TMP/tailbondd" -config "$TMP/client.json" -quiet &
+CLIENT_PID=$!
+for _ in $(seq 50); do curl -fsS -o /dev/null http://127.0.0.1:18077/ && break; sleep 0.2; done
 
 podman run --rm --network=host --userns=keep-id \
     -v "$PW/node_modules:/pw/node_modules:ro,z" -v "$REPO/scripts/ux:/scripts:ro,z" -v "$OUT:/out:z" \
     -e NODE_PATH=/pw/node_modules \
     "mcr.microsoft.com/playwright:v$PW_VERSION-noble" \
-    node /scripts/web-screens.mjs http://127.0.0.1:8077/ /out http://127.0.0.1:18080/
+    node /scripts/web-screens.mjs http://127.0.0.1:8077/ /out http://127.0.0.1:18080/ http://127.0.0.1:18077/
 ls -1 "$OUT"

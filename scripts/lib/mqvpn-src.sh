@@ -17,6 +17,10 @@ mqvpn_src_prepare() {
     for c in git rsync patch; do
         command -v "$c" >/dev/null || die "'$c' not found (dnf install git rsync patch)"
     done
+    # GNU patch: macOS's own patch(1) lacks --no-backup-if-mismatch
+    # (brew install gpatch)
+    local patch=patch
+    command -v gpatch >/dev/null && patch=gpatch
 
     # Patches target the pinned upstream commit; refuse a moved or dirty submodule.
     local pinned head
@@ -37,6 +41,7 @@ mqvpn_src_prepare() {
         --exclude '/build-*/' \
         --exclude '/third_party/xquic/build/' \
         --exclude '/third_party/xquic/third_party/boringssl/build/' \
+        --exclude '/android/sdk-native/prebuilt/' \
         "$src/" "$work/src/"
 
     local p
@@ -45,7 +50,7 @@ mqvpn_src_prepare() {
         echo "=== Applying $(basename "$p") ==="
         # patch(1), not git apply: the work tree sits inside the superproject's
         # repo, where git apply would resolve paths against the repo root.
-        patch -d "$work/src" -p1 --forward --no-backup-if-mismatch -s <"$p" \
+        "$patch" -d "$work/src" -p1 --forward --no-backup-if-mismatch -s <"$p" \
             || die "$(basename "$p") does not apply to the pinned mqvpn"
     done
 }

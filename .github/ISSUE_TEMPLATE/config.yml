@@ -6,3 +6,6 @@ contact_links:
   - name: Setup tips for best speed
     url: https://github.com/kaovilai/tailbond/blob/main/docs/setup-tips.md
     about: Direct Tailscale connections, port forwarding, CGNAT.
+  - name: Report a security problem privately
+    url: https://github.com/kaovilai/tailbond/security/advisories/new
+    about: Vulnerabilities go here, not in a public issue (SECURITY.md).

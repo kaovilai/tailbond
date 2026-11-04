@@ -1,0 +1,8 @@
+#!/bin/sh
+# tailbond macOS hook: the tunnel is down. mqvpn has already put the routes
+# and DNS servers back; flush the resolver cache so nothing keeps
+# answering with the tunnel's DNS. TB_RELEASE=1: turned off on purpose.
+echo "tunnel down on ${TB_TUN:-?}${TB_RELEASE:+ (turned off)}${TB_SWITCH:+ (switching servers)}"
+dscacheutil -flushcache 2>/dev/null || true
+killall -HUP mDNSResponder 2>/dev/null || true
+exit 0

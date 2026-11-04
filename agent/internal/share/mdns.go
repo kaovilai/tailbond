@@ -14,8 +14,13 @@ import (
 
 var mdnsGroup = &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353}
 
-// serviceFQDN is the browse name.
-const serviceFQDN = Service + ".local."
+// serviceFQDN is the browse name of a service type ("" = Pair & Share's).
+func serviceFQDN(svc string) string {
+	if svc == "" {
+		svc = Service
+	}
+	return svc + ".local."
+}
 
 // Found is a sharer a hub can use.
 type Found struct {
@@ -25,16 +30,32 @@ type Found struct {
 	Addr  *net.UDPAddr `json:"-"`
 	// How the hub learned of it: "mdns" or "server" (the home server's list).
 	Via string `json:"via"`
+	// Bonded (phone hubs' "b" TXT key): "1" the proxy's upstream is a
+	// bonded tunnel (Android), "0" not (the iPhone's, mobile data only),
+	// "" unknown.
+	Bonded string `json:"bonded,omitempty"`
 }
 
 // Advert is what a sharer announces over mDNS.
 type Advert struct {
 	ID, Label, KeyID string
 	Port             int
+	// IP (optional) is the address announced; nil = the address of the
+	// interface the query came in on.
+	IP net.IP
+	// Service (optional) is the service type; "" = Pair & Share's
+	// (_tailbond-share._udp). The phone hub's proxy is _tailbond-proxy._tcp.
+	Service string
+	// Bonded (optional): the phone hub's "b" TXT key, "1" or "0".
+	Bonded string
 }
 
 func txt(a Advert) []string {
-	return []string{"v=1", "id=" + a.ID, "k=" + a.KeyID, "n=" + a.Label}
+	t := []string{"v=1", "id=" + a.ID, "k=" + a.KeyID, "n=" + a.Label}
+	if a.Bonded != "" {
+		t = append(t, "b="+a.Bonded)
+	}
+	return t
 }
 
 func instanceName(a Advert) string {
@@ -57,6 +78,12 @@ func shortID(id string) string {
 // unicast: answers come straight back to our port) and collects answers
 // for wait.
 func Browse(ctx context.Context, ifaces []net.Interface, wait time.Duration) ([]Found, error) {
+	return BrowseService(ctx, Service, ifaces, wait)
+}
+
+// BrowseService is Browse for another service type with the same TXT keys
+// (the phone hub's _tailbond-proxy._tcp).
+func BrowseService(ctx context.Context, svc string, ifaces []net.Interface, wait time.Duration) ([]Found, error) {
 	c, err := net.ListenUDP("udp4", &net.UDPAddr{})
 	if err != nil {
 		return nil, err
@@ -64,7 +91,7 @@ func Browse(ctx context.Context, ifaces []net.Interface, wait time.Duration) ([]
 	defer c.Close()
 	p := ipv4.NewPacketConn(c)
 	q := new(dns.Msg)
-	q.SetQuestion(serviceFQDN, dns.TypePTR)
+	q.SetQuestion(serviceFQDN(svc), dns.TypePTR)
 	q.RecursionDesired = false
 	b, err := q.Pack()
 	if err != nil {
@@ -94,7 +121,7 @@ func Browse(ctx context.Context, ifaces []net.Interface, wait time.Duration) ([]
 		if err != nil {
 			break
 		}
-		for _, f := range parseAnswer(buf[:n], from) {
+		for _, f := range parseAnswerFor(svc, buf[:n], from) {
 			byID[f.ID] = f
 		}
 	}
@@ -107,7 +134,9 @@ func Browse(ctx context.Context, ifaces []net.Interface, wait time.Duration) ([]
 
 // parseAnswer reads sharers from an mDNS response. The address is the A
 // record when there is one, else the responder's source address.
-func parseAnswer(b []byte, from *net.UDPAddr) []Found {
+func parseAnswer(b []byte, from *net.UDPAddr) []Found { return parseAnswerFor(Service, b, from) }
+
+func parseAnswerFor(svc string, b []byte, from *net.UDPAddr) []Found {
 	var m dns.Msg
 	if m.Unpack(b) != nil || !m.Response {
 		return nil
@@ -123,7 +152,7 @@ func parseAnswer(b []byte, from *net.UDPAddr) []Found {
 	for _, rr := range rrs {
 		switch r := rr.(type) {
 		case *dns.PTR:
-			if strings.EqualFold(r.Hdr.Name, serviceFQDN) {
+			if strings.EqualFold(r.Hdr.Name, serviceFQDN(svc)) {
 				if insts[strings.ToLower(r.Ptr)] == nil {
 					insts[strings.ToLower(r.Ptr)] = &inst{kv: map[string]string{}}
 				}
@@ -159,7 +188,7 @@ func parseAnswer(b []byte, from *net.UDPAddr) []Found {
 		if ip == nil {
 			continue
 		}
-		out = append(out, Found{ID: in.kv["id"], Label: in.kv["n"], KeyID: in.kv["k"], Addr: &net.UDPAddr{IP: ip, Port: in.port}, Via: "mdns"})
+		out = append(out, Found{ID: in.kv["id"], Label: in.kv["n"], KeyID: in.kv["k"], Addr: &net.UDPAddr{IP: ip, Port: in.port}, Via: "mdns", Bonded: in.kv["b"]})
 	}
 	return out
 }
@@ -169,15 +198,19 @@ func parseAnswer(b []byte, from *net.UDPAddr) []Found {
 func answer(q *dns.Msg, a Advert, ip net.IP, legacy bool) *dns.Msg {
 	asks := false
 	for _, x := range q.Question {
-		if strings.EqualFold(x.Name, serviceFQDN) && (x.Qtype == dns.TypePTR || x.Qtype == dns.TypeANY) {
+		if strings.EqualFold(x.Name, serviceFQDN(a.Service)) && (x.Qtype == dns.TypePTR || x.Qtype == dns.TypeANY) {
 			asks = true
 		}
 	}
 	if !asks {
 		return nil
 	}
-	inst := instanceName(a) + "." + serviceFQDN
-	host := "tailbond-share-" + shortID(a.ID) + ".local."
+	inst := instanceName(a) + "." + serviceFQDN(a.Service)
+	kind := "share"
+	if a.Service != "" && a.Service != Service {
+		kind = "proxy"
+	}
+	host := "tailbond-" + kind + "-" + shortID(a.ID) + ".local."
 	r := new(dns.Msg)
 	r.Response, r.Authoritative = true, true
 	if legacy {
@@ -189,7 +222,7 @@ func answer(q *dns.Msg, a Advert, ip net.IP, legacy bool) *dns.Msg {
 	if legacy {
 		ttl = 10
 	}
-	r.Answer = []dns.RR{&dns.PTR{Hdr: dns.RR_Header{Name: serviceFQDN, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}, Ptr: inst}}
+	r.Answer = []dns.RR{&dns.PTR{Hdr: dns.RR_Header{Name: serviceFQDN(a.Service), Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}, Ptr: inst}}
 	r.Extra = []dns.RR{
 		&dns.SRV{Hdr: dns.RR_Header{Name: inst, Rrtype: dns.TypeSRV, Class: dns.ClassINET, Ttl: ttl}, Port: uint16(a.Port), Target: host},
 		&dns.TXT{Hdr: dns.RR_Header{Name: inst, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl}, Txt: txt(a)},
@@ -253,7 +286,10 @@ func Advertise(ctx context.Context, ifaces []net.Interface, a Advert) error {
 		if err != nil {
 			continue
 		}
-		ip := ifaceIPv4In(ifi, src.IP)
+		ip := a.IP
+		if ip == nil {
+			ip = ifaceIPv4In(ifi, src.IP)
+		}
 		if ip == nil {
 			continue
 		}
@@ -299,13 +335,15 @@ func ifaceIPv4In(ifi *net.Interface, peer net.IP) net.IP {
 	return first
 }
 
-// MulticastIfaces are the up, multicast-capable, non-loopback interfaces
-// with an IPv4 address, minus skip (the tunnel, say).
+// MulticastIfaces are the up, multicast-capable, non-loopback LAN
+// interfaces with an IPv4 address, minus skip (the tunnel, say). Point-to-
+// point links (tunnels: Linux tun, macOS utun; PPP) never have sharers.
 func MulticastIfaces(skip ...string) []net.Interface {
 	all, _ := net.Interfaces()
 	var out []net.Interface
 	for _, ifi := range all {
-		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 || ifi.Flags&net.FlagLoopback != 0 {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 || ifi.Flags&net.FlagLoopback != 0 ||
+			ifi.Flags&net.FlagPointToPoint != 0 {
 			continue
 		}
 		skipped := false

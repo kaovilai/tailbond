@@ -1,0 +1,28 @@
+{
+  "credentials": [
+    {
+      "share_key": "0123456789abcdef0123456789abcdef",
+      "hub": "mac",
+      "exp": 1793836800,
+      "pass_key": "58617c98f9751f56046b281e303a8d5a0d54cbd26b5de8ab9328961bb3f10ee4",
+      "user": "mac/1793836800",
+      "pass": "cddfysqm2dpdgyvb"
+    },
+    {
+      "share_key": "k",
+      "hub": "slate7",
+      "exp": 1,
+      "pass_key": "d6b41cb321f743ffb224ffb811c633a29cc2274346c74a8e933a15bf07ff6218",
+      "user": "slate7/1",
+      "pass": "fzwj6j56iss26fjw"
+    },
+    {
+      "share_key": "a much longer share key, 64 bytes or so, as the server makes it.",
+      "hub": "dana-macbook",
+      "exp": 4102444800,
+      "pass_key": "cf5cfccb4efaa0415fdfcf6aa64a48eb6c951c6bb1d77ca87dc02707463a173a",
+      "user": "dana-macbook/4102444800",
+      "pass": "aehk4or3u6fzqdqu"
+    }
+  ]
+}

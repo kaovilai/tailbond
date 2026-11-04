@@ -10,7 +10,7 @@ depends on the device:
 | Android phone | **One or the other at a time.** Android runs one VPN; tailbond takes over from Tailscale while it's connected | Its existing entry, offline while tailbond is on. Nothing new is added |
 | GL.iNet travel router (Slate 7) | **Run both.** GL's built-in Tailscale stays on | Its existing entry, if it has one. Nothing new is added |
 | iPhone (tailbond Share) | **Run both.** The Share app isn't a VPN | Unchanged |
-| Mac | In progress: not released yet | |
+| Mac (Apple silicon) | **Run both.** tailbond keeps out of the Tailscale app's and a work VPN's (NetBird's) routes and DNS. Next to NetBird: CI-tested. Next to the Tailscale app: designed for, not tested yet | Its existing entry, if the Tailscale app is on it. Nothing new is added |
 
 Bonded devices never appear as machines of their own. To the rest of your
 tailnet their traffic comes **from the server** (it's masqueraded), so
@@ -85,5 +85,50 @@ Tailscale app can stay on. See [ios.md](ios.md).
 
 ## Mac
 
-The Mac hub isn't released yet. Its guide will say how it runs next to the
-Tailscale app.
+tailbond runs as a background service with a menu bar icon
+([macos.md](macos.md)). It's built and tested on macOS runners in CI
+against a Linux server; **it hasn't run on a real Mac yet**.
+
+**Order:**
+
+1. Optional: keep the Tailscale app on. With it, the Mac can ask your server
+   to connect over Tailscale. Without it, pair with a link from the
+   server's dashboard (**Devices → Add a device**) instead.
+2. Install tailbond (the [bundle or Homebrew](macos.md#install), or the
+   server's *Get tailbond* page, `homebox/`, **Mac** tab).
+3. On `http://127.0.0.1:8077`, **Setup → Ask your home server** (or paste
+   the link), then approve it on the server. tailbond connects and the menu
+   bar icon shows the links it bonds.
+
+**Next to the Tailscale app.** Leave both on:
+
+- tailbond routes no tailnet machines while the Tailscale app runs: the app
+  reaches them itself, as before, and the dashboard says so. Without the
+  app, tailbond reaches them through your server.
+- tailbond never adds a route that equals or covers one the Tailscale app
+  owns, and uses split DNS (only `ts.net` names go to the tunnel's DNS), so
+  MagicDNS keeps working through the app.
+- **Exit node:** don't use a Tailscale exit node while tailbond is
+  connected. Both want the Mac's default route, and which one wins isn't
+  defined. Pick one: tailbond (bonded, out through your server) or the exit
+  node.
+
+Unit tests cover the Tailscale-app rules; the macOS CI runs without the
+Tailscale app, so **running both is untested**, and so is an exit node.
+
+**Next to NetBird (or another work VPN).** Leave both on. NetBird keeps its
+addresses, routes and match-domain DNS. Its own traffic goes **Direct**
+(the Mac's own connection, the default) or **Bonded**, your choice in the
+menu bar or on the dashboard ([details](macos.md#using-tailbond-with-netbird-or-another-work-vpn)).
+CI checks this on a macOS runner against a NetBird stand-in (a WireGuard
+interface on 100.92.0.0/16 with a `corp.example` resolver) and the real
+NetBird app logged out: tailbond's routes stay clear of NetBird's network,
+work names keep NetBird's DNS, the global DNS is untouched, NetBird's
+endpoints go Direct, and Bonded raises the MTU or falls back to Direct.
+**A real NetBird login hasn't been tested.**
+
+**Switching back:** turn tailbond off with the menu bar switch (or
+**Disconnect** on the dashboard). mqvpn puts the Mac's routes and DNS back,
+and tailbond removes its resolver files: CI checks both, also after the
+agent is killed. To remove it: `sudo /usr/local/lib/tailbond/uninstall.sh`.
+The Tailscale app and NetBird need nothing changed either way.

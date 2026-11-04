@@ -14,25 +14,64 @@ Releases are automatic; nobody has to cut one by hand:
 3. **The tag's CI run** builds and tests everything again and publishes the GitHub release only if every job passes. A failing build never reaches devices.
 4. **Installs** see the new release on their next check and update per their policy (below).
 
-Every tailbond install looks at the latest release about once a day and
-shows **Update available: vX.Y (What's new)** in its dashboard, the GL panel
-or the app. Each platform then updates the way it normally does:
+Every tailbond install looks at the latest release (hourly with **Right
+away** or **Automatic**, daily with **Tell me**, and right after it starts)
+and shows **Update available: vX.Y (What's new)** in its dashboard, the GL
+panel or the app. Each platform then updates the way it normally does:
 
 | Device | How updates arrive | Turn them off |
 |---|---|---|
 | Home server on Fedora (RPM) | `dnf`, from the [COPR repository](fedora-server.md#updates): `sudo dnf upgrade tailbond-server`, or automatically with `dnf-automatic`. The dashboard only tells you. | Settings → Updates → Off (no checks); `dnf` is up to you |
-| VPS / any Linux (bundle, `install.sh`) | **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update`. **Automatic** installs them by itself. | Settings → Updates → Off, or `install.sh --update-policy off` |
-| VPS with Ansible | bump `tailbond_version` and run the playbook ([vps.md](vps.md#updates)) | `tailbond_update_policy: off` |
-| GL.iNet travel router | **Update now** in the tailbond panel, or **Automatic** | tailbond panel → Updates → Off |
-| Android phone | [Obtainium](android.md#updates) installs new releases by itself (recommended); or the app's **Update available → Download update** | Settings → Updates → Off; remove the app from Obtainium |
+| VPS / any Linux (bundle, `install.sh`) | **Right away** (new installs): by itself, as soon as it's safe. Or **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update` | Settings → Updates → Off, or `install.sh --update-policy off` |
+| VPS with Ansible | `tailbond_update_policy` (empty: new servers get Right away, existing ones keep theirs); a pinned `tailbond_version` wins on the next role run ([vps.md](vps.md#updates)) | `tailbond_update_policy: off` |
+| GL.iNet travel router | **Right away** (new installs), **Automatic (night)**, or **Update now** in the tailbond panel | tailbond panel → Updates → Off |
+| Mac (bundle, `install.sh`) | **Right away** (new installs), or **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update` | Updates → Off |
+| Mac (Homebrew) | the dashboard shows the commands: the release's `tailbond.rb` into the local tap, `brew reinstall local/tailbond/tailbond`, `sudo brew services start tailbond` ([macos.md](macos.md#updates)) | Updates → Off |
+| Android phone | **Right away** (new installs): an hourly check and a notification, *Update ready: tap to install* (Android always asks before installing an app). Hands-off: [Obtainium](android.md#updates) set to check every hour | Settings → Updates → Off; remove the app from Obtainium |
 
-Policies (dashboard, GL panel, `"update": {"policy": …}` in `tailbond.json`):
-**Tell me** (`notify`, the default: shows new releases, installs when you
-press Update now), **Automatic** (`auto`: installs them by itself between
-03:00 and 05:00 local time, when nobody is on a call), **Off** (`off`: no
-checks). On Fedora, Automatic means `dnf-automatic`; the dashboard says
-whether it's on. Pre-releases (`v1.2.3-beta.1`) are never
-offered.
+### Policies
+
+Set in the dashboard, the GL panel, the Android app, `install.sh
+--update-policy`, the Ansible variable `tailbond_update_policy`, or
+`"update": {"policy": …}` in `tailbond.json`:
+
+| Policy | Checks | Installs |
+|---|---|---|
+| **Right away** (`immediate`, the default for new installs) | Every hour (plus up to 10 minutes of jitter), and right after tailbond starts | As soon as it's safe: not during a call or heavy traffic (traffic both ways at 48 kbit/s or more, or 2 Mbit/s together). It waits at most **30 minutes**, then installs anyway. A **security release** doesn't wait. On Android: a notification, *Update ready: tap to install* |
+| **Automatic (night)** (`auto`) | Every hour, and at start | By itself between 03:00 and 05:00 local time |
+| **Tell me** (`notify`) | Once a day, and at start | Only when you press **Update now** |
+| **Off** (`off`) | Never by itself (Check now still works) | Never by itself |
+
+Devices drop for a few seconds while tailbond restarts. A new version that
+doesn't start goes back by itself, and isn't installed by itself again.
+
+**Existing installs keep their policy.** Only new installs get Right away.
+That covers fresh configs from `install.sh`, `tailbondd -init` (Mac), a
+first boot without a config (GL.iNet), a new Ansible server and the
+Android app's default. A `tailbond.json` written before this change that
+has no `update.policy` keeps **Tell me**; choose Right away in the
+dashboard to switch. On Fedora, updates come from dnf, and every policy
+except Off means "check and tell me".
+
+**Servers and clients, in any order within the hour.** The protocol
+ordering is unchanged: a server keeps working with older clients and
+lists them as outdated, and reports its `protocol` in `/api/hello`
+([architecture.md](architecture.md#updates)). Right away on both sides
+just shortens how long a fleet runs mixed versions.
+
+**Security releases.** The release job marks a release with `[security]`
+in its notes when any commit since the previous release has a
+`Security: yes` trailer. A maintainer can also add the marker by editing
+the notes, and devices see it at their next check. Right away installs
+those without waiting for a quiet moment.
+
+**Rate limits.** The check is one `GET /repos/…/releases/latest` with
+`If-None-Match` (the last answer's ETag), so an unchanged release is a
+small `304` (GitHub doesn't count conditional `304`s against its rate
+limit). Even counted, one request an hour per device is far inside the
+60 an hour GitHub allows each address without a token.
+
+Pre-releases (`v1.2.3-beta.1`) are never offered.
 
 ## What "Update now" does
 
@@ -44,6 +83,8 @@ offered.
   the new version within 60 seconds, the old binaries go back and the
   dashboard says "went back to vX". Going back by hand:
   `sudo /usr/local/lib/tailbond/install.sh --update --version vX.Y.Z`.
+- **Mac**: the same as the Linux bundle with `tailbond-macos-arm64.tar.gz`;
+  the LaunchDaemon is restarted (`/usr/local/var/log/tailbond.log`).
 - **GL router**: `opkg install` of the release's package; if the agent
   doesn't answer within 90 seconds, the previous package goes back
   (`logread -e tailbond-update`).
@@ -68,4 +109,4 @@ Push a `v*` tag. CI builds everything, writes `SHA256SUMS`, attests the files
 (`actions/attest-build-provenance`), creates the GitHub release, and starts a
 COPR build when the `COPR_CONFIG` secret is set
 ([fedora-server.md](fedora-server.md#copr)). The release fails if the Android
-signing secrets are missing ([android.md](android.md#release-key)).
+signing secrets are missing ([android.md](android.md#updates), "The release key").

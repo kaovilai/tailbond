@@ -222,7 +222,7 @@ class RestorePreviewTest {
         assertEquals("none" to "1 app", by.getValue("Apps that skip tailbond").let { it.from to it.to })
         assertEquals("none" to "mybank.com", by.getValue("Websites that skip tailbond").let { it.from to it.to })
         assertEquals("no limit" to "5 GB a month", by.getValue("Mobile data limit").let { it.from to it.to })
-        assertEquals("Tell me" to "Off", by.getValue("Updates").let { it.from to it.to })
+        assertEquals("Right away" to "Off", by.getValue("Updates").let { it.from to it.to })
         assertFalse(by.containsKey("Server choice"))
         // a missing app is a neutral note, named, not a warning
         assertTrue(p.warnings.isEmpty())

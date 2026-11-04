@@ -61,6 +61,10 @@ class MqvpnTunnel internal constructor(
     fun addPath(fd: Int, iface: String): Long =
         live(-1L) { NativeBridge.reactorAddPath(reactorHandle, it, fd, iface) }
 
+    /** tailbond: a relay path to 127.0.0.1:[relayPort] (Pair & Share hub); as [addPath] otherwise. */
+    fun addRelayPath(fd: Int, iface: String, relayPort: Int): Long =
+        live(-1L) { NativeBridge.reactorAddRelayPath(reactorHandle, it, fd, iface, relayPort) }
+
     /** Orderly removal; the caller closes the fd afterwards, then calls [pathReleased]. */
     fun removePath(pathHandle: Long): Int =
         live(ERR_INVALID_STATE) { NativeBridge.reactorRemovePath(reactorHandle, it, pathHandle) }

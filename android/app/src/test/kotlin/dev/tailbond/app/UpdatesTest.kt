@@ -69,6 +69,17 @@ class ReleaseParserTest {
         assertNull(ReleaseParser.apkAsset(listOf("tailbond-0.2.0.apk" to null), v))
     }
 
+    @Test fun theStableNameWins() {
+        val v = SemVer.parse("0.2.0")!!
+        val pick = { names: List<String> -> ReleaseParser.apkAsset(names.map { it to "https://h/$it" }, v) }
+        // releases publish tailbond-android.apk (releases/latest/download/tailbond-android.apk)
+        assertEquals("https://h/tailbond-android.apk", pick(listOf("tailbond-0.2.0.apk", "tailbond-android.apk")))
+        assertEquals("https://h/tailbond-android.apk", pick(listOf("tailbond-android.apk", "tailbond-0.2.0-debug.apk")))
+        assertNull(ReleaseParser.apkAsset(listOf("tailbond-android.apk" to "http://h/tailbond-android.apk"), v))
+        val r = ReleaseParser.parse(release(assets = listOf("tailbond-android.apk", "tailbond-linux-x86_64.tar.gz", "SHA256SUMS")))
+        assertEquals("https://github.com/kaovilai/tailbond/releases/download/v0.2.0/tailbond-android.apk", r.apkUrl)
+    }
+
     @Test fun oddTagsAndReleasesAreRefused() {
         assertThrows(ReleaseException::class.java) { ReleaseParser.parse(release(tag = "nightly")) }
         assertThrows(ReleaseException::class.java) { ReleaseParser.parse(release(tag = "v1.2")) }
@@ -145,9 +156,42 @@ class UpdateRulesTest {
         assertEquals(5000L, s.cellularCapMb)
         assertTrue(s.onboarded)
         assertEquals(UpdatePolicy.OFF, AppSettings.fromJson("""{"updatePolicy":"off"}""").updatePolicy)
-        assertTrue(AppSettings().toJson().contains("\"updatePolicy\":\"notify\""))
+        // new installs: Right away; a saved "notify" stays notify
+        assertTrue(AppSettings().toJson().contains("\"updatePolicy\":\"immediate\""))
+        assertEquals(UpdatePolicy.NOTIFY, AppSettings.fromJson("""{"updatePolicy":"notify"}""").updatePolicy)
+        assertEquals(UpdatePolicy.IMMEDIATE, AppSettings.fromJson("""{"updatePolicy":"immediate"}""").updatePolicy)
         val b = AndroidBackup.fromJson("""{"format":1,"config":{"servers":[],"settings":$old}}""")
         assertEquals(UpdatePolicy.NOTIFY, b.config.settings.updatePolicy)
+    }
+}
+
+/** Right away on Android: hourly checks and "Update ready: tap to install". */
+class UpdateNotifyTest {
+    private val h = 60 * 60 * 1000L
+    private val now = 1_800_000_000_000L
+
+    @Test fun rightAwayChecksHourly() {
+        val p = UpdatePolicy.IMMEDIATE
+        assertFalse(UpdateRules.checkDue(p, now - 50 * 60_000, now - 50 * 60_000, now))
+        assertTrue(UpdateRules.checkDue(p, now - h, now - h, now))
+        // Tell me stays daily
+        assertFalse(UpdateRules.checkDue(UpdatePolicy.NOTIFY, now - 2 * h, now - 2 * h, now))
+    }
+
+    private fun st(latest: String?, apk: String? = "https://github.com/o/r/releases/download/v$latest/tailbond-$latest.apk", current: String = "0.2.0") =
+        UpdateStatus(current = current, latest = latest, apkUrl = apk, lastCheckMs = now)
+
+    @Test fun notificationDecision() {
+        val p = UpdatePolicy.IMMEDIATE
+        assertTrue("a newer release with an APK", UpdateRules.notifyUpdate(p, st("0.2.1"), null))
+        assertFalse("once per version", UpdateRules.notifyUpdate(p, st("0.2.1"), "0.2.1"))
+        assertTrue("the next version again", UpdateRules.notifyUpdate(p, st("0.2.2"), "0.2.1"))
+        assertFalse("up to date", UpdateRules.notifyUpdate(p, st("0.2.0"), null))
+        assertFalse("no APK in the release (yet)", UpdateRules.notifyUpdate(p, st("0.2.1", apk = null), null))
+        assertFalse("a debug build isn't nagged", UpdateRules.notifyUpdate(p, st("0.2.1", current = "0.2.0-5-gabc1234"), null))
+        assertFalse("never checked", UpdateRules.notifyUpdate(p, st(null), null))
+        assertFalse("Tell me: shown in the app, no notification", UpdateRules.notifyUpdate(UpdatePolicy.NOTIFY, st("0.2.1"), null))
+        assertFalse("Off", UpdateRules.notifyUpdate(UpdatePolicy.OFF, st("0.2.1"), null))
     }
 }
 

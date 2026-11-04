@@ -16,9 +16,11 @@ struct PairView: View {
     @EnvironmentObject var model: ShareModel
     @State private var text = ""
     @State private var scanning = false
+    @State private var reporting = false
 
     var body: some View {
         Form {
+            CrashBanner { reporting = true }
             Section {
                 Text("tailbond Share lends this iPhone's mobile data to your travel router or laptop running tailbond, so it can use it next to its other connections.")
                 Text("On your home server's page, choose **Devices → Add a device**, then scan the code here or open the link on this iPhone. Not sure where that page is? Ask whoever set up your home server to send you the link.")
@@ -39,6 +41,8 @@ struct PairView: View {
             }
         }
         .navigationTitle("tailbond Share")
+        .toolbar { ToolbarItem(placement: .primaryAction) { ReportButton(reporting: $reporting) } }
+        .sheet(isPresented: $reporting) { ReportView() }
         .sheet(isPresented: $scanning) {
             QRScannerView { code in
                 scanning = false
@@ -52,15 +56,19 @@ struct PairView: View {
 /// The share screen: one big button, what's happening, and the limits.
 struct ShareView: View {
     @EnvironmentObject var model: ShareModel
+    @Environment(\.colorScheme) private var scheme
     @State private var newHub = ""
     @State private var notice = false
+    @State private var reporting = false
 
     var body: some View {
+        let p = BrandPalette.of(scheme)
         List {
+            CrashBanner { reporting = true }
             Section {
                 Label {
                     Text("**Keep tailbond Share on the screen while sharing.** iOS pauses sharing as soon as you switch apps or lock the phone, and it starts again when you come back. The screen stays on while sharing; plug the phone in for long trips.")
-                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(p.warn) }
                     .font(.callout)
             }
             Section {
@@ -72,8 +80,7 @@ struct ShareView: View {
                             .font(.title2.bold())
                             .frame(maxWidth: .infinity, minHeight: 64)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(model.sharing ? .red : .accentColor)
+                    .buttonStyle(BeamButtonStyle(stop: model.sharing))
                     Text(model.headline).font(.headline).multilineTextAlignment(.center)
                     Text("\(ShareModel.bytes(model.usedThisMonth)) shared this month").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -90,12 +97,22 @@ struct ShareView: View {
                 }
                 ForEach(model.status.hubs, id: \.endpoint) { h in
                     HStack {
-                        Image(systemName: "wifi.router")
+                        Image(systemName: "wifi.router").foregroundStyle(p.shared)
                         Text(h.hub)
                         Spacer()
                         Text(ShareModel.bytes(h.upBytes + h.downBytes)).foregroundStyle(.secondary)
                     }
                 }
+            }
+            Section {
+                Toggle("Share mobile data with a Mac", isOn: Binding(get: { model.proxyOn }, set: { $0 ? model.startProxy() : model.stopProxy() }))
+                if model.proxyOn {
+                    Text(model.proxyStatus.clients.isEmpty ? "Ready. On the Mac: tailbond → Use a phone's connection → Use."
+                         : "\(model.proxyStatus.clients.count) device(s): \(ShareModel.bytes(model.proxyStatus.up + model.proxyStatus.down))")
+                }
+                if let e = model.proxyStatus.error { Text(e).foregroundStyle(.red) }
+            } header: { Text("For a Mac (experimental)") } footer: {
+                Text("Better: plug the iPhone into the Mac with a cable and turn on Personal Hotspot. tailbond on the Mac then bonds it with the Wi-Fi, and you don't need this. This switch only lends mobile data, not bonded, and it stops when you leave this screen or lock the iPhone.")
             }
             Section {
                 Picker("Stop below", selection: $model.minBattery) {
@@ -130,7 +147,11 @@ struct ShareView: View {
                 Button("Forget \(model.pairing?.label ?? "home server")", role: .destructive) { model.forget() }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(p.bg)
         .navigationTitle("Share mobile data")
+        .toolbar { ToolbarItem(placement: .primaryAction) { ReportButton(reporting: $reporting) } }
+        .sheet(isPresented: $reporting) { ReportView() }
         .alert("Keep this app on the screen", isPresented: $notice) {
             Button("Share mobile data") {
                 model.screenNoticeSeen = true
@@ -140,5 +161,14 @@ struct ShareView: View {
         } message: {
             Text("iOS pauses sharing as soon as you switch apps or lock the iPhone, and it starts again when you come back. Leave tailbond Share open, and plug the iPhone in: the screen stays on while sharing.")
         }
+    }
+}
+
+/// Report a problem (docs/reporting.md), in every screen's toolbar.
+struct ReportButton: View {
+    @Binding var reporting: Bool
+    var body: some View {
+        Button { reporting = true } label: { Label("Report a problem", systemImage: "exclamationmark.bubble") }
+            .accessibilityIdentifier("report-button")
     }
 }

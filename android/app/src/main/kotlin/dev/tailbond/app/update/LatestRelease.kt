@@ -17,7 +17,7 @@ data class LatestRelease(
     val version: String,
     /** `html_url`: the release page, its changelog. Null when it isn't https. */
     val notesUrl: String?,
-    /** `tailbond-<version>.apk`'s `browser_download_url`; null when the release has no APK (yet). */
+    /** The release APK's `browser_download_url` ([ReleaseParser.apkAsset]); null when the release has no APK (yet). */
     val apkUrl: String?,
 )
 
@@ -53,15 +53,23 @@ object ReleaseParser {
     }
 
     /**
-     * The release APK among [assets] (name, download URL): `tailbond-<version>.apk`
-     * for this release's version. A `-debug` APK (or any other name) never counts.
+     * The release APK among [assets] (name, download URL): [STABLE_APK], the
+     * name every release uses (its version is the release's tag), else
+     * `tailbond-<version>.apk` for this release's version. A `-debug` APK
+     * (or any other name) never counts.
      */
-    fun apkAsset(assets: List<Pair<String, String?>>, version: SemVer): String? =
-        assets.firstOrNull { (name, url) ->
+    fun apkAsset(assets: List<Pair<String, String?>>, version: SemVer): String? {
+        val https = assets.filter { it.second?.startsWith("https://") == true }
+        https.firstOrNull { it.first == STABLE_APK }?.let { return it.second }
+        return https.firstOrNull { (name, _) ->
             val m = APK.matchEntire(name) ?: return@firstOrNull false
             val named = SemVer.parse(m.groupValues[1])
-            named != null && named.pre.isEmpty() && named.compareTo(version) == 0 && url?.startsWith("https://") == true
+            named != null && named.pre.isEmpty() && named.compareTo(version) == 0
         }?.second
+    }
+
+    /** The APK's release asset name (releases/latest/download/tailbond-android.apk, docs/android.md). */
+    const val STABLE_APK = "tailbond-android.apk"
 
     private val APK = Regex("""^tailbond-v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.apk$""")
 

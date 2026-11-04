@@ -450,6 +450,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setCapMb(mb: Long) = repo.updateSettings { it.copy(cellularCapMb = mb.coerceAtLeast(0)) }
     fun setShareMinBattery(pct: Int) = repo.updateSettings { it.copy(shareMinBattery = pct.coerceIn(0, 90)) }
     fun setShareCapMb(mb: Long) = repo.updateSettings { it.copy(shareCapMb = mb.coerceAtLeast(0)) }
+    fun setUseShares(on: Boolean) = repo.updateSettings { it.copy(useShares = on) }
     fun setShareAllowedHubs(hubs: List<String>) = repo.updateSettings { it.copy(shareAllowedHubs = hubs.map { h -> h.trim() }.filter { h -> h.isNotEmpty() }.distinct()) }
     fun setBackupFec(on: Boolean) = repo.updateSettings { it.copy(experimentalBackupFec = on) }
     fun resetCellular() = repo.resetCellularBytes()

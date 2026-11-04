@@ -136,7 +136,7 @@ private fun LinkCard(kind: PathKind, state: UiState, actions: UiActions, advance
     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(kindIcon(kind), null)
+                Icon(kindIcon(kind), null, tint = kindColor(kind))
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(kind.label, style = MaterialTheme.typography.titleMedium)
@@ -152,7 +152,7 @@ private fun LinkCard(kind: PathKind, state: UiState, actions: UiActions, advance
                     "↓ ${formatBps(sample.rxBps)}  ↑ ${formatBps(sample.txBps)} · delay ${sample.srttMs} ms",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Sparkline(sample.history, MaterialTheme.colorScheme.primary)
+                Sparkline(sample.history, kindColor(kind))
             }
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -1,11 +1,18 @@
 // Fork of third_party/mqvpn/android/sdk-native/build.gradle.kts (v0.19.0).
-// tailbond: sources and prebuilt libs come from the submodule via -DMQVPN_ROOT;
-// instrumented tests and the debug-only JNI test seams are left out.
+// tailbond: sources and prebuilt libs come from the patched copy of the
+// submodule that android/scripts/build-native.sh makes (out/mqvpn-android/src:
+// patches/mqvpn/*, e.g. 0004's relay paths) via -DMQVPN_ROOT; instrumented
+// tests and the debug-only JNI test seams are left out.
 plugins {
     id("com.android.library")
 }
 
-val mqvpnRoot = rootProject.file("../third_party/mqvpn").canonicalFile
+val mqvpnRoot = rootProject.file("../out/mqvpn-android/src").canonicalFile.takeIf {
+    it.resolve("src/platform/android/reactor.c").isFile
+} ?: rootProject.file("../third_party/mqvpn").canonicalFile.also {
+    // unpatched: Kotlin-only tasks work, the JNI build doesn't (no relay paths)
+    logger.warn("tailbond: out/mqvpn-android/src missing, using the unpatched submodule; run android/scripts/build-native.sh")
+}
 
 // tailbond: same ABI list as :app (-Ptailbond.abis / TB_ANDROID_ABIS, default arm64-v8a)
 val abis: List<String> = ((findProperty("tailbond.abis") as String?)?.takeIf { it.isNotBlank() }

@@ -9,12 +9,22 @@ import kotlinx.serialization.encoding.Encoder
 
 /**
  * `update.policy` on the phone: [label] and [explain] are what Settings shows.
- * Stored as `notify` / `off`; anything else (an older `auto`) reads as
- * [NOTIFY], so old settings and backups still load.
+ * Stored as `immediate` / `notify` / `off`; anything else (an older `auto`)
+ * reads as [NOTIFY], so old settings and backups still load. New installs
+ * get [IMMEDIATE] (AppSettings' default); saved settings keep theirs.
+ *
+ * Android never lets an app install itself without a tap, so "Right away"
+ * is an hourly check and a notification, "Update ready: tap to install";
+ * Obtainium (checking hourly) is the hands-off way.
  */
 @Serializable(with = UpdatePolicySerializer::class)
 enum class UpdatePolicy(val wire: String, val label: String, val explain: String) {
-    NOTIFY("notify", "Tell me", "Checks GitHub about once a day and tells you when there's a new version"),
+    IMMEDIATE(
+        "immediate", "Right away",
+        "Checks every hour. When a new version is out you get a notification, \"Update ready: tap to install\". " +
+            "Android always asks before installing an app, so it needs your tap",
+    ),
+    NOTIFY("notify", "Tell me", "Checks GitHub about once a day and shows a new version here"),
     OFF("off", "Off", "Never checks by itself. Check now still works"),
 }
 
@@ -22,7 +32,11 @@ object UpdatePolicySerializer : KSerializer<UpdatePolicy> {
     override val descriptor = PrimitiveSerialDescriptor("dev.tailbond.app.update.UpdatePolicy", PrimitiveKind.STRING)
     override fun serialize(encoder: Encoder, value: UpdatePolicy) = encoder.encodeString(value.wire)
     override fun deserialize(decoder: Decoder): UpdatePolicy =
-        if (decoder.decodeString().equals(UpdatePolicy.OFF.wire, ignoreCase = true)) UpdatePolicy.OFF else UpdatePolicy.NOTIFY
+        when (decoder.decodeString().lowercase()) {
+            UpdatePolicy.OFF.wire -> UpdatePolicy.OFF
+            UpdatePolicy.IMMEDIATE.wire -> UpdatePolicy.IMMEDIATE
+            else -> UpdatePolicy.NOTIFY
+        }
 }
 
 /** What the last good check means for this build. */
@@ -40,8 +54,10 @@ enum class Availability {
 
 /** Pure update rules (docs/architecture.md, "Updates"); unit tested. */
 object UpdateRules {
-    /** Checks run about once a day: when the app comes to the front and the last good check is older than this. */
+    /** Tell me: about once a day (when the app comes to the front and the last good check is older than this). */
     const val CHECK_EVERY_MS = 24 * 60 * 60 * 1000L
+    /** Right away: every hour, also from the tunnel's service while it runs. */
+    const val CHECK_HOURLY_MS = 60 * 60 * 1000L
     /** After a failed check, the next automatic try waits at least this long (GitHub allows 60 requests an hour). */
     const val RETRY_MS = 60 * 60 * 1000L
 
@@ -53,8 +69,17 @@ object UpdateRules {
     fun checkDue(policy: UpdatePolicy, lastCheckMs: Long, lastAttemptMs: Long, nowMs: Long): Boolean {
         if (policy == UpdatePolicy.OFF) return false
         fun older(t: Long, gap: Long) = t <= 0 || nowMs < t || nowMs - t >= gap
-        return older(lastCheckMs, CHECK_EVERY_MS) && older(lastAttemptMs, RETRY_MS)
+        val every = if (policy == UpdatePolicy.IMMEDIATE) CHECK_HOURLY_MS else CHECK_EVERY_MS
+        return older(lastCheckMs, every) && older(lastAttemptMs, RETRY_MS)
     }
+
+    /**
+     * Whether to post "Update ready: tap to install": with Right away, for
+     * an installable newer release (it has an APK; this is a release build),
+     * once per version ([notifiedVersion]: the last one notified about).
+     */
+    fun notifyUpdate(policy: UpdatePolicy, s: UpdateStatus, notifiedVersion: String?): Boolean =
+        policy == UpdatePolicy.IMMEDIATE && s.availability == Availability.AVAILABLE && s.latest != notifiedVersion
 
     /** [current]: this build's versionName; [latest]: the latest release's version (null = never checked). */
     fun availability(current: String, latest: String?, apkUrl: String?): Availability {

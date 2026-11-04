@@ -1,17 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- "ST" mark from assets/icon.svg, drawn as paths (vector drawables cannot render text). -->
+<!-- The "Braid" mark (assets/brand/tailbond-mark.svg) on the adaptive
+     icon's 108dp canvas: the 64-unit mark scaled 0.95 into the 66dp safe
+     zone. Background: brand ink (@color/brand_ink). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:pathData="M48.3,46.8 C47.2,44.6 45,43.5 42,43.5 C38.3,43.5 35.8,45.6 35.8,48.6 C35.8,51.8 38.6,53 42,54 C45.6,55 48.4,56.3 48.4,59.6 C48.4,62.7 45.7,64.5 42,64.5 C38.8,64.5 36.4,63.3 35.4,61"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="5"
-        android:strokeLineCap="butt"
-        android:strokeLineJoin="round" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M57,41 H75 V46 H57 Z M63.5,46 H68.5 V67 H63.5 Z" />
+  <group android:translateX="23.6" android:translateY="23.6" android:scaleX="0.95" android:scaleY="0.95">
+    <path android:pathData="M12,18 C26,18 28,32 38,32" android:strokeColor="#38BDF8" android:strokeWidth="4.5" android:strokeLineCap="round" />
+    <path android:pathData="M12,46 C26,46 28,32 38,32" android:strokeColor="#A78BFA" android:strokeWidth="4.5" android:strokeLineCap="round" />
+    <path android:pathData="M12,32 H38" android:strokeColor="#2DD4BF" android:strokeWidth="4.5" android:strokeLineCap="round" />
+    <path android:pathData="M36,32 H50" android:strokeWidth="8" android:strokeLineCap="round">
+      <aapt:attr name="android:strokeColor">
+        <gradient android:type="linear" android:startX="36" android:startY="32" android:endX="50" android:endY="32"
+            android:startColor="#2DD4BF" android:endColor="#C6F432" />
+      </aapt:attr>
+    </path>
+    <path android:pathData="M45,23 L54,32 L45,41" android:strokeColor="#C6F432" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M8.4,18 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0" android:fillColor="#38BDF8" />
+    <path android:pathData="M8.4,32 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0" android:fillColor="#2DD4BF" />
+    <path android:pathData="M8.4,46 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0" android:fillColor="#A78BFA" />
+  </group>
 </vector>

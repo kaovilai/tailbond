@@ -10,4 +10,6 @@
     <string name="share_channel">Sharing mobile data</string>
     <string name="share_starting">Starting to share mobile data…</string>
     <string name="share_stop">Stop sharing</string>
+    <string name="hub_channel">Sharing bonded connection</string>
+    <string name="hub_stop">Stop sharing</string>
 </resources>
