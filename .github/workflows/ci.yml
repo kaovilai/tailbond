@@ -721,10 +721,11 @@ jobs:
         run: PODMAN="sudo podman" deploy/docker/build-image.sh ${{ matrix.arch }}
       - name: Image metadata (arch, labels, HEALTHCHECK, binaries)
         run: |
-          sudo podman image inspect "$IMAGE" | jq -e --arg a "${{ matrix.arch }}" '.[0] | .Architecture == $a
+          sudo podman image inspect "$IMAGE" | jq '.[0] | {Architecture, Labels, Healthcheck: (.Config.Healthcheck // .Healthcheck)}' | tee "$RUNNER_TEMP/meta.json"
+          jq -e --arg a "${{ matrix.arch }}" '.Architecture == $a
             and .Labels["org.opencontainers.image.source"] == "https://github.com/kaovilai/tailbond"
             and (.Labels["org.opencontainers.image.version"] | length > 0)
-            and .Config.Healthcheck.Test == ["CMD", "/usr/local/bin/tailbond-healthcheck"]'
+            and .Healthcheck.Test == ["CMD", "/usr/local/bin/tailbond-healthcheck"]' "$RUNNER_TEMP/meta.json"
           sudo podman run --rm --entrypoint /opt/tailbond/bin/tailbondd "$IMAGE" -version
           sudo podman image ls "$IMAGE"
       - name: e2e-oci (podman; a client bonds 2 paths; NAT, dashboard, restart on the same volume)
