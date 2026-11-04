@@ -217,22 +217,30 @@ jobs:
         run: |
           signers=("$ANDROID_HOME"/build-tools/*/apksigner)
           signer="$(printf '%s\n' "${signers[@]}" | sort -V | tail -n1)"
+          # Release APKs only: the debug builds (tailbond-debug*.apk, incl.
+          # the x86_64 emulator one) are signed with the debug key on purpose.
+          checked=0
           for apk in out/android/tailbond-*.apk; do
-            [ "$apk" = out/android/tailbond-debug.apk ] && continue
+            case "$apk" in out/android/tailbond-debug*.apk) continue ;; esac
             got="$("$signer" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n1)"
             echo "$apk: $got"
             if [ "${got,,}" != "${WANT,,}" ]; then
               echo "::error::$apk is signed with $got, not the release key $WANT (TB_RELEASE_CERT_SHA256). A new key makes every user reinstall: restore the old key with scripts/release/gen-android-keystore.sh --restore."
               exit 1
             fi
+            checked=$((checked + 1))
           done
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::no release APK in out/android to check"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
         with:
           name: android-release-apk
           path: |
             out/android/tailbond-*.apk
-            !out/android/tailbond-debug.apk
+            !out/android/tailbond-debug*.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: failure()
