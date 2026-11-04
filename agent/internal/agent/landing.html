@@ -107,7 +107,7 @@ a{color:var(--accent)}
 <section class="plat{{if eq .Section "android"}} first{{end}}" id="android" aria-label="Android">
 <h2>{{if .OnAndroid}}On this phone{{else}}On an Android phone{{end}}</h2>
 <p class="muted small">The app bonds the phone's Wi-Fi and mobile data. It can also lend the phone's mobile data to a travel router or a Mac.</p>
-<p class="note small">Good to know before you install: while tailbond is on, it takes over from Tailscale on the phone (Android runs one VPN app at a time). Your Tailscale machines keep working, through {{.Server}}, and the phone's internet goes out from {{.Server}} until you turn tailbond off. The app tells you when there's a new version.</p>
+<p class="note small">Good to know before you install: while tailbond is on, it takes over from Tailscale on the phone (Android runs one VPN app at a time). Your Tailscale machines keep working, through {{.Server}}, and all the phone's internet travels through {{.Server}}. What pauses meanwhile: Tailscale's own extras on the phone, like exit nodes and Taildrop. Turn tailbond off and Tailscale is back as before. The app tells you when there's a new version.</p>
 
 {{if not .OnAndroid}}
 <section class="card">
@@ -115,7 +115,7 @@ a{color:var(--accent)}
   <div class="qr">
     {{.QRAndroid}}
     <div class="grow">
-      <p>With Tailscale on, point the phone's camera at this code: it opens these Android steps on the phone. Or type <b>{{.TypeName}}</b> into the phone's browser (with the slash at the end, so it opens this page instead of searching).</p>
+      <p>With Tailscale on, point the phone's camera (or Google Lens) at this code: it opens <b>{{.URL}}#android</b> on the phone. Or type <b>{{.TypeName}}</b> into the phone's browser (with the slash at the end, so it opens this page instead of searching).</p>
       <p class="small muted">Anyone on your Tailscale network (or with {{.Server}} shared to them) can open this page; nothing here changes {{.Server}}'s settings.</p>
     </div>
   </div>
@@ -131,6 +131,7 @@ a{color:var(--accent)}
     <p class="notyet warnbox">tailbond isn't on this phone yet, so step 2 brought you back here. Install it first, then tap step 2 again.</p>
     {{if .APK}}
     {{if .OnAndroid}}<p class="small"><a href="#dl">Skip to the download button ↓</a></p>{{end}}
+    <p class="small">Android shows 3 or 4 warnings on the way: that's expected for any app that isn't from the Play Store. The pictures below show each one.</p>
     <p class="note"><b>Look at these five pictures first</b> (or take a screenshot): once you open the file, Android's own screens cover this page. The download button is below them. They're drawings: the dashed ring marks what to tap on the real screen.</p>
     <p class="quick">In short: Download anyway → Open → Settings → Allow from this source → back → Install (→ Scan app, if asked)</p>
     <p>Then open the downloaded file. tailbond isn't in the Play Store: it comes from {{.Server}}, your own home server, so Android asks you to confirm a few times. That's Android's normal check for every app from outside the Play Store, and you only go through it once. Here's what you'll see (the words differ a little between phones; the pictures below are drawings, not buttons):</p>
@@ -161,6 +162,7 @@ a{color:var(--accent)}
           <div class="acts"><span>Don't scan</span><span class="tap">Scan app</span></div></div>
       </div>
     </div>
+    <p class="quick">In short: Download anyway → Open → Settings → Allow from this source → back → Install (→ Scan app, if asked)</p>
     <a class="btn primary" id="dl" href="/tailbond.apk" download>Download tailbond ({{.APKSize}})</a>
     <p class="small">When it says <b>App installed</b>, tap <b>Done</b> and come back to this page (Chrome, this tab) for step 2. You can turn <b>Allow from this source</b> off again afterwards; tailbond stays installed.</p>
     <p class="small">Chrome's <b>Open</b> message gone before you tapped it? The file is in your downloads: Chrome's menu <b>⋮ → Downloads</b>, or the <b>Files</b> app → <b>Downloads</b>. Tap <b>tailbond.apk</b>.</p>
@@ -198,7 +200,7 @@ a{color:var(--accent)}
     <h2>Turn tailbond on</h2>
     <p>Once approved, tailbond shows what it will do: tap <b>Add phone</b>. Then tap the big switch at the top of tailbond. tailbond explains that it takes over from Tailscale, and Android asks once to allow its connection: tap <b>OK</b>.</p>
     <p>Your Tailscale machines keep working: tailbond reaches them through {{.Server}}. Android runs one VPN app at a time, so Tailscale's own switch is off while tailbond is on; nothing is broken. The machines see the phone as {{.Server}}, so they allow it whatever they allow {{.Server}}.</p>
-    <p class="small muted">The phone's internet goes out from {{.Server}} while tailbond is on (tailbond's Settings change that). To go back to Tailscale, tap <b>Switch back to Tailscale</b> in tailbond.</p>
+    <p class="small muted">All the phone's internet travels through {{.Server}} while tailbond is on (tailbond's Settings change that). To go back to Tailscale, tap <b>Switch back to Tailscale</b> in tailbond.</p>
   </div></div>
 </section>
 {{if not .OnAndroid}}</details>{{end}}
@@ -207,7 +209,7 @@ a{color:var(--accent)}
 <!-- ============================== Mac ============================== -->
 <section class="plat{{if eq .Section "mac"}} first{{end}}" id="mac" aria-label="Mac">
 <h2>On a Mac</h2>
-<p>tailbond on a Mac bonds its <b>Wi-Fi</b>, an <b>Ethernet or USB-C adapter</b>, an <b>iPhone plugged in by USB</b> (Personal Hotspot on) and <b>nearby phones' shared mobile data</b> into one tunnel to {{.Server}}. Tailscale stays on next to it, as before.</p>
+<p>tailbond on a Mac bonds its <b>Wi-Fi</b>, an <b>Ethernet or USB-C adapter</b>, an <b>iPhone plugged in by USB</b> (Personal Hotspot on) and <b>nearby phones' shared mobile data</b> into one tunnel to {{.Server}}. While it's on, the Mac's internet travels through {{.Server}}; Tailscale stays on next to it, as before.</p>
 <p class="small muted">For Macs with Apple silicon: Apple menu → <b>About This Mac</b> → <b>Chip</b> says "Apple M…". A Mac with an Intel processor can't run tailbond yet.</p>
 {{if not .OnMac}}<p class="note small">You're not on a Mac now. On the Mac, open <b>{{.TypeName}}</b> in Safari (Tailscale on) and choose <b>Mac</b>, or go straight to <b>{{.URL}}#mac</b>.</p>{{end}}
 
@@ -217,18 +219,20 @@ a{color:var(--accent)}
     <p class="small">Open <b>Terminal</b> (Applications → Utilities), paste this line and press <b>Return</b>:</p>
     <div class="cmd"><code>{{.MacOneLiner}}</code><button type="button" class="copy" data-copy="{{.MacOneLiner}}">Copy</button></div>
     <p class="small">Terminal asks for your <b>Mac's login password</b>: type it and press Return. <b>Nothing shows while you type</b>; that's normal. tailbond needs it once, to run in the background like any VPN.</p>
-    <p class="small">When Terminal says <b>tailbond … is installed</b>, go to step 2.</p>
-    <p class="small muted">Is this safe? The line downloads tailbond from {{.Server}}, your own home server, over Tailscale, which encrypts it and makes sure it really comes from {{.Server}}. macOS normally asks before running programs that aren't from the App Store; the installer tells it this one is yours, so you won't see that warning. {{if .MacSHA256}}(For the curious: SHA-256 <code>{{.MacSHA256}}</code>, {{.MacSize}}.){{else}}({{.Server}} gets the Mac file from tailbond's GitHub releases the first time someone asks, a few seconds, and checks it against the release's checksums.){{end}}</p>
+    <p class="small">When Terminal says <b>tailbond … is installed</b>, go to step 2. (Use Homebrew? Its commands are under <b>Other ways</b> below.)</p>
+    <p class="small">If Terminal shows an error instead (like <b>Could not resolve host</b>), check that Tailscale is on and paste the line again.</p>
+    <p class="small muted">Is this safe? The file comes straight from {{.Server}}, your own home server, through Tailscale, which encrypts it and makes sure it really is {{.Server}}. Because Terminal fetches it (not Safari), macOS never marks it "downloaded from the internet", so there's no warning to click through. Nothing on your Mac is switched off.</p>
     <details>
       <summary>Other ways: a download button, Homebrew</summary>
       <p class="small"><a href="/{{.MacBundle}}" download>Download {{.MacBundle}}</a> from {{.Server}}, then in Terminal:</p>
       <div class="cmd"><code>{{.MacInstall}}</code><button type="button" class="copy" data-copy="{{.MacInstall}}">Copy</button></div>
       <p class="small">To check the download first:</p>
       <div class="cmd"><code>shasum -a 256 ~/Downloads/{{.MacBundle}}</code><button type="button" class="copy" data-copy="shasum -a 256 ~/Downloads/{{.MacBundle}}">Copy</button></div>
+      <p class="small muted">{{if .MacSHA256}}It should print <code>{{.MacSHA256}}</code> ({{.MacSize}}).{{else}}{{.Server}} gets the Mac file from tailbond's GitHub releases the first time someone asks (a few seconds) and checks it against the release's checksums.{{end}}</p>
       <p class="small">With <a href="https://brew.sh">Homebrew</a> (these download tailbond from its GitHub releases, not from {{.Server}}; the same files): Homebrew installs from a "tap", here a local one, and runs system services with <code>sudo brew services</code>.</p>
       {{range .BrewCmds}}<div class="cmd"><code>{{.}}</code><button type="button" class="copy" data-copy="{{.}}">Copy</button></div>
       {{end}}
-      <p class="small muted">Gatekeeper, in detail: the installer clears the download's quarantine flag (<code>xattr -dr com.apple.quarantine</code>); tailbond has no Apple Developer ID, and needs none for software you install yourself.</p>
+      <p class="small muted">Gatekeeper, in detail: a file Safari downloads gets a quarantine flag, and macOS asks before opening unsigned programs that carry it. The installer clears that flag on the files it installs (<code>xattr -dr com.apple.quarantine</code>); tailbond has no Apple Developer ID and needs none for software you install yourself.</p>
     </details>
   </div></div>
 </section>
@@ -237,9 +241,9 @@ a{color:var(--accent)}
   <div class="step"><span class="num">2</span><div class="grow">
     <h2>Add the Mac to {{.Server}}</h2>
     {{if .OnMac}}<a class="btn primary" href="{{.AskURL}}">Open tailbond and ask {{.Server}}</a>
-    <p>This opens tailbond's page on this Mac (<b>localhost:8077</b>) with {{.Server}} filled in: tap <b>Ask {{.Server}}</b>. Leave the switch at the top alone.</p>
-    {{else}}<p>On the Mac, open <b>http://localhost:8077</b> in a browser, go to <b>Setup</b>, type <b>{{.Server}}</b> under <b>Ask your home server</b> and tap <b>Ask {{.Server}}</b>.</p>{{end}}
-    <p>{{.Server}} then has to say yes: whoever looks after {{.Server}} taps <b>Approve</b> on its page. If that's you (nobody else set it up), open <a href="{{.Dashboard}}">{{.Dashboard}}</a> and tap <b>Approve</b> at the top. Otherwise tell them you asked.</p>
+    <p>This opens tailbond's page on this Mac (<b>localhost:8077</b>) with {{.Server}} filled in: click <b>Ask {{.Server}}</b>. Leave the switch and the modes alone; there's nothing else to choose.</p>
+    {{else}}<p>On the Mac, open <b>http://localhost:8077</b> in a browser, go to <b>Setup</b>, type <b>{{.Server}}</b> under <b>Ask your home server</b> and click <b>Ask {{.Server}}</b>.</p>{{end}}
+    <p>{{.Server}} then has to say yes: whoever looks after {{.Server}} clicks <b>Approve</b> on its page, and tailbond's page on the Mac says it's waiting meanwhile. If you look after {{.Server}} (you set it up, or you have its password), open <a href="{{.Dashboard}}">{{.Dashboard}}</a> and click <b>Approve</b> at the top. Otherwise tell whoever does that you asked.</p>
     <p>Once approved, the Mac connects by itself: the switch turns on and tailbond's page shows <b>Connected</b>.</p>
   </div></div>
 </section>
@@ -248,6 +252,7 @@ a{color:var(--accent)}
   <div class="step"><span class="num">3</span><div class="grow">
     <h2>What you'll see</h2>
     <p>tailbond's page on the Mac lists each connection by name: <b>Wi-Fi</b>, <b>Ethernet</b> or your adapter, <b>iPhone (USB)</b> when one is plugged in, and phones that share their mobile data under <b>Shared by nearby phones</b>. Each can be <b>Use it</b>, <b>Backup only</b> or <b>Off</b>.</p>
+    <p>Have an Android phone too? Click <b>Android</b> at the top of this page.</p>
     <p class="small muted">Hotel Wi-Fi that keeps devices apart stops phones from sharing over it; an iPhone over USB still works. More: <a href="https://github.com/{{.Repo}}/blob/main/docs/macos.md">tailbond on a Mac</a> (GitHub). To remove it: <code>sudo /usr/local/lib/tailbond/uninstall.sh</code>.</p>
   </div></div>
 </section>

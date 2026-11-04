@@ -251,7 +251,7 @@ func TestLandingMacDownload(t *testing.T) {
 	if w.Code != http.StatusOK || w.Body.String() != "mac bundle" || !strings.Contains(w.Header().Get("Content-Disposition"), macBundleName) {
 		t.Fatalf("local copy: %d %q", w.Code, w.Body.String())
 	}
-	if body := landingGet(a, h, "/", macUA).Body.String(); !strings.Contains(body, "SHA-256 <code>"+sha256hex([]byte("mac bundle"))) {
+	if body := landingGet(a, h, "/", macUA).Body.String(); !strings.Contains(body, "It should print <code>"+sha256hex([]byte("mac bundle"))) {
 		t.Error("page doesn't show the bundle's SHA-256")
 	}
 

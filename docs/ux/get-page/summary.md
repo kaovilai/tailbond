@@ -30,6 +30,23 @@ No high findings; both personas would finish both tasks.
 | 16 | Updates of a sideloaded APK (A, low) | **fix**: "The app tells you when there's a new version" in the note; Obtainium stays the auto-update option |
 | 17 | Phone "Is this safe?" jargon (F2, low) | **reject**: kept for the curious, already behind plain wording and in small print |
 
-## Round 2
+## Round 2 ([F2](round-2/persona-f2-home-admin.md), [A](round-2/persona-a-tailscale-daily.md)), the last
 
-See [round-2/](round-2/).
+Both would finish both tasks. One high, fixed after the round; the cap of
+2 rounds means no third round confirms these fixes.
+
+| # | Finding (persona, severity) | Triage |
+|---|---|---|
+| 1 | "The installer tells macOS this one is yours, so you won't see that warning" reads like disabling a safety check (F2 **high**, A med) | **fix**: says what actually happens: Terminal fetches the file, so macOS never marks it "downloaded from the internet" and shows no warning; nothing is switched off. The SHA-256 moved under Other ways, next to the `shasum` command and what it should print |
+| 2 | No help when the install line fails (F2, med) | **fix**: "If Terminal shows an error instead (like *Could not resolve host*), check Tailscale is on and paste again" |
+| 3 | Mac: does its internet go through homebox? (A, med) | **fix**: "While it's on, the Mac's internet travels through homebox" |
+| 4 | "Goes out from homebox" read as "stops working" (F2, med) | **fix**: "all the phone's internet travels through homebox" |
+| 5 | What do I lose while tailbond is on (A, med) | **fix**: "What pauses meanwhile: Tailscale's own extras on the phone, like exit nodes and Taildrop" |
+| 6 | Homebrew hidden for brew users (A, med) | **partial**: a pointer next to the one-liner ("Use Homebrew? Its commands are under Other ways"); the folded block stays (F2 doesn't know the word) |
+| 7 | Who counts as "looking after homebox"; no waiting state shown (F2, A, med) | **fix**: "If you look after homebox (you set it up, or you have its password)"; the page says the Mac's page shows it's waiting (the dashboard's Ask status already does). **partial**: no screenshot of the waiting state (the throwaway server can't approve over a fake tailnet) |
+| 8 | The Mac's dashboard, unpaired: modes and the switch distract from Ask (F2, med) | **partial**: the page says to leave the switch and modes alone. Dimming the dashboard while unpaired is a dashboard-wide change, left for the brand pass |
+| 9 | Phone page long; many warnings before the button (A, F2, med) | **partial**: a calm "Android shows 3 or 4 warnings; that's expected" line at the top of step 1, and the "In short" line repeated right above the button; the skip link stays |
+| 10 | QR: show the address it opens; Google Lens (A, F2, low) | **fix** |
+| 11 | "tap" on a Mac; no pointer to the Android tab from the Mac tab (F2, low) | **fix**: "click" in the Mac section; "Have an Android phone too? Click Android at the top" |
+| 12 | Collapse "Or paste a pairing link" on the Mac's dashboard (A, low) | **reject**: it's the way in without Tailscale; it sits below Ask |
+| 13 | Obtainium on the computer's Android tab; shorten the phone's "Is this safe?" (A, F2, low) | **reject**: both are inside the folded phone steps / small print already |
