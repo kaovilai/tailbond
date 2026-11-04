@@ -598,7 +598,7 @@ its line in `SHA256SUMS`, else nothing is installed.
 | `opkg` | OpenWrt (`/etc/openwrt_release` + `opkg`) | yes: download the ipk whose arch `opkg print-architecture` lists + check, keep it in `/etc/tailbond/pkg/`, run `/usr/lib/tailbond/update-ipk` detached (`opkg install`, health check, previous ipk back on failure) |
 | `dnf` | `tailbondd` owned by an RPM | no: the status says so and the UI shows `sudo dnf upgrade tailbond-server` (COPR, `dnf-automatic`) |
 | `static` (macOS) | `/usr/local/etc/tailbond/install.env` (written by `packaging/macos/install.sh`) | yes: `tailbond-macos-<arch>.tar.gz`, its `install.sh --update` run in a new session (it restarts the LaunchDaemon), same `.prev` rollback |
-| `brew` | macOS, `tailbondd` resolves into Homebrew's Cellar | no: the UI shows the commands (the release's `tailbond.rb`, `brew reinstall`, `sudo brew services restart tailbond`) |
+| `brew` | macOS, `tailbondd` resolves into Homebrew's Cellar | no: the UI shows the commands (the release's `tailbond.rb` into a local tap, `brew reinstall`, `sudo brew services start tailbond`) |
 | `none` | anything else (a dev build, a copied binary) | no: shown only |
 
 Both installers write `<state_dir>/update-result.json`

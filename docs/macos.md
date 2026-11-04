@@ -44,26 +44,21 @@ settings and pairing.
 
 ### Homebrew
 
-Each release also has a formula with its checksum:
-
-```sh
-curl -fsSLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond.rb
-brew install --formula ./tailbond.rb
-sudo brew services start tailbond
-```
-
-Homebrew may refuse a formula file that isn't in a tap. Then put it in a
-local tap:
+Each release also has a formula with its checksum. Homebrew only installs
+formulae from a tap, so put it in a local one:
 
 ```sh
 brew tap-new --no-git local/tailbond
-cp tailbond.rb "$(brew --repository local/tailbond)/Formula/"
+curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" \
+  https://github.com/kaovilai/tailbond/releases/latest/download/tailbond.rb
 brew install local/tailbond/tailbond
+sudo brew services start tailbond
 ```
 
 The copy in this repository (`packaging/macos/tailbond.rb`) builds from
-source instead: `brew install --HEAD --formula packaging/macos/tailbond.rb`
-(Xcode command line tools, a few minutes). Settings live in
+source instead: copy it into the tap the same way and
+`brew install --HEAD local/tailbond/tailbond` (Xcode command line tools, a
+few minutes). Settings live in
 `$(brew --prefix)/etc/tailbond/tailbond.json`, the log in
 `$(brew --prefix)/var/log/tailbond.log`.
 
@@ -157,9 +152,18 @@ put back if the new version isn't running within 60 s. By hand:
 sudo /usr/local/lib/tailbond/install.sh --update
 ```
 
-With Homebrew, the dashboard shows the command to run (download the new
-`tailbond.rb`, `brew reinstall --formula ./tailbond.rb`, then
-`sudo brew services restart tailbond`).
+With Homebrew, the dashboard shows the command to run. `sudo brew services`
+makes the installed files root-owned (Homebrew does that for every root
+service), so give them back to yourself before `brew` changes them:
+
+```sh
+sudo brew services stop tailbond
+sudo chown -R "$USER" "$(brew --prefix)/Cellar/tailbond"
+curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" \
+  https://github.com/kaovilai/tailbond/releases/latest/download/tailbond.rb
+brew reinstall local/tailbond/tailbond
+sudo brew services start tailbond
+```
 
 ## Settings
 
@@ -190,7 +194,14 @@ sudo /usr/local/lib/tailbond/uninstall.sh            # keeps settings and pairin
 sudo /usr/local/lib/tailbond/uninstall.sh --purge    # removes them too
 ```
 
-Homebrew: `sudo brew services stop tailbond && brew uninstall tailbond`.
+Homebrew:
+
+```sh
+sudo brew services stop tailbond
+sudo chown -R "$USER" "$(brew --prefix)/Cellar/tailbond"   # the root service owned it
+brew uninstall tailbond
+```
+
 Stopping tailbond stops mqvpn, which removes its routes, DNS servers and
 kill-switch rules.
 

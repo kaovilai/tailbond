@@ -3,15 +3,17 @@
 # `sudo brew services start tailbond`.
 #
 # Each GitHub release has this file with its version and checksum filled in
-# (packaging/macos/build-bundle.sh):
+# (packaging/macos/build-bundle.sh). Homebrew installs formulae from taps
+# only, so use a local one:
 #
-#   curl -fsSLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond.rb
-#   brew install --formula ./tailbond.rb
+#   brew tap-new --no-git local/tailbond
+#   curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" \
+#     https://github.com/kaovilai/tailbond/releases/latest/download/tailbond.rb
+#   brew install local/tailbond/tailbond
 #
-# This copy in the repository builds from source instead (Xcode command line
-# tools, a few minutes):
-#
-#   brew install --HEAD --formula packaging/macos/tailbond.rb
+# This copy in the repository builds from source with --HEAD (Xcode command
+# line tools, a few minutes): copy it into the tap and
+# `brew install --HEAD local/tailbond/tailbond`.
 #
 # The binaries are unsigned: fine for software you build or install
 # yourself, no Apple Developer ID needed.

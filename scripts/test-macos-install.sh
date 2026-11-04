@@ -86,7 +86,11 @@ sudo brew services start "$name" && ok "sudo brew services start" || bad "brew s
 if wait_hello 30; then ok "dashboard up under brew services: $(hello)"; else bad "no dashboard under brew services"; sudo tail -n 30 "$(brew --prefix)/var/log/tailbond.log" || true; fi
 curl -fsS -m 3 http://127.0.0.1:8077/api/update | grep -q '"method":"brew"' && ok "update method brew (the dashboard shows the brew command)" || bad "update: $(curl -fsS -m 3 http://127.0.0.1:8077/api/update)"
 sudo brew services stop "$name" >/dev/null || true
-brew uninstall --formula "$name" && ok "brew uninstall" || bad "brew uninstall failed"
+# a root service leaves the keg root-owned: hand it back (docs/macos.md)
+P="$(brew --prefix)"
+sudo chown -R "$(id -un)" "$P/Cellar/tailbond"
+sudo chown -h "$(id -un)" "$P/opt/tailbond" "$P/var/homebrew/linked/tailbond" 2>/dev/null || true
+brew uninstall --formula "$name" && ok "brew uninstall (after handing the keg back)" || bad "brew uninstall failed"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

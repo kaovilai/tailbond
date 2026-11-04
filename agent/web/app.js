@@ -925,7 +925,8 @@ function releasesUrl(u) {
 }
 // Homebrew (macOS): the release's formula, reinstalled (docs/macos.md)
 function brewCmd(u) {
-  return `curl -fsSLO ${releasesUrl(u)}/latest/download/tailbond.rb && brew reinstall --formula ./tailbond.rb && sudo brew services restart tailbond`;
+  // the root service left the keg root-owned; brew needs it back first
+  return `sudo brew services stop tailbond && sudo chown -R "$USER" "$(brew --prefix)/Cellar/tailbond" && curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" ${releasesUrl(u)}/latest/download/tailbond.rb && brew reinstall local/tailbond/tailbond && sudo brew services start tailbond`;
 }
 // methods that install by themselves (one click, or Automatic)
 const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg';

@@ -16,7 +16,7 @@ or the app. Each platform then updates the way it normally does:
 | VPS with Ansible | bump `tailbond_version` and run the playbook ([vps.md](vps.md#updates)) | `tailbond_update_policy: off` |
 | GL.iNet travel router | **Update now** in the tailbond panel, or **Automatic** | tailbond panel → Updates → Off |
 | Mac (bundle, `install.sh`) | **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update`; **Automatic** too | Updates → Off |
-| Mac (Homebrew) | the dashboard shows the commands: the release's `tailbond.rb`, `brew reinstall --formula ./tailbond.rb`, `sudo brew services restart tailbond` ([macos.md](macos.md#updates)) | Updates → Off |
+| Mac (Homebrew) | the dashboard shows the commands: the release's `tailbond.rb` into the local tap, `brew reinstall local/tailbond/tailbond`, `sudo brew services start tailbond` ([macos.md](macos.md#updates)) | Updates → Off |
 | Android phone | [Obtainium](android.md#updates) installs new releases by itself (recommended); or the app's **Update available → Download update** | Settings → Updates → Off; remove the app from Obtainium |
 
 Policies (dashboard, GL panel, `"update": {"policy": …}` in `tailbond.json`):
