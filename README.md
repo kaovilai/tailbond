@@ -27,7 +27,7 @@ tailbond combines Wi-Fi, 5G/cellular, ethernet and phone tethering into one tunn
 | Travel router | GL.iNet Slate 7 (stock firmware, native admin panel) and other OpenWrt 23.05+ aarch64 routers | [GL.iNet](docs/glinet.md) |
 | Phone | Android app (Wi-Fi + mobile data bonding) | [Android](docs/android.md) |
 
-More: [setup tips for best speed](docs/setup-tips.md) · [updates](docs/updates.md) · [backup and restore](docs/backup-restore.md) · [architecture and API contract](docs/architecture.md) · [comparison with OpenMPTCProuter](docs/comparison-openmptcprouter.md)
+More: [coming from Tailscale](docs/coming-from-tailscale.md) · [setup tips for best speed](docs/setup-tips.md) · [updates](docs/updates.md) · [backup and restore](docs/backup-restore.md) · [architecture and API contract](docs/architecture.md) · [comparison with OpenMPTCProuter](docs/comparison-openmptcprouter.md)
 
 ## Building
 
