@@ -64,6 +64,8 @@ func newFakeGitHub(t *testing.T, version string) *fakeGitHub {
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		switch {
+		case r.URL.Path == "/repos/kaovilai/tailbond":
+			w.Write([]byte(`{"full_name":"kaovilai/tailbond"}`))
 		case r.URL.Path == "/repos/kaovilai/tailbond/releases/latest":
 			g.calls++
 			if g.version == "" { // no release published yet: GitHub answers 404

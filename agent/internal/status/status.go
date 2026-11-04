@@ -249,7 +249,7 @@ type SharingHub struct {
 // Update is the status of auto-updates on this machine.
 type Update struct {
 	Current   string `json:"current"`
-	Available string `json:"available,omitempty"`
+	Available string `json:"available"`           // always sent: the UIs merge snapshots
 	NotesURL  string `json:"notes_url,omitempty"` // the release page (changelog)
 	Policy    string `json:"policy"`              // immediate | auto | notify | off
 	Repo      string `json:"repo,omitempty"`
