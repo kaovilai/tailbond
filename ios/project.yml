@@ -41,7 +41,7 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSLocalNetworkUsageDescription: tailbond Share talks to your travel router or laptop on this Wi-Fi to lend it your mobile data.
-        NSBonjourServices: [_tailbond-share._udp]
+        NSBonjourServices: [_tailbond-share._udp, _tailbond-proxy._tcp]
         NSCameraUsageDescription: Scan the pairing code from your home server.
         CFBundleURLTypes:
           - CFBundleURLName: dev.tailbond.share

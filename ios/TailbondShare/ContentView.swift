@@ -99,6 +99,16 @@ struct ShareView: View {
                 }
             }
             Section {
+                Toggle("Share as a proxy", isOn: Binding(get: { model.proxyOn }, set: { $0 ? model.startProxy() : model.stopProxy() }))
+                if model.proxyOn {
+                    Text(model.proxyStatus.clients.isEmpty ? "Ready on port \(ProxyCore.defaultPort). On the Mac: tailbond → Use a phone's bonded connection."
+                         : "\(model.proxyStatus.clients.count) device(s): \(ShareModel.bytes(model.proxyStatus.up + model.proxyStatus.down))")
+                }
+                if let e = model.proxyStatus.error { Text(e).foregroundStyle(.red) }
+            } header: { Text("Phone hub (experimental)") } footer: {
+                Text("A Mac paired with your home server uses this iPhone's mobile data through a proxy. Not bonded yet: for bonding, plug the iPhone into the Mac over USB (Personal Hotspot on) and tailbond on the Mac bonds it with the Wi-Fi.")
+            }
+            Section {
                 Picker("Stop below", selection: $model.minBattery) {
                     Text("Never").tag(0)
                     ForEach([10, 20, 30, 50], id: \.self) { Text("\($0)% battery").tag($0) }

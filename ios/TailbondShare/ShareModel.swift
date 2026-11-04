@@ -164,6 +164,44 @@ final class ShareModel: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    // MARK: phone hub proxy (experimental, docs/phone-hub.md)
+
+    @Published private(set) var proxyOn = false
+    @Published private(set) var proxyStatus = ProxyServer.Status()
+    private var proxy: ProxyServer?
+
+    /// SOCKS5 / HTTP CONNECT on port 1888 for a Mac paired with the same home
+    /// server (password from the share key). Upstream: this iPhone's mobile
+    /// data. The bonded tunnel inside the app isn't built yet, so this is not
+    /// bonded: the Mac gets the iPhone's mobile data through a proxy.
+    func startProxy() {
+        guard let p = pairing, let key = p.shareKey, !key.isEmpty else {
+            pairError = "Open tailbond on a device paired with your home server once, then pair this iPhone again: the pairing has no sharing key."
+            return
+        }
+        let c = ProxyCore.credentials(shareKey: Array(key.utf8))
+        let name = p.name.isEmpty ? (p.user.isEmpty ? "iPhone" : p.user) : p.name
+        let s = ProxyServer(user: c.user, pass: c.pass, dialer: DirectDialer(interface: .cellular),
+                            advert: .init(name: name, id: shareID + "-hub", keyID: ShareProtocol.keyID(Array(key.utf8))))
+        s.onChange = { [weak self] st in Task { @MainActor in self?.proxyStatus = st } }
+        do {
+            try s.start()
+            proxy = s
+            proxyOn = true
+            UIApplication.shared.isIdleTimerDisabled = true
+        } catch {
+            proxyStatus.error = "\(error)"
+        }
+    }
+
+    func stopProxy() {
+        proxy?.stop()
+        proxy = nil
+        proxyOn = false
+        proxyStatus = ProxyServer.Status()
+        if !sharing { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
     func scenePhase(_ p: ScenePhase) {
         switch p {
         case .background:
