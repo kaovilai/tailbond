@@ -123,6 +123,29 @@ scripts/e2e-macos.sh                    # Mac hub end-to-end (on a Mac, sudo, QE
 
 [CI](.github/workflows/ci.yml) builds and tests all of it and publishes releases on `v*` tags, with the same file names in every release (`releases/latest/download/<name>`: [scripts/release/collect-assets.sh](scripts/release/collect-assets.sh)).
 
+## Inspirations and credits
+
+tailbond exists because these projects showed what bonding should feel like.
+Here's what each got right, and what tailbond does differently (as of
+November 2026; check their sites for current plans).
+
+| Project | What it got right | Where tailbond differs |
+|---|---|---|
+| [Speedify](https://speedify.com) | Bonding that just works on every platform, plain-language modes, **Pair & Share** (nearby phones lend their data) and a GL.iNet router app. tailbond's modes and Pair & Share follow its lead | A subscription service (a free account includes 5 GB a month, then paid plans) whose traffic exits through Speedify's servers. tailbond is free with no account, and exits from **your** home or VPS. It's Tailscale-native and open source. Speedify is ahead on polish, support, Windows, and iPhones that bond themselves |
+| [Peplink SpeedFusion Connect](https://www.peplink.com/services/products-sfc/) | Per-link control (Always, Backup only), hot failover and duplicated packets for calls, on Peplink routers and apps | Peplink's hosted service is sold as data plans. Self-hosting means Peplink's [FusionHub](https://www.peplink.com/services/software/virtual-appliance-fusionhub/) appliance, which is free for one device and licensed beyond that. tailbond has no plans or licences for any number of devices, and runs on hardware you already have (GL.iNet stock firmware, Fedora, a VPS, a Mac, Android). Peplink is ahead on enterprise hardware and support |
+| [OpenMPTCProuter](https://www.openmptcprouter.com) | Open source, your own VPS, up to 8 WANs, port forwarding and a public IP | Replaces your router's firmware and has no phone or desktop apps. tailbond installs on stock GL.iNet firmware, adds phone and Mac hubs and Pair & Share, and is built around Tailscale. Full comparison: [docs/comparison-openmptcprouter.md](docs/comparison-openmptcprouter.md) |
+| [Tailscale](https://tailscale.com) | Zero-config identity, MagicDNS, a machine list, one-tap simplicity. tailbond's apps copy its layout, and pairing uses your tailnet | Tailscale uses one path at a time and doesn't bond links. tailbond adds the bonding and leaves your tailnet as it is ([coming from Tailscale](docs/coming-from-tailscale.md)) |
+
+Built on:
+
+- **[mqvpn](https://github.com/mp0rta/mqvpn)** by mp0rta: MASQUE CONNECT-IP over Multipath QUIC, the engine that carries every bonded packet. tailbond adds patches for client stats, Pair & Share relay paths and macOS ([patches/mqvpn](patches/mqvpn)).
+- **[iOS-SOCKS-Server](https://github.com/nneonneo/iOS-SOCKS-Server)** by nneonneo: showed that an iPhone can share its connection from an ordinary app, with no paid developer account. That idea became the iPhone Share app and the phone hub.
+- **[Obtainium](https://obtainium.imranr.dev/)**, for hands-off Android updates straight from GitHub Releases.
+- Notes from the GL.iNet and OpenWrt communities on package formats and GL's firmware ([docs/glinet.md](docs/glinet.md)).
+- The libraries in [NOTICE](NOTICE).
+
+In short, tailbond is **free, with no subscription or account, runs on your own stack, and is Tailscale-native.** Your traffic goes to your server and leaves from your IP, and your tailnet comes along.
+
 ## Contributing
 
 - **Issues:** use the [issue forms](https://github.com/kaovilai/tailbond/issues/new/choose) ([bug](.github/ISSUE_TEMPLATE/bug_report.yml), [feature](.github/ISSUE_TEMPLATE/feature_request.yml)). Take pairing links, keys and addresses you don't want public out of logs first.
