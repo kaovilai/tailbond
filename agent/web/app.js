@@ -1126,6 +1126,7 @@ function renderMaint(st) {
   badge.textContent = bad ? '!' : String(n);
   badge.className = 'tab-badge' + (bad ? ' bad' : '') + (n || bad ? '' : ' hidden');
   renderUpdBanner(st);
+  renderCrashBanner(st);
   if (state.tab !== 'maint') return;
   renderUpdates(st);
 }
@@ -1322,6 +1323,91 @@ function confirmInstall(u) {
     h('div', { class: 'row end' },
       h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'),
       h('button', { class: 'btn primary', type: 'button', onclick: async () => { closeDlg(); await updAction('/api/update/install', {}, `Installing ${u.available}…`); } }, 'Update now')));
+}
+
+// ---- Report a problem (docs/reporting.md) ----
+// The agent redacts (GET /api/report) and builds the issue URL from the
+// user's edits (POST /api/report, redacted again). Nothing is sent: the
+// browser opens GitHub's form, which the user still edits and submits.
+function renderCrashBanner(st) {
+  const ban = $('#crash-banner');
+  if (!ban) return;
+  if (!st.crash) { ban.replaceChildren(); ban.classList.add('hidden'); return; }
+  const when = new Date(st.crash).toLocaleString();
+  ban.replaceChildren(
+    `tailbond stopped unexpectedly (${when}) and restarted. `,
+    h('a', { href: '#report', text: 'Report a problem', onclick: (e) => { e.preventDefault(); openReport(); } }),
+    ' · ',
+    h('a', { href: '#', text: 'Dismiss', onclick: async (e) => { e.preventDefault(); try { await api('POST', '/api/report/crash/dismiss'); ban.classList.add('hidden'); } catch (err) { toast(err.message, true); } } }));
+  ban.classList.remove('hidden');
+}
+
+async function copyText(text, area) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* http:// pages: no Clipboard API */ }
+  const ta = area || h('textarea', { style: 'position:fixed;opacity:0' });
+  if (!area) { ta.value = text; document.body.append(ta); }
+  const was = ta.value; ta.value = text; ta.select();
+  const ok = document.execCommand('copy');
+  ta.value = was;
+  if (!area) ta.remove();
+  return ok;
+}
+
+async function openReport() {
+  let rep;
+  try { rep = await api('GET', '/api/report'); } catch (e) { toast(e.message, true); return; }
+  const field = (label, el, hint) => h('label', { class: 'field' }, h('span', { text: label }), el, hint ? h('small', { class: 'muted', text: hint }) : null);
+  const what = h('textarea', { id: 'rep-what', rows: 3, required: true, placeholder: 'After plugging in the iPhone the tunnel drops; I expected it to add a path.' });
+  const steps = h('textarea', { id: 'rep-steps', rows: 2, placeholder: '1. …  2. …' });
+  const comp = h('input', { id: 'rep-component', value: rep.component || '' });
+  const ver = h('input', { id: 'rep-version', value: rep.version || '' });
+  const dev = h('input', { id: 'rep-device', value: rep.device || '' });
+  const logs = h('textarea', { id: 'rep-logs', rows: 8, class: 'mono', spellcheck: 'false' });
+  logs.value = rep.logs || '';
+  const crash = h('textarea', { id: 'rep-crash', rows: 5, class: 'mono', spellcheck: 'false' });
+  crash.value = rep.crash || '';
+  const ok = h('input', { type: 'checkbox', id: 'rep-ok' });
+  const open = h('button', { class: 'btn primary', type: 'button', id: 'rep-open', disabled: true }, 'Open GitHub issue');
+  const gate = () => { open.disabled = !(ok.checked && what.value.trim()); };
+  ok.addEventListener('change', gate);
+  what.addEventListener('input', gate);
+  const body = () => ({ component: comp.value, version: ver.value, device: dev.value, what: what.value, steps: steps.value, logs: logs.value, crash: crash.value });
+  const built = async () => api('POST', '/api/report', body());
+  open.addEventListener('click', async () => {
+    // a window opened in the click itself isn't blocked as a pop-up
+    const w = window.open('about:blank', '_blank');
+    try {
+      const r = await built();
+      if (w) { w.opener = null; w.location.href = r.url; } else window.location.href = r.url;
+      toast('Opened GitHub: check the issue there, then submit it.');
+    } catch (e) { if (w) w.close(); toast(e.message, true); }
+  });
+  dlg(
+    h('h3', { text: 'Report a problem' }),
+    h('p', { class: 'notice', id: 'rep-notice', text: rep.notice }),
+    h('p', { class: 'muted small' }, rep.security_note.replace(/\(.*\)\.?$/, ''), ' ', h('a', { href: rep.security_url, target: '_blank', rel: 'noopener', text: 'Report a vulnerability privately' }), '.'),
+    rep.crash ? h('p', { class: 'warn-text small', text: `tailbond stopped unexpectedly${rep.crash_at ? ' (' + new Date(rep.crash_at).toLocaleString() + ')' : ''}; its crash details are below.` }) : null,
+    field('What happened, and what did you expect?', what),
+    field('Steps to reproduce (optional)', steps),
+    h('div', { class: 'grid2' }, field('Where', comp), field('tailbond version', ver)),
+    field('Device and OS', dev),
+    rep.crash ? field('Crash details', crash, 'Edit or clear anything you don\'t want public.') : null,
+    field('Logs (newest last)', logs, 'A link holds about 7 KB, so the issue gets the newest lines; "Copy full report" and "Save report file" have all of them.'),
+    h('label', { class: 'check' }, ok, ' ', rep.confirm),
+    h('div', { class: 'row end wrap' },
+      h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'),
+      h('button', { class: 'btn', type: 'button', id: 'rep-copy', onclick: async () => {
+        try { const r = await built(); toast(await copyText(r.full) ? 'Full report copied' : 'Copy failed: use Save report file', false); } catch (e) { toast(e.message, true); }
+      } }, 'Copy full report'),
+      h('button', { class: 'btn', type: 'button', id: 'rep-save', onclick: async () => {
+        try {
+          const r = await built();
+          const a = h('a', { href: URL.createObjectURL(new Blob([r.full], { type: 'text/plain' })), download: r.file_name });
+          document.body.append(a); a.click(); a.remove();
+        } catch (e) { toast(e.message, true); }
+      } }, 'Save report file'),
+      open));
+  what.focus();
 }
 
 // ---- generic dialog ----
@@ -1633,6 +1719,8 @@ setupTabs();
 setupClients();
 setupPassword();
 setupAddPhone();
+for (const id of ['#report-link', '#logs-report']) $(id).addEventListener('click', (e) => { e.preventDefault(); openReport(); });
+if (location.hash === '#report') openReport();
 setupPairing();
 setupLogin();
 connect();

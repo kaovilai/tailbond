@@ -8,6 +8,11 @@ struct TailbondShareApp: App {
     @StateObject private var model = ShareModel()
     @Environment(\.scenePhase) private var phase
 
+    init() {
+        // crash capture first (Report a problem, docs/reporting.md)
+        CrashReporter.shared.install()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

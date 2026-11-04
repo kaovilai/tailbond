@@ -345,6 +345,10 @@ The hooks (`client-up`, `client-down` in `/usr/local/lib/tailbond/hooks`)
 only flush the DNS cache: on macOS mqvpn sets routes and DNS itself.
 Executables in `client-up.d/` etc. run too ([hooks](architecture.md#platform-hooks-keep-the-agent-platform-neutral)).
 
+## Report a problem
+
+**Report a problem** at the bottom of the dashboard or in its Logs tab (and a banner after a crash): a redacted report you check, then GitHub in your browser; the Mac sends nothing. [reporting.md](reporting.md).
+
 ## Uninstall
 
 ```sh

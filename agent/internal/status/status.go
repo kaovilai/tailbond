@@ -134,6 +134,9 @@ type Status struct {
 	// Client role on a Mac or Linux: other VPNs and how tailbond keeps out
 	// of their way (docs/macos.md "Using tailbond with NetBird").
 	Coexist *Coexist `json:"coexist,omitempty"`
+	// When tailbondd or mqvpn last crashed (RFC 3339), until the user
+	// reports or dismisses it (GET /api/report, docs/reporting.md).
+	Crash string `json:"crash,omitempty"`
 }
 
 // Coexist: other VPNs found, and what tailbond does about them.

@@ -91,6 +91,14 @@
         if (fn === "service" || fn === "set_role" || fn === "set_kill_switch") return resolve({ ok: true });
         if (fn === "status") args = { method: "GET", path: "/api/status" };
         var path = args.path, m = (args.method || "GET").toUpperCase();
+        // F.live: a real tailbondd answers (scripts/ux/report-screens.mjs proxies /live/)
+        if (F.live) {
+          var opt = { method: m, headers: {} };
+          if (m !== "GET") { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(args.body || {}); }
+          return fetch("/live" + path, opt).then(function (r) {
+            return r.json().catch(function () { return {}; }).then(function (d) { resolve({ ok: r.ok, code: r.status, data: d }); });
+          });
+        }
         if (F.down) return resolve({ ok: false, code: 0, error: "agent_down" });
         if ((F.hang || []).indexOf(key(m, path)) >= 0) return; // still running
         // seq: successive answers (the last one sticks); after: a call that changes later answers

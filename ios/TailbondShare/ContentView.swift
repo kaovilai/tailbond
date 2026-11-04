@@ -16,9 +16,11 @@ struct PairView: View {
     @EnvironmentObject var model: ShareModel
     @State private var text = ""
     @State private var scanning = false
+    @State private var reporting = false
 
     var body: some View {
         Form {
+            CrashBanner { reporting = true }
             Section {
                 Text("tailbond Share lends this iPhone's mobile data to your travel router or laptop running tailbond, so it can use it next to its other connections.")
                 Text("On your home server's page, choose **Devices → Add a device**, then scan the code here or open the link on this iPhone. Not sure where that page is? Ask whoever set up your home server to send you the link.")
@@ -39,6 +41,8 @@ struct PairView: View {
             }
         }
         .navigationTitle("tailbond Share")
+        .toolbar { ToolbarItem(placement: .primaryAction) { ReportButton(reporting: $reporting) } }
+        .sheet(isPresented: $reporting) { ReportView() }
         .sheet(isPresented: $scanning) {
             QRScannerView { code in
                 scanning = false
@@ -55,10 +59,12 @@ struct ShareView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var newHub = ""
     @State private var notice = false
+    @State private var reporting = false
 
     var body: some View {
         let p = BrandPalette.of(scheme)
         List {
+            CrashBanner { reporting = true }
             Section {
                 Label {
                     Text("**Keep tailbond Share on the screen while sharing.** iOS pauses sharing as soon as you switch apps or lock the phone, and it starts again when you come back. The screen stays on while sharing; plug the phone in for long trips.")
@@ -144,6 +150,8 @@ struct ShareView: View {
         .scrollContentBackground(.hidden)
         .background(p.bg)
         .navigationTitle("Share mobile data")
+        .toolbar { ToolbarItem(placement: .primaryAction) { ReportButton(reporting: $reporting) } }
+        .sheet(isPresented: $reporting) { ReportView() }
         .alert("Keep this app on the screen", isPresented: $notice) {
             Button("Share mobile data") {
                 model.screenNoticeSeen = true
@@ -153,5 +161,14 @@ struct ShareView: View {
         } message: {
             Text("iOS pauses sharing as soon as you switch apps or lock the iPhone, and it starts again when you come back. Leave tailbond Share open, and plug the iPhone in: the screen stays on while sharing.")
         }
+    }
+}
+
+/// Report a problem (docs/reporting.md), in every screen's toolbar.
+struct ReportButton: View {
+    @Binding var reporting: Bool
+    var body: some View {
+        Button { reporting = true } label: { Label("Report a problem", systemImage: "exclamationmark.bubble") }
+            .accessibilityIdentifier("report-button")
     }
 }

@@ -77,7 +77,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 - **Setup health:** direct-vs-relayed Tailscale peers, CGNAT detection and port reachability, each with how to fix it.
 - **[Updates](docs/updates.md) and [backups](docs/backup-restore.md):** GitHub releases with checksums; COPR/dnf on Fedora, one click on VPS, GL routers and Macs, Homebrew, Obtainium on Android; encrypted config backup and restore.
 - **"Get tailbond" page:** type the server's name (`homebox/`) in any browser on the tailnet: the app or installer for that device (Android, Mac, iPhone, Linux), with the steps.
-- **Report a problem:** crash capture and a redacted, user-checked GitHub issue from every app: *in progress*.
+- **[Report a problem](docs/reporting.md):** crash capture and a redacted GitHub issue you check first, from the dashboard, the GL panel and both apps. Nothing is sent automatically: no telemetry, no network call; your browser opens the issue form. Security problems go to [private reporting](SECURITY.md).
 
 ## Platforms
 
@@ -132,7 +132,7 @@ scripts/e2e-macos.sh                    # Mac hub end-to-end (on a Mac, sudo, QE
 
 ## Security
 
-Please report vulnerabilities privately through GitHub's [private vulnerability reporting](https://github.com/kaovilai/tailbond/security/advisories/new), not in a public issue.
+Please report vulnerabilities privately through GitHub's [private vulnerability reporting](https://github.com/kaovilai/tailbond/security/advisories/new), not in a public issue: [SECURITY.md](SECURITY.md).
 
 ## License
 

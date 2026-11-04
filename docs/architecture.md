@@ -129,6 +129,9 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | POST | `/api/captive/check` | client, additive: `{"name"}` re-check now (`""` = all) |
 | GET | `/api/health` | additive: [setup health](#setup-health) |
 | GET | `/tailbond-glinet.ipk` | additive: the GL router package, from `glinet_ipk` (default `/usr/share/tailbond/tailbond-glinet.ipk`) or rebuilt from opkg's records of the installed package |
+| GET | `/api/report` | additive: Report a problem ([reporting.md](reporting.md)): component, version, device, the newest log lines and the kept crash, redacted |
+| POST | `/api/report` | additive: `{component, version, device, what, steps, logs, crash}` → `{url, full, file_name}` (the GitHub issue link, ≤ 7000 characters, and the whole report), redacted again |
+| POST | `/api/report/crash/dismiss` | additive: forget the kept crash (`crash` in the status) |
 | GET | `/get` | server, additive, **unauthenticated**: the [phone page](#phone-page) (HTML), also served on port 80 |
 | GET | `/tailbond-macos-arm64.tar.gz` | server, additive, **unauthenticated**: the macOS bundle for the phone page's Mac section (`macos_bundle`, else a copy fetched once from the GitHub release and cached; 404 when there is none), also on port 80 |
 | GET | `/api/servers` | client, additive: `{"servers":[…],"active_server","failover":{…}}`, the same objects as in `/api/status` ([multiple servers](#multiple-servers-and-failover)) |

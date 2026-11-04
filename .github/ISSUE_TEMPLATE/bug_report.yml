@@ -6,7 +6,8 @@ body:
     attributes:
       value: |
         Thanks for reporting. If you're a maintainer and tick the box at the bottom, an AI agent looks at this issue as soon as it's opened: it links a **draft PR** if it finds a fix, or comments with questions if it can't. Anyone else: a maintainer may add the `autofix` label after reading the issue.
-        Remove secrets (pairing links, keys, public IPs you don't want shared) from logs before pasting.
+        Remove secrets (pairing links, keys, public IPs you don't want shared) from logs before pasting. **Report a problem** in tailbond's dashboard, the GL panel and the apps fills this in for you, redacted (docs/reporting.md).
+        **A security problem?** Don't post it here: [report it privately](https://github.com/kaovilai/tailbond/security/advisories/new) (SECURITY.md).
   - type: dropdown
     id: component
     attributes:
@@ -16,6 +17,7 @@ body:
         - GL.iNet / OpenWrt router (home server)
         - Fedora home server (RPM)
         - VPS / Linux install.sh
+        - Linux laptop (client)
         - Mac
         - Android app
         - iPhone Share app

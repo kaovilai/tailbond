@@ -843,6 +843,93 @@
     }
   };
 
+  // ---- Report a problem (docs/reporting.md) ----
+  // The agent redacts the report (GET /api/report) and builds the GitHub
+  // issue link from the edited fields (POST /api/report, redacted again).
+  // Nothing is sent: the browser opens GitHub's form for the user to submit.
+  var REP = {
+    methods: {
+      openReport: function () {
+        var self = this;
+        api("GET", "/api/report").then(function (r) {
+          self.rep = { d: r, what: "", steps: "", component: r.component || "", version: r.version || "", device: r.device || "",
+            logs: r.logs || "", crash: r.crash || "", ok: false, busy: false, err: "" };
+        }).catch(function (e) { self.say(self.humanError(e)); });
+      },
+      repBody: function () {
+        var u = this.rep;
+        return { component: u.component, version: u.version, device: u.device, what: u.what, steps: u.steps, logs: u.logs, crash: u.crash };
+      },
+      repBuilt: function () { return api("POST", "/api/report", this.repBody()); },
+      repOpen: function () {
+        var self = this, w = window.open("about:blank", "_blank");
+        this.repBuilt().then(function (r) {
+          if (w) { w.opener = null; w.location.href = r.url; } else { window.location.href = r.url; }
+          self.say("Opened GitHub: check the issue there, then submit it.");
+        }).catch(function (e) { if (w) w.close(); self.rep.err = self.humanError(e); });
+      },
+      repCopy: function () {
+        var self = this;
+        this.repBuilt().then(function (r) {
+          var done = function () { self.say("Full report copied"); };
+          if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(r.full).then(done);
+          var ta = document.createElement("textarea");
+          ta.value = r.full; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.select();
+          var ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+          if (ok) done(); else self.say("Copy failed: use Save report file");
+        }).catch(function (e) { self.rep.err = self.humanError(e); });
+      },
+      repSave: function () {
+        var self = this;
+        this.repBuilt().then(function (r) { saveBlob(new Blob([r.full], { type: "text/plain" }), r.file_name); })
+          .catch(function (e) { self.rep.err = self.humanError(e); });
+      },
+      rCrashAlert: function (h) {
+        var self = this;
+        if (!this.st || !this.st.crash) return null;
+        return this.alert(h, "", "tailbond stopped unexpectedly", "It restarted by itself (" + new Date(this.st.crash).toLocaleString() + "). Reporting it helps fix it.", [
+          this.btn(h, "Report a problem", function () { self.openReport(); }, "primary small"),
+          this.btn(h, "Dismiss", function () { api("POST", "/api/report/crash/dismiss", {}).then(function () { self.tick(); }).catch(function (e) { self.say(self.humanError(e)); }); }, "small")
+        ]);
+      },
+      rReportDialog: function (h) {
+        var self = this, u = this.rep, d = u.d || {};
+        var close = function () { self.rep = null; };
+        var lbl = function (t) { return h("div", { class: "tb-label" }, t); };
+        var inp = function (k, ph) { return h("input", { class: "tb-input", attrs: { placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } }); };
+        var area = function (k, rows, mono, ph) {
+          return h("textarea", { class: "tb-input", style: { height: (rows * 20 + 16) + "px", fontFamily: mono ? "ui-monospace,Menlo,monospace" : "inherit", fontSize: mono ? "12px" : "14px", whiteSpace: mono ? "pre" : "normal" },
+            attrs: { spellcheck: mono ? "false" : "true", placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } });
+        };
+        var canOpen = u.ok && u.what.trim() !== "";
+        var kids = [
+          h("div", { class: "tb-dialog-t" }, "Report a problem"),
+          h("div", { class: "tb-alert", style: { marginBottom: "10px" } }, [h("div", d.notice)]),
+          h("div", { class: "tb-muted tb-small", style: { marginBottom: "8px" } }, [String(d.security_note || "").replace(/\(.*\)\.?$/, ""), " ",
+            h("a", { class: "tb-link", attrs: { href: d.security_url, target: "_blank", rel: "noopener" } }, "Report a vulnerability privately"), "."]),
+          d.crash ? h("div", { class: "tb-small", style: { color: "#e6a23c", marginBottom: "8px" } }, "tailbond stopped unexpectedly" + (d.crash_at ? " (" + new Date(d.crash_at).toLocaleString() + ")" : "") + "; its crash details are below.") : null,
+          lbl("What happened, and what did you expect?"), area("what", 3, false, "After the firmware upgrade the panel shows Disconnected; I expected Connected."),
+          lbl("Steps to reproduce (optional)"), area("steps", 2, false),
+          lbl("Where"), inp("component"),
+          lbl("tailbond version"), inp("version"),
+          lbl("Router and firmware"), inp("device"),
+          d.crash ? lbl("Crash details") : null, d.crash ? area("crash", 5, true) : null,
+          lbl("Logs (newest last)"), area("logs", 8, true),
+          h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "A link holds about 7 KB, so the issue gets the newest lines; Copy full report and Save report file have all of them."),
+          h("div", { style: { marginTop: "12px" } }, [h("span", { class: "tb-check" + (u.ok ? " on" : ""), attrs: { role: "checkbox", "aria-checked": String(u.ok), tabindex: 0, id: "tb-rep-ok" }, on: { click: function () { u.ok = !u.ok; } } }, [h("i"), d.confirm])]),
+          u.err ? h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "10px" } }, u.err) : null
+        ];
+        var foot = [this.btn(h, "Cancel", close), this.btn(h, "Copy full report", function () { self.repCopy(); }), this.btn(h, "Save report file", function () { self.repSave(); }),
+          this.btn(h, "Open GitHub issue", function () { self.repOpen(); }, "primary", !canOpen)];
+        return h("div", { class: "tb-modal", on: { click: function (e) { if (e.target === e.currentTarget) close(); } } }, [
+          h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-label": "Report a problem" } }, kids.concat([h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px", flexWrap: "wrap" } }, foot)]))
+        ]);
+      }
+    }
+  };
+
   // ---- component ----
   return {
     name: "tailbond",
@@ -859,7 +946,9 @@
         srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", histAll: false,
         bp: null, lan: null, bpEdit: null,
         // updates and backups
-        updX: null, bks: null, ub: null, ubSched: null, restartUntil: 0, restarting: false
+        updX: null, bks: null, ub: null, ubSched: null, restartUntil: 0, restarting: false,
+        // Report a problem
+        rep: null
       };
     },
     computed: {
@@ -1426,27 +1515,28 @@
         kids.push(this.card(h, null, [h("div", { class: "tb-row" }, [h("div", { class: "tb-spin" }), "Loading tailbond…"])]));
       } else if (this.down) {
         kids.push(this.rDown(h));
-      } else if (this.role === "server") {
-        kids = kids.concat(this.rServer(h));
       } else {
-        kids = kids.concat(this.rClient(h));
+        kids.push(this.rCrashAlert(h));
+        kids = kids.concat(this.role === "server" ? this.rServer(h) : this.rClient(h));
       }
       if (this.loaded && !this.down && this.st) {
         var ver = (this.info && this.info.version) || this.st.version || "";
         kids.push(h("div", { class: "tb-foot" }, [
           "tailbond " + ver,
+          h("span", [" · ", h("a", { class: "tb-link", attrs: { href: "#", id: "tb-report-link" }, on: { click: function (e) { e.preventDefault(); self.openReport(); } } }, "Report a problem")]),
           this.info && this.info.lan_dashboard ? h("span", [" · ", h("a", { class: "tb-link", attrs: { href: "http://" + location.hostname + ":8077/", target: "_blank", rel: "noopener" } }, "Advanced page (:8077)")]) : null
         ]));
       }
       if (this.bpEdit) kids.push(this.rBypassDialog(h));
       if (this.ub) kids.push(this.rUbDialog(h));
+      if (this.rep) kids.push(this.rReportDialog(h));
       if (this.confirm) kids.push(this.rConfirm(h));
       if (this.toast) kids.push(h("div", { class: "tb-toast" }, this.toast));
       return h("div", { class: "tb" }, kids);
     },
 
     // Render helpers (a mixin keeps render() short; Vue binds `this`).
-    mixins: [UB, {
+    mixins: [UB, REP, {
       methods: {
         card: function (h, title, body, extra, cls) {
           return h("div", { class: "tb-card" + (cls ? " " + cls : "") }, [

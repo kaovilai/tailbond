@@ -52,6 +52,7 @@ object Routes {
     const val BACKUP = "backup"
     const val SHARE = "share"
     const val PAIR = "pair"
+    const val REPORT = "report"
     const val MACHINE = "machine:" // + hostname
 }
 
@@ -145,6 +146,7 @@ fun TailbondApp(
                                     page == Routes.WEBSITES -> "Websites that skip tailbond"
                                     page == Routes.UPDATES -> "Updates"
                                     page == Routes.BACKUP -> "Back up and restore"
+                                    page == Routes.REPORT -> "Report a problem"
                                     page == Routes.SHARE -> "Sharing"
                                     page == Routes.PAIR && state.pairTarget == PairTarget.Add -> "Add another server"
                                     page == Routes.PAIR && state.pairTarget is PairTarget.Replace -> "Pair again"
@@ -177,9 +179,11 @@ fun TailbondApp(
                     onUpdates = { route = Routes.UPDATES },
                     onBackup = { route = Routes.BACKUP },
                     onShare = { route = Routes.SHARE },
+                    onReport = { route = Routes.REPORT },
                     modifier = m,
                 )
                 page == Routes.UPDATES -> UpdatesScreen(state, actions, m)
+                page == Routes.REPORT -> ReportScreen(m)
                 page == Routes.BACKUP -> BackupScreen(state, actions, m, startDialog = startDialog)
                 page == Routes.SHARE -> ShareScreen(state, actions, m)
                 page == Routes.APPS -> AppsScreen(state, actions, m)
@@ -193,6 +197,7 @@ fun TailbondApp(
                     onMachine = { route = Routes.MACHINE + it },
                     startSearch = startSearch,
                     onUpdates = { route = Routes.UPDATES },
+                    onReport = { route = Routes.REPORT },
                     modifier = m,
                 )
             }

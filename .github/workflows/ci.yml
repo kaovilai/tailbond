@@ -171,6 +171,14 @@ jobs:
           path: out/android/tailbond-debug.apk
           if-no-files-found: error
       # x86_64-only debug APK for the emulator (job android-e2e); phones get arm64 only
+      # Report a problem (docs/reporting.md): screen renders for review
+      - name: Report a problem screens (Robolectric renders)
+        run: android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.ReportScreens' -Ptailbond.uxOut="$PWD/out/ux/report/android"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: report-screens-android
+          path: out/ux/report/android/
+          if-no-files-found: error
       - name: x86_64 debug APK (emulator e2e)
         run: android/scripts/build-e2e-apk.sh
       - uses: actions/upload-artifact@v7
@@ -488,6 +496,27 @@ jobs:
           path: out/ipk/*.ipk
           if-no-files-found: error
 
+  # Report a problem (docs/reporting.md) in a browser against a real
+  # tailbondd: the dashboard and the GL.iNet panel; redaction, the
+  # checkbox gate, the issue URL, the file and the clipboard.
+  report-ux:
+    name: Report a problem (dashboard + GL panel, Chromium)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Flow check and screenshots (Playwright in podman)
+        run: scripts/ux/report-screens.sh "$PWD/out/ux/report/web"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-screens-web
+          path: out/ux/report/web/
+          if-no-files-found: ignore
+
   mqvpn-x86_64:
     name: Static x86_64 mqvpn (musl)
     runs-on: ubuntu-24.04
@@ -692,7 +721,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, macos-e2e-server, macos]
+    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, macos-e2e-server, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

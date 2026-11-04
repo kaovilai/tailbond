@@ -59,6 +59,7 @@ fun SettingsScreen(
     onUpdates: () -> Unit = {},
     onBackup: () -> Unit = {},
     onShare: () -> Unit = {},
+    onReport: () -> Unit = {},
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
@@ -155,6 +156,7 @@ fun SettingsScreen(
         )
 
         UpdatesBackupRows(state, onUpdates, onBackup)
+        ReportRow(onReport)
 
     }
 

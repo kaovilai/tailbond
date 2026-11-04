@@ -93,6 +93,10 @@ SideStore/AltStore with the same Apple ID.
 There is no App Store or TestFlight build (both need the paid developer
 program).
 
+## Report a problem
+
+The speech-bubble button at the top right (and a banner after a crash): a redacted report you check, then GitHub in Safari; nothing is sent by the app. Crashes come from an exception handler and MetricKit. [reporting.md](reporting.md).
+
 ## Tests
 
 CI job `ios` (macOS): the relay core's unit tests (`swift test`: framing and

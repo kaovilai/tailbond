@@ -363,6 +363,10 @@ with every release: `MAJOR*1000000 + MINOR*10000 + PATCH*100` (0.2.0 →
 20000); a pre-release ending in a number N is that − 100 + N (1.2.3-beta.4 →
 1020204). MINOR and PATCH stay ≤ 99.
 
+## Report a problem
+
+**Settings → Help → Report a problem** (and a card on the home screen after a crash): a redacted report you check, then GitHub in the browser; nothing is sent by the app. Crashes are caught by an uncaught-exception handler and, on Android 11+, the system's native-crash and ANR records. [reporting.md](reporting.md).
+
 ## Backup and restore
 
 Settings → **Back up and restore** (servers and routers: [backup-restore.md](backup-restore.md)):

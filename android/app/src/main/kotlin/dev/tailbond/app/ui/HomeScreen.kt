@@ -85,6 +85,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     startSearch: String = "",
     onUpdates: () -> Unit = {},
+    onReport: () -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf(startSearch) }
     val live = state.live
@@ -92,6 +93,8 @@ fun HomeScreen(
     val copy = LocalCopy.current
 
     LazyColumn(modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
+        // tailbond crashed last time: Report a problem (docs/reporting.md)
+        item(key = "crash") { CrashCard(onReport) }
         item { StatusCard(state, actions) }
         if (live.state == ConnState.ERROR) item { ErrorCard(state, actions, onRepair) }
         if (state.wifiSignIn && state.settings.captivePrompts && state.settings.path(PathKind.WIFI).enabled) item { WifiSignInCard(state, actions) }

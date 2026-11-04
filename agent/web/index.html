@@ -122,6 +122,7 @@
 
   <div class="banner hidden" id="health-banner"></div>
   <div class="banner upd-banner hidden" id="upd-banner"></div>
+  <div class="banner bad hidden" id="crash-banner"></div>
   <nav class="tabs" id="tabs">
     <button data-tab="connections" class="active">Connections</button>
     <button data-tab="clients" data-role="server">Devices</button>
@@ -227,13 +228,13 @@
 
   <section class="tab hidden" id="tab-logs">
     <div class="card logs-card">
-      <div class="row between"><h3>Logs</h3><label class="check"><input type="checkbox" id="logs-follow" checked> follow</label></div>
+      <div class="row between"><h3>Logs</h3><div class="row"><button class="btn" type="button" id="logs-report">Report a problem</button><label class="check"><input type="checkbox" id="logs-follow" checked> follow</label></div></div>
       <pre id="logs" class="logs"></pre>
     </div>
   </section>
 </main>
 
-<footer class="foot muted" id="foot"></footer>
+<footer class="foot muted"><span id="foot"></span> · <a href="#report" id="report-link">Report a problem</a></footer>
 
 <dialog id="qr-dialog">
   <form method="dialog" class="dialog-inner">

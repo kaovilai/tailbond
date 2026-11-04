@@ -38,6 +38,7 @@ type Options struct {
 }
 
 type Agent struct {
+	crash *crashState // Report a problem: the kept crash (reportapi.go)
 	opts  Options
 	store *config.Store
 	logs  *supervisor.Ring
@@ -160,6 +161,7 @@ func New(store *config.Store, opts Options) *Agent {
 		bypassNow:   make(chan struct{}, 1),
 		upd:         newUpdater(),
 		restart:     make(chan struct{}, 1),
+		crash:       &crashState{},
 	}
 	if opts.Echo {
 		a.logs.Echo = os.Stderr
@@ -220,6 +222,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	go a.hookWorker(ctx)
 	a.Logf("tailbondd %s starting, role=%s mode=%s config=%s", a.opts.Version, cfg.Role, cfg.Mode, a.store.Path())
+	a.setupCrash()
 
 	switch cfg.Role {
 	case config.RoleServer:
@@ -314,6 +317,7 @@ func (a *Agent) preStart(ctx context.Context) error {
 func (a *Agent) onStart() {}
 
 func (a *Agent) onExit(err error) {
+	a.noteChildCrash(err)
 	a.mu.Lock()
 	fired := a.rt.upHookFired
 	env := a.downEnvLocked()
@@ -509,6 +513,7 @@ func (a *Agent) poll(ctx context.Context) {
 	st.Version = a.opts.Version
 	st.Protocol = update.Protocol
 	st.Update = a.updateView()
+	st.Crash = a.crashAt()
 	a.mu.Lock()
 	a.snap = st
 	a.mu.Unlock()

@@ -401,6 +401,10 @@ the panel says "reinstalled after a firmware upgrade". Removing the package
 (`opkg remove tailbond`) removes the rc.local line and the cached packages;
 `/etc/tailbond/` stays. See also [updates.md](updates.md#glinet-firmware-upgrades).
 
+## Report a problem
+
+**Report a problem** at the bottom of the tailbond panel (and an alert after a crash): a redacted report you check, then GitHub in your browser; the router sends nothing. [reporting.md](reporting.md).
+
 ## Logs and troubleshooting
 
 ```sh

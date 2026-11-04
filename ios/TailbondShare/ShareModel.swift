@@ -126,6 +126,7 @@ final class ShareModel: ObservableObject {
 
     func start() {
         guard let p = pairing, let key = p.shareKey, relay == nil else { return }
+        CrashReporter.log.info("sharing starts (paired with \(p.label, privacy: .public))")
         if usedMonth != month {
             usedMonth = month
             usedBytesStored = 0
@@ -168,6 +169,7 @@ final class ShareModel: ObservableObject {
     }
 
     func stop(reason: ShareProtocol.Reason = .paused) {
+        CrashReporter.log.info("sharing stops: \(String(describing: reason), privacy: .public)")
         relay?.stop(reason)
         relay = nil
         sharing = false
