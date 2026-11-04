@@ -1,0 +1,93 @@
+# CodeQL code scanning (advanced setup). It replaces GitHub's default setup,
+# which can't check out submodules: the Android build includes sdk-runtime
+# and sdk-network from third_party/mqvpn, so default setup's Java/Kotlin
+# build failed. The two can't run side by side: turn default setup off
+# (Settings → Code security → CodeQL analysis) when this workflow lands.
+#
+# Categories are default setup's (/language:<lang>), so alerts carry over.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { language: actions, build-mode: none }
+          - { language: c-cpp, build-mode: none }
+          - { language: go, build-mode: autobuild }
+          - { language: java-kotlin, build-mode: manual }
+          - { language: javascript-typescript, build-mode: none }
+          - { language: python, build-mode: none }
+          - { language: ruby, build-mode: none }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # the Android build includes modules from third_party/mqvpn
+          submodules: ${{ matrix.language == 'java-kotlin' && 'recursive' || 'false' }}
+      - if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@v6
+      - if: matrix.language == 'java-kotlin'
+        name: Android SDK
+        run: android/scripts/setup-sdk.sh
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      # Kotlin and Java only: the JNI library (android/scripts/build-native.sh)
+      # isn't needed to compile them. No build cache and an in-process Kotlin
+      # compiler, so CodeQL sees every compile.
+      - if: matrix.build-mode == 'manual'
+        name: Compile the Android app and its SDK modules
+        run: >-
+          android/scripts/gradle.sh --console=plain --no-daemon --no-build-cache
+          -Pkotlin.compiler.execution.strategy=in-process
+          :app:compileDebugJavaWithJavac
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+
+  # Swift (iOS Share app, macOS menu app) needs a macOS runner, which CI
+  # already waits on. Not on pull requests: main, weekly and by hand.
+  analyze-swift:
+    name: Analyze (swift)
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: swift
+          build-mode: autobuild
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:swift
