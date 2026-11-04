@@ -90,11 +90,6 @@ Don't open a public issue: every report screen links to GitHub's
 (see [SECURITY.md](../SECURITY.md)). Use **Copy full report** or **Save
 report file** and paste it there.
 
-**Maintainers, once:** turn on private vulnerability reporting in the
-repository's **Settings → Code security → Private vulnerability
-reporting → Enable** (it's a setting, not done by CI). Until then the link
-shows GitHub's "not enabled" page.
-
 ## API (agent)
 
 - `GET /api/report`: `component`, `version`, `device`, `logs` (the newest
