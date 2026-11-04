@@ -117,7 +117,9 @@ say "LAN: feth0 (this Mac, 192.168.77.1) <-> feth1 (the phones, .2 and .3)"
 ifconfig feth0 destroy 2>/dev/null || true; ifconfig feth1 destroy 2>/dev/null || true
 if ifconfig feth0 create && ifconfig feth1 create && ifconfig feth0 peer feth1; then
   ifconfig feth0 inet 192.168.77.1/24 up
-  ifconfig feth1 inet 192.168.77.2/24 up
+  # the phones' addresses as /32s: feth0 alone routes 192.168.77.0/24, so
+  # the hub's datagrams to them stay on this one path
+  ifconfig feth1 inet 192.168.77.2 netmask 255.255.255.255 up
   ifconfig feth1 inet 192.168.77.3 netmask 255.255.255.255 alias
   ok "fake Ethernet pair up: $(ifconfig feth0 | head -n1)"
 else
@@ -203,6 +205,7 @@ PIX="$(hapi "http://$API/api/status" | jq -r '.shares[] | select(.label | starts
     sleep 0.25
   done ) >"$WORK/probe.log" 2>&1 &
 PROBE=$!
+disown "$PROBE"
 sleep 2
 K="$(now)"
 kill -9 "$PIXEL_PID"; PIXEL_PID=""
