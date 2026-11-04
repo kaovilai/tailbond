@@ -119,8 +119,14 @@ jobs:
             mqvpn-native-${{ runner.os }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-native.sh', 'scripts/lib/*.sh') }}-
       - name: Build patched mqvpn
         run: scripts/build-mqvpn-native.sh
+      - name: mqvpn certificate pin unit tests (patches/mqvpn/0005)
+        run: |
+          out/build/mqvpn-native/src/build/tests/test_cert_pin
+          out/build/mqvpn-native/src/build/tests/test_config_bridge
       - name: Client control API smoke test
         run: sudo scripts/smoke-client-control.sh
+      - name: e2e-cert-pin (an impostor server with another certificate is refused)
+        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-cert-pin.sh
       - name: e2e-netns
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
       - name: e2e-backup (backup, wipe, restore, the client reconnects)

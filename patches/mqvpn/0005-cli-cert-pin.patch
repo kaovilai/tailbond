@@ -1,0 +1,582 @@
+From: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+Subject: [PATCH] feat(cli): pin the server certificate by SHA-256 (--cert-sha256)
+
+A client of a server with a self-signed certificate had one option on the
+CLI: --insecure / Insecure = true, which turns certificate verification
+off for the tunnel. tailbond pairs such servers by the SHA-256 of their
+certificate, and Android already enforces that pin through
+mqvpn_config_set_cert_verifier; the CLI (Linux, macOS) could not.
+
+--cert-sha256 HEX / [Server] CertSHA256 (JSON "cert_sha256") now pins the
+server: 64 hex digits, any case, ':'-separated or not. The shared
+CLI->library bridge installs a verifier that accepts only a chain whose
+leaf certificate (DER) hashes to the pin (constant-time compare; no chain
+or hostname check, the pin is the identity), and turns insecure off, since
+the library lets insecure override any verifier. The library consults the
+verifier on every handshake (APP_VERIFY), so reconnects are checked too;
+the paths of a multipath connection share its one handshake. A malformed
+pin is a startup error. On Windows the store verifier is not installed
+over the pin.
+
+- src/platform/cert_pin.{c,h}: parser and verifier (BoringSSL SHA256,
+  CRYPTO_memcmp), compiled into the Linux, Darwin and Windows CLIs.
+- tests/test_cert_pin.c: parser (case, colons, malformed) and verifier
+  (leaf only, one bit off, empty chain); test_config_bridge: a pin
+  installs the verifier with the pin as context and forces insecure off.
+
+Signed-off-by: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+---
+ CMakeLists.txt                          |  20 +++++-
+ src/config.c                            |   1 +
+ src/config.h                            |   1 +
+ src/main.c                              |  29 +++++++++
+ src/platform/cert_pin.c                 |  62 ++++++++++++++++++
+ src/platform/cert_pin.h                 |  31 +++++++++
+ src/platform/client_config_bridge.c     |   9 +++
+ src/platform/windows/platform_windows.c |   5 +-
+ src/vpn_client.h                        |   7 +++
+ tests/test_cert_pin.c                   | 108 ++++++++++++++++++++++++++++++++
+ tests/test_config_bridge.c              |  37 +++++++++++
+ 11 files changed, 306 insertions(+), 4 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7e5dc72..c993926 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -47,6 +47,8 @@ endif()
+ #   2. Otherwise → try add_subdirectory (requires SSL_PATH to be set)
+ 
+ set(XQUIC_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/xquic/include)
++# BoringSSL headers for the CLI's certificate pin (src/platform/cert_pin.c)
++set(BORINGSSL_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/xquic/third_party/boringssl/include)
+ 
+ if(XQUIC_BUILD_DIR)
+     message(STATUS "Using pre-built xquic from: ${XQUIC_BUILD_DIR}")
+@@ -476,6 +478,7 @@ set(WINTUN_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/wintun)
+ add_executable(mqvpn
+     src/main.c
+     src/platform/client_config_bridge.c
++    src/platform/cert_pin.c
+     src/platform/windows/platform_windows.c
+     src/platform/windows/tun_wintun.c
+     src/platform/windows/routing.c
+@@ -496,6 +499,7 @@ target_include_directories(mqvpn PRIVATE
+     ${CMAKE_SOURCE_DIR}/src/platform/windows
+     ${WINTUN_INCLUDE_DIR}
+ )
++target_include_directories(mqvpn SYSTEM PRIVATE ${BORINGSSL_INCLUDE_DIR})
+ 
+ if(Libevent_FOUND)
+     target_link_libraries(mqvpn
+@@ -604,6 +608,7 @@ elseif(APPLE)
+ add_executable(mqvpn
+     src/main.c
+     src/platform/client_config_bridge.c
++    src/platform/cert_pin.c
+     src/platform/darwin/platform_darwin.c
+     src/platform/darwin/route_mon.c
+     src/platform/posix/netmon_common.c
+@@ -626,6 +631,7 @@ target_include_directories(mqvpn PRIVATE
+     ${CMAKE_SOURCE_DIR}/src/platform/posix
+     ${CMAKE_SOURCE_DIR}/src/platform/darwin
+ )
++target_include_directories(mqvpn SYSTEM PRIVATE ${BORINGSSL_INCLUDE_DIR})
+ 
+ target_link_libraries(mqvpn
+     mqvpn_lib
+@@ -644,6 +650,7 @@ target_link_libraries(mqvpn
+ # .github/workflows/ci.yml darwin job.
+ add_library(mqvpn_darwin_platform OBJECT
+     src/platform/client_config_bridge.c
++    src/platform/cert_pin.c
+     src/platform/darwin/platform_darwin.c
+     src/platform/darwin/route_mon.c
+     src/platform/posix/netmon_common.c
+@@ -665,6 +672,7 @@ target_include_directories(mqvpn_darwin_platform PRIVATE
+     ${CMAKE_SOURCE_DIR}/src/platform/posix
+     ${CMAKE_SOURCE_DIR}/src/platform/darwin
+ )
++target_include_directories(mqvpn_darwin_platform SYSTEM PRIVATE ${BORINGSSL_INCLUDE_DIR})
+ 
+ # Shared library variant — mirrors the Linux mqvpn_shared block below (kept
+ # per-branch: everything past the platform split, tests/install/CPack
+@@ -840,6 +848,7 @@ endif()
+ add_executable(mqvpn
+     src/main.c
+     src/platform/client_config_bridge.c
++    src/platform/cert_pin.c
+     src/platform/linux/platform_linux.c
+     src/platform/linux/netlink_mon.c
+     src/platform/posix/netmon_common.c
+@@ -864,6 +873,7 @@ target_include_directories(mqvpn PRIVATE
+     ${CMAKE_SOURCE_DIR}/src/platform/posix
+     ${CMAKE_SOURCE_DIR}/src/platform/linux
+ )
++target_include_directories(mqvpn SYSTEM PRIVATE ${BORINGSSL_INCLUDE_DIR})
+ 
+ target_link_libraries(mqvpn
+     mqvpn_lib
+@@ -961,7 +971,13 @@ if(BUILD_TESTING)
+     # Parity test for the shared CLI→library config bridge: pins every field
+     # forwarded by mqvpn_platform_apply_client_config so a new knob cannot be
+     # bridged on one platform and dropped on another (see the bridge TU).
+-    add_executable(test_config_bridge tests/test_config_bridge.c src/platform/client_config_bridge.c src/mqvpn_config.c src/redundant_tx.c src/log.c third_party/yyjson/yyjson.c)
++    add_executable(test_config_bridge tests/test_config_bridge.c src/platform/client_config_bridge.c src/platform/cert_pin.c src/mqvpn_config.c src/redundant_tx.c src/log.c third_party/yyjson/yyjson.c)
++    target_include_directories(test_config_bridge SYSTEM PRIVATE ${BORINGSSL_INCLUDE_DIR})
++    target_link_libraries(test_config_bridge ${CRYPTO_LIB} pthread stdc++)
++    # CLI server certificate pin (--cert-sha256): parser and leaf verifier.
++    add_executable(test_cert_pin tests/test_cert_pin.c src/platform/cert_pin.c src/log.c)
++    target_include_directories(test_cert_pin SYSTEM PRIVATE ${BORINGSSL_INCLUDE_DIR})
++    target_link_libraries(test_cert_pin ${CRYPTO_LIB} pthread stdc++)
+     add_executable(test_classifier tests/test_classifier.c src/hybrid/classifier.c)
+     add_executable(test_icmp tests/test_icmp.c src/icmp.c)
+     # test_reorder_gate exercises src/reorder_gate.h (shared STAMP/RAW/DROP_MTU
+@@ -974,7 +990,7 @@ if(BUILD_TESTING)
+     add_executable(test_path_line tests/test_path_line.c src/mqvpn_util.c)
+     # Library clock on its own (test_clock covers it with xquic's tokens).
+     add_executable(test_clock_source tests/test_clock_source.c src/mqvpn_clock.c)
+-    set(MQVPN_UNIT_TESTS test_config test_auth test_session test_dns test_route_check test_flow_sched test_redundant_tx test_status test_path_state_machine test_path_slot_oracle test_reorder_common test_reorder_tx test_reorder_rx test_reorder_config test_config_bridge test_classifier test_icmp test_reorder_gate test_path_readd test_path_line test_clock_source)
++    set(MQVPN_UNIT_TESTS test_config test_auth test_session test_dns test_route_check test_flow_sched test_redundant_tx test_status test_path_state_machine test_path_slot_oracle test_reorder_common test_reorder_tx test_reorder_rx test_reorder_config test_config_bridge test_cert_pin test_classifier test_icmp test_reorder_gate test_path_readd test_path_line test_clock_source)
+ 
+     # test_tcp_lane #include's BOTH src/hybrid/tcp_lane.c AND
+     # src/hybrid/tcp_lane_uplink.c (Task 12 split the uplink relay out of
+diff --git a/src/config.c b/src/config.c
+index 124cdc7..2e58d46 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -566,6 +566,7 @@ static const cfg_key_desc_t cfg_keys[] = {
+     CFG_STR(SEC_SERVER, "Address", "server_addr", server_addr),
+     CFG_STR(SEC_SERVER, "ServerName", "tls_server_name", tls_server_name),
+     CFG_BOOL(SEC_SERVER, "Insecure", "insecure", insecure),
++    CFG_STR(SEC_SERVER, "CertSHA256", "cert_sha256", cert_sha256),
+     /* [TLS] */
+     CFG_STR(SEC_TLS, "Cert", "cert_file", cert_file),
+     CFG_STR(SEC_TLS, "Key", "key_file", key_file),
+diff --git a/src/config.h b/src/config.h
+index cd0ef72..3d63c5e 100644
+--- a/src/config.h
++++ b/src/config.h
+@@ -44,6 +44,7 @@ typedef struct mqvpn_file_config_s {
+     char server_addr[280]; /* "host:port" */
+     char tls_server_name[256];
+     int insecure;
++    char cert_sha256[128]; /* leaf certificate SHA-256 pin, hex ('' = none) */
+ 
+     /* [Auth] — client */
+     char auth_key[256];
+diff --git a/src/main.c b/src/main.c
+index e56ec92..9718aee 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -54,6 +54,9 @@ usage(const char *prog)
+         "  --key PATH                TLS private key (server mode)\n"
+         "  --tls-server-name NAME    TLS SNI / cert verify name (client mode)\n"
+         "  --insecure                Accept untrusted certs (client mode, testing only)\n"
++        "  --cert-sha256 HEX         Accept only a server whose leaf certificate has this\n"
++        "                            SHA-256 (64 hex digits, ':' allowed; client mode;\n"
++        "                            overrides --insecure)\n"
+         "  --auth-key KEY            PSK for authentication\n"
+         "  --user NAME:KEY           Add a server user credential (repeatable)\n"
+         "  --genkey                  Generate a random PSK and exit\n"
+@@ -172,6 +175,7 @@ main(int argc, char *argv[])
+         {"kill-switch", no_argument, NULL, 'K'},
+         {"no-manage-routes", no_argument, NULL, 0x103},
+         {"tls-server-name", required_argument, NULL, 0x104},
++        {"cert-sha256", required_argument, NULL, 0x108},
+         {"allow-client-scheduler", no_argument, NULL, 0x105},
+         {"request-server-scheduler", no_argument, NULL, 0x106},
+         {"control-port", required_argument, NULL, 'X'},
+@@ -195,6 +199,7 @@ main(int argc, char *argv[])
+     int allow_client_sched = -1;
+     int request_server_sched = -1;
+     const char *tls_server_name = NULL;
++    const char *cert_sha256 = NULL; /* NULL means "not set by CLI" */
+     const char *auth_key = NULL;
+     char cli_user_names[MQVPN_CONFIG_MAX_USERS][64];
+     char cli_user_keys[MQVPN_CONFIG_MAX_USERS][256];
+@@ -319,6 +324,7 @@ main(int argc, char *argv[])
+         case 'K': kill_switch = 1; break;
+         case 0x103: manage_routes = 0; break; /* --no-manage-routes */
+         case 0x104: tls_server_name = optarg; break;
++        case 0x108: cert_sha256 = optarg; break;
+         case 0x105: allow_client_sched = 1; break;
+         case 0x106: request_server_sched = 1; break;
+         case 'X':
+@@ -565,6 +571,27 @@ main(int argc, char *argv[])
+             return 1;
+         }
+ 
++        /* Certificate pin: the server's identity when its certificate is
++         * self-signed. Checked on every handshake (cert_pin.h); insecure is
++         * off whenever a pin is set. A malformed pin is fatal rather than
++         * silently falling back to Insecure or the root store. */
++        const char *eff_cert_sha256 = cert_sha256 ? cert_sha256 : file_cfg.cert_sha256;
++        int cert_pin_set = 0;
++        uint8_t cert_pin[MQVPN_CERT_PIN_LEN];
++        if (eff_cert_sha256 && eff_cert_sha256[0]) {
++            if (mqvpn_cert_pin_parse(eff_cert_sha256, cert_pin) < 0) {
++                fprintf(stderr, "error: --cert-sha256 / CertSHA256 must be 64 hex digits "
++                                "(SHA-256 of the server certificate, ':' allowed)\n");
++                return 1;
++            }
++            cert_pin_set = 1;
++            if (eff_insecure)
++                LOG_WRN("CertSHA256 set: Insecure ignored, the server certificate must "
++                        "match the pin");
++            eff_insecure = 0;
++            LOG_INF("server certificate pinned (SHA-256)");
++        }
++
+         if (eff_insecure) {
+             LOG_WRN("--insecure: accepting untrusted certificates");
+         }
+@@ -620,7 +647,9 @@ main(int argc, char *argv[])
+             /* [Advanced] TunOffload / TunGro; default 1. Linux only. */
+             .tun_offload = file_cfg.tun_offload,
+             .tun_gro = file_cfg.tun_gro,
++            .cert_pin_set = cert_pin_set,
+         };
++        if (cert_pin_set) memcpy(cfg.cert_pin, cert_pin, sizeof(cfg.cert_pin));
+         memcpy(cfg.redundant_ports, redundant_ports,
+                (size_t)n_redundant_ports * sizeof(redundant_ports[0]));
+         for (int i = 0; i < n_paths; i++) {
+diff --git a/src/platform/cert_pin.c b/src/platform/cert_pin.c
+new file mode 100644
+index 0000000..518080e
+--- /dev/null
++++ b/src/platform/cert_pin.c
+@@ -0,0 +1,62 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright (c) 2026 mp0rta and mqvpn contributors
++
++/* Server certificate pin for the CLI client; see cert_pin.h. */
++
++#include "cert_pin.h"
++#include "log.h"
++
++#include <openssl/mem.h> /* CRYPTO_memcmp */
++#include <openssl/sha.h>
++
++static int
++hexval(char c)
++{
++    if (c >= '0' && c <= '9') return c - '0';
++    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
++    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
++    return -1;
++}
++
++int
++mqvpn_cert_pin_parse(const char *s, uint8_t out[MQVPN_CERT_PIN_LEN])
++{
++    uint8_t pin[MQVPN_CERT_PIN_LEN];
++    size_t n = 0;
++    if (!s) return -1;
++    while (*s) {
++        if (*s == ':') {
++            /* only between bytes: not leading, trailing or doubled */
++            if (n == 0 || s[1] == '\0' || s[1] == ':') return -1;
++            s++;
++            continue;
++        }
++        int hi = hexval(s[0]);
++        int lo = hi < 0 ? -1 : hexval(s[1]);
++        if (hi < 0 || lo < 0 || n == MQVPN_CERT_PIN_LEN) return -1;
++        pin[n++] = (uint8_t)(hi << 4 | lo);
++        s += 2;
++    }
++    if (n != MQVPN_CERT_PIN_LEN) return -1;
++    for (size_t i = 0; i < MQVPN_CERT_PIN_LEN; i++)
++        out[i] = pin[i];
++    return 0;
++}
++
++int
++mqvpn_cert_pin_verify(const uint8_t *const certs[], const size_t cert_len[],
++                      size_t n_certs, const char *hostname, void *ctx)
++{
++    const uint8_t *pin = (const uint8_t *)ctx;
++    uint8_t digest[SHA256_DIGEST_LENGTH];
++    (void)hostname; /* the pin is the identity; no name check */
++    if (!pin || n_certs == 0 || !certs || !cert_len || !certs[0] || cert_len[0] == 0)
++        return -1;
++    SHA256(certs[0], cert_len[0], digest);
++    if (CRYPTO_memcmp(digest, pin, sizeof(digest)) != 0) {
++        LOG_ERR("TLS certificate rejected: leaf SHA-256 does not match the pinned "
++                "certificate (CertSHA256)");
++        return -1;
++    }
++    return 0;
++}
+diff --git a/src/platform/cert_pin.h b/src/platform/cert_pin.h
+new file mode 100644
+index 0000000..a6c7ddb
+--- /dev/null
++++ b/src/platform/cert_pin.h
+@@ -0,0 +1,31 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright (c) 2026 mp0rta and mqvpn contributors
++
++/*
++ * Server certificate pin for the CLI client (--cert-sha256 / [Server]
++ * CertSHA256): the SHA-256 of the server's leaf certificate (DER). With a
++ * pin, the leaf must hash to it and nothing else is checked (no chain, no
++ * hostname): the pin is the server's identity, as for a self-signed server
++ * certificate. Installed through mqvpn_config_set_cert_verifier, so the
++ * library consults it on every handshake, reconnects included.
++ */
++#ifndef MQVPN_CERT_PIN_H
++#define MQVPN_CERT_PIN_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#define MQVPN_CERT_PIN_LEN 32
++
++/* Parses 64 hex digits, any case, optionally ':'-separated between bytes
++ * (AB:CD:...). Returns 0 and fills out, or -1 (out untouched) on anything
++ * else. */
++int mqvpn_cert_pin_parse(const char *s, uint8_t out[MQVPN_CERT_PIN_LEN]);
++
++/* mqvpn_cert_verify_fn: ctx is the uint8_t[MQVPN_CERT_PIN_LEN] pin. Accepts
++ * only a chain whose leaf (certs[0]) hashes to the pin (constant-time
++ * compare). Returns 0 to accept, -1 to reject. */
++int mqvpn_cert_pin_verify(const uint8_t *const certs[], const size_t cert_len[],
++                          size_t n_certs, const char *hostname, void *ctx);
++
++#endif /* MQVPN_CERT_PIN_H */
+diff --git a/src/platform/client_config_bridge.c b/src/platform/client_config_bridge.c
+index d7f2be9..9b213a6 100644
+--- a/src/platform/client_config_bridge.c
++++ b/src/platform/client_config_bridge.c
+@@ -18,6 +18,7 @@
+ 
+ #include "vpn_client.h"
+ #include "mqvpn_internal.h" /* mqvpn_config_apply_reorder / _apply_hybrid */
++#include "cert_pin.h"
+ 
+ void
+ mqvpn_platform_apply_client_config(mqvpn_config_t *lib_cfg, const mqvpn_client_cfg_t *cfg)
+@@ -27,6 +28,14 @@ mqvpn_platform_apply_client_config(mqvpn_config_t *lib_cfg, const mqvpn_client_c
+         mqvpn_config_set_tls_server_name(lib_cfg, cfg->tls_server_name);
+     if (cfg->auth_key) mqvpn_config_set_auth_key(lib_cfg, cfg->auth_key);
+     mqvpn_config_set_insecure(lib_cfg, cfg->insecure);
++    if (cfg->cert_pin_set) {
++        /* The pin is the server's identity: verified on every handshake by
++         * the leaf's SHA-256. Never together with insecure, which would turn
++         * every check off (the library lets insecure win). */
++        mqvpn_config_set_insecure(lib_cfg, 0);
++        mqvpn_config_set_cert_verifier(lib_cfg, mqvpn_cert_pin_verify,
++                                       (void *)cfg->cert_pin);
++    }
+     mqvpn_config_set_multipath(lib_cfg, cfg->n_paths > 1 ? 1 : 0);
+     mqvpn_config_set_reconnect(lib_cfg, cfg->reconnect,
+                                cfg->reconnect_interval > 0 ? cfg->reconnect_interval : 5);
+diff --git a/src/platform/windows/platform_windows.c b/src/platform/windows/platform_windows.c
+index c77a30b..c74036d 100644
+--- a/src/platform/windows/platform_windows.c
++++ b/src/platform/windows/platform_windows.c
+@@ -756,8 +756,9 @@ win_platform_run_client(const mqvpn_client_cfg_t *cfg)
+      * shared rule decides identity. Not installed when the operator supplied
+      * a custom trust path for the library-side verifier (the public header
+      * names SSL_CERT_FILE / SSL_CERT_DIR as overrides of the default paths),
+-     * nor with Insecure, where no verifier is ever consulted. */
+-    if (!cfg->insecure) {
++     * nor with Insecure, where no verifier is ever consulted, nor with a
++     * certificate pin (the bridge installed the pin verifier). */
++    if (!cfg->insecure && !cfg->cert_pin_set) {
+         const char *cert_file = getenv("SSL_CERT_FILE");
+         const char *cert_dir = getenv("SSL_CERT_DIR");
+         if (cert_file && cert_file[0]) {
+diff --git a/src/vpn_client.h b/src/vpn_client.h
+index 10f405f..dc2a9fd 100644
+--- a/src/vpn_client.h
++++ b/src/vpn_client.h
+@@ -9,6 +9,7 @@
+ #include "libmqvpn.h"          /* for MQVPN_MAX_PATHS */
+ #include "reorder.h"           /* mqvpn_reorder_config_t (INI [Reorder] bridge) */
+ #include "hybrid/classifier.h" /* mqvpn_hybrid_config_t (INI [Hybrid] bridge) */
++#include "platform/cert_pin.h" /* MQVPN_CERT_PIN_LEN */
+ 
+ #define MQVPN_MAX_PATH_IFACES 8
+ _Static_assert(MQVPN_MAX_PATH_IFACES == MQVPN_MAX_PATHS,
+@@ -20,6 +21,12 @@ typedef struct mqvpn_client_cfg_s {
+     const char *tls_server_name; /* SNI / cert verify name (NULL = use server_addr) */
+     const char *tun_name;        /* TUN device name */
+     int insecure;                /* skip TLS cert verification */
++    /* Server certificate pin (--cert-sha256 / [Server] CertSHA256): when set,
++     * only a leaf whose DER SHA-256 equals cert_pin is accepted, on every
++     * handshake, and insecure is ignored. The bridge hands the library a
++     * pointer to cert_pin, so this struct must outlive the client. */
++    int cert_pin_set;
++    uint8_t cert_pin[MQVPN_CERT_PIN_LEN];
+     int log_level;               /* mqvpn_log_level_t */
+     const char *path_ifaces[MQVPN_MAX_PATH_IFACES]; /* network interfaces for multipath */
+     int n_paths;                  /* number of path interfaces (0 = single-path) */
+diff --git a/tests/test_cert_pin.c b/tests/test_cert_pin.c
+new file mode 100644
+index 0000000..e6c8d31
+--- /dev/null
++++ b/tests/test_cert_pin.c
+@@ -0,0 +1,108 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright (c) 2026 mp0rta and mqvpn contributors
++
++/*
++ * test_cert_pin.c — the CLI's server certificate pin (src/platform/
++ * cert_pin.c): the --cert-sha256 / CertSHA256 parser and the leaf verifier
++ * the bridge installs with mqvpn_config_set_cert_verifier.
++ */
++#include "platform/cert_pin.h"
++
++#include <stdio.h>
++#include <string.h>
++
++static int g_pass = 0, g_fail = 0;
++
++#define CHECK(cond, msg)                         \
++    do {                                         \
++        if (cond) {                              \
++            g_pass++;                            \
++        } else {                                 \
++            g_fail++;                            \
++            fprintf(stderr, "FAIL: %s\n", msg);  \
++        }                                        \
++    } while (0)
++
++/* SHA-256("abc"), FIPS 180-2 test vector */
++static const char *ABC_HEX =
++    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
++static const char *ABC_HEX_COLONS_UPPER =
++    "BA:78:16:BF:8F:01:CF:EA:41:41:40:DE:5D:AE:22:23:"
++    "B0:03:61:A3:96:17:7A:9C:B4:10:FF:61:F2:00:15:AD";
++
++static void
++test_parse(void)
++{
++    uint8_t a[MQVPN_CERT_PIN_LEN], b[MQVPN_CERT_PIN_LEN];
++    CHECK(mqvpn_cert_pin_parse(ABC_HEX, a) == 0, "lowercase hex");
++    CHECK(a[0] == 0xba && a[31] == 0xad, "lowercase hex bytes");
++    CHECK(mqvpn_cert_pin_parse(ABC_HEX_COLONS_UPPER, b) == 0, "uppercase, colons");
++    CHECK(memcmp(a, b, sizeof(a)) == 0, "colons/case give the same pin");
++
++    memset(b, 0x5a, sizeof(b));
++    const char *bad[] = {
++        "",
++        "ba7816bf",                                                           /* short */
++        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad00", /* long */
++        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015a",   /* odd */
++        "ga7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",  /* non-hex */
++        ":ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", /* leading : */
++        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad:", /* trailing : */
++        "ba::7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", /* double : */
++        " ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", /* space */
++        "b:a7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", /* split byte */
++    };
++    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
++        char msg[64];
++        snprintf(msg, sizeof(msg), "rejects bad pin #%zu", i);
++        CHECK(mqvpn_cert_pin_parse(bad[i], b) < 0, msg);
++    }
++    CHECK(mqvpn_cert_pin_parse(NULL, b) < 0, "rejects NULL");
++    CHECK(b[0] == 0x5a && b[31] == 0x5a, "out untouched on failure");
++}
++
++static void
++test_verify(void)
++{
++    uint8_t pin[MQVPN_CERT_PIN_LEN];
++    mqvpn_cert_pin_parse(ABC_HEX, pin);
++    const uint8_t abc[] = {'a', 'b', 'c'};
++    const uint8_t abd[] = {'a', 'b', 'd'};
++
++    const uint8_t *good[] = {abc};
++    size_t good_len[] = {3};
++    CHECK(mqvpn_cert_pin_verify(good, good_len, 1, "any.name", pin) == 0,
++          "leaf matching the pin is accepted");
++    CHECK(mqvpn_cert_pin_verify(good, good_len, 1, NULL, pin) == 0,
++          "hostname is not checked");
++
++    const uint8_t *other[] = {abd};
++    CHECK(mqvpn_cert_pin_verify(other, good_len, 1, "any.name", pin) < 0,
++          "different leaf is rejected");
++
++    /* only the leaf counts: the pinned cert further up the chain is no use */
++    const uint8_t *chain[] = {abd, abc};
++    size_t chain_len[] = {3, 3};
++    CHECK(mqvpn_cert_pin_verify(chain, chain_len, 2, "any.name", pin) < 0,
++          "pin matching a non-leaf cert is rejected");
++
++    CHECK(mqvpn_cert_pin_verify(good, good_len, 0, "any.name", pin) < 0, "empty chain");
++    size_t zero[] = {0};
++    CHECK(mqvpn_cert_pin_verify(good, zero, 1, "any.name", pin) < 0, "empty leaf");
++    CHECK(mqvpn_cert_pin_verify(good, good_len, 1, "any.name", NULL) < 0, "no pin ctx");
++
++    uint8_t flipped[MQVPN_CERT_PIN_LEN];
++    memcpy(flipped, pin, sizeof(flipped));
++    flipped[31] ^= 1;
++    CHECK(mqvpn_cert_pin_verify(good, good_len, 1, "any.name", flipped) < 0,
++          "one bit off the pin is rejected");
++}
++
++int
++main(void)
++{
++    test_parse();
++    test_verify();
++    printf("test_cert_pin: %d passed, %d failed\n", g_pass, g_fail);
++    return g_fail == 0 ? 0 : 1;
++}
+diff --git a/tests/test_config_bridge.c b/tests/test_config_bridge.c
+index 6d0acf1..186ebf1 100644
+--- a/tests/test_config_bridge.c
++++ b/tests/test_config_bridge.c
+@@ -172,11 +172,48 @@ test_defaults_and_fallbacks(void)
+     mqvpn_config_free(lc);
+ }
+ 
++/* A certificate pin installs the pin verifier with the pin as its context
++ * and forces insecure off, even when insecure is also set: the library lets
++ * insecure win over any verifier, which would silently disable the pin. */
++static void
++test_cert_pin(void)
++{
++    mqvpn_client_cfg_t cfg;
++    memset(&cfg, 0, sizeof(cfg));
++    mqvpn_reorder_config_default(&cfg.reorder);
++    mqvpn_hybrid_config_default(&cfg.hybrid);
++    cfg.server_addr = "203.0.113.7";
++    cfg.server_port = 443;
++
++    mqvpn_config_t *lc = mqvpn_config_new();
++    if (!lc) {
++        g_fail++;
++        fprintf(stderr, "FAIL: mqvpn_config_new\n");
++        return;
++    }
++
++    /* no pin: no verifier, insecure forwarded as is */
++    cfg.insecure = 1;
++    mqvpn_platform_apply_client_config(lc, &cfg);
++    ASSERT_EQ_INT(lc->cert_verify_fn == NULL, 1, "no pin: no verifier");
++    ASSERT_EQ_INT(lc->insecure, 1, "no pin: insecure forwarded");
++
++    cfg.cert_pin_set = 1;
++    memset(cfg.cert_pin, 0xab, sizeof(cfg.cert_pin));
++    mqvpn_platform_apply_client_config(lc, &cfg);
++    ASSERT_EQ_INT(lc->insecure, 0, "pin: insecure forced off");
++    ASSERT_EQ_INT(lc->cert_verify_fn == mqvpn_cert_pin_verify, 1, "pin: pin verifier");
++    ASSERT_EQ_INT(lc->cert_verify_ctx == (void *)cfg.cert_pin, 1, "pin: ctx is the pin");
++
++    mqvpn_config_free(lc);
++}
++
+ int
+ main(void)
+ {
+     test_all_fields_forwarded();
+     test_defaults_and_fallbacks();
++    test_cert_pin();
+     printf("test_config_bridge: %d passed, %d failed\n", g_pass, g_fail);
+     return g_fail == 0 ? 0 : 1;
+ }
