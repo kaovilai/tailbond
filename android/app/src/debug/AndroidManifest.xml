@@ -12,6 +12,7 @@
                 <action android:name="dev.tailbond.app.debug.PAIR" />
                 <action android:name="dev.tailbond.app.debug.SHARE" />
                 <action android:name="dev.tailbond.app.debug.HUB" />
+                <action android:name="dev.tailbond.app.debug.SHARE_HUB_ADD" />
             </intent-filter>
         </receiver>
     </application>

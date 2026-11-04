@@ -22,6 +22,12 @@
 # from the share key reach the tunnel-only token server, which logs the
 # phone's tunnel address as the client; a wrong password is refused.
 #
+# Pair & Share hub on the phone: a sharer on the host (tb-sharesim, started
+# by e2e-android-server.sh with SHARESIM; 10.0.2.2:47077 from the emulator)
+# becomes a relay path of the app's tunnel (patches/mqvpn/0002 + 0004): the
+# link gets ready, mqvpn carries the path, the sharer relays bytes, and
+# when it stops the path goes and the tunnel keeps working.
+#
 # Artifacts in $OUT (default out/e2e-android): screenshots, logcat, UI dumps,
 # dumpsys connectivity, server status and log.
 set -uo pipefail
@@ -271,6 +277,45 @@ shot hub-sharing
 adb forward --remove tcp:18888 >/dev/null 2>&1 || true
 sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.HUB --ez on false >/dev/null
 wait_for 10 app_is '.hub.status == "OFF"' && ok "hub stops" || bad "hub didn't stop: $(app_status | jq -c '.hub | del(.pass)')"
+
+say "Pair & Share hub: a nearby phone's shared data (tb-sharesim on the host) as a relay path of the app's tunnel"
+if [ -s "$WORK/sharer.pid" ]; then
+  sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.SHARE_HUB_ADD --es addr 10.0.2.2:47077 >/dev/null
+  if wait_for 45 app_is '[.hub_shares[]? | select(.state == "ready")] | length == 1'; then
+    ok "link to the sharer ready: $(app_status | jq -c '[.hub_shares[] | {label, addr, via, state, path}]')"
+  else
+    bad "link not ready: $(app_status | jq -c '.hub_shares')"
+  fi
+  RP="$(app_status | jq -r '.hub_shares[0].path // empty')"
+  if [ -n "$RP" ] && wait_for 60 app_is "[.paths[] | select(.name == \"$RP\" and .status == 1)] | length == 1"; then
+    ok "mqvpn carries the relay path $RP: $(app_status | jq -c '[.paths[] | {name, kind, status}]')"
+  else
+    bad "no active relay path ${RP:-?}: $(app_status | jq -c '[.paths[] | {name, kind, status}]')"
+  fi
+  grep -q "relay path" "$OUT/logcat.txt" && ok "logcat: $(grep -oE 'Relay path added: [^ ]+ → 127.0.0.1:[0-9]+|android-reactor: path [^ ]+: relay path' "$OUT/logcat.txt" | head -n 2 | tr '\n' ';')" \
+    || bad "no relay path in logcat"
+  wait_for 30 srv_paths_ge 2 && ok "server: $CLIENT has $(srv_active_paths) active paths: $(srv_client | jq -c '[.paths[] | {state, srtt_ms}]')" \
+    || bad "server paths: $(srv_client | jq -c '[.paths[] | {state}]')"
+  for _ in 1 2 3 4 5; do token_ok; done
+  if wait_for 20 sh -c "grep -Eq 'hub [^ ]+ at [^ ]+: up [1-9][0-9]* down [1-9]' '$WORK/sharer.log'"; then
+    ok "the sharer relayed the phone's traffic: $(grep -E 'hub [^ ]+ at' "$WORK/sharer.log" | tail -n 1 | sed 's/^.*: hub /hub /')"
+  else
+    bad "the sharer relayed nothing: $(tail -n 3 "$WORK/sharer.log" | tr '\n' ' ')"
+  fi
+  wait_for 10 app_is '.hub_shares[0].up > 0 and .hub_shares[0].down > 0' && ok "the app counts it: $(app_status | jq -c '.hub_shares[0] | {up, down}')" \
+    || bad "app counters: $(app_status | jq -c '.hub_shares')"
+  shot share-hub
+  say "Pair & Share hub: the sharer stops; its path goes, the tunnel keeps working"
+  sudo kill "$(cat "$WORK/sharer.pid")" 2>/dev/null || true
+  if wait_for 20 app_is "([.hub_shares[]? | select(.state == \"ready\")] | length == 0) and ([.paths[] | select(.name == \"$RP\" and .status == 1)] | length == 0)"; then
+    ok "relay path gone: $(app_status | jq -c '{hub_shares: [.hub_shares[] | {state, reason}], paths: [.paths[] | {name, status}]}')"
+  else
+    bad "relay path still there: $(app_status | jq -c '{hub_shares, paths: [.paths[] | {name, status}]}')"
+  fi
+  wait_for 20 token_ok && ok "tunnel still works without the sharer" || bad "tunnel broken after the sharer left"
+else
+  note "no sharer on the host (e2e-android-server.sh without SHARESIM): the Pair & Share hub isn't tested"
+fi
 
 say "failover: Wi-Fi off"
 if $TWO; then

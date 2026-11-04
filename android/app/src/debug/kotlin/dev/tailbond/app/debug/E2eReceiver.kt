@@ -23,6 +23,8 @@ import kotlinx.serialization.json.put
  *     → result data: {"state":"CONNECTED","tunnel_ip":…,"paths":[…],"servers":1,"peers":{…}}
  *   … -a dev.tailbond.app.debug.HUB --ez on true|false
  *     → starts/stops "Share bonded connection" (phone hub proxy)
+ *   … -a dev.tailbond.app.debug.SHARE_HUB_ADD --es addr 10.0.2.2:47077
+ *     → bonds the sharer at that address (Pair & Share, hub side)
  *   … -a dev.tailbond.app.debug.PAIR --es uri 'tailbond://pair?d=…'
  *     → stores the pairing as the "Add phone" button does (fallback when the
  *       confirm dialog can't be tapped)
@@ -35,6 +37,17 @@ class E2eReceiver : BroadcastReceiver() {
                 if (intent.getBooleanExtra("on", true)) dev.tailbond.app.share.ShareService.start(context)
                 else dev.tailbond.app.share.ShareService.stop(context)
                 resultData = "ok"
+            }
+            ACTION_SHARE_HUB_ADD -> {
+                // a sharer by address (the emulator can't see the host's mDNS)
+                val a = intent.getStringExtra("addr").orEmpty()
+                val i = a.lastIndexOf(':')
+                if (i > 0) {
+                    dev.tailbond.app.share.ShareHubState.manual += java.net.InetSocketAddress(a.substring(0, i), a.substring(i + 1).toInt())
+                    resultData = "ok"
+                } else {
+                    resultData = "addr host:port"
+                }
             }
             ACTION_HUB -> {
                 if (intent.getBooleanExtra("on", true)) dev.tailbond.app.share.HubService.start(context)
@@ -85,6 +98,14 @@ class E2eReceiver : BroadcastReceiver() {
                     val key = repo.shareKey(repo.servers.value.firstOrNull()?.payload)
                     put("share_key", key != null)
                     val hub = dev.tailbond.app.share.HubState.live.value
+                    put("hub_shares", buildJsonArray {
+                        dev.tailbond.app.share.ShareHubState.live.value.forEach { h ->
+                            add(buildJsonObject {
+                                put("id", h.id); put("label", h.label); put("addr", h.addr); put("via", h.via)
+                                put("state", h.state); put("path", h.path); put("up", h.up); put("down", h.down); put("reason", h.reason)
+                            })
+                        }
+                    })
                     put("hub", buildJsonObject {
                         put("status", hub.status.name)
                         put("up_bytes", hub.upBytes)
@@ -114,5 +135,6 @@ class E2eReceiver : BroadcastReceiver() {
         const val ACTION_PAIR = "dev.tailbond.app.debug.PAIR"
         const val ACTION_SHARE = "dev.tailbond.app.debug.SHARE"
         const val ACTION_HUB = "dev.tailbond.app.debug.HUB"
+        const val ACTION_SHARE_HUB_ADD = "dev.tailbond.app.debug.SHARE_HUB_ADD"
     }
 }

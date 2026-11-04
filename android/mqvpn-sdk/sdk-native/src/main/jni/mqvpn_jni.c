@@ -1250,6 +1250,35 @@ JNI_FN(reactorAddPath)(JNIEnv *env, jobject thiz, jlong reactor, jlong client, j
         (int)fd, name, ANDROID_UDP_GSO, ANDROID_UDP_GRO);
 }
 
+/* tailbond: reactorAddRelayPath(reactor, client, fd, iface, relayPort) →
+ * long, as reactorAddPath. A relay path (Pair & Share hub,
+ * patches/mqvpn/0004): fd is a local UDP socket, and every datagram goes to
+ * 127.0.0.1:relayPort, the hub-side link that frames it for the sharer. No
+ * UDP GSO toward the relay: the link forwards datagram by datagram. */
+JNIEXPORT jlong JNICALL
+JNI_FN(reactorAddRelayPath)(JNIEnv *env, jobject thiz, jlong reactor, jlong client, jint fd,
+                            jstring iface, jint relayPort)
+{
+    (void)thiz;
+    if (relayPort <= 0 || relayPort > 65535) return -1;
+    char name[16] = {0};
+    if (iface) {
+        const char *n = (*env)->GetStringUTFChars(env, iface, NULL);
+        if (!n) return -1;
+        snprintf(name, sizeof(name), "%s", n);
+        (*env)->ReleaseStringUTFChars(env, iface, n);
+    }
+    struct sockaddr_in relay;
+    memset(&relay, 0, sizeof(relay));
+    relay.sin_family = AF_INET;
+    relay.sin_port = htons((uint16_t)relayPort);
+    relay.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    return (jlong)mqvpn_android_reactor_add_relay_path(
+        (mqvpn_android_reactor_t *)(intptr_t)reactor, (mqvpn_client_t *)(intptr_t)client,
+        (int)fd, name, (const struct sockaddr *)&relay, (unsigned)sizeof(relay), 0,
+        ANDROID_UDP_GRO);
+}
+
 /* reactorRemovePath(reactor, client, pathHandle) → int. Orderly removal:
  * the library abandons the path and the reactor stops polling the fd; Kotlin
  * then closes the fd (never on the bad-fd chain) and calls reactorPathReleased. */

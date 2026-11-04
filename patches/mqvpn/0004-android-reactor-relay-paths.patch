@@ -1,0 +1,71 @@
+From: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+Subject: [PATCH] android reactor: relay paths (Pair & Share hub)
+
+tailbond's Android app as a Pair & Share hub bonds nearby phones' shared
+mobile data as relay paths, as tailbondd does on Linux and macOS (patch
+0002). The reactor gets mqvpn_android_reactor_add_relay_path(): the same
+add_path, with the bind ctx made a relay path
+(mqvpn_bind_posix_path_set_relay) before the library sees it. add_path is
+the relay-less case of it. The JNI fork (android/mqvpn-sdk) exposes it as
+reactorAddRelayPath.
+
+Signed-off-by: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+---
+diff -ruN a/src/platform/android/reactor.c b/src/platform/android/reactor.c
+--- a/src/platform/android/reactor.c	2026-11-03 22:20:43.988322237 -0500
++++ b/src/platform/android/reactor.c	2026-11-03 22:20:43.996968578 -0500
+@@ -198,6 +198,15 @@
+ mqvpn_android_reactor_add_path(mqvpn_android_reactor_t *r, mqvpn_client_t *client, int fd,
+                                const char *iface, int gso_policy, int gro_policy)
+ {
++    return mqvpn_android_reactor_add_relay_path(r, client, fd, iface, NULL, 0, gso_policy,
++                                                gro_policy);
++}
++
++mqvpn_path_handle_t
++mqvpn_android_reactor_add_relay_path(mqvpn_android_reactor_t *r, mqvpn_client_t *client,
++                                     int fd, const char *iface, const struct sockaddr *relay,
++                                     unsigned relay_len, int gso_policy, int gro_policy)
++{
+     entry_t *e = NULL;
+     for (int i = 0; i < MQVPN_MAX_PATHS; i++) {
+         if (r->e[i].state == MQVPN_REACTOR_ENTRY_FREE) {
+@@ -245,6 +254,17 @@
+         memset(e, 0, sizeof(*e));
+         return -1;
+     }
++    if (relay) {
++        brc = mqvpn_bind_posix_path_set_relay(ctx, relay, (socklen_t)relay_len);
++        if (brc != MQVPN_OK) {
++            LOG_ERR("android-reactor: add_path(%s): relay: %s", e->tag,
++                    mqvpn_error_string(brc));
++            mqvpn_bind_posix_path_free(ctx);
++            memset(e, 0, sizeof(*e));
++            return -1;
++        }
++        LOG_INF("android-reactor: path %s: relay path", e->tag);
++    }
+ 
+     mqvpn_add_path_outcome_t outcome = MQVPN_ADD_PATH_OK;
+     mqvpn_path_handle_t h =
+diff -ruN a/src/platform/android/reactor.h b/src/platform/android/reactor.h
+--- a/src/platform/android/reactor.h	2026-11-03 22:20:43.988360729 -0500
++++ b/src/platform/android/reactor.h	2026-11-03 22:20:43.996851079 -0500
+@@ -96,6 +96,17 @@
+                                                    const char *iface, int gso_policy,
+                                                    int gro_policy);
+ 
++/* tailbond (patches/mqvpn/0004): add_path for a relay path (Pair & Share).
++ * fd is a local UDP socket (127.0.0.1:any); the bind ctx is made a relay
++ * path (mqvpn_bind_posix_path_set_relay, patch 0002) before the library
++ * sees it: every datagram goes to relay, a hub-side link that frames it for
++ * the sharer, and only what arrives from relay is delivered, as the
++ * server's. Same contract as add_path otherwise; relay NULL = add_path. */
++struct sockaddr;
++mqvpn_path_handle_t mqvpn_android_reactor_add_relay_path(
++    mqvpn_android_reactor_t *r, mqvpn_client_t *client, int fd, const char *iface,
++    const struct sockaddr *relay, unsigned relay_len, int gso_policy, int gro_policy);
++
+ /* mqvpn_client_remove_path() for every entry that is not FREE or POISONED
+  * (ATTACHED, INVALID or already DETACHED — the library call is idempotent);
+  * the entry becomes DETACHED whatever the library returns, and the library's

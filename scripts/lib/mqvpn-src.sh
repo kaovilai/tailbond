@@ -41,6 +41,7 @@ mqvpn_src_prepare() {
         --exclude '/build-*/' \
         --exclude '/third_party/xquic/build/' \
         --exclude '/third_party/xquic/third_party/boringssl/build/' \
+        --exclude '/android/sdk-native/prebuilt/' \
         "$src/" "$work/src/"
 
     local p

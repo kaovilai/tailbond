@@ -87,6 +87,8 @@ data class AppSettings(
     val shareCapMb: Long = 0,
     /** Pair & Share: hubs (their device names) that may use the share; empty = any device paired with the same server. */
     val shareAllowedHubs: List<String> = emptyList(),
+    /** Pair & Share, hub side: bond nearby phones' shared mobile data into this phone's tunnel. */
+    val useShares: Boolean = true,
 ) {
     val failoverTiming: FailoverTiming
         get() = FailoverTiming(

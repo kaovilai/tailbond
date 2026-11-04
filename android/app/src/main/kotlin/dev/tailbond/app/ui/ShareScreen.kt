@@ -77,6 +77,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
         )
 
         HubCard(state, actions)
+        NearbySharesSection(state, actions)
 
         SectionHeader("Who's using it")
         if (l.hubs.isEmpty()) {
@@ -188,6 +189,44 @@ private fun HubCard(state: UiState, actions: UiActions) {
                     style = MaterialTheme.typography.bodySmall, color = muted,
                 )
             }
+        }
+    }
+}
+
+/** Pair & Share, hub side: nearby phones' shared mobile data in this phone's tunnel. */
+@Composable
+private fun NearbySharesSection(state: UiState, actions: UiActions) {
+    val on = state.settings.useShares
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Use nearby phones' shared data", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Switch(checked = on, onCheckedChange = { actions.setUseShares(it) })
+    }
+    val words = mapOf("ready" to "Sharing", "connecting" to "Connecting…", "refused" to "Stopped", "unreachable" to "Can't reach it", "lost" to "Stopped answering")
+    if (!on) {
+        Text("Off: other phones' shared data isn't used.", style = MaterialTheme.typography.bodyMedium, color = muted, modifier = Modifier.padding(horizontal = 16.dp))
+    } else if (state.hubShares.isEmpty()) {
+        Text(
+            "While tailbond is on, phones on the same Wi-Fi sharing their mobile data are added to this phone's connection.",
+            style = MaterialTheme.typography.bodyMedium, color = muted, modifier = Modifier.padding(horizontal = 16.dp),
+        )
+    }
+    if (on) {
+        for (h in state.hubShares) {
+            ListItem(
+                headlineContent = { Text(h.label.ifEmpty { h.addr }) },
+                supportingContent = {
+                    Text(
+                        listOfNotNull(
+                            words[h.state] ?: h.state,
+                            h.reason.takeIf { h.state != "ready" && it.isNotEmpty() },
+                            if (h.battery >= 0) "battery ${h.battery}%" else null,
+                            formatBytes(h.up + h.down).takeIf { h.up + h.down > 0 },
+                        ).joinToString(" · "),
+                    )
+                },
+                leadingContent = { Icon(Icons.Filled.Router, null, tint = LocalBrand.current.shared) },
+            )
         }
     }
 }

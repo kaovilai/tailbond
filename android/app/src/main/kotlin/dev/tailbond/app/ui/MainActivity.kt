@@ -232,6 +232,7 @@ class MainActivity : ComponentActivity() {
         override fun setShareMinBattery(pct: Int) = vm.setShareMinBattery(pct)
         override fun setShareCapMb(mb: Long) = vm.setShareCapMb(mb)
         override fun setShareAllowedHubs(hubs: List<String>) = vm.setShareAllowedHubs(hubs)
+        override fun setUseShares(on: Boolean) = vm.setUseShares(on)
     }
 
     @Composable
@@ -264,6 +265,7 @@ class MainActivity : ComponentActivity() {
             backup = vm.backup.collectAsStateWithLifecycle().value,
             share = dev.tailbond.app.share.ShareState.live.collectAsStateWithLifecycle().value,
             hub = dev.tailbond.app.share.HubState.live.collectAsStateWithLifecycle().value,
+            hubShares = dev.tailbond.app.share.ShareHubState.live.collectAsStateWithLifecycle().value,
         )
         TailbondApp(state, actions)
     }

@@ -140,7 +140,6 @@ func (a *Agent) restoreSysProxy() {
 }
 
 func (a *Agent) phoneHubWatcher(ctx context.Context) {
-	a.restoreSysProxy()
 	t := time.NewTimer(2 * time.Second)
 	defer t.Stop()
 	for {

@@ -207,6 +207,13 @@ object NativeBridge {
     external fun reactorAddPath(reactor: Long, client: Long, fd: Int, iface: String): Long
 
     /**
+     * tailbond: [reactorAddPath] for a relay path (Pair & Share hub,
+     * patches/mqvpn/0004): [fd] is a local UDP socket; every datagram goes to
+     * 127.0.0.1:[relayPort], the hub-side link to a nearby phone's share.
+     */
+    external fun reactorAddRelayPath(reactor: Long, client: Long, fd: Int, iface: String, relayPort: Int): Long
+
+    /**
      * mqvpn_client_remove_path() + stop polling the fd. Returns the library's
      * code, or -1 (MQVPN_ERR_INVALID_ARG, nothing called) for an unknown or
      * poisoned handle. Then the caller closes the fd — except on the bad-fd

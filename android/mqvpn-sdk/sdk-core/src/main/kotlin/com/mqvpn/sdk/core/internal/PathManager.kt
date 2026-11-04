@@ -46,6 +46,8 @@ internal class PathManager(
             PathBinder.bindAndDetachUdp(network, host, port, prot)
         },
     private val closeFd: (Int) -> Unit = ::closeFdSafe,
+    /** tailbond: a local UDP socket (127.0.0.1, any port) for a relay path; its fd, detached. */
+    private val openRelaySocket: () -> Int = ::loopbackUdpFd,
     /**
      * tailbond: whether an available network should carry a path right now
      * (per-path enable, priority/standby, data cap). A network the gate
@@ -60,6 +62,64 @@ internal class PathManager(
     private var connected = false
     private val pathHandles = mutableMapOf<Network, Long>()  // network → pathHandle
     private val pathFds = mutableMapOf<Long, Int>()           // pathHandle → fd
+    // tailbond: relay paths (Pair & Share hub), engine-thread state
+    private val relayHandles = mutableMapOf<String, Pair<Long, Int>>() // name → (pathHandle, relay port)
+
+    /**
+     * tailbond: bring the relay paths in line with [wanted] (path name →
+     * the local port of its hub-side link): attach the new ones, detach the
+     * ones gone or moved. Called from IO.
+     */
+    suspend fun setRelays(wanted: Map<String, Int>) = mutex.withLock {
+        val attached = handOver { relayHandles.toMap() } ?: return@withLock
+        for ((name, hp) in attached) {
+            if (wanted[name] != hp.second) detachRelay(name)
+        }
+        for ((name, port) in wanted) {
+            if (attached[name]?.second != port) attachRelay(name, port)
+        }
+    }
+
+    private suspend fun attachRelay(name: String, port: Int) {
+        val fd = try {
+            openRelaySocket()
+        } catch (e: Exception) {
+            Log.e(TAG, "relay socket for $name: ${e.message}")
+            return
+        }
+        val handle = handOver {
+            val h = tunnel.addRelayPath(fd, name, port)
+            if (h < 0) return@handOver h
+            relayHandles[name] = h to port
+            pathFds[h] = fd
+            if (!connected) {
+                tunnel.setServerAddr(serverHost, serverPort)
+                tunnel.connect()
+                connected = true
+            }
+            h
+        }
+        if (handle == null || handle < 0) {
+            Log.e(TAG, "addRelayPath failed for $name: $handle")
+            closeFd(fd)
+            return
+        }
+        Log.i(TAG, "Relay path added: $name → 127.0.0.1:$port (handle=$handle, fd=$fd)")
+    }
+
+    private suspend fun detachRelay(name: String) {
+        val h = handOver {
+            val hp = relayHandles.remove(name) ?: return@handOver -1L
+            val h = hp.first
+            val fd = pathFds.remove(h)
+            val rc = tunnel.removePath(h)
+            if (rc != 0) Log.w(TAG, "removePath for $name returned $rc")
+            if (fd != null) closeFd(fd)
+            checkReleased(tunnel.pathReleased(h), name)
+            h
+        } ?: return
+        if (h >= 0) Log.i(TAG, "Relay path removed: $name (handle=$h)")
+    }
 
     /**
      * Handle a network event. Must be called from IO dispatcher.
@@ -194,6 +254,7 @@ internal class PathManager(
     fun handleBadFd(handle: Long) {
         val network = pathHandles.entries.firstOrNull { it.value == handle }?.key
         if (network != null) pathHandles.remove(network)
+        relayHandles.entries.firstOrNull { it.value.first == handle }?.key?.let { relayHandles.remove(it) }
         val fd = pathFds.remove(handle)
         Log.e(TAG, "Path fd closed behind the platform (handle=$handle, fd=$fd); removing without close")
         val rc = tunnel.removePath(handle)
@@ -218,11 +279,23 @@ internal class PathManager(
         }
         pathFds.clear()
         pathHandles.clear()
+        relayHandles.clear()
         connected = false
     }
 
     companion object {
         private const val TAG = "PathManager"
+
+        // tailbond: a relay path's socket: UDP on 127.0.0.1 (never routed
+        // into the VPN), its fd detached from the Java object.
+        private fun loopbackUdpFd(): Int {
+            val ds = java.net.DatagramSocket(java.net.InetSocketAddress(java.net.InetAddress.getByName("127.0.0.1"), 0))
+            try {
+                return android.os.ParcelFileDescriptor.fromDatagramSocket(ds).detachFd()
+            } finally {
+                ds.close() // fromDatagramSocket holds a dup
+            }
+        }
 
         // An untagged close(2) through the JNI; NativeBridge.closeFd says why.
         private fun closeFdSafe(fd: Int) {

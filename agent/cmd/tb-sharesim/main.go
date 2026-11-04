@@ -51,6 +51,7 @@ func main() {
 	register := flag.String("register", "", "home server API base URL to register with, e.g. http://127.0.0.1:8077 (default: don't)")
 	registerOnly := flag.Bool("register-only", false, "register once and exit, without relaying")
 	proxyAddr := flag.String("proxy", "", "run the phone hub's proxy on this address:port instead of a relay")
+	upstream := flag.String("upstream", "", "relay to this server address instead of the pairing's (the Android emulator e2e: the pairing says 10.0.2.2, the host's 127.0.0.1)")
 	flag.Parse()
 	if *proxyAddr != "" {
 		*listen = *proxyAddr
@@ -146,8 +147,12 @@ func main() {
 		return
 	}
 
+	server := p.Server
+	if *upstream != "" {
+		server = *upstream
+	}
 	sh, err := share.NewSharer(share.SharerConfig{
-		ID: *id, Label: *label, Key: key, Server: p.Server,
+		ID: *id, Label: *label, Key: key, Server: server,
 		Dial: func(ctx context.Context, server string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "udp", server)
@@ -162,7 +167,7 @@ func main() {
 		log.Fatal(err)
 	}
 	go func() { _ = sh.Serve(ctx, conn) }()
-	logf("sharing as %q on %s, upstream %s", *label, la, p.Server)
+	logf("sharing as %q on %s, upstream %s", *label, la, server)
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {

@@ -53,6 +53,15 @@ jobs:
           name: tailbondd
           path: out/agent/
           if-no-files-found: error
+      # the stand-in sharer for the Android emulator's Pair & Share hub test
+      - name: tb-sharesim (linux/amd64)
+        working-directory: agent
+        run: CGO_ENABLED=0 go build -trimpath -o ../out/tools/tb-sharesim ./cmd/tb-sharesim
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tb-sharesim-linux-amd64
+          path: out/tools/tb-sharesim
+          if-no-files-found: error
 
   shellcheck:
     name: ShellCheck
@@ -143,9 +152,10 @@ jobs:
         with:
           # build-native.sh skips the NDK build when these prebuilt libs exist
           # (arm64-v8a for phones, x86_64 for the emulator)
-          path: third_party/mqvpn/android/sdk-native/prebuilt
-          key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-${{ github.sha }}
-          restore-keys: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-
+          # (from the patched copy of mqvpn, scripts/lib/mqvpn-src.sh)
+          path: out/mqvpn-android/src/android/sdk-native/prebuilt
+          key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh', 'patches/mqvpn/*.patch') }}-${{ github.sha }}
+          restore-keys: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh', 'patches/mqvpn/*.patch') }}-
       - name: Unit tests, lint, debug APK
         run: android/scripts/build-apk.sh
       - uses: actions/upload-artifact@v7
@@ -230,6 +240,10 @@ jobs:
         with:
           name: android-apk-x86_64
           path: out/android/
+      - uses: actions/download-artifact@v8
+        with:
+          name: tb-sharesim-linux-amd64
+          path: out/tools/
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -237,8 +251,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: tailbond server on the runner (static mqvpn, Tailscale off)
         run: |
-          chmod +x out/x86_64/mqvpn out/agent/linux-amd64/tailbondd
-          MQVPN="$PWD/out/x86_64/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/e2e-android-server.sh
+          chmod +x out/x86_64/mqvpn out/agent/linux-amd64/tailbondd out/tools/tb-sharesim
+          MQVPN="$PWD/out/x86_64/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" SHARESIM="$PWD/out/tools/tb-sharesim" scripts/e2e-android-server.sh
       - name: Emulator (API 34, x86_64) and the checks
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:

@@ -92,7 +92,11 @@ func (a *Agent) startClient(ctx context.Context) {
 	go a.serverWatcher(ctx)
 	go a.bypassWatcher(ctx)
 	go a.shareWatcher(ctx)
+	// before mqvpn starts: its own networksetup calls (DNS) at start-up
+	// would race this change to the same preferences, and the last
+	// writer wins
 	a.initSysProxy()
+	a.restoreSysProxy()
 	go a.phoneHubWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
