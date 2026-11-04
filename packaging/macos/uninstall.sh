@@ -27,6 +27,12 @@ esac
 
 if [ -z "${TB_NO_LAUNCHD:-}" ]; then
     launchctl bootout "system/$LABEL" 2>/dev/null || true
+    # bootout can return while tailbondd is still stopping (mqvpn, then the
+    # down hooks): let it finish before its files go
+    for _ in $(seq 1 30); do
+        pgrep -f "^$PREFIX/bin/tailbondd" >/dev/null 2>&1 || break
+        sleep 1
+    done
 fi
 # a system proxy a phone hub left set (tailbondd puts it back when it
 # stops; this covers one that was killed): docs/phone-hub.md
@@ -40,6 +46,8 @@ if [ -f "$STATE/mqvpn.pid" ]; then kill "$(cat "$STATE/mqvpn.pid")" 2>/dev/null 
 if [ -f "$STATE/server-net.state" ] && [ -x "$PREFIX/lib/tailbond/hooks/server-down" ]; then
     TB_STATE_DIR="$STATE" "$PREFIX/lib/tailbond/hooks/server-down" || true
 fi
+# and the server's pf anchor in any case (it's tailbond's own)
+pfctl -q -a com.apple/251.tailbond.server -F all 2>/dev/null || true
 # the application firewall entries a server's hook added
 ALF=/usr/libexec/ApplicationFirewall/socketfilterfw
 if [ -x "$ALF" ]; then

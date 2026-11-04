@@ -114,6 +114,11 @@ launchd_on() { [ -z "${TB_NO_LAUNCHD:-}" ]; }
 tb_stop() {
     launchd_on || return 0
     launchctl bootout "system/$LABEL" 2>/dev/null || true
+    # bootout can return before tailbondd has stopped mqvpn and run its hooks
+    for _ in $(seq 1 30); do
+        pgrep -f "^$BINDIR/tailbondd" >/dev/null 2>&1 || break
+        sleep 1
+    done
 }
 tb_start() {
     launchd_on || return 0
