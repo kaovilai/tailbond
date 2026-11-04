@@ -159,3 +159,23 @@ func TestStatusJSONShape(t *testing.T) {
 		}
 	}
 }
+
+// A reconnect can leave the previous session on the server until its idle
+// timeout: the device shows once, with its newest session's paths.
+func TestServerNewestSessionPerUser(t *testing.T) {
+	st := &mqctl.Status{Clients: []mqctl.ClientInfo{
+		{User: "mac", Endpoint: "198.51.100.7:50001", ConnectedSec: 95, Paths: []mqctl.Path{{PathID: 0, StateLabel: "active"}, {PathID: 1, StateLabel: "active"}, {PathID: 2, StateLabel: "active"}}},
+		{User: "mac", Endpoint: "198.51.100.7:50002", ConnectedSec: 12, Paths: []mqctl.Path{{PathID: 0, StateLabel: "active"}, {PathID: 1, StateLabel: "active"}}},
+		{User: "pixel", Endpoint: "203.0.113.9:4000", ConnectedSec: 400, Paths: []mqctl.Path{{PathID: 0, StateLabel: "active"}}},
+	}}
+	cs, _, _ := Server(NewRater(), time.Now(), st, nil, []string{"mac", "pixel"})
+	if len(cs) != 2 {
+		t.Fatalf("clients: %+v", cs)
+	}
+	if cs[0].Name != "mac" || cs[0].Endpoint != "198.51.100.7:50002" || len(cs[0].Paths) != 2 || !cs[0].Connected {
+		t.Errorf("mac: %+v", cs[0])
+	}
+	if cs[1].Name != "pixel" || len(cs[1].Paths) != 1 {
+		t.Errorf("pixel: %+v", cs[1])
+	}
+}

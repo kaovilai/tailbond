@@ -481,7 +481,20 @@ func Server(r *Rater, now time.Time, st *mqctl.Status, stats *mqctl.Stats, regis
 	}
 	var live []Client
 	if st != nil {
-		for _, c := range st.Clients {
+		// One device runs one session; a reconnect can leave the previous
+		// one on the server until its idle timeout (its close went out on a
+		// path that had just died). Only the newest session per user counts:
+		// the ghost would show the device twice with paths it no longer has.
+		newest := map[string]int{}
+		for i, c := range st.Clients {
+			if j, ok := newest[c.User]; !ok || c.ConnectedSec < st.Clients[j].ConnectedSec {
+				newest[c.User] = i
+			}
+		}
+		for i, c := range st.Clients {
+			if newest[c.User] != i {
+				continue
+			}
 			key := "c/" + c.User + "/" + c.Endpoint
 			txb, rxb, _ := r.Rate(key, now, c.BytesTx, c.BytesRx, 0, 0)
 			cl := Client{
