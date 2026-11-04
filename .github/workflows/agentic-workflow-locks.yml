@@ -1,0 +1,42 @@
+name: Agentic workflow lock files
+
+# gh-aw compiles .github/workflows/*.md into *.lock.yml; fail if a lock file
+# is stale (edited .md without recompiling, or gh-aw changed its output).
+on:
+  pull_request:
+    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml"]
+  push:
+    branches: [main]
+    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml"]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install gh-aw
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh release list --repo github/gh-aw --limit 1 --json tagName --jq '.[0].tagName')
+          mkdir -p "$RUNNER_TEMP/gh-aw/bin"
+          curl -fsSL --retry 3 "https://github.com/github/gh-aw/releases/download/${TAG}/linux-amd64" -o "$RUNNER_TEMP/gh-aw/linux-amd64"
+          curl -fsSL --retry 3 "https://github.com/github/gh-aw/releases/download/${TAG}/checksums.txt" -o "$RUNNER_TEMP/gh-aw/checksums.txt"
+          (cd "$RUNNER_TEMP/gh-aw" && grep ' linux-amd64$' checksums.txt | sha256sum --check --status)
+          install -m 0755 "$RUNNER_TEMP/gh-aw/linux-amd64" "$RUNNER_TEMP/gh-aw/bin/gh-aw"
+          echo "$RUNNER_TEMP/gh-aw/bin" >> "$GITHUB_PATH"
+      - name: Recompile and compare
+        run: |
+          gh-aw version
+          gh-aw compile --strict
+          if [ -n "$(git status --porcelain -- '.github/workflows/*.lock.yml')" ]; then
+            git --no-pager diff --stat -- '.github/workflows/*.lock.yml'
+            echo "::error::Lock files are stale: run 'gh aw compile' and commit the result."
+            exit 1
+          fi
