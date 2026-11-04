@@ -763,12 +763,13 @@ jobs:
       # stable names (releases/latest/download/<name>) plus the versioned
       # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
       - name: Collect assets and SHA256SUMS
-        run: scripts/release/collect-assets.sh dist assets
+        # not "assets/": the repo has one (logos), which would end up in the release
+        run: scripts/release/collect-assets.sh dist release-assets
       # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
       # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: assets/*
+          subject-path: release-assets/*
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -787,7 +788,7 @@ jobs:
             notes=(--notes "[security] This release fixes a security issue. Installs on Right away take it without waiting for a quiet moment.")
             echo "security release (a Security: yes trailer since ${prev:-the start})"
           fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "${notes[@]}" --verify-tag "${pre[@]}" assets/*
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "${notes[@]}" --verify-tag "${pre[@]}" release-assets/*
 
   copr:
     name: COPR build (Fedora)
