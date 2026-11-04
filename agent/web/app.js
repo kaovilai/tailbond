@@ -358,7 +358,8 @@ function renderLocalHead(st) {
     h('p', { class: 'muted small', text: on
       ? (mac ? 'Wi-Fi, Ethernet and USB-C adapters, and an iPhone plugged in over USB (Personal Hotspot on) are bonded with the phones below.' : 'Its own uplinks are bonded with the phones below.')
       : "Off: only nearby phones' shared data is bonded. With no phone sharing, tailbond connects over the default route." }));
-  box.classList.toggle('hidden', st.role !== 'client' || !st.platform);
+  // the Mac's own switch; elsewhere the per-connection switches do it
+  box.classList.toggle('hidden', st.role !== 'client' || !mac);
 }
 
 // Pair & Share: phones on this machine's network lending their mobile data

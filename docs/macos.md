@@ -121,8 +121,9 @@ sharing isn't available here.* What works instead:
   the hotel Wi-Fi, and the Mac and the phones join the router's own Wi-Fi,
   where nothing is isolated. The router can be the hub itself.
 - **A phone's hotspot**: the Mac and the other phones join one phone's
-  Personal Hotspot. Its data reaches tailbond as the Mac's Wi-Fi; the other
-  phones share theirs over that hotspot's network.
+  Personal Hotspot. Its data reaches tailbond as the Mac's Wi-Fi, and the
+  other phones share theirs over that hotspot's network, where phone
+  hotspots usually let devices reach each other.
 - **Internet Sharing on the Mac** (System Settings → General → Sharing →
   Internet Sharing, from Ethernet or iPhone USB *to* Wi-Fi): the phones join
   the Mac's own Wi-Fi network. The Mac's Wi-Fi radio then can't also be a

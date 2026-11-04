@@ -6,8 +6,8 @@ each lend their 5G/LTE over the hotel Wi-Fi to the **hub**, which bonds them
 with its own Wi-Fi and Ethernet in one tunnel to your home server.
 
 - **Hub** (bonds): the travel router (GL.iNet Slate 7 or another OpenWrt
-  router running tailbond in the client role), or a Linux laptop running
-  tailbondd in the client role.
+  router running tailbond in the client role), a Mac ([macos.md](macos.md)),
+  or a Linux laptop running tailbondd in the client role.
 - **Sharer** (lends): tailbond on Android (**Share my mobile data**), the
   **tailbond Share** app on iPhone ([ios.md](ios.md)), or a Linux machine with
   an LTE dongle (`client.share`, below).
@@ -41,14 +41,16 @@ per-connection limit applies on top.
 *hotel's* Wi-Fi can't reach a laptop hub there. tailbond says so: *This Wi-Fi
 blocks devices from talking to each other; sharing isn't available here.*
 With the travel router this doesn't happen: phones join the router's own
-Wi-Fi. Otherwise use USB tethering (below).
+Wi-Fi. Otherwise use USB tethering (below), or on a Mac one of the
+workarounds in [macos.md](macos.md#hotel-wi-fi-that-keeps-devices-apart).
 
 ## USB tethering is already bonded
 
-A phone plugged into the travel router (or a laptop) with **USB tethering**
+A phone plugged into the travel router (or a laptop, or a Mac) with **USB tethering**
 on, or a phone hotspot the router joins as its repeater uplink, is just another
 WAN: tailbond bonds it with no app on the phone. An iPhone over USB shows as
-**iPhone (USB)** (Apple's `ipheth` driver); Android shows as Tethering. USB
+**iPhone (USB)** (Apple's `ipheth` driver on Linux, the "iPhone USB" hardware
+port on a Mac); Android shows as Tethering. USB
 also charges the phone, and works where hotel Wi-Fi isolates devices.
 
 ## A Linux machine sharing its uplink
@@ -125,14 +127,16 @@ Two ways to make mqvpn send one path somewhere other than the server:
   differ between OpenWrt's firewall4 and a Linux client's nftables, and is
   hard to test.
 
-(a) is smaller, the same on OpenWrt and Linux, and keeps the relay protocol
+(a) is smaller, the same on OpenWrt, Linux and macOS (`0003` wires it into
+mqvpn's Darwin client: the relay path's socket isn't `IP_BOUND_IF`-pinned and
+the route monitor leaves it alone), and keeps the relay protocol
 (authentication, framing, counters, caps) in Go, where it is tested next to
 the sharer. The Android SDK fork doesn't need the patch: a phone only shares,
 it never bonds a share.
 
 ## Limits and what isn't tested
 
-- Hubs are Linux (OpenWrt or a Linux client). A phone running tailbond
+- Hubs are OpenWrt routers, Linux clients and Macs. A phone running tailbond
   doesn't bond other phones' shares.
 - iPhone sharing pauses whenever tailbond Share leaves the screen (iOS
   suspends it): free signing can't use background VPN/Network Extension
@@ -142,8 +146,10 @@ it never bonds a share.
   put a hub on the emulator's virtual Wi-Fi, so the Android relay's traffic is
   covered by unit tests over loopback (the same frames as Go, pinned by
   `agent/internal/share/testdata/vectors.json`). The full hub ↔ sharer ↔
-  server path runs in `scripts/e2e-share.sh` with the Linux sharer.
+  server path runs in `scripts/e2e-share.sh` with the Linux sharer, and in
+  `scripts/e2e-macos.sh` with a Mac hub bonding two sharers (the reference
+  relay, `agent/cmd/tb-sharesim`) on a macOS runner.
 - Not yet run on real phones and routers: Android's behaviour with
   `bindSocket`/`protect` while our own VPN runs, iOS Local Network
   permission prompts and Bonjour on real Wi-Fi, GL firmware's firewall with
-  LAN-side UDP to the router.
+  LAN-side UDP to the router, a Mac hub on a real Wi-Fi network.
