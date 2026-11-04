@@ -72,7 +72,9 @@ type healthInputs struct {
 	ServerTS string // client role: the paired server's tailnet name
 	// server: tagged (no owner), no approvers, no password
 	OpenApproval bool
-	Now          time.Time
+	// server on a Mac: sleep (nil elsewhere)
+	Power *powerInfo
+	Now   time.Time
 }
 
 // lanIP is ip when it's a home-network address (what a port forward points at).
@@ -187,7 +189,7 @@ func buildHealth(in healthInputs) healthView {
 			add(healthCheck{ID: "route", Status: hWarn, Title: "Route " + in.Route + " isn't approved yet (optional)",
 				Detail: "Devices connected through tailbond reach your Tailscale machines without it. Approving it lets your Tailscale machines reach those devices too, under your access rules.",
 				Fix: "If you want that: Tailscale admin console → Machines → this machine → Edit route settings (an autoApprovers rule in your policy approves it automatically). " +
-					"If you do not want it: leave it, or add \"no_advertise_route\": true inside the \"server\" section of /etc/tailbond/tailbond.json, then restart tailbond (Fedora: sudo systemctl restart tailbond; GL.iNet: /etc/init.d/tailbond restart) to stop advertising it.", FixURL: urlSubnetRtrs})
+					"If you do not want it: leave it, or add \"no_advertise_route\": true inside the \"server\" section of " + config.DefaultPath + ", then restart tailbond (Fedora: sudo systemctl restart tailbond; GL.iNet: /etc/init.d/tailbond restart; Mac: sudo launchctl kickstart -k system/com.tailbond.tailbondd) to stop advertising it.", FixURL: urlSubnetRtrs})
 		}
 	}
 
@@ -224,6 +226,9 @@ func buildHealth(in healthInputs) healthView {
 	} else {
 		add(healthCheck{ID: "port", Status: hUnknown, Title: fmt.Sprintf("UDP %d: not confirmed from outside yet", in.Port),
 			Detail: "It can't be checked from inside your network; the first device that connects from away confirms it. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute."})
+	}
+	if in.Power != nil {
+		add(powerCheck(in.Power))
 	}
 	if in.OpenApproval {
 		add(healthCheck{ID: "approvers", Status: hWarn, Title: "Anyone on your Tailscale network can approve devices",
@@ -322,6 +327,7 @@ func (a *Agent) hHealth(w http.ResponseWriter, r *http.Request) {
 			in.Route = cfg.Server.Subnet
 		}
 		in.OpenApproval = in.TS.Running && in.TS.Owner == "" && len(cfg.Approvers) == 0 && cfg.UIPassword == ""
+		in.Power = readPower(r.Context())
 		a.mu.Lock()
 		in.Outside = a.outside
 		a.mu.Unlock()

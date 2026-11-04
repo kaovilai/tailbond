@@ -1,0 +1,207 @@
+#!/bin/bash
+# tailbond macOS server-up hook (docs/macos.md "Mac as home server"). Run by
+# tailbondd after mqvpn's server starts on a utun.
+# Env: TB_TUN (utunN) TB_SUBNET TB_SUBNET6 TB_PORT TB_WEB_PORTS
+#      TB_ADVERTISE_ROUTE TB_TAILSCALE (0: disable_tailscale, leave Tailscale
+#      alone) TB_STATE_DIR; TB_REFRESH=1 when tailbondd runs it again because
+#      Tailscale came up or changed interface: only the pf rules and the
+#      route advertisement are redone.
+#
+# The Mac twin of packaging/linux/hooks/server-up:
+# - IP forwarding on (net.inet.ip.forwarding, net.inet6.ip6.forwarding).
+# - pf anchor com.apple/251.tailbond.server (the stock /etc/pf.conf
+#   evaluates com.apple/* for nat and filter rules; a main ruleset without
+#   those anchors, i.e. another firewall's, is never replaced: then there's
+#   no NAT and the hook says so), pf enabled with a
+#   reference token: NAT of the tunnel subnets out the default-route
+#   interface and, toward 100.64.0.0/10 / fd7a:115c:a1e0::/48, out
+#   Tailscale's interface; the dashboard and phone page (TB_WEB_PORTS) only
+#   from loopback, bonded clients on the tunnel and tailnet ranges.
+# - The application firewall, when on: mqvpn and tailbondd allowed in.
+# - A power assertion (caffeinate) so the Mac doesn't sleep while serving.
+# - Tailscale: advertise TB_SUBNET as a subnet route, as on Linux.
+#
+# Everything it changes is written first to $TB_STATE_DIR/server-net.state,
+# the restore record: server-down puts it all back from there, and a record
+# left by a crash (kill -9, power loss of tailbondd) is restored here before
+# anything is applied again. Runs with macOS's own bash 3.2.
+set -u
+
+TB_TUN="${TB_TUN:-utun}"
+TB_PORT="${TB_PORT:-443}"
+TB_SUBNET6="${TB_SUBNET6:-}"
+STATE="${TB_STATE_DIR:-/usr/local/var/lib/tailbond}"
+REC="$STATE/server-net.state"
+ANCHOR=com.apple/251.tailbond.server
+TAILNET4=100.64.0.0/10
+TAILNET6=fd7a:115c:a1e0::/48
+ALF=/usr/libexec/ApplicationFirewall/socketfilterfw
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+log() { echo "$*"; }
+rec() { printf '%s=%s\n' "$1" "$2" >>"$REC"; }
+
+REFRESH=0
+[ "${TB_REFRESH:-}" = 1 ] && [ -f "$REC" ] && REFRESH=1
+fail=0
+if [ "$REFRESH" = 0 ]; then
+  # a record still here: the last server didn't stop cleanly
+  if [ -f "$REC" ]; then
+    log "restore record from an unclean stop found: putting that state back first"
+    TB_STALE=1 "$HERE/server-down"
+  fi
+  mkdir -p "$STATE"
+  : >"$REC.tmp" && mv -f "$REC.tmp" "$REC"
+  chmod 0600 "$REC"
+
+  # ---- forwarding ----------------------------------------------------------------
+  rec FWD4 "$(sysctl -n net.inet.ip.forwarding 2>/dev/null || echo 0)"
+  rec FWD6 "$(sysctl -n net.inet6.ip6.forwarding 2>/dev/null || echo 0)"
+  sysctl -w net.inet.ip.forwarding=1 >/dev/null || { log "ERROR: can't set net.inet.ip.forwarding=1: bonded clients reach only this Mac"; fail=1; }
+  if [ -n "$TB_SUBNET6" ]; then sysctl -w net.inet6.ip6.forwarding=1 >/dev/null || log "WARNING: can't set net.inet6.ip6.forwarding=1"; fi
+fi
+
+# ---- interfaces ------------------------------------------------------------------
+WAN="$(route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}')"
+TS_CLI=""
+# on PATH (tailscaled, or the app's CLI integration), else inside the app;
+# none with disable_tailscale
+if [ "${TB_TAILSCALE:-1}" = 0 ]; then :
+elif command -v tailscale >/dev/null 2>&1; then TS_CLI=tailscale
+elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then TS_CLI=/Applications/Tailscale.app/Contents/MacOS/Tailscale; fi
+TS_IF="" TS_IP="" TS_IP6=""
+if [ -n "$TS_CLI" ]; then
+  TS_IP="$("$TS_CLI" ip -4 2>/dev/null | head -n1)"
+  TS_IP6="$("$TS_CLI" ip -6 2>/dev/null | head -n1)"
+  if [ -n "$TS_IP" ]; then
+    # the utun holding the Tailscale address
+    TS_IF="$(ifconfig 2>/dev/null | awk -v ip="$TS_IP" '/^[a-z0-9]+:/ {i = $1; sub(":", "", i)} $1 == "inet" && $2 == ip {print i; exit}')"
+  fi
+fi
+
+# the uplinks to NAT out of: the default route's interface and every other
+# Ethernet/Wi-Fi port (en*), so a switch from one to another keeps working
+UPLINKS="$WAN"
+for i in $(ifconfig -l 2>/dev/null); do
+  case "$i" in en[0-9]*) [ "$i" = "$WAN" ] || UPLINKS="$UPLINKS $i" ;; esac
+done
+# the addresses tailbondd serves the dashboard and the phone page on, other
+# than loopback: its tunnel address and the Tailscale ones
+TUN_IP="$(ifconfig "$TB_TUN" 2>/dev/null | awk '$1 == "inet" {print $2; exit}')"
+WEB_TO="$(echo "$TUN_IP $TS_IP $TS_IP6" | xargs)"
+
+# ---- pf ------------------------------------------------------------------------------
+WEB="${TB_WEB_PORTS:-8077 80}"
+rules() {
+  echo "# tailbond server (packaging/macos/hooks/server-up)"
+  for u in $UPLINKS; do
+    echo "nat on $u inet from $TB_SUBNET to any -> ($u)"
+    [ -n "$TB_SUBNET6" ] && echo "nat on $u inet6 from $TB_SUBNET6 to any -> ($u)"
+  done
+  if [ -n "$TS_IF" ]; then
+    echo "nat on $TS_IF inet from $TB_SUBNET to $TAILNET4 -> ($TS_IF)"
+    [ -n "$TB_SUBNET6" ] && echo "nat on $TS_IF inet6 from $TB_SUBNET6 to $TAILNET6 -> ($TS_IF)"
+  fi
+  # tailnet peers reaching bonded clients (the advertised route): keep
+  # state, so the clients' replies aren't NATed on their way back
+  echo "pass in quick inet from $TAILNET4 to $TB_SUBNET"
+  [ -n "$TB_SUBNET6" ] && echo "pass in quick inet6 from $TAILNET6 to $TB_SUBNET6"
+  echo "pass in quick proto udp to port $TB_PORT"
+  # only what tailbondd listens on: a web server of your own on another
+  # address keeps its port 80
+  if [ -n "$WEB_TO" ]; then
+    echo "pass in quick on lo0 proto tcp to { $WEB_TO } port { $WEB }"
+    echo "pass in quick on $TB_TUN proto tcp to { $WEB_TO } port { $WEB }"
+    echo "pass in quick proto tcp from { $TAILNET4 $TAILNET6 } to { $WEB_TO } port { $WEB }"
+    echo "block drop in quick proto tcp to { $WEB_TO } port { $WEB }"
+  fi
+  return 0
+}
+PF_OK=1
+# The stock /etc/pf.conf (loaded at boot) hooks com.apple/* in for nat and
+# filter rules. Another firewall that loaded its own main ruleset may have
+# dropped them: that ruleset is never replaced here (it isn't ours to
+# restore), so then there's no NAT and the log says how to fix it.
+if ! pfctl -s nat 2>/dev/null | grep -q 'nat-anchor "com.apple/\*"' ||
+   ! pfctl -s rules 2>/dev/null | grep -q 'anchor "com.apple/\*"'; then
+  PF_OK=0
+  log "ERROR: pf's main ruleset has no com.apple anchors (another firewall replaced /etc/pf.conf's?): tailbond adds no NAT or firewall rules, so bonded clients reach only this Mac. Add nat-anchor \"com.apple/*\" and anchor \"com.apple/*\" to that ruleset, then restart tailbond."
+  fail=1
+elif [ "$REFRESH" = 0 ]; then
+  rec ANCHOR "$ANCHOR"
+  tok="$(pfctl -E 2>&1 | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -n1)"
+  rec PF_TOKEN "$tok"
+fi
+# (pfctl warns about -f flushing the main ruleset even for an anchor: noise)
+if [ "$PF_OK" = 0 ]; then
+  :
+elif out="$(rules | pfctl -q -a "$ANCHOR" -f - 2>&1)"; then
+  log "pf: anchor $ANCHOR: nat $TB_SUBNET${TB_SUBNET6:+ $TB_SUBNET6} out ${UPLINKS:-<no uplink>}${TS_IF:+, to the tailnet out $TS_IF}; tcp $WEB on ${WEB_TO:-<none>} from loopback, $TB_TUN and the tailnet only"
+else
+  printf '%s\n' "$out" | grep -v -e 'Use of -f option' -e 'present in the main ruleset' -e 'See /etc/pf.conf' -e '^$'
+  log "ERROR: pf: could not load anchor $ANCHOR: bonded clients won't reach the internet"
+  fail=1
+fi
+[ -n "$UPLINKS" ] || log "WARNING: no uplink: no NAT to the internet until there is one (restart tailbond then)"
+if [ -n "$TS_CLI" ] && [ -z "$TS_IF" ]; then log "tailscale: not up (no Tailscale address): bonded clients reach the internet, not the tailnet, until it is (tailbond applies it then)"; fi
+
+if [ "$REFRESH" = 1 ]; then
+  log "refreshed for Tailscale${TS_IF:+ on $TS_IF}"
+fi
+
+# ---- application firewall --------------------------------------------------------
+if [ "$REFRESH" = 0 ] && [ -x "$ALF" ] && "$ALF" --getglobalstate 2>/dev/null | grep -qi 'enabled'; then
+  bins=""
+  sep=""
+  me="$(ps -o comm= -p "$PPID" 2>/dev/null)"
+  case "$me" in */tailbondd) bins="$me"; sep=" " ;; esac
+  if [ -f "$STATE/mqvpn.pid" ]; then
+    mq="$(ps -o comm= -p "$(cat "$STATE/mqvpn.pid")" 2>/dev/null)"
+    case "$mq" in */mqvpn) bins="$bins$sep$mq" ;; esac
+  fi
+  for b in $bins; do
+    "$ALF" --add "$b" >/dev/null 2>&1
+    "$ALF" --unblockapp "$b" >/dev/null 2>&1
+  done
+  log "application firewall is on: allowed incoming connections for ${bins:-(nothing found)}"
+  if "$ALF" --getblockall 2>/dev/null | grep -qi 'enabled\|state = 2'; then
+    log "WARNING: the firewall blocks all incoming connections (System Settings > Network > Firewall > Options): turn that off, or phones and travel routers can't connect"
+  fi
+fi
+
+# ---- sleep ------------------------------------------------------------------------
+# held until server-down or until tailbondd ($PPID) exits; -s keeps the
+# system awake on AC power, -i also on battery (a closed lid still sleeps)
+if [ "$REFRESH" = 0 ] && command -v caffeinate >/dev/null 2>&1; then
+  caffeinate -i -s -w "$PPID" </dev/null >/dev/null 2>&1 &
+  rec CAFF_PID "$!"
+  log "power: holding a sleep assertion while the server runs (caffeinate pid $!)"
+fi
+
+# ---- Tailscale: advertise the tunnel subnet ---------------------------------------
+if [ "${TB_ADVERTISE_ROUTE:-1}" = 0 ]; then
+  log "tailscale: not advertising $TB_SUBNET (no_advertise_route)"
+elif [ -n "$TS_CLI" ] && "$TS_CLI" status >/dev/null 2>&1; then
+  # set --advertise-routes replaces the whole list: only change it when the
+  # current one could be read (an explicit list or null), never from an
+  # empty read, which would drop the user's other routes (an exit node too)
+  prefs="$("$TS_CLI" debug prefs 2>/dev/null | tr -d ' \n\t')" || prefs=""
+  case "$prefs" in
+    *'"AdvertiseRoutes":['*) cur="$(printf '%s' "$prefs" | sed -n 's/.*"AdvertiseRoutes":\[\([^]]*\)\].*/\1/p' | tr -d '"')" ;;
+    *'"AdvertiseRoutes":null'*) cur="" ;;
+    *) cur="?" ;;
+  esac
+  case ",$cur," in
+    ",?,") log "tailscale: can't read the advertised routes (tailscale debug prefs): leaving them as they are; advertise $TB_SUBNET yourself (tailscale set --advertise-routes=<your routes>,$TB_SUBNET)" ;;
+    *",$TB_SUBNET,"*) log "tailscale: $TB_SUBNET already advertised" ;;
+    *)
+      routes="${cur:+$cur,}$TB_SUBNET"
+      if "$TS_CLI" set --advertise-routes="$routes"; then
+        log "tailscale: advertising $routes (approve $TB_SUBNET in the admin console if needed)"
+      else
+        log "tailscale: could not advertise $TB_SUBNET"
+      fi
+      ;;
+  esac
+fi
+exit "$fail"

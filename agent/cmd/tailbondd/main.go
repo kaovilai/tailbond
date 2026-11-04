@@ -4,6 +4,7 @@
 //	tailbondd [-config FILE] ...                  run the agent
 //	tailbondd backup --out FILE [--plain]         encrypted backup (or a summary)
 //	tailbondd restore FILE [--yes]                restore one
+//	tailbondd configure -role server -port N ...  set install-time keys (packaging/macos/install.sh)
 package main
 
 import (
@@ -39,6 +40,9 @@ func main() {
 			return
 		case "restore-proxy":
 			cmdRestoreProxy(os.Args[2:])
+			return
+		case "configure":
+			cmdConfigure(os.Args[2:])
 			return
 		}
 	}
@@ -93,6 +97,62 @@ func main() {
 		if errors.Is(err, agent.ErrRestart) {
 			os.Exit(agent.ExitRestart)
 		}
+		fatal(err)
+	}
+}
+
+// cmdConfigure sets the keys an installer owns in the config file (created
+// with the defaults when missing), leaving everything else (devices,
+// approvers, password, mode) alone: what packaging/linux/install.sh does
+// with jq, for a Mac, which may have neither jq nor python3. Only the flags
+// given change anything; the result is validated before it is written.
+func cmdConfigure(args []string) {
+	fs := flag.NewFlagSet("configure", flag.ExitOnError)
+	cfgPath := fs.String("config", config.DefaultPath, "path to tailbond.json")
+	role := fs.String("role", "", "server or client")
+	listen := fs.String("listen", "", "HTTP listen address")
+	port := fs.Int("port", 0, "server: tunnel UDP port")
+	subnet := fs.String("subnet", "", "server: IPv4 tunnel subnet")
+	subnet6 := fs.String("subnet6", "", "server: IPv6 tunnel subnet")
+	public := fs.String("public-addr", "", "server: the address clients dial")
+	tsOn := fs.String("tailscale", "", "on: use Tailscale (and its certificate); off: don't")
+	_ = fs.Parse(args)
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	store, err := config.Load(*cfgPath)
+	if err != nil {
+		fatal(err)
+	}
+	if _, err := store.Update(func(c *config.Config) error {
+		if set["role"] {
+			c.Role = *role
+		}
+		if set["listen"] {
+			c.Listen = *listen
+		}
+		if set["port"] {
+			c.Server.Port = *port
+		}
+		if set["subnet"] {
+			c.Server.Subnet = *subnet
+		}
+		if set["subnet6"] {
+			c.Server.Subnet6 = *subnet6
+		}
+		if set["public-addr"] {
+			c.Server.PublicAddr = *public
+		}
+		switch *tsOn {
+		case "":
+		case "on":
+			c.DisableTailscale, c.Server.UseTailscaleCert = false, true
+		case "off":
+			c.DisableTailscale, c.Server.UseTailscaleCert = true, false
+		default:
+			return fmt.Errorf("-tailscale on|off, not %q", *tsOn)
+		}
+		return nil
+	}); err != nil {
 		fatal(err)
 	}
 }
@@ -200,7 +260,7 @@ func cmdRestore(args []string) {
 		fatal(err)
 	}
 	fmt.Println("restored; the previous settings are in", rollback)
-	fmt.Println("restart tailbond now: systemctl restart tailbond (OpenWrt: /etc/init.d/tailbond restart)")
+	fmt.Println("restart tailbond now: systemctl restart tailbond (OpenWrt: /etc/init.d/tailbond restart; Mac: sudo launchctl kickstart -k system/com.tailbond.tailbondd)")
 }
 
 func passphrase(file string, twice bool) string {
