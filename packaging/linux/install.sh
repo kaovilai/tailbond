@@ -335,7 +335,15 @@ do_update() {
     fi
     why="tailbond $new didn't come up within 60 s"
     warn "$why: going back to $cur"
-    for b in tailbondd mqvpn; do [ -e "$BINDIR/$b.prev" ] && cp -p "$BINDIR/$b.prev" "$BINDIR/$b"; done
+    # By rename, as swap does: a restart loop can bring the restored agent
+    # back between two copies and start the new mqvpn, and cp onto a running
+    # binary fails ("Text file busy"), which (set -e) ended the rollback half
+    # done. mqvpn first, so the agent comes back with its own.
+    for b in mqvpn tailbondd; do
+        if [ -e "$BINDIR/$b.prev" ]; then
+            install -m 0755 "$BINDIR/$b.prev" "$BINDIR/$b.tbnew" && mv -f "$BINDIR/$b.tbnew" "$BINDIR/$b"
+        fi
+    done
     if [ -d "$HOOKS.prev" ]; then rm -rf "$HOOKS"; cp -a "$HOOKS.prev" "$HOOKS"; fi
     sed -i "s/^TB_VERSION=.*/TB_VERSION=$cur/" "$MANIFEST"
     if selinux_on; then restorecon -RF "$BINDIR/mqvpn" "$BINDIR/tailbondd" "$LIBDIR" 2>/dev/null || true; fi
