@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+title: "feat: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If you're a maintainer and tick the box at the bottom, an AI agent looks at this as soon as it's opened: a draft PR if it's small and clear enough, otherwise a comment with questions or a proposed split. Anyone else: a maintainer may add the `autofix` label after reading it. Small, well-scoped requests work best.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part?
+      options:
+        - GL.iNet / OpenWrt router
+        - Fedora / VPS / Linux server
+        - Mac
+        - Android app
+        - iPhone Share app
+        - Pair & Share / phone hub
+        - Web dashboard / Get tailbond page
+        - Tailscale integration
+        - Packaging / updates / CI
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      placeholder: "At hotels I can't tell which connection is carrying my video call."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How would we know it's done?
+      description: A checklist the agent and reviewers can verify (tests, screens, behaviour).
+      placeholder: |
+        - [ ] Each path card shows its live share of traffic
+        - [ ] Covered by a unit test
+  - type: checkboxes
+    id: autofix
+    attributes:
+      label: Automation
+      options:
+        - label: Let an AI agent draft an implementation PR (maintainers' issues only; otherwise a maintainer decides)
+          required: false

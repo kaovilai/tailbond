@@ -1,0 +1,46 @@
+name: Agentic workflow lock files
+
+# gh-aw compiles .github/workflows/*.md into *.lock.yml; fail if a lock file
+# is stale (edited .md without recompiling, or gh-aw changed its output).
+on:
+  pull_request:
+    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml", ".github/aw/actions-lock.json"]
+  push:
+    branches: [main]
+    paths: [".github/workflows/*.md", ".github/workflows/*.lock.yml", ".github/aw/actions-lock.json"]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Pinned: the version that generated the committed locks. Bump it together
+      # with a recompile; an unpinned compiler would fail this check whenever
+      # gh-aw ships a release that changes its output.
+      - name: Install gh-aw
+        env:
+          TAG: v1.0.1
+        run: |
+          mkdir -p "$RUNNER_TEMP/gh-aw/bin"
+          curl -fsSL --retry 3 "https://github.com/github/gh-aw/releases/download/${TAG}/linux-amd64" -o "$RUNNER_TEMP/gh-aw/linux-amd64"
+          curl -fsSL --retry 3 "https://github.com/github/gh-aw/releases/download/${TAG}/checksums.txt" -o "$RUNNER_TEMP/gh-aw/checksums.txt"
+          (cd "$RUNNER_TEMP/gh-aw" && grep ' linux-amd64$' checksums.txt | sha256sum --check --status)
+          install -m 0755 "$RUNNER_TEMP/gh-aw/linux-amd64" "$RUNNER_TEMP/gh-aw/bin/gh-aw"
+          echo "$RUNNER_TEMP/gh-aw/bin" >> "$GITHUB_PATH"
+      - name: Recompile and compare
+        run: |
+          gh-aw version
+          gh-aw compile --strict --purge
+          if [ -n "$(git status --porcelain -- .github/workflows .github/aw)" ]; then
+            git status --short -- .github/workflows .github/aw
+            echo "::error::Lock files are stale or orphaned: run 'gh aw compile --purge' and commit the result."
+            exit 1
+          fi
