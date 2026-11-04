@@ -92,12 +92,11 @@ func (g *fakeGitHub) publish(t *testing.T, version string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.version, g.sums = version, map[string]string{}
-	arch := bundleArch()
 	g.files = map[string][]byte{
-		"tailbond-linux-" + arch + ".tar.gz": targz(t, map[string]string{
-			"tailbond-linux-" + arch + "/install.sh":   "#!/bin/sh\n",
-			"tailbond-linux-" + arch + "/VERSION":      version + "\n",
-			"tailbond-linux-" + arch + "/../../escape": "x",
+		bundleName() + ".tar.gz": targz(t, map[string]string{
+			bundleName() + "/install.sh":   "#!/bin/sh\n",
+			bundleName() + "/VERSION":      version + "\n",
+			bundleName() + "/../../escape": "x",
 		}),
 		"tailbond_" + version + "-r1_aarch64_cortex-a53.ipk":            []byte("ipk a53"),
 		"tailbond_" + version + "-r1_aarch64_cortex-a53_neon-vfpv4.ipk": []byte("ipk neon"),
@@ -148,7 +147,7 @@ func TestUpdateCheckNotifyAndInstall(t *testing.T) {
 		t.Fatalf("runner calls %v (%+v)", *calls, a.updateView())
 	}
 	c := (*calls)[0]
-	bundle := filepath.Join(a.store.Get().StateDir, "update", "0.2.0", "tailbond-linux-"+bundleArch())
+	bundle := filepath.Join(a.store.Get().StateDir, "update", "0.2.0", bundleName())
 	if c.name != filepath.Join(bundle, "install.sh") || strings.Join(c.args, " ") != "--update --bundle-dir "+bundle {
 		t.Fatalf("ran %+v", c)
 	}
@@ -164,7 +163,7 @@ func TestUpdateCheckNotifyAndInstall(t *testing.T) {
 	// a tampered bundle (SHA256SUMS disagrees): failed, nothing run
 	g.publish(t, "0.3.0")
 	g.mu.Lock()
-	g.sums["tailbond-linux-"+bundleArch()+".tar.gz"] = strings.Repeat("0", 64)
+	g.sums[bundleName()+".tar.gz"] = strings.Repeat("0", 64)
 	g.mu.Unlock()
 	a.updateTick(ctx, true)
 	if v := a.updateView(); v.State != "failed" || !strings.Contains(v.Error, "SHA-256") || len(*calls) != 1 {

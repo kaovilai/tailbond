@@ -20,6 +20,7 @@
 #   TB_JOBS      make parallelism (default: all cores)
 #   TB_TEST=1    also build and run mqvpn's Darwin unit tests (ctest)
 #   TB_CLEAN=1   wipe the work tree first
+#   LIBEVENT_PREFIX  libevent's prefix (default: brew --prefix libevent)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,10 +33,12 @@ die() { echo "build-mqvpn-macos: $*" >&2; exit 1; }
 . "$ROOT/scripts/lib/mqvpn-src.sh"
 
 [ "$(uname -s)" = Darwin ] || die "run this on macOS"
-for c in cmake make cc c++ brew; do
+for c in cmake make cc c++; do
     command -v "$c" >/dev/null || die "'$c' not found (xcode-select --install; brew install cmake)"
 done
-LIBEVENT="$(brew --prefix libevent 2>/dev/null)" || die "brew install libevent"
+# LIBEVENT_PREFIX: set by the Homebrew formula's source build
+LIBEVENT="${LIBEVENT_PREFIX:-$(brew --prefix libevent 2>/dev/null || true)}"
+[ -n "$LIBEVENT" ] || die "brew install libevent"
 [ -f "$LIBEVENT/lib/libevent.a" ] || die "no $LIBEVENT/lib/libevent.a (brew reinstall libevent)"
 
 [ "${TB_CLEAN:-0}" = 1 ] && rm -rf "$WORK"

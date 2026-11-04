@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 )
 
@@ -118,7 +119,7 @@ func Counters(name string) (tx, rx uint64, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
-	b, err := unix.SysctlRaw("net.route", 0, syscall.AF_UNSPEC, unix.NET_RT_IFLIST2, 0)
+	b, err := route.FetchRIB(syscall.AF_UNSPEC, route.RIBType(unix.NET_RT_IFLIST2), 0)
 	if err != nil {
 		return 0, 0, false
 	}

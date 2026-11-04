@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- tailbond on macOS (docs/macos.md): tailbondd as a LaunchDaemon. Root:
+     mqvpn opens a utun device, sets routes and DNS, and takes its lock in
+     /var/run. Installed to /Library/LaunchDaemons by install.sh. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tailbond.tailbondd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/tailbondd</string>
+    <string>-config</string>
+    <string>/usr/local/etc/tailbond/tailbond.json</string>
+    <string>-quiet</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- restarted whenever it exits (an update or a restore exits on purpose) -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>/usr/local/var/log/tailbond.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/var/log/tailbond.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

@@ -313,6 +313,7 @@ function renderClientPaths(st) {
     els.push(el);
   }
   syncChildren($('#paths'), els);
+  renderLocalHead(st);
   renderShares(st);
   const empty = $('#paths-empty');
   if (!els.length) {
@@ -323,12 +324,51 @@ function renderClientPaths(st) {
   } else empty.classList.add('hidden');
 }
 
+// A section on/off switch (client): POST /api/share {<key>: on}.
+function sectionToggle(key, on, label) {
+  const input = h('input', { type: 'checkbox', 'aria-label': label });
+  input.checked = on;
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    try {
+      await api('POST', '/api/share', { [key]: input.checked });
+      toast(input.checked ? `${label}: on` : `${label}: off`);
+    } catch (e) {
+      input.checked = !input.checked;
+      toast(e.message, true);
+    } finally {
+      input.disabled = false;
+    }
+  });
+  return h('label', { class: 'toggle', title: label }, input, h('span'));
+}
+
+// "Use this Mac's connections": bond this machine's own Wi-Fi, Ethernet,
+// iPhone over USB (client.use_local, default on).
+function renderLocalHead(st) {
+  const box = $('#local-head');
+  if (!box) return;
+  const mac = st.platform === 'darwin';
+  const label = mac ? "Use this Mac's connections" : "Use this machine's connections";
+  const on = st.use_local !== false;
+  const cur = box.querySelector('input');
+  if (cur && document.activeElement === cur) return;
+  box.replaceChildren(
+    h('div', { class: 'row between' }, h('h3', { text: label }), sectionToggle('use_local', on, label)),
+    h('p', { class: 'muted small', text: on
+      ? (mac ? 'Wi-Fi, Ethernet and USB-C adapters, and an iPhone plugged in over USB (Personal Hotspot on) are bonded with the phones below.' : 'Its own uplinks are bonded with the phones below.')
+      : "Off: only nearby phones' shared data is bonded. With no phone sharing, tailbond connects over the default route." }));
+  box.classList.toggle('hidden', st.role !== 'client' || !st.platform);
+}
+
 // Pair & Share: phones on this machine's network lending their mobile data
 function renderShares(st) {
   const box = $('#shares');
   if (!box) return;
+  if (box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   const shares = st.shares || [];
-  const kids = [h('h3', { text: 'Shared by nearby phones' })];
+  const kids = [h('div', { class: 'row between' }, h('h3', { text: 'Shared by nearby phones' }),
+    sectionToggle('use_shares', st.use_shares !== false, "Use phones' shared data"))];
   if (st.share_note) kids.push(h('div', { class: 'banner warn', text: st.share_note }));
   const words = { ready: 'Sharing', connecting: 'Connecting…', refused: 'Stopped', unreachable: "Can't reach it", lost: 'Stopped answering' };
   for (const s of shares) {
@@ -882,6 +922,10 @@ function releasesUrl(u) {
   const r = String(u.repo || 'kaovilai/tailbond').replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
   return `https://github.com/${r}/releases`;
 }
+// Homebrew (macOS): the release's formula, reinstalled (docs/macos.md)
+function brewCmd(u) {
+  return `curl -fsSLO ${releasesUrl(u)}/latest/download/tailbond.rb && brew reinstall --formula ./tailbond.rb && sudo brew services restart tailbond`;
+}
 // methods that install by themselves (one click, or Automatic)
 const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg';
 
@@ -1020,6 +1064,8 @@ function renderUpdates(st) {
     now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, notes ? ' · ' : '', notes));
     if (u.method === 'dnf') {
       now.push(h('p', { class: 'small', text: 'Updates for this server come from dnf. In a terminal on this server, run:' }), cmdRow(DNF_CMD));
+    } else if (u.method === 'brew') {
+      now.push(h('p', { class: 'small', text: 'Installed with Homebrew. In Terminal, run:' }), cmdRow(brewCmd(u)));
     } else if (selfUpdates(u)) {
       now.push(h('p', { class: 'muted small', text: 'You can update now or later; everything keeps working meanwhile.' }));
     } else {

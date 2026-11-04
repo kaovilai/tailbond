@@ -356,6 +356,17 @@ jobs:
           name: e2e-macos-logs
           path: out/e2e-macos/
           if-no-files-found: ignore
+      - name: macOS bundle and Homebrew formula
+        run: packaging/macos/build-bundle.sh
+      - name: Install test (install.sh, --update, uninstall.sh, Homebrew formula)
+        run: scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-bundle
+          path: |
+            out/macos/tailbond-macos-arm64.tar.gz
+            out/macos/tailbond.rb
+          if-no-files-found: error
 
   # tailbond Share for iPhone (ios/, docs/ios.md): the relay core's unit
   # tests on macOS and on an iOS simulator, and an unsigned simulator build
@@ -615,7 +626,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, openwrt, rpm, linux-bundle, vps-install]
+    needs: [agent, shellcheck, e2e, android, openwrt, rpm, linux-bundle, vps-install, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -634,6 +645,9 @@ jobs:
         run: |
           mkdir -p assets
           cp dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz assets/
+          # macOS: the bundle (install.sh, one-click updates) and the
+          # Homebrew formula with this version's checksum (docs/macos.md)
+          cp dist/macos-bundle/tailbond-macos-arm64.tar.gz dist/macos-bundle/tailbond.rb assets/
           if ! compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
             # never publish an APK that can't update the installed app
             echo "::error::no release APK: the Android signing secrets are missing (TB_RELEASE_KEYSTORE_B64 ...). Run scripts/release/gen-android-keystore.sh once (or --restore the key from its backup), then re-run this tag. docs/android.md, Release key."

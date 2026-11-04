@@ -198,6 +198,7 @@ textarea { width: 100%; resize: vertical; font-family: var(--mono); font-size: 1
 select.prio { padding: 5px 8px; font-size: 13px; }
 
 .toggle { position: relative; width: 40px; height: 24px; flex: none; }
+.row .toggle input { min-width: 0; flex: none; }
 .toggle input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; }
 .toggle span { position: absolute; inset: 0; border-radius: 99px; background: var(--line); transition: background .2s; }
 .toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .2s; }
@@ -425,5 +426,8 @@ input.num { width: 5.5em; flex: none !important; min-width: 0 !important; }
 .ub-head .chip { text-transform: none; white-space: nowrap; }
 
 .shares { margin-top: 12px; }
+.local-head { margin-bottom: 12px; }
+.local-head h3, .shares .row h3 { margin: 0; font-size: 15px; }
+.local-head p { margin: 6px 0 0; }
 .shares h3 { margin: 0 0 8px; font-size: 15px; }
 .share-row { padding: 6px 0; border-top: 1px solid var(--line); }

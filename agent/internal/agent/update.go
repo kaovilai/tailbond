@@ -44,9 +44,9 @@ const (
 	methodStatic = "static"
 	methodOpkg   = "opkg"
 	methodDnf    = "dnf"
+	methodBrew   = "brew" // macOS, installed by the Homebrew formula: brew upgrades it
 	methodNone   = "none"
 
-	defaultInstallEnv = "/etc/tailbond/install.env"
 	// OpenWrt: kept across firmware upgrades (keep.d), see docs/updates.md
 	defaultPkgDir    = "/etc/tailbond/pkg"
 	defaultIPKScript = "/usr/lib/tailbond/update-ipk"
@@ -174,6 +174,9 @@ func (a *Agent) method() string {
 			return methodOpkg
 		}
 	}
+	if goruntime.GOOS == "darwin" && brewInstalled() {
+		return methodBrew
+	}
 	env := a.upd.installEnv
 	if env == "" {
 		env = defaultInstallEnv
@@ -187,6 +190,19 @@ func (a *Agent) method() string {
 		}
 	}
 	return methodNone
+}
+
+// brewInstalled: this tailbondd is the Homebrew formula's (its opt/ link
+// resolves into the Cellar).
+func brewInstalled() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	return strings.Contains(exe, "/Cellar/")
 }
 
 func isOpenWrt() bool {
@@ -420,6 +436,15 @@ func (a *Agent) install(ctx context.Context, rel *update.Release, m string) erro
 	return fmt.Errorf("this install updates with %s", m)
 }
 
+// bundleName is the static bundle for this machine (release asset
+// <name>.tar.gz, unpacking to <name>/).
+func bundleName() string {
+	if goruntime.GOOS == "darwin" {
+		return "tailbond-macos-" + goruntime.GOARCH
+	}
+	return "tailbond-linux-" + bundleArch()
+}
+
 func bundleArch() string {
 	if goruntime.GOARCH == "arm64" {
 		return "aarch64"
@@ -431,7 +456,7 @@ func bundleArch() string {
 // under state_dir/update/<version>/ and run its install.sh --update outside
 // our own service (systemd-run), since it restarts tailbond.
 func (a *Agent) installStatic(ctx context.Context, rel *update.Release) error {
-	name := "tailbond-linux-" + bundleArch() + ".tar.gz"
+	name := bundleName() + ".tar.gz"
 	root := filepath.Join(a.store.Get().StateDir, "update")
 	dir := filepath.Join(root, rel.Version)
 	os.RemoveAll(dir)
@@ -443,7 +468,7 @@ func (a *Agent) installStatic(ctx context.Context, rel *update.Release) error {
 	if err := untar(tgz, dir); err != nil {
 		return fmt.Errorf("unpack %s: %w", name, err)
 	}
-	bundle := filepath.Join(dir, "tailbond-linux-"+bundleArch())
+	bundle := filepath.Join(dir, bundleName())
 	script := filepath.Join(bundle, "install.sh")
 	if _, err := os.Stat(script); err != nil {
 		return fmt.Errorf("%s has no install.sh", name)

@@ -4,7 +4,11 @@ package netif
 
 import (
 	"net"
+	"syscall"
 	"testing"
+
+	"golang.org/x/net/route"
+	"golang.org/x/sys/unix"
 )
 
 // On a real Mac: discovery runs, lists no tunnel or loopback, and the
@@ -22,7 +26,14 @@ func TestDarwinDiscoverAndCounters(t *testing.T) {
 	}
 	tx0, rx0, ok := Counters("lo0")
 	if !ok {
-		t.Fatal("no counters for lo0")
+		lo, _ := net.InterfaceByName("lo0")
+		b, err := route.FetchRIB(syscall.AF_UNSPEC, route.RIBType(unix.NET_RT_IFLIST2), 0)
+		t.Fatalf("no counters for lo0 (index %v): %d bytes, %v; first message type %v", lo, len(b), err, func() any {
+			if len(b) > 3 {
+				return b[3]
+			}
+			return nil
+		}())
 	}
 	srv, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
