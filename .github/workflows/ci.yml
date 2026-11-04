@@ -68,6 +68,8 @@ jobs:
           echo "SHELLCHECK=$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" >>"$GITHUB_ENV"
       - name: ShellCheck (scripts, hooks; OpenWrt files as busybox sh)
         run: scripts/shellcheck.sh
+      - name: Release gate covers every job
+        run: python3 scripts/ci/check-release-needs.py
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -515,7 +517,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, openwrt, rpm, linux-bundle, vps-install]
+    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, mqvpn-x86_64, openwrt, rpm, linux-bundle, vps-install]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
