@@ -31,6 +31,9 @@ type Found struct {
 type Advert struct {
 	ID, Label, KeyID string
 	Port             int
+	// IP (optional) is the address announced; nil = the address of the
+	// interface the query came in on.
+	IP net.IP
 }
 
 func txt(a Advert) []string {
@@ -253,7 +256,10 @@ func Advertise(ctx context.Context, ifaces []net.Interface, a Advert) error {
 		if err != nil {
 			continue
 		}
-		ip := ifaceIPv4In(ifi, src.IP)
+		ip := a.IP
+		if ip == nil {
+			ip = ifaceIPv4In(ifi, src.IP)
+		}
 		if ip == nil {
 			continue
 		}
@@ -299,13 +305,15 @@ func ifaceIPv4In(ifi *net.Interface, peer net.IP) net.IP {
 	return first
 }
 
-// MulticastIfaces are the up, multicast-capable, non-loopback interfaces
-// with an IPv4 address, minus skip (the tunnel, say).
+// MulticastIfaces are the up, multicast-capable, non-loopback LAN
+// interfaces with an IPv4 address, minus skip (the tunnel, say). Point-to-
+// point links (tunnels: Linux tun, macOS utun; PPP) never have sharers.
 func MulticastIfaces(skip ...string) []net.Interface {
 	all, _ := net.Interfaces()
 	var out []net.Interface
 	for _, ifi := range all {
-		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 || ifi.Flags&net.FlagLoopback != 0 {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 || ifi.Flags&net.FlagLoopback != 0 ||
+			ifi.Flags&net.FlagPointToPoint != 0 {
 			continue
 		}
 		skipped := false

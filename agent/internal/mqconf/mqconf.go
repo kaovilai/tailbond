@@ -68,6 +68,7 @@ type ClientParams struct {
 	Mode         string
 	ControlAddr  string
 	ManageRoutes bool
+	KillSwitch   bool
 	LogLevel     string
 }
 
@@ -210,6 +211,9 @@ func Client(p ClientParams) (string, error) {
 	}
 	w.kv("LogLevel", orDefault(p.LogLevel, "info"))
 	w.kv("ManageRoutes", boolStr(p.ManageRoutes))
+	if p.KillSwitch {
+		w.kv("KillSwitch", "true")
+	}
 	w.kv("Reconnect", "true")
 	w.kv("ReconnectInterval", 3)
 

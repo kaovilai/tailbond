@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -56,5 +57,47 @@ func TestDesiredPathsOpenWrtKeys(t *testing.T) {
 	cfg.Client.Paths = []config.PathSetting{{Iface: "wwan", Enabled: false, Priority: config.PriorityPrimary}}
 	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"eth1"}) {
 		t.Fatalf("wwan off: %v", got)
+	}
+}
+
+// macOS: "Use this Mac's connections" off bonds only the phones' shares.
+func TestDesiredPathsUseLocalOff(t *testing.T) {
+	ifs := []netif.Iface{
+		{Name: "en0", Kind: netif.KindWifi, Up: true, Carrier: true, Addrs: []string{"192.0.2.2/24"}},
+		{Name: "en8", Kind: netif.KindUSB, Label: "iPhone (USB)", Up: true, Carrier: true, Addrs: []string{"172.20.10.2/28"}},
+		{Name: "sh0a1b2c", Kind: netif.KindShared, WAN: true, Up: true, Carrier: true, Addrs: []string{"127.0.0.1/8"}},
+	}
+	cfg := config.Default()
+	cfg.Role = config.RoleClient
+	cfg.Client.Paths = []config.PathSetting{{Iface: "en0", Enabled: true, Priority: config.PriorityPrimary}, {Iface: "en8", Enabled: true, Priority: config.PriorityPrimary}}
+	none := func(config.PathSetting) bool { return false }
+	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"en0", "en8", "sh0a1b2c"}) {
+		t.Fatalf("all: %v", got)
+	}
+	off := false
+	cfg.Client.UseLocal = &off
+	if got := desiredPaths(cfg, ifs, none, nil); !slices.Equal(got, []string{"sh0a1b2c"}) {
+		t.Fatalf("Mac's connections off: %v", got)
+	}
+}
+
+// A path setting can name an interface discovery skips (lo0 in the macOS
+// e2e); it is looked up and used, once, and never the tunnel or a share.
+func TestNamedIfs(t *testing.T) {
+	cfg := config.Default()
+	cfg.Role = config.RoleClient
+	cfg.Client.Paths = []config.PathSetting{{Iface: "en0"}, {Iface: "lo0"}, {Iface: "nosuch1"}, {Iface: config.DefaultTunName}, {Iface: "sh0a1b2c"}}
+	a := &Agent{store: config.NewStore(filepath.Join(t.TempDir(), "tb.json"), cfg)}
+	looked := []string{}
+	a.lookupIf = func(n string) (netif.Iface, bool) {
+		looked = append(looked, n)
+		return netif.Iface{Name: n, Up: true}, n == "lo0"
+	}
+	got := a.namedIfs([]netif.Iface{{Name: "en0"}})
+	if len(got) != 1 || got[0].Name != "lo0" {
+		t.Fatalf("named: %v", got)
+	}
+	if !slices.Equal(looked, []string{"lo0", "nosuch1"}) {
+		t.Fatalf("looked up %v", looked)
 	}
 }

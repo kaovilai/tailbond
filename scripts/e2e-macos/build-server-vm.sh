@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# The tailbond server for scripts/e2e-macos.sh: a tiny aarch64 Linux VM
+# (kernel + initramfs) that runs tailbondd in the server role with the
+# static mqvpn, plus a token web server only the tunnel reaches. mqvpn's
+# server mode isn't built on macOS, and a server in the Mac's own network
+# stack would answer the tunnel's traffic locally, so the macOS runner boots
+# this under QEMU instead.
+#
+#   MQVPN=out/aarch64/mqvpn TAILBONDD=out/agent/linux-arm64/tailbondd \
+#       scripts/e2e-macos/build-server-vm.sh        # -> out/e2e-vm/{vmlinuz,initramfs.gz}
+#
+# Kernel, modules (tun, virtio-net, virtio-rng) and busybox come from Alpine
+# (linux-virt, busybox-static) in an arm64 container: run it on an arm64
+# Linux host (CI: ubuntu-24.04-arm) with podman.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+MQVPN="${MQVPN:-$ROOT/out/aarch64/mqvpn}"
+TAILBONDD="${TAILBONDD:-$ROOT/out/agent/linux-arm64/tailbondd}"
+OUT="${OUT:-$ROOT/out/e2e-vm}"
+IMAGE="${TB_ALPINE_IMAGE:-docker.io/library/alpine:3.20}"
+PODMAN="${PODMAN:-podman}"
+
+die() { echo "build-server-vm: $*" >&2; exit 1; }
+[ -x "$MQVPN" ] || die "no static aarch64 mqvpn at $MQVPN (scripts/build-mqvpn-aarch64-musl.sh)"
+[ -x "$TAILBONDD" ] || die "no linux/arm64 tailbondd at $TAILBONDD (agent/build.sh arm64)"
+file "$MQVPN" | grep -q 'aarch64\|ARM aarch64' || die "$MQVPN is not an aarch64 binary"
+for c in "$PODMAN" cpio gzip; do command -v "$c" >/dev/null || die "'$c' not found"; done
+
+rm -rf "$OUT"
+mkdir -p "$OUT/root"
+# Kernel, the modules it needs for the tunnel and the NIC (dependencies
+# first, decompressed: busybox insmod takes plain .ko), static busybox.
+"$PODMAN" run --rm --arch arm64 -v "$OUT:/out" "$IMAGE" sh -euc '
+  apk add --no-cache --no-scripts linux-virt busybox-static kmod xz zstd >/dev/null
+  kver="$(ls /lib/modules | head -n1)"
+  cp /boot/vmlinuz-virt /out/vmlinuz
+  mkdir -p /out/root/bin /out/root/lib/modules
+  cp /bin/busybox.static /out/root/bin/busybox
+  n=0
+  modprobe -S "$kver" --show-depends tun virtio_net virtio_pci virtio_rng 2>/dev/null |
+  while read -r what path _; do
+    [ "$what" = insmod ] || continue
+    n=$((n + 1))
+    name="$(printf %02d "$n")-$(basename "$path" | sed "s/\.ko.*//").ko"
+    case "$path" in
+      *.gz) gzip -dc "$path" ;;
+      *.xz) xz -dc "$path" ;;
+      *.zst) zstd -qdc "$path" ;;
+      *) cat "$path" ;;
+    esac >"/out/root/lib/modules/$name"
+  done
+  ls /out/root/lib/modules
+  echo "kernel $kver"
+'
+mkdir -p "$OUT/root/usr/bin" "$OUT/root/www"
+install -m 0755 "$MQVPN" "$OUT/root/usr/bin/mqvpn"
+install -m 0755 "$TAILBONDD" "$OUT/root/usr/bin/tailbondd"
+install -m 0755 "$ROOT/scripts/e2e-macos/vm-init.sh" "$OUT/root/init"
+# no Tailscale in the VM: the server role checks it and carries on
+printf '#!/bin/sh\n[ "$1" = status ] && echo '"'"'{"BackendState":"Stopped"}'"'"'\nexit 1\n' >"$OUT/root/usr/bin/tailscale"
+chmod 0755 "$OUT/root/usr/bin/tailscale"
+(cd "$OUT/root" && find . | LC_ALL=C sort | cpio -o -H newc --quiet -R 0:0 | gzip -9) >"$OUT/initramfs.gz"
+rm -rf "$OUT/root"
+ls -l "$OUT"

@@ -27,18 +27,12 @@ const (
 	PrioritySecondary = "secondary"
 	PriorityBackup    = "backup"
 
-	DefaultPath    = "/etc/tailbond/tailbond.json"
-	DefaultTunName = "tb0"
 	// DefaultClientMTU is safe on any IPv4/IPv6 uplink (the Android app uses it too).
 	DefaultClientMTU = 1280
 	DefaultCtlAddr   = "127.0.0.1:9077"
-	DefaultListen    = ":8077"
 	DefaultPort      = 443
 	DefaultSubnet    = "10.77.0.0/24"
 	DefaultSubnet6   = "fd77:77::/112"
-	DefaultStateDir  = "/var/lib/tailbond"
-	DefaultHooksDir  = "/usr/lib/tailbond/hooks"
-	DefaultMqvpnBin  = "/usr/bin/mqvpn"
 )
 
 // TailnetRoutes are the tailnet prefixes bonded clients reach through the server.
@@ -131,6 +125,14 @@ type Client struct {
 	UseShares *bool        `json:"use_shares,omitempty"`
 	Share     *ShareConfig `json:"share,omitempty"`
 	ShareKey  string       `json:"share_key,omitempty"`
+	// Additive: bond this machine's own connections (Wi-Fi, Ethernet, a
+	// phone over USB; default on). Off: only nearby phones' shares are
+	// bonded, and with none of those mqvpn uses the default route.
+	UseLocal *bool `json:"use_local,omitempty"`
+	// Additive: mqvpn's kill switch (macOS: pf; Linux: nftables): nothing
+	// leaves outside the tunnel while it runs. Off by default; it also
+	// blocks the LAN, so phones' shares don't work with it on.
+	KillSwitch bool `json:"kill_switch,omitempty"`
 }
 
 // ShareConfig: this machine lends Iface's data to hubs on its LAN.
@@ -147,6 +149,9 @@ type ShareConfig struct {
 
 // SharesUsed reports whether nearby devices' shared data is bonded (default on).
 func (c *Client) SharesUsed() bool { return c.UseShares == nil || *c.UseShares }
+
+// LocalUsed reports whether this machine's own connections are bonded (default on).
+func (c *Client) LocalUsed() bool { return c.UseLocal == nil || *c.UseLocal }
 
 // ServerEntry is one paired server in the client's list.
 type ServerEntry struct {

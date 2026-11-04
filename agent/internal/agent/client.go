@@ -163,6 +163,10 @@ func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.
 		if !ok || !p.Enabled || capReached(p) || (blocked != nil && blocked(it)) {
 			continue
 		}
+		// "Use this Mac's connections" off: only the phones' shares
+		if it.Kind != netif.KindShared && !cfg.Client.LocalUsed() {
+			continue
+		}
 		// a share is a path only while its session is open: mqvpn can't
 		// tell a dead relay from a live one
 		if it.Kind == netif.KindShared && !it.Usable() {
@@ -372,7 +376,7 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	ini, err := mqconf.Client(mqconf.ClientParams{
 		Server: p.Server, ServerName: p.SNI, Insecure: p.Insecure, Key: p.Key, DNS: dns,
 		Paths: a.pathSpecs(paths), TunName: config.DefaultTunName, MTU: clientMTU(cfg), Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
-		ManageRoutes: cfg.Client.RoutesManaged(), LogLevel: cfg.LogLevel,
+		ManageRoutes: cfg.Client.RoutesManaged(), KillSwitch: cfg.Client.KillSwitch, LogLevel: cfg.LogLevel,
 	})
 	if err != nil {
 		return err
@@ -458,7 +462,10 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	if !st.ControlAPI && running {
 		// Unpatched mqvpn: totals from the tun device, per-path bytes from the
 		// kernel counters of each bound interface, RTT from the 30 s log lines.
-		if tx, rx, ok := netif.Counters(config.DefaultTunName); ok {
+		a.mu.Lock()
+		tun := a.tunDevLocked()
+		a.mu.Unlock()
+		if tx, rx, ok := netif.Counters(tun); ok {
 			st.Totals.TxBytes, st.Totals.RxBytes = tx, rx
 			st.Totals.TxBps, st.Totals.RxBps, _ = a.rater.Rate("totals", now, tx, rx, 0, 0)
 		}

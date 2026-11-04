@@ -124,6 +124,11 @@ type Status struct {
 	UseShares *bool    `json:"use_shares,omitempty"`
 	ShareNote string   `json:"share_note,omitempty"`
 	Sharing   *Sharing `json:"sharing,omitempty"`
+	// Client role: whether this machine's own connections are bonded
+	// ("Use this Mac's connections"), and the OS the agent runs on
+	// ("linux", "darwin"), for the dashboard's wording.
+	UseLocal *bool  `json:"use_local,omitempty"`
+	Platform string `json:"platform,omitempty"`
 }
 
 // Share is a nearby device's shared mobile data, as the hub sees it.

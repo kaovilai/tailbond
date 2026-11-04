@@ -73,6 +73,8 @@ type Agent struct {
 	outside *outsideSeen // server: last client seen from the internet (a.mu)
 	// listIfs discovers interfaces (tests stub it).
 	listIfs func() ([]netif.Iface, error)
+	// lookupIf describes an interface a path setting names (tests leave it nil).
+	lookupIf func(string) (netif.Iface, bool)
 	wc      whoisCache // admin requests from the tailnet: who sent them
 	apkHash struct {   // the phone page's APK checksum
 		sync.Mutex
@@ -102,6 +104,7 @@ type Agent struct {
 
 // runtime is reset every time mqvpn starts.
 type runtime struct {
+	tunName     string // the tunnel device mqvpn made (macOS: utunN, the kernel's pick)
 	tunnelIP    string
 	peerIP      string
 	ready       bool // server: "server ready" / client: ESTABLISHED
@@ -157,6 +160,7 @@ func New(store *config.Store, opts Options) *Agent {
 	a.hello = a.fetchHello
 	a.glRead = glrepeater.Read
 	a.listIfs = netif.Discover
+	a.lookupIf = netif.Lookup
 	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
 	mqvpnBin := cfg.MqvpnBin
 	a.sup = supervisor.New(supervisor.Spec{
@@ -333,11 +337,11 @@ func (a *Agent) onLine(line string) {
 		if a.rt.tunnelIP != m[2] {
 			a.logs.Add("agent", "tunnel address "+m[2])
 		}
-		a.rt.tunnelIP, a.rt.peerIP = m[2], m[3]
+		a.rt.tunName, a.rt.tunnelIP, a.rt.peerIP = m[1], m[2], m[3]
 		return
 	}
 	if m := reServerTun.FindStringSubmatch(line); m != nil {
-		a.rt.tunnelIP = m[2]
+		a.rt.tunName, a.rt.tunnelIP = m[1], m[2]
 		return
 	}
 	if reReady.MatchString(line) && a.role == config.RoleServer {
@@ -418,10 +422,19 @@ func webPorts(cfg *config.Config) string {
 	return port
 }
 
+// tunDevLocked is the tunnel device: the one mqvpn reported, else the name
+// it is asked for. Caller holds a.mu.
+func (a *Agent) tunDevLocked() string {
+	if a.rt.tunName != "" {
+		return a.rt.tunName
+	}
+	return config.DefaultTunName
+}
+
 func (a *Agent) hookEnvLocked() map[string]string {
 	cfg := a.store.Get()
 	env := map[string]string{
-		"TB_TUN":       config.DefaultTunName,
+		"TB_TUN":       a.tunDevLocked(),
 		"TB_ROLE":      cfg.Role,
 		"TB_MODE":      cfg.Mode,
 		"TB_STATE_DIR": cfg.StateDir,

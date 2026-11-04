@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	goruntime "runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -511,10 +512,35 @@ func shareLabel(hl *hubLink, st share.LinkStatus) string {
 	return l + " (shared)"
 }
 
-// allIfs is the discovered interfaces plus the shares.
+// allIfs is the discovered interfaces, the interfaces named in the path
+// settings that discovery skips, and the shares.
 func (a *Agent) allIfs() ([]netif.Iface, error) {
 	ifs, err := a.listIfs()
+	ifs = append(ifs, a.namedIfs(ifs)...)
 	return append(ifs, a.shareIfaces()...), err
+}
+
+// namedIfs: a path setting can name any interface (an adapter discovery
+// doesn't recognise, lo0 in the macOS e2e); it is used as named.
+func (a *Agent) namedIfs(found []netif.Iface) []netif.Iface {
+	if a.lookupIf == nil {
+		return nil
+	}
+	have := map[string]bool{config.DefaultTunName: true}
+	for _, i := range found {
+		have[i.Name], have[i.Key()] = true, true
+	}
+	var out []netif.Iface
+	for _, ps := range a.store.Get().Client.Paths {
+		if have[ps.Iface] || strings.HasPrefix(ps.Iface, "sh") {
+			continue
+		}
+		if it, ok := a.lookupIf(ps.Iface); ok {
+			out = append(out, it)
+			have[ps.Iface] = true
+		}
+	}
+	return out
 }
 
 // pathSpecs turns path names into mqvpn Path values: a share becomes its
@@ -587,8 +613,9 @@ func (a *Agent) shareStatus(st *status.Status) {
 		st.Shares = append(st.Shares, s)
 	}
 	st.ShareNote = ss.note
-	use := cfg.Client.SharesUsed()
-	st.UseShares = &use
+	use, local := cfg.Client.SharesUsed(), cfg.Client.LocalUsed()
+	st.UseShares, st.UseLocal = &use, &local
+	st.Platform = goruntime.GOOS
 	if sc := cfg.Client.Share; sc != nil {
 		sh := &status.Sharing{Enabled: sc.Enabled, Iface: sc.Iface, Label: ss.sharerLabel, Port: sharePort(sc), CapMB: sc.CapMB, Hubs: []status.SharingHub{}, State: "off"}
 		switch {
@@ -754,6 +781,7 @@ func (a *Agent) hShareSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		UseShares *bool               `json:"use_shares"`
+		UseLocal  *bool               `json:"use_local"`
 		Share     *config.ShareConfig `json:"share"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
@@ -775,6 +803,10 @@ func (a *Agent) hShareSettings(w http.ResponseWriter, r *http.Request) {
 			v := *in.UseShares
 			c.Client.UseShares = &v
 		}
+		if in.UseLocal != nil {
+			v := *in.UseLocal
+			c.Client.UseLocal = &v
+		}
 		if in.Share != nil {
 			s := *in.Share
 			c.Client.Share = &s
@@ -783,6 +815,9 @@ func (a *Agent) hShareSettings(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
+	}
+	if in.UseLocal != nil || in.UseShares != nil {
+		a.reconcilePaths(true)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

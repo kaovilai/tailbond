@@ -1,0 +1,10 @@
+#!/bin/sh
+# tailbond macOS hook (docs/macos.md, docs/architecture.md "Platform
+# hooks"): the tunnel is up. mqvpn itself sets the routes (manage_routes)
+# and the DNS servers (networksetup) on macOS, so this only flushes the
+# resolver cache, so names resolve through the tunnel's DNS at once.
+# Env: TB_TUN (utunN), TB_TUNNEL_IP, TB_SERVER_IP, TB_DNS_IP, ...
+echo "tunnel up on ${TB_TUN:-?} (${TB_TUNNEL_IP:-?}), server ${TB_SERVER_IP:-?}"
+dscacheutil -flushcache 2>/dev/null || true
+killall -HUP mDNSResponder 2>/dev/null || true
+exit 0
