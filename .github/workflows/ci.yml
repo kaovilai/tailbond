@@ -1017,6 +1017,225 @@ jobs:
           copr-cli buildscm --clone-url "https://github.com/$GITHUB_REPOSITORY" --commit "$TAG" \
             --method make_srpm --nowait "$COPR_PROJECT"
 
+  # The release SBOM (docs/sbom.md): one SPDX document for every release
+  # file, with what syft finds in it (tailbondd's Go modules), mqvpn and the
+  # C libraries linked into it (scripts/sbom/mqvpn-components.json, versions
+  # from the pinned submodules and the shipped binaries) and the APK's Maven
+  # runtime dependencies (Gradle). Every run builds and checks it from this
+  # run's artifacts; on a v* tag from the files "release" published, which
+  # job sbom-publish then attaches and attests.
+  sbom:
+    name: SBOM (SPDX + CycloneDX, checked)
+    needs: [release, agent, android, openwrt, rpm, linux-bundle, macos]
+    # "release" is skipped except on v* tags: run anyway, but not after a failure
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    env:
+      SYFT_VERSION: v1.56.0
+      GRYPE_VERSION: v0.121.1
+      SPDX_SCHEMA_URL: https://raw.githubusercontent.com/spdx/spdx-spec/v2.3/schemas/spdx-schema.json
+      SPDX_SCHEMA_SHA256: 239208b7ac287b3cf5d9a9af23f9d69863971102a5e1587a27a398b43490b89b
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # mqvpn's library versions come from the pinned submodules
+          submodules: recursive
+      - name: mqvpn's C libraries (versions from the submodules)
+        run: python3 scripts/sbom/sbom.py components
+      - name: sbom.py self-test (STATIC_LINK direction, SHA256SUMS, the APK inside the ipk)
+        run: python3 scripts/sbom/test-sbom.py
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        id: syft
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
+      - name: bsdtar (unpacks the rpm), jsonschema, the SPDX 2.3 schema
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libarchive-tools
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q jsonschema==4.26.0
+          curl -fsSLo "$RUNNER_TEMP/spdx-schema.json" "$SPDX_SCHEMA_URL"
+          echo "$SPDX_SCHEMA_SHA256  $RUNNER_TEMP/spdx-schema.json" | sha256sum -c -
+      # The APK's Maven dependencies: releaseRuntimeClasspath, what the
+      # release APK ships, as a Gradle dependency graph file.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Android SDK (as in job android)
+        run: android/scripts/setup-sdk.sh
+      - name: Android runtime dependencies (Gradle dependency graph)
+        uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          build-root-directory: android
+          # generate only (the upload is a side effect): job
+          # dependency-snapshot submits it as part of the SBOM
+          dependency-graph: generate-and-upload
+          dependency-graph-include-configurations: '^releaseRuntimeClasspath$'
+          dependency-graph-report-dir: out/gradle-graph
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true'
+        with:
+          name: tailbondd
+          path: dist/tailbondd/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true' && needs.android.outputs.release-apk == 'true'
+        with:
+          name: android-release-apk
+          path: dist/android-release-apk/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true' && needs.android.outputs.release-apk != 'true'
+        with:
+          name: android-apk
+          path: dist/android-apk/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true'
+        with:
+          name: glinet-ipk
+          path: dist/glinet-ipk/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true'
+        with:
+          name: fedora-rpm
+          path: dist/fedora-rpm/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true'
+        with:
+          name: linux-bundle
+          path: dist/linux-bundle/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true'
+        with:
+          name: macos-bundle
+          path: dist/macos-bundle/
+      - name: The release files (published ones on a tag, else this run's)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$IS_TAG" = true ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D release-assets
+          else
+            if [ ! -d dist/android-release-apk ]; then
+              # no release key (a fork): the debug APK stands in, for this check only
+              mkdir -p dist/android-release-apk
+              cp dist/android-apk/tailbond-debug.apk dist/android-release-apk/tailbond-debug-stand-in.apk
+              echo "::notice::no release APK in this run: the SBOM describes the debug APK"
+            fi
+            scripts/release/collect-assets.sh dist release-assets >/dev/null
+          fi
+          ls -l release-assets
+      - name: SBOM (SPDX 2.3, CycloneDX 1.x)
+        id: sbom
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$IS_TAG" = true ]; then v="${TAG#v}"; tag="$TAG"; else v="dev-${GITHUB_SHA::12}"; tag=""; fi
+          mkdir -p sbom
+          spdx="sbom/tailbond-$v.spdx.json"
+          python3 scripts/sbom/sbom.py build --assets release-assets --version "$v" ${tag:+--tag "$tag"} \
+            --namespace "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/tailbond-$v.spdx.json" \
+            --android-graph out/gradle-graph/*.json --out "$spdx"
+          "$SYFT" convert "$spdx" -o "cyclonedx-json=sbom/tailbond-$v.cdx.json"
+          echo "spdx=$spdx" >>"$GITHUB_OUTPUT"
+      - name: Check (SPDX schema; every file and its SHA256; mqvpn's libraries with versions)
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" scripts/sbom/sbom.py check "${{ steps.sbom.outputs.spdx }}" \
+            --assets release-assets --schema "$RUNNER_TEMP/spdx-schema.json" --require-android-deps --require-sums
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+      # Informational, never fails the run: grype also matches by CPE
+      # (libevent, lwIP), which Dependabot can't.
+      - uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        id: grype
+        continue-on-error: true
+        with:
+          grype-version: ${{ env.GRYPE_VERSION }}
+      - name: Known vulnerabilities (grype, informational)
+        if: steps.grype.outcome == 'success'
+        continue-on-error: true
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+          SPDX: ${{ steps.sbom.outputs.spdx }}
+        run: |
+          "$GRYPE" "sbom:$SPDX" -o table >"$RUNNER_TEMP/grype.txt"
+          { echo "### Known vulnerabilities (grype, informational)"; echo
+            echo '```'; head -n 150 "$RUNNER_TEMP/grype.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+
+  # A tag's SBOM, attached to the release and attested: anyone can check it
+  # with gh attestation verify FILE -R OWNER/REPO --predicate-type https://spdx.dev/Document
+  sbom-publish:
+    name: SBOM (attach to the release, attest)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release, sbom]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbom
+          path: sbom/
+      # The attestation's subjects come from SHA256SUMS: it must match the
+      # published files, and list exactly the files the SBOM describes.
+      - name: SHA256SUMS and the SBOM match the published files
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D release-assets
+          (cd release-assets && sha256sum --strict -c SHA256SUMS)
+          spdx="$(ls sbom/*.spdx.json)"
+          python3 scripts/sbom/sbom.py check "$spdx" --assets release-assets --require-android-deps --require-sums
+          echo "spdx=$spdx" >>"$GITHUB_OUTPUT"
+      # subjects: every file in SHA256SUMS, i.e. every release file
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release-assets/SHA256SUMS
+          sbom-path: ${{ steps.files.outputs.spdx }}
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber sbom/*.json
+
+  # Dependabot alerts come from the default branch's dependency graph only,
+  # and main's build is what a tag publishes (auto-release.yml tags main).
+  # Submit what main's release files contain: the APK's Maven runtime
+  # dependencies (in the graph from nowhere else), tailbondd's Go modules as
+  # built, mqvpn's C libraries (GitHub has no advisories for those; grype
+  # above and docs/sbom.md). On workflow_dispatch it submits for that ref,
+  # which feeds dependency review only.
+  dependency-snapshot:
+    name: Dependency graph (submit the SBOM)
+    if: ${{ !cancelled() && needs.sbom.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    needs: [release, sbom]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbom
+          path: sbom/
+      - name: Submit (dependency submission API)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/sbom/sbom.py snapshot sbom/*.spdx.json --sha "$GITHUB_SHA" --ref "$GITHUB_REF" >"$RUNNER_TEMP/snapshot.json"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dependency-graph/snapshots" --input "$RUNNER_TEMP/snapshot.json" \
+            --jq '"snapshot \(.id): \(.result) \(.message)"'
+
   # The release exists: the server image's X.Y and latest tags point at the
   # vX.Y.Z that job release pushed (not for pre-releases).
   image-tags:

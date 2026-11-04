@@ -1,0 +1,65 @@
+{
+  "//": [
+    "The C code compiled into mqvpn (docs/sbom.md). syft can't see it: it is",
+    "linked statically, with no package metadata in the binary. Hand-maintained;",
+    "the versions are not: scripts/sbom/sbom.py reads them from the pinned",
+    "submodule commits and the sources at build time, and fails when it can't.",
+    "Every directory under third_party/mqvpn/third_party must be listed here or",
+    "in notShipped (sbom.py components checks it), so a new library can't",
+    "slip into a release unlisted. libevent is not here: its version comes from",
+    "the shipped binary itself (sbom.py build)."
+  ],
+  "notShipped": {
+    "third_party/mqvpn/third_party/wintun": "Windows driver; tailbond ships no Windows build"
+  },
+  "components": [
+    {
+      "name": "mqvpn",
+      "path": "third_party/mqvpn",
+      "repo": "mp0rta/mqvpn",
+      "license": "Apache-2.0",
+      "supplier": "Organization: mqvpn contributors (https://github.com/mp0rta/mqvpn)",
+      "version": {"file": "CMakeLists.txt", "regex": "project\\(mqvpn VERSION ([0-9][0-9.]*)"},
+      "comment": "With tailbond's patches applied (patches/mqvpn/*.patch, scripts/lib/mqvpn-src.sh)."
+    },
+    {
+      "name": "xquic",
+      "path": "third_party/mqvpn/third_party/xquic",
+      "repo": "mp0rta/xquic",
+      "license": "Apache-2.0",
+      "supplier": "Organization: mqvpn contributors (https://github.com/mp0rta/xquic)",
+      "comment": "mqvpn's fork of https://github.com/alibaba/xquic (branch mqvpn-main); no upstream release version applies."
+    },
+    {
+      "name": "boringssl",
+      "path": "third_party/mqvpn/third_party/xquic/third_party/boringssl",
+      "repo": "google/boringssl",
+      "license": "NOASSERTION",
+      "supplier": "Organization: Google LLC",
+      "comment": "Pinned by commit; BoringSSL has no stable releases, so scanners can't match it by version."
+    },
+    {
+      "name": "lwip",
+      "path": "third_party/mqvpn/third_party/lwip",
+      "repo": "mp0rta/heiher-lwip",
+      "license": "BSD-3-Clause",
+      "supplier": "Organization: mqvpn contributors (https://github.com/mp0rta/heiher-lwip)",
+      "version": {
+        "file": "src/include/lwip/init.h",
+        "regex": "#define LWIP_VERSION_MAJOR\\s+(\\d+)[\\s\\S]*?#define LWIP_VERSION_MINOR\\s+(\\d+)[\\s\\S]*?#define LWIP_VERSION_REVISION\\s+(\\d+)"
+      },
+      "cpe": "cpe:2.3:a:lwip_project:lwip:{version}:*:*:*:*:*:*:*",
+      "comment": "heiher's lwIP fork (hev-socks5-tunnel) as forked for mqvpn's TCP lane."
+    },
+    {
+      "name": "yyjson",
+      "path": "third_party/mqvpn/third_party/yyjson",
+      "vendored": true,
+      "repo": "ibireme/yyjson",
+      "license": "MIT",
+      "supplier": "Organization: yyjson contributors (https://github.com/ibireme/yyjson)",
+      "version": {"file": "yyjson.h", "regex": "#define YYJSON_VERSION_STRING \"([0-9][0-9.]*)\""},
+      "comment": "Vendored source files in mqvpn (not a submodule)."
+    }
+  ]
+}
