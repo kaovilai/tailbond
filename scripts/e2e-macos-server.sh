@@ -266,12 +266,23 @@ else
 fi
 
 say "traffic: the internet through the Mac's NAT, the tailnet, DNS, the dashboard via the tunnel"
+info "VM routes: $(probe what=routes | grep -E '^(default|0\.0\.0\.0|128\.0|[0-9.]+/[0-9]+ dev tb)' | tr '\n' ';')"
+tcpdump -n -l -i "$WAN" -c 40 host 1.1.1.1 >"$WORK/tcpdump-wan.log" 2>&1 &
+TD1=$!
+tcpdump -n -l -i "$TUN" -c 40 host 1.1.1.1 >"$WORK/tcpdump-tun.log" 2>&1 &
+TD2=$!
+sleep 1
 OUT="$(probe 'what=http&url=http://1.1.1.1/cdn-cgi/trace')"
 STATES="$(pfctl -s state 2>/dev/null | grep '1\.1\.1\.1:80' || true)"
+sleep 1; kill "$TD1" "$TD2" 2>/dev/null || true
 if grep -q 'HTTP/1\.[01] [0-9]' <<<"$OUT"; then
   ok "VM fetched http://1.1.1.1/cdn-cgi/trace through the tunnel"
 else
   bad "internet from the VM: $(head -c 300 <<<"$OUT")"
+  info "the Mac itself: $(curl -sS -m 10 -o /dev/null -w '%{http_code}' http://1.1.1.1/cdn-cgi/trace 2>&1)"
+  info "on $TUN: $(head -n 8 "$WORK/tcpdump-tun.log" | tr '\n' ';')"
+  info "on $WAN: $(head -n 8 "$WORK/tcpdump-wan.log" | tr '\n' ';')"
+  info "pf: $(pfctl -s info 2>/dev/null | grep -E 'state-|match|Status' | tr -s ' ' | tr '\n' ';')"
 fi
 grep -q "$CIP" <<<"$STATES" && ok "pf translated it: $(grep "$CIP" <<<"$STATES" | head -n1 | tr -s ' ')" || bad "no NAT state for $CIP: $STATES"
 OUT="$(probe "what=ping&host=$PEER")"
