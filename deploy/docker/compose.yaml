@@ -1,10 +1,12 @@
 # tailbond server with Podman Compose or Docker Compose (docs/deploy.md).
-#   TAILBOND_PUBLIC_ADDR=vps.example.net TAILBOND_UI_PASSWORD=change-me podman compose up -d
-#   (or: docker compose up -d)
-# Uses the published image; pin a release with TAILBOND_IMAGE=ghcr.io/kaovilai/tailbond:vX.Y.Z.
+# Put the settings in deploy/docker/.env (git-ignored) so every compose
+# command sees them, then (rootful: UDP 443 and /dev/net/tun):
+#   printf 'TAILBOND_PUBLIC_ADDR=vps.example.net\nTAILBOND_UI_PASSWORD=change-me\n' >.env
+#   sudo podman compose up -d        (or: sudo docker compose up -d)
+# Uses the published image; pin a release with TAILBOND_IMAGE=ghcr.io/kaovilai/tailbond:vX.Y.Z in .env.
 # Build from source instead: build the Linux bundle, then
-#   deploy/docker/build-image.sh && TAILBOND_IMAGE=localhost/tailbond:dev podman compose up -d
-# The image never updates itself: pull a new tag (`podman compose pull && podman compose up -d`).
+#   deploy/docker/build-image.sh, and TAILBOND_IMAGE=localhost/tailbond:dev in .env
+# The image never updates itself: pull a new tag (`sudo podman compose pull && sudo podman compose up -d`).
 services:
   tailbond:
     image: ${TAILBOND_IMAGE:-ghcr.io/kaovilai/tailbond:latest}
@@ -22,6 +24,7 @@ services:
       TAILBOND_SUBNET: ${TAILBOND_SUBNET:-10.77.0.0/24}
       TAILBOND_MODE: ${TAILBOND_MODE:-speed}
       TAILBOND_UI_PASSWORD: ${TAILBOND_UI_PASSWORD:-}
+      TAILBOND_UPDATE_POLICY: ${TAILBOND_UPDATE_POLICY:-notify}
     ports:
       - "${TAILBOND_PORT:-443}:${TAILBOND_PORT:-443}/udp"
       # Dashboard: keep it off the internet; reach it over SSH tunnel or a VPN.

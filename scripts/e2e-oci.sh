@@ -91,12 +91,13 @@ srv_exec() {
 
 cleanup() {
   local rc=$?
+  set +e # every step runs, whatever failed before
   if [ -n "${KEEP:-}" ]; then echo "KEEP: namespaces, server and client left running; work dir $WORK"; return; fi
   if [ "$rc" -ne 0 ] || [ "$FAIL" -ne 0 ] || [ -n "${VERBOSE:-}" ]; then
     echo "--- server log (tail)"; srv_logs
     echo "--- client log (tail)"; tail -n 40 "$WORK/client.log" 2>/dev/null || true
   fi
-  [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
+  [ -z "$PF_PID" ] || kill "$PF_PID" 2>/dev/null || true
   for ns in "$NS_C" "$NS_I"; do
     ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null || true
   done
@@ -106,7 +107,7 @@ cleanup() {
     ip netns del "$ns" 2>/dev/null || true
   done
   for l in tboci-a tboci-b tboci-i; do ip link del "$l" 2>/dev/null || true; done
-  [ "$IPT_RULE" = 1 ] && iptables -D FORWARD -i tboci-+ -j ACCEPT -m comment --comment tb-e2e-oci 2>/dev/null
+  [ "$IPT_RULE" != 1 ] || iptables -D FORWARD -i tboci-+ -j ACCEPT -m comment --comment tb-e2e-oci 2>/dev/null || true
   case "$BACKEND" in
     podman)
       podman rm -f "$CTR" >/dev/null 2>&1; podman volume rm -f "$VOL" >/dev/null 2>&1
@@ -203,7 +204,9 @@ configMapGenerator:
       - TAILBOND_PUBLIC_ADDR=$SERVER_IP
 secretGenerator:
   - name: tailbond-ui
-    behavior: replace
+    namespace: $KNS
+    options:
+      disableNameSuffixHash: true
     literals:
       - TAILBOND_UI_PASSWORD=$UIPW
 patches:
@@ -216,7 +219,7 @@ EOF
         kubectl apply -k "$WORK/k8s" >/dev/null
       fi
       kubectl -n "$KNS" rollout status deploy/tailbond --timeout=180s >/dev/null
-      [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
+      [ -z "$PF_PID" ] || kill "$PF_PID" 2>/dev/null || true
       kubectl -n "$KNS" port-forward deploy/tailbond "${SAPI##*:}:8077" >"$WORK/pf.log" 2>&1 &
       PF_PID=$!
       ;;
@@ -236,7 +239,9 @@ wait_for 30 "server connected" sh -c "curl -fsS -m 2 -b '$WORK/cookies' http://$
   && ok "server role, mqvpn up" || bad "server status: $(sapi "http://$SAPI/api/status" | jq -c '{state, role, error}')"
 sapi "http://$SAPI/api/status" | jq -e '.update.policy == "notify" and .update.method == "none"' >/dev/null \
   && ok "updates: notify only, no self-update (method none)" || bad "update: $(sapi "http://$SAPI/api/status" | jq -c .update)"
-srv_exec nft list table inet tailbond 2>/dev/null | grep -q masquerade && ok "server-up hook loaded the NAT (nft table inet tailbond)" || bad "no nft table in the container"
+# the server-up hook runs once mqvpn is up, just after the status says so
+nat_loaded() { srv_exec nft list table inet tailbond 2>/dev/null | grep -q masquerade; }
+wait_for 30 "nft table" nat_loaded && ok "server-up hook loaded the NAT (nft table inet tailbond)" || bad "no nft table in the container"
 case "$BACKEND" in
   podman) podman healthcheck run "$CTR" && ok "image HEALTHCHECK passes (podman healthcheck run)" || bad "health check fails" ;;
   kind) srv_exec tailbond-healthcheck && ok "tailbond-healthcheck passes" || bad "health check fails" ;;
@@ -277,7 +282,21 @@ through_nat
 say "replace the server on the same volume: state persists"
 OLD_ID="$(srv_id)"
 case "$BACKEND" in
-  podman) podman rm -f "$CTR" >/dev/null ;;
+  podman)
+    podman rm -f "$CTR" >/dev/null
+    # with the server stopped: a start whose config render fails (a bad
+    # TAILBOND_PORT) exits and leaves tailbond.json byte for byte as it was
+    data_state() { podman run --rm --entrypoint sh -v "$VOL:/data" "$IMAGE" -c 'sha256sum /data/tailbond.json; ls -A /data'; }
+    before="$(data_state)"
+    if podman run --rm --device /dev/net/tun -v "$VOL:/data" -e TAILBOND_PUBLIC_ADDR="$SERVER_IP" \
+        -e TAILBOND_PORT=not-a-port "$IMAGE" >"$WORK/bad-render.log" 2>&1; then
+      bad "a start with TAILBOND_PORT=not-a-port succeeded"
+    elif grep -q 'it is unchanged' "$WORK/bad-render.log" && [ "$(data_state)" = "$before" ]; then
+      ok "a failed config render leaves tailbond.json intact (no temp file left)"
+    else
+      bad "after a failed render: $(cat "$WORK/bad-render.log"); before: $before; after: $(data_state)"
+    fi
+    ;;
 esac
 srv_start again || { bad "server did not come back"; exit 1; }
 NEW_ID="$(srv_id)"

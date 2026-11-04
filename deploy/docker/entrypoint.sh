@@ -46,19 +46,27 @@ fi
 apk=""
 [ -f "$bundle/share/tailbond.apk" ] && apk="$bundle/share/tailbond.apk"
 
-# Re-apply the environment on every start; users/pairings in the file are kept.
-tmp="$(mktemp)"
-jq --arg addr "$TAILBOND_PUBLIC_ADDR" --argjson port "$port" --arg subnet "$subnet" \
+# Re-apply the environment on every start; users/pairings in the file are
+# kept. The new file is written next to the old one (same filesystem),
+# flushed, then renamed over it: a failed render or a stop half-way leaves
+# the old file as it was.
+tmp="$(mktemp "$(dirname "$cfg")/.tailbond.json.XXXXXX")"
+if ! jq --arg addr "$TAILBOND_PUBLIC_ADDR" --argjson port "$port" --arg subnet "$subnet" \
    --arg listen "$listen" --arg pw "${TAILBOND_UI_PASSWORD:-}" --arg mode "$mode" \
    --arg bin "$bundle/bin/mqvpn" --arg hooks "$bundle/hooks" --arg upol "$upol" --arg apk "$apk" '
   .role = "server" | .mqvpn_bin = $bin | .hooks_dir = $hooks | .state_dir = "/data/state"
   | .listen = $listen | .ui_password = $pw | .mode = $mode | .disable_tailscale = true
-  | .android_apk = $apk | .update = ((.update // {}) | .policy = $upol)
+  | (if $apk != "" then .android_apk = $apk else . end)
+  | .update = ((.update // {}) | .policy = $upol)
   | .server.public_addr = $addr | .server.port = $port | .server.subnet = $subnet
   | .server.use_tailscale_cert = false | .server.no_advertise_route = true
-' "$cfg" >"$tmp"
-cat "$tmp" >"$cfg"
-rm -f "$tmp"
-chmod 600 "$cfg"
+' "$cfg" >"$tmp" || ! jq -e .role "$tmp" >/dev/null; then
+  rm -f "$tmp"
+  echo "tailbond: could not apply the environment to $cfg (is TAILBOND_PORT a number?); it is unchanged" >&2
+  exit 1
+fi
+chmod 600 "$tmp"
+sync "$tmp" 2>/dev/null || sync
+mv -f "$tmp" "$cfg"
 
 exec "$bundle/bin/tailbondd" -config "$cfg"

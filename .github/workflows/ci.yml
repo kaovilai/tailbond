@@ -781,6 +781,7 @@ jobs:
           echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
       - name: kubeconform (base, tailscale overlay)
         run: |
+          set -o pipefail # a kustomize error fails the step
           for k in base tailscale; do
             kubectl kustomize "deploy/kubernetes/$k" | kubeconform -strict -summary -
           done
@@ -898,6 +899,9 @@ jobs:
           podman manifest create localhost/tailbond:release containers-storage:localhost/tailbond:amd64 containers-storage:localhost/tailbond:arm64
           podman manifest inspect localhost/tailbond:release | jq -e '[.manifests[].platform.architecture] | sort == ["amd64", "arm64"]'
           printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # the attestation below (push-to-registry) reads only Docker's
+          # ~/.docker/config.json, which docker login writes natively
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           # v2s2: Docker media types keep HEALTHCHECK in the image config
           podman manifest push --all --format v2s2 --digestfile "$RUNNER_TEMP/digest" localhost/tailbond:release "docker://$repo:$TAG"
           echo "name=$repo" >>"$GITHUB_OUTPUT"
@@ -980,6 +984,7 @@ jobs:
         run: |
           repo="ghcr.io/${GITHUB_REPOSITORY,,}"
           minor="$(sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/' <<<"$TAG")"
+          command -v skopeo || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for t in "$minor" latest; do
             skopeo copy --all --preserve-digests "docker://$repo:$TAG" "docker://$repo:$t"

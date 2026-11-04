@@ -7,7 +7,9 @@ metadata:
 data:
   # what phones and routers dial: the Service's external IP or a DNS name for it
   TAILBOND_PUBLIC_ADDR: tailbond.example.net
-  # the Service's UDP port must be the same number
+  # the UDP port mqvpn listens on in the pod. To change it, change
+  # deployment.yaml's containerPort "tunnel" to the same number (the Service
+  # targets that port; its own `port` is what clients dial, see service.yaml)
   TAILBOND_PORT: "443"
   TAILBOND_SUBNET: 10.77.0.0/24
   TAILBOND_MODE: speed

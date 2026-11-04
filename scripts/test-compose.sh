@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # deploy/docker/compose.yaml with the image under test, in each engine
 # present: `podman compose` and `docker compose` (CI job "oci-image").
-# Up, the agent answers on 127.0.0.1:8077, the NAT table is loaded, (docker)
+# The settings come from deploy/docker/.env, as docs/deploy.md says. Up,
+# the agent answers on 127.0.0.1:8077, the NAT table is loaded, every
+# setting reached the config (TAILBOND_UPDATE_POLICY=off), (docker)
 # HEALTHCHECK reports healthy, down -v.
 #
 #   scripts/test-compose.sh localhost/tailbond:ci      (rootful: uses sudo)
@@ -11,11 +13,25 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -eq 1 ] || { echo "usage: $0 IMAGE (in root's podman storage)" >&2; exit 2; }
 IMAGE="$1"
-export TAILBOND_IMAGE="$IMAGE" TAILBOND_PUBLIC_ADDR=203.0.113.7 TAILBOND_PORT=4443 TAILBOND_UI_PASSWORD="compose-$RANDOM"
-# shellcheck disable=SC2054 # one sudo option, commas and all
-SUDO=(sudo --preserve-env=TAILBOND_IMAGE,TAILBOND_PUBLIC_ADDR,TAILBOND_UI_PASSWORD,TAILBOND_PORT,PODMAN_COMPOSE_PROVIDER)
+SUDO=(sudo --preserve-env=PODMAN_COMPOSE_PROVIDER)
 cd "$ROOT/deploy/docker"
+[ ! -e .env ] || { echo "deploy/docker/.env exists (yours?): move it away first" >&2; exit 2; }
+cat >.env <<EOF
+TAILBOND_IMAGE=$IMAGE
+TAILBOND_PUBLIC_ADDR=203.0.113.7
+TAILBOND_PORT=4443
+TAILBOND_UI_PASSWORD=compose-$RANDOM
+TAILBOND_MODE=redundant
+TAILBOND_UPDATE_POLICY=off
+EOF
 rc=0
+started=()
+cleanup() {
+  local e
+  for e in "${started[@]}"; do "${SUDO[@]}" "$e" compose down -v >/dev/null 2>&1 || true; done
+  rm -f .env
+}
+trap cleanup EXIT
 
 wait_for() { # wait_for <seconds> <command...>
   local t=$1; shift
@@ -34,6 +50,12 @@ check() { # check ENGINE: compose is up
   else
     echo "  FAIL $eng compose: no NAT table"; rc=1
   fi
+  if sudo "$eng" exec "$id" jq -e '.update.policy == "off" and .mode == "redundant" and .server.port == 4443
+      and .server.public_addr == "203.0.113.7" and .listen == "0.0.0.0:8077"' /data/tailbond.json >/dev/null; then
+    echo "  PASS $eng compose: every .env setting reached tailbond.json (update policy off, mode, port, address, password)"
+  else
+    echo "  FAIL $eng compose: config $(sudo "$eng" exec "$id" jq -c '{update, mode, listen, server: {port: .server.port, public_addr: .server.public_addr}}' /data/tailbond.json)"; rc=1
+  fi
   if [ "$eng" = docker ]; then
     if wait_for 90 sh -c "[ \"\$(sudo docker inspect -f '{{.State.Health.Status}}' $id)\" = healthy ]"; then
       echo "  PASS docker: HEALTHCHECK healthy"
@@ -46,6 +68,7 @@ check() { # check ENGINE: compose is up
 
 if "${SUDO[@]}" podman compose version >/dev/null 2>&1; then
   echo "==> podman compose"
+  started+=(podman)
   "${SUDO[@]}" podman compose up -d
   check podman
   "${SUDO[@]}" podman compose down -v
@@ -56,6 +79,7 @@ fi
 if command -v docker >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1; then
   echo "==> docker compose"
   sudo podman save --format docker-archive "$IMAGE" | sudo docker load
+  started+=(docker)
   "${SUDO[@]}" docker compose up -d
   check docker
   "${SUDO[@]}" docker compose down -v

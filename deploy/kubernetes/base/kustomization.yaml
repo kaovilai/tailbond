@@ -2,14 +2,17 @@
 #   kubectl apply -k deploy/kubernetes/base        # this
 #   kubectl apply -k deploy/kubernetes/tailscale   # or: plus a Tailscale sidecar
 # Set TAILBOND_PUBLIC_ADDR (configmap.yaml) to the Service's external
-# address first; pin a release with `images:` in an overlay of your own.
+# address; pin a release with `images:` in an overlay of your own.
+# The dashboard password is Secret tailbond-ui, which you create (not part
+# of this kustomization, so `kubectl apply -k` never resets it):
+#   kubectl -n tailbond create secret generic tailbond-ui --from-literal=TAILBOND_UI_PASSWORD='<password>'
+# Without it the dashboard listens on the pod's 127.0.0.1 only (kubectl port-forward).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: tailbond
 resources:
   - namespace.yaml
   - configmap.yaml
-  - secret.yaml
   - pvc.yaml
   - deployment.yaml
   - service.yaml

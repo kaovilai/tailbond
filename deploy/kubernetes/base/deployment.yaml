@@ -37,8 +37,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: tailbond
+            # the dashboard password, created by you (kustomization.yaml); optional
             - secretRef:
                 name: tailbond-ui
+                optional: true
           ports:
             - name: tunnel
               containerPort: 443
