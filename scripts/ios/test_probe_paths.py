@@ -49,6 +49,17 @@ class Logic(unittest.TestCase):
         self.assertEqual(pp.split_hostport("api.ipify.org", 80), ("api.ipify.org", 80))
         self.assertEqual(pp.split_hostport("127.0.0.1:8053", 53), ("127.0.0.1", 8053))
 
+    def test_parse_ip_response(self):
+        self.assertEqual(pp.parse_ip_response(b"HTTP/1.1 200 OK\r\nX: y\r\n\r\n203.0.113.9\n"), "203.0.113.9")
+        self.assertEqual(pp.parse_ip_response(b"HTTP/1.0 200 OK\r\n\r\n2001:db8::1"), "2001:db8::1")
+        # A captive portal's redirect or login page must not count as an IP.
+        with self.assertRaises(ValueError):
+            pp.parse_ip_response(b"HTTP/1.1 302 Found\r\nLocation: http://portal/\r\n\r\n")
+        with self.assertRaises(ValueError):
+            pp.parse_ip_response(b"HTTP/1.1 200 OK\r\n\r\n<html>Log in to Hotel Wi-Fi</html>")
+        with self.assertRaises(ValueError):
+            pp.parse_ip_response(b"")
+
 
 @contextlib.contextmanager
 def loopback_servers(public_ip="203.0.113.9"):

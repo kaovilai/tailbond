@@ -13,10 +13,12 @@ services:
       net.ipv6.conf.all.forwarding: "1"
     environment:
       TAILBOND_PUBLIC_ADDR: ${TAILBOND_PUBLIC_ADDR:?set TAILBOND_PUBLIC_ADDR}
-      TAILBOND_PORT: "443"
+      TAILBOND_PORT: ${TAILBOND_PORT:-443}
+      TAILBOND_SUBNET: ${TAILBOND_SUBNET:-10.77.0.0/24}
+      TAILBOND_MODE: ${TAILBOND_MODE:-speed}
       TAILBOND_UI_PASSWORD: ${TAILBOND_UI_PASSWORD:-}
     ports:
-      - "443:443/udp"
+      - "${TAILBOND_PORT:-443}:${TAILBOND_PORT:-443}/udp"
       # Dashboard: keep it off the internet; reach it over SSH tunnel or a VPN.
       - "127.0.0.1:8077:8077/tcp"
     volumes:

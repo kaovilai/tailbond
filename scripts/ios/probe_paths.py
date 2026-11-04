@@ -18,6 +18,7 @@ Options (for testing; the defaults are what the iPhone needs):
     --ip-url HOST:PORT         plain-HTTP "what's my IP" service (default api.ipify.org:80)
 """
 import argparse
+import ipaddress
 import socket
 import struct
 import sys
@@ -95,9 +96,24 @@ def public_ip(ifname, ip_service):
             if not chunk:
                 break
             resp += chunk
-        return resp.split(b"\r\n\r\n", 1)[-1].decode().strip()
+        return parse_ip_response(resp)
     finally:
         s.close()
+
+
+def parse_ip_response(resp):
+    """The IP from a plain "what's my IP" HTTP reply. Anything else (a redirect,
+    a captive portal's login page, an error) raises instead of being compared."""
+    head, _, body = resp.partition(b"\r\n\r\n")
+    status = head.split(b"\r\n", 1)[0].split()
+    if len(status) < 2 or status[1] != b"200":
+        raise ValueError("HTTP status %r, not 200 (captive portal or proxy?)"
+                         % b" ".join(status[1:]).decode(errors="replace"))
+    text = body.decode(errors="replace").strip()
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        raise ValueError("reply isn't an IP address: %r" % text[:60]) from None
 
 
 def classify(results):

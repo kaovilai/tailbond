@@ -22,7 +22,7 @@ All three use the same release bundle (`tailbond-linux-<arch>.tar.gz`, checked a
 ## Any VPS (cloud-init)
 
 1. Create a server with Debian 12, Ubuntu 24.04, AlmaLinux/Rocky 9–10 or Fedora. 512 MB RAM is enough ([sizing](vps.md)).
-2. Paste [`deploy/cloud-init/cloud-init.yaml`](../deploy/cloud-init/cloud-init.yaml) into the provider's **User data** / **cloud-init** box. Optionally fill in `TAILSCALE_AUTHKEY` so the server joins your tailnet; then phones and routers reach your Tailscale machines through it.
+2. Paste [`deploy/cloud-init/cloud-init.yaml`](../deploy/cloud-init/cloud-init.yaml) into the provider's **User data** / **cloud-init** box. Optionally fill in `TAILSCALE_AUTHKEY` so the server joins your tailnet; then phones and routers reach your Tailscale machines through it. Clients dial the server's public IPv4 (looked up from the internet, so it's right behind cloud NAT); set `PUBLIC_ADDR` to use a DNS name instead.
 3. Allow inbound UDP 443 in the provider's firewall (the installer picks another port if something already holds 443; see its log in `/var/log/cloud-init-output.log`).
 4. Open the dashboard over Tailscale (`http://<server>:8077`) or an SSH tunnel (`ssh -L 8077:127.0.0.1:8077 root@<server>`) and add your devices.
 
@@ -35,7 +35,7 @@ TAILBOND_PUBLIC_ADDR=vps.example.net TAILBOND_UI_PASSWORD=change-me docker compo
 
 Podman: `podman compose up -d --build` (or `podman-compose`), run as root so the container can use `/dev/net/tun`.
 
-- **Environment:** `TAILBOND_PUBLIC_ADDR` (required: what clients dial), `TAILBOND_PORT` (default 443), `TAILBOND_SUBNET` (default `10.77.0.0/24`), `TAILBOND_UI_PASSWORD`, `TAILBOND_MODE`.
+- **Environment:** `TAILBOND_PUBLIC_ADDR` (required: what clients dial), `TAILBOND_PORT` (default 443), `TAILBOND_SUBNET` (default `10.77.0.0/24`), `TAILBOND_UI_PASSWORD`, `TAILBOND_MODE`. The Compose file passes all of them through and publishes `TAILBOND_PORT` on the host.
 - **Data:** config, devices and certificates live in the `tailbond-data` volume (`/data`).
 - **Dashboard:** published only on `127.0.0.1:8077` of the host. Reach it with an SSH tunnel. It listens inside the container only when `TAILBOND_UI_PASSWORD` is set.
 - **No Tailscale in the container:** devices pair with the QR code or link from the dashboard, and the server is an internet exit without tailnet access. For tailnet access, use cloud-init or the VPS installer on a host with Tailscale instead.

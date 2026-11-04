@@ -6,6 +6,10 @@
 # (Debian 12, Ubuntu 24.04, AlmaLinux/Rocky 9-10 or Fedora). Optional: fill in
 # TAILSCALE_AUTHKEY below to join your tailnet, so phones and routers reach
 # your Tailscale machines through this server and can pair over Tailscale.
+# PUBLIC_ADDR: leave empty to use the server's public IPv4 as seen from the
+# internet (right behind cloud NAT: AWS, GCP, Oracle), or set a DNS name.
+package_update: true
+packages: [curl, ca-certificates, tar, nftables]
 write_files:
   - path: /root/tailbond-setup.sh
     permissions: "0700"
@@ -13,7 +17,13 @@ write_files:
       #!/bin/bash
       set -euo pipefail
       TAILSCALE_AUTHKEY=""        # tskey-auth-... (optional; reusable/ephemeral off)
+      PUBLIC_ADDR=""              # vps.example.net (optional; default: public IPv4)
       TAILBOND_REPO="kaovilai/tailbond"
+      if [ -z "$PUBLIC_ADDR" ]; then
+        # The default-route address is private behind cloud NAT; ask the internet.
+        PUBLIC_ADDR="$(curl -4fsS --max-time 10 https://api.ipify.org || true)"
+        [[ "$PUBLIC_ADDR" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || { echo "couldn't find the public IPv4; set PUBLIC_ADDR"; exit 1; }
+      fi
       case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) echo "unsupported arch"; exit 1 ;; esac
       base="https://github.com/$TAILBOND_REPO/releases/latest/download"
       cd /root
@@ -24,9 +34,9 @@ write_files:
       if [ -n "$TAILSCALE_AUTHKEY" ]; then
         curl -fsSL https://tailscale.com/install.sh | sh
         tailscale up --authkey "$TAILSCALE_AUTHKEY"
-        "./tailbond-linux-$arch/install.sh" --update-policy auto
+        "./tailbond-linux-$arch/install.sh" --public-addr "$PUBLIC_ADDR" --update-policy auto
       else
-        "./tailbond-linux-$arch/install.sh" --no-tailscale --update-policy auto
+        "./tailbond-linux-$arch/install.sh" --no-tailscale --public-addr "$PUBLIC_ADDR" --update-policy auto
       fi
 runcmd:
   - [bash, /root/tailbond-setup.sh]
