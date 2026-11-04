@@ -17,7 +17,14 @@
 #
 # plus the versioned packages package tools read the version from:
 # tailbond_<version>-r1_<arch>.ipk (the router's package cache and its
-# reinstall after a firmware upgrade) and tailbond-server-<version>.rpm.
+# reinstall after a firmware upgrade, the opkg feed) and
+# tailbond-server-<version>.rpm.
+#
+# The opkg feed (docs/glinet.md, "Install and update from GL's Plug-ins
+# page"), when TB_OPKG_SIGNING_KEY holds the usign secret key: Packages,
+# Packages.gz, Packages.sig and tailbond-opkg.pub
+# (scripts/release/opkg-feed.sh). Without the key the release has no feed
+# (a warning); with a key the packages don't carry, it fails.
 #
 #   scripts/release/collect-assets.sh DIST OUT
 #
@@ -91,5 +98,20 @@ for f in tailbond-android.apk tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk 
     tailbond-macos-arm64.tar.gz tailbond.rb tailbondd-linux-amd64.tar.gz tailbondd-linux-arm64.tar.gz; do
     [ -s "$OUT/$f" ] || die "$f missing"
 done
+# the opkg feed: signed, or none
+if [ -n "${TB_OPKG_SIGNING_KEY:-}" ]; then
+    kd="$(mktemp -d "${TMPDIR:-/tmp}/tb-opkg-key.XXXXXX")"
+    (umask 077; printf '%s\n' "$TB_OPKG_SIGNING_KEY" >"$kd/opkg.sec")
+    rc=0
+    "$(dirname "$0")/opkg-feed.sh" "$OUT" "$kd/opkg.sec" || rc=$?
+    rm -rf "$kd"
+    [ "$rc" = 0 ] || die "the opkg feed failed (above)"
+    for f in Packages Packages.gz Packages.sig tailbond-opkg.pub; do
+        [ -s "$OUT/$f" ] || die "$f missing"
+    done
+else
+    echo "::warning::collect-assets: secret TB_OPKG_SIGNING_KEY is not set, so this release has no opkg feed (Packages, Packages.sig): GL's Plug-ins page can't install or update it. Run scripts/release/gen-opkg-key.sh once and commit the public key it writes (docs/glinet.md)."
+fi
+
 (cd "$OUT" && rm -f SHA256SUMS && sha256sum -- * >SHA256SUMS.tmp && mv SHA256SUMS.tmp SHA256SUMS)
 cat "$OUT/SHA256SUMS"

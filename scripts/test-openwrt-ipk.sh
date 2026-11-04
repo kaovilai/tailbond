@@ -11,7 +11,15 @@
 # back one whose agent never answers; a simulated firmware upgrade (the
 # sysupgrade hook's keep list restored onto a system without the package)
 # reinstalls it at boot from the kept cache, and from the GitHub release
-# (checked against SHA256SUMS) when the cache is gone.
+# (checked against SHA256SUMS) when the cache is gone. The signed opkg feed
+# (docs/glinet.md, "Install and update from GL's Plug-ins page"): an index
+# built and signed here (scripts/release/opkg-feed.sh, usign from source,
+# a throwaway key), served behind a redirect like GitHub's, added to
+# customfeeds.conf as GL's UI adds it, check_signature on: rejected until
+# the key is added, then opkg update + install + upgrade from it; the
+# router's own usign rejects a changed Packages and another key; uninstall
+# removes the key the package installed. Plus opkg's downloader (wget)
+# through a real GitHub releases/latest/download redirect.
 #
 #   scripts/test-openwrt-ipk.sh [path/to/tailbond_*_aarch64_cortex-a53.ipk]
 #
@@ -27,8 +35,10 @@ IMAGE=docker.io/openwrt/rootfs:armsr-armv8-23.05.0
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-# repack OUT [VERSION [TAILBONDD]]: the ipk without Depends, optionally with
-# another control Version and another /usr/bin/tailbondd
+# repack OUT [VERSION [TAILBONDD [PUBKEY]]]: the ipk without Depends,
+# optionally with another control Version, another /usr/bin/tailbondd, and
+# a usign public key shipped as the feed key (/etc/opkg/keys/<fingerprint>,
+# a conffile), as build-ipk.sh ships the committed one
 repack() {
     local w="$TMP/repack"
     rm -rf "$w" && mkdir -p "$w/x" "$w/c"
@@ -36,13 +46,20 @@ repack() {
     tar -xzf "$w/x/control.tar.gz" -C "$w/c"
     sed -i '/^Depends:/d' "$w/c/control"
     [ -z "${2:-}" ] || sed -i "s/^Version: .*/Version: $2/" "$w/c/control"
-    tar --format=ustar --owner=0 --group=0 -C "$w/c" -czf "$w/x/control.tar.gz" .
-    if [ -n "${3:-}" ]; then
+    if [ -n "${3:-}${4:-}" ]; then
         mkdir -p "$w/d"
         tar -xzf "$w/x/data.tar.gz" -C "$w/d"
-        install -m 0755 "$3" "$w/d/usr/bin/tailbondd"
+        [ -z "${3:-}" ] || install -m 0755 "$3" "$w/d/usr/bin/tailbondd"
+        if [ -n "${4:-}" ]; then
+            local fp
+            fp="$("$USIGN" -F -p "$4")"
+            install -d -m 0755 "$w/d/etc/opkg/keys"
+            install -m 0644 "$4" "$w/d/etc/opkg/keys/$fp"
+            grep -qx "/etc/opkg/keys/$fp" "$w/c/conffiles" || echo "/etc/opkg/keys/$fp" >>"$w/c/conffiles"
+        fi
         tar --format=ustar --owner=0 --group=0 -C "$w/d" -czf "$w/x/data.tar.gz" .
     fi
+    tar --format=ustar --owner=0 --group=0 -C "$w/c" -czf "$w/x/control.tar.gz" .
     tar --format=ustar --owner=0 --group=0 -C "$w/x" -czf "$1" ./debian-binary ./data.tar.gz ./control.tar.gz
 }
 repack "$TMP/tailbond.ipk"
@@ -52,6 +69,38 @@ repack "$TMP/tailbond_0.0.1-r1_aarch64_cortex-a53.ipk" 0.0.1-r1
 repack "$TMP/tailbond_99.0.0-r1_aarch64_cortex-a53.ipk" 99.0.0-r1
 printf '#!/bin/sh\necho "broken build" >&2\nexit 1\n' >"$TMP/broken-tailbondd"
 repack "$TMP/tailbond_99.1.0-r1_aarch64_cortex-a53.ipk" 99.1.0-r1 "$TMP/broken-tailbondd"
+# The feed key the repository commits (gen-opkg-key.sh) is in the package,
+# as a conffile, as is: routers that install it trust the release's feed.
+for k in "$ROOT"/packaging/openwrt/files/etc/opkg/keys/*; do
+    [ -f "$k" ] || continue
+    tar -xzOf "$IPK" ./data.tar.gz | tar -xzOf - "./etc/opkg/keys/${k##*/}" | cmp -s - "$k" &&
+        tar -xzOf "$IPK" ./control.tar.gz | tar -xzOf - ./conffiles | grep -qx "/etc/opkg/keys/${k##*/}" ||
+        { echo "FAIL $IPK doesn't ship $k as a conffile"; exit 1; }
+    echo "  PASS the package ships the feed key ${k##*/} (a conffile)"
+done
+# The signed opkg feed: the release's index and signature (opkg-feed.sh,
+# usign built from OpenWrt's source) for packages that ship a throwaway
+# key; v1 to install, v2 to upgrade to, a changed Packages (signature of
+# the original), one signed by a key the router doesn't have.
+USIGN="$("$ROOT/scripts/release/usign.sh")"
+"$USIGN" -G -s "$TMP/feed.sec" -p "$TMP/feed.pub"
+"$USIGN" -G -s "$TMP/other.sec" -p "$TMP/other.pub"
+"$USIGN" -F -p "$TMP/feed.pub" >"$TMP/feed.fp"
+feed() { # DIR VERSION
+    mkdir -p "$1"
+    repack "$1/tailbond_$2_aarch64_cortex-a53.ipk" "$2" "" "$TMP/feed.pub"
+    cp "$1/tailbond_$2_aarch64_cortex-a53.ipk" "$1/tailbond-openwrt-aarch64_cortex-a53.ipk" # the stable copy, not indexed
+    "$ROOT/scripts/release/opkg-feed.sh" "$1" "$TMP/feed.sec" >/dev/null
+}
+feed "$TMP/feed1" 99.2.0-r1
+feed "$TMP/feed2" 99.3.0-r1
+cp -r "$TMP/feed1" "$TMP/feed-tampered"
+sed -i 's/^Version: 99.2.0-r1$/Version: 99.2.1-r1/' "$TMP/feed-tampered/Packages"
+gzip -9n -c "$TMP/feed-tampered/Packages" >"$TMP/feed-tampered/Packages.gz"
+cp -r "$TMP/feed1" "$TMP/feed-otherkey"
+rm "$TMP/feed-otherkey/Packages.sig"
+"$USIGN" -S -m "$TMP/feed-otherkey/Packages" -s "$TMP/other.sec" -x "$TMP/feed-otherkey/Packages.sig"
+chmod -R a+rX "$TMP"
 # A pairing link whose payload names the server.
 printf '%s' '{"v":1,"name":"slate7","server_name":"homebox","sni":"homebox.tail1234.ts.net","server":"203.0.113.7:443"}' |
     base64 -w0 | tr '+/' '-_' | tr -d '=' >"$TMP/pair-d.txt"
@@ -348,6 +397,94 @@ if opkg install uhttpd >/dev/null 2>&1; then
 	kill $U1 2>/dev/null
 else
 	echo "  SKIP GitHub fallback: uhttpd not installable from the feed"
+fi
+
+echo "== the signed opkg feed (GL: Plug-ins -> Manage Sources -> Add Custom Software Source)"
+grep -q '^option check_signature' /etc/opkg.conf && ok "check_signature is on (as on GL 4.x)" || { bad "no check_signature in /etc/opkg.conf"; echo 'option check_signature' >>/etc/opkg.conf; }
+if command -v uhttpd >/dev/null 2>&1 || opkg install uhttpd >/dev/null 2>&1; then
+	FP="$(cat /t/feed.fp)"
+	K="/etc/opkg/keys/$FP"
+	F=/tmp/feedsrv
+	mkdir -p $F/cgi-bin $F/f
+	# GitHub's releases/latest/download/<name> answers with a redirect (to
+	# releases/download/<tag>/<name>, then the file's host); so does this
+	cat >$F/cgi-bin/latest <<'SH'
+#!/bin/sh
+printf 'Status: 302 Found\r\nLocation: http://127.0.0.1:8098/f%s\r\n\r\n' "$PATH_INFO"
+SH
+	chmod 755 $F/cgi-bin/latest
+	uhttpd -f -p 127.0.0.1:8098 -h $F -x /cgi-bin >/dev/null 2>&1 &
+	U2=$!
+	serve() { rm -rf $F/f && cp -r "/t/$1" $F/f && chmod -R a+rX $F/f; }
+	serve feed1
+	sleep 1
+	opkg remove tailbond >/dev/null 2>&1
+	rm -f "$K"
+	# only this feed: opkg update's result is then this feed's
+	mv /etc/opkg/distfeeds.conf /tmp/distfeeds.conf
+	cp /etc/opkg/customfeeds.conf /tmp/customfeeds.conf
+	# the line GL's "Add Custom Software Source" writes
+	echo 'src/gz tailbond http://127.0.0.1:8098/cgi-bin/latest' >>/etc/opkg/customfeeds.conf
+	L=/var/opkg-lists/tailbond
+	# opkg update exits 0 on a bad signature; it deletes the list instead
+	rejected() { opkg update >/tmp/feed.log 2>&1; [ ! -e $L ] && grep -q 'Signature check failed' /tmp/feed.log && ! opkg list 2>/dev/null | grep -qE '^tailbond - 99[.]2[.]'; }
+	rejected && ok "before the key is added, opkg update rejects the feed (signature check failed, list deleted)" || { bad "feed accepted without its key"; cat /tmp/feed.log; }
+	# the documented first step: the release's tailbond-opkg.pub
+	wget -q -O /tmp/tailbond-opkg.pub http://127.0.0.1:8098/cgi-bin/latest/tailbond-opkg.pub && opkg-key add /tmp/tailbond-opkg.pub
+	[ -f "$K" ] && ok "opkg-key add put the release's key in /etc/opkg/keys/$FP" || bad "opkg-key add"
+	opkg update >/tmp/feed.log 2>&1 && [ -s $L ] && grep -q 'Signature check passed' /tmp/feed.log \
+		&& ok "opkg update: the feed's signature checks (router's usign, key from the release)" || { bad "opkg update"; cat /tmp/feed.log; }
+	opkg list 2>/dev/null | grep -q '^tailbond - 99.2.0-r1' && ok "opkg list shows tailbond 99.2.0-r1 (the stable copy isn't a second entry)" || { bad "opkg list"; opkg list; }
+	opkg install tailbond >/tmp/feed.log 2>&1 && [ "$(ver)" = 99.2.0-r1 ] \
+		&& ok "opkg install tailbond from the feed (Packages.gz, .sig and the ipk through the redirect)" || { bad "install from feed"; cat /tmp/feed.log; }
+	if grep -qiE 'clash|already provided' /tmp/feed.log; then
+		bad "the key added first clashed with the package's"; cat /tmp/feed.log
+	elif grep -qx "$K" /usr/lib/opkg/info/tailbond.list && awk 'BEGIN { RS = "" } /^Package: tailbond\n/' /usr/lib/opkg/status | grep -q "^ $K "; then
+		ok "the package owns the key (a conffile); the key added first didn't clash"
+	else
+		bad "key not owned as a conffile"; cat /usr/lib/opkg/info/tailbond.list; cat /usr/lib/opkg/status
+	fi
+	serve feed2
+	opkg update >/tmp/feed.log 2>&1 && opkg upgrade tailbond >>/tmp/feed.log 2>&1 && [ "$(ver)" = 99.3.0-r1 ] \
+		&& ok "a new release: opkg update + upgrade to 99.3.0-r1" || { bad "upgrade from feed"; cat /tmp/feed.log; }
+	[ "$(uci -q get tailbond.main.keep_test)" = kept ] && [ -f "$K" ] && ok "settings and the key stay over the upgrade" || bad "upgrade lost settings or key"
+	for v in tampered otherkey; do
+		serve feed-$v
+		rejected && ok "feed-$v: opkg update rejects it (the good list from before is deleted too)" || { bad "feed-$v accepted"; cat /tmp/feed.log; }
+	done
+	serve feed2
+	opkg update >/dev/null 2>&1 && [ -s $L ] && opkg list 2>/dev/null | grep -q '^tailbond - 99.3.0-r1' && ok "the good feed checks again" || bad "good feed after rejections"
+	opkg remove tailbond >/tmp/feed.log 2>&1
+	[ ! -e "$K" ] && ok "opkg remove tailbond removes its key" || { bad "key left after remove"; cat /tmp/feed.log; }
+	# no opkg-key: the package installed by hand (LuCI upload) brings the key
+	serve feed1
+	opkg install /t/feed1/tailbond_99.2.0-r1_aarch64_cortex-a53.ipk >/tmp/feed.log 2>&1 && [ -f "$K" ] \
+		&& opkg update >>/tmp/feed.log 2>&1 && grep -q 'Signature check passed' /tmp/feed.log && serve feed2 \
+		&& opkg update >>/tmp/feed.log 2>&1 && opkg upgrade tailbond >>/tmp/feed.log 2>&1 && [ "$(ver)" = 99.3.0-r1 ] \
+		&& ok "after one install by hand, the source checks with the package's key and upgrades it" || { bad "manual install then feed"; cat /tmp/feed.log; }
+	opkg remove tailbond >/dev/null 2>&1
+	kill $U2 2>/dev/null
+	mv /tmp/distfeeds.conf /etc/opkg/distfeeds.conf
+	cp /tmp/customfeeds.conf /etc/opkg/customfeeds.conf
+else
+	echo "  SKIP opkg feed: uhttpd not installable from the feed"
+fi
+
+echo "== opkg's downloader through a real GitHub releases/latest/download redirect"
+# opkg runs "wget -q -O FILE URL" (here uclient-fetch); a stable-name asset
+# of a public repository stands in until tailbond's feed is published
+gh=https://github.com/jqlang/jq/releases/latest/download/jq-linux-arm64
+got=0
+for try in 1 2 3; do
+	if wget -q -O /tmp/gh.bin "$gh" && [ "$(head -c 4 /tmp/gh.bin | tail -c 3)" = ELF ]; then got=1; break; fi
+	sleep $((try * 3))
+done
+if [ "$got" = 1 ]; then
+	ok "wget followed github.com's latest/download redirects over HTTPS"
+elif wget -q -O /dev/null https://github.com/ 2>/dev/null; then
+	bad "github.com answers, but wget didn't get $gh"
+else
+	echo "  SKIP GitHub redirect: github.com unreachable from the container"
 fi
 
 [ "$fail" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"
