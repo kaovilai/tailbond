@@ -1,0 +1,12 @@
+# kind cluster for the Kubernetes e2e (scripts/e2e-oci.sh, TB_OCI_BACKEND=kind):
+# host UDP 443 -> the node's NodePort 30443 -> the tailbond Service, as a
+# cloud load balancer would forward it.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: tailbond
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30443
+        hostPort: 443
+        protocol: UDP

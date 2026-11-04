@@ -588,7 +588,7 @@
           }
         } else if (S.noCheck) {
           body.push(big(["Couldn't check for updates"]), line("Couldn't reach GitHub (" + u.error + "). tailbond tries again later by itself; Check now tries again now.", { color: "#b07a12" }));
-        } else if (!S.retry) body.push(big(["Up to date"]));
+        } else if (!S.retry) body.push(big([u.no_release ? "No release published yet" : "Up to date"]));
         var meta = [], lv = u.last_result_version, la = u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "";
         if (u.last_check && !off) meta.push("Checked " + fmtAgo(u.last_check));
         if (!S.reinstalled && lv) {

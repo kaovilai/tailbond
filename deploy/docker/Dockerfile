@@ -1,46 +1,45 @@
-# tailbond home/VPS server in a container. UNTESTED TEMPLATE (see docs/deploy.md).
+# tailbond server image: ghcr.io/kaovilai/tailbond (docs/deploy.md).
 #
-# Needs a host that gives the container a TUN device, NET_ADMIN and inbound
-# UDP: Docker/Podman on a VM, or Fly.io. It can't run on Heroku, Vercel,
-# Cloudflare Workers/Pages or Railway (no inbound UDP, no TUN).
+# Built from this repository's own Linux bundle, the one install.sh puts on
+# a VPS (static tailbondd + the patched static mqvpn), not from a download:
+# deploy/docker/build-image.sh unpacks out/linux/tailbond-linux-<arch>.tar.gz
+# into bundle/<amd64|arm64>/ of a fresh build context and builds this file.
+# CI tests the same image it publishes on a release.
 #
-# Uses the release bundle (tailbond-linux-<arch>.tar.gz) that install.sh uses
-# on a VPS; set TAILBOND_VERSION to pin a release, default "latest".
-FROM docker.io/library/debian:12-slim
+# Runs as root inside the container with only NET_ADMIN (the TUN device,
+# nftables NAT) and NET_BIND_SERVICE (UDP 443) needed: docs/deploy.md.
+# Never updates itself: a new release is a new image tag.
+FROM docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
-ARG TAILBOND_REPO=kaovilai/tailbond
-ARG TAILBOND_VERSION=latest
 ARG TARGETARCH
+ARG VERSION=dev
+ARG REVISION=unknown
 
-# hadolint ignore=DL3008
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl jq nftables iproute2 procps \
- && rm -rf /var/lib/apt/lists/*
+LABEL org.opencontainers.image.title="tailbond server" \
+      org.opencontainers.image.description="tailbond bonding server: mqvpn multipath tunnel endpoint, NAT to the internet, dashboard" \
+      org.opencontainers.image.source="https://github.com/kaovilai/tailbond" \
+      org.opencontainers.image.url="https://github.com/kaovilai/tailbond" \
+      org.opencontainers.image.documentation="https://github.com/kaovilai/tailbond/blob/main/docs/deploy.md" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# The checksum check runs in a subshell in /tmp; nothing after it depends on the cwd.
-# hadolint ignore=DL3003
-RUN case "${TARGETARCH:-amd64}" in \
-      amd64) arch=x86_64 ;; \
-      arm64) arch=aarch64 ;; \
-      *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
- && if [ "$TAILBOND_VERSION" = latest ]; then base="https://github.com/${TAILBOND_REPO}/releases/latest/download"; \
-    else base="https://github.com/${TAILBOND_REPO}/releases/download/${TAILBOND_VERSION}"; fi \
- && curl -fsSLo /tmp/bundle.tar.gz "$base/tailbond-linux-$arch.tar.gz" \
- && curl -fsSLo /tmp/SHA256SUMS "$base/SHA256SUMS" \
- && (cd /tmp && grep " tailbond-linux-$arch.tar.gz\$" SHA256SUMS | sed "s|  .*|  bundle.tar.gz|" | sha256sum -c -) \
- && mkdir -p /opt/tailbond \
- && tar -C /opt/tailbond --strip-components=1 -xzf /tmp/bundle.tar.gz \
- && rm -f /tmp/bundle.tar.gz /tmp/SHA256SUMS
+# bash + jq: entrypoint and hooks; nftables: the NAT the server-up hook
+# loads; iproute2: mqvpn/hooks; tini: PID 1 that reaps the hooks' children.
+# hadolint ignore=DL3018
+RUN apk add --no-cache bash ca-certificates iproute2 jq nftables tini
 
+COPY bundle/${TARGETARCH}/ /opt/tailbond/
 COPY entrypoint.sh /usr/local/bin/tailbond-entrypoint
-RUN chmod 0755 /usr/local/bin/tailbond-entrypoint
+COPY healthcheck.sh /usr/local/bin/tailbond-healthcheck
 
-# Config, users, certificates and backups live here: mount a volume.
+# Config, devices, certificates and backups: mount a volume here.
 VOLUME ["/data"]
-# mqvpn's tunnel port (UDP); the dashboard (TCP 8077) is only published when
-# TAILBOND_UI_PASSWORD is set.
+# mqvpn's tunnel (TAILBOND_PORT, UDP) and the dashboard (TCP, listens on
+# all addresses only when TAILBOND_UI_PASSWORD is set).
 EXPOSE 443/udp 8077/tcp
 
-ENTRYPOINT ["/usr/local/bin/tailbond-entrypoint"]
+# Kept by Docker and Podman (--format docker); Kubernetes uses its own
+# probes (deploy/kubernetes).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD ["/usr/local/bin/tailbond-healthcheck"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/tailbond-entrypoint"]
