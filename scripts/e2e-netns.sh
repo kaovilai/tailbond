@@ -953,8 +953,10 @@ sleep 1
 ip -n "$NS_C" route show 198.51.100.50 | grep -q 'via 10.200.1.1' && ok "after kill -9 the direct routes are still there (nobody to take them away yet)" \
   || bad "direct routes gone before the restart?"
 jq '.client.disconnected = true' "$WORK/cli/tailbond.json" >"$WORK/cli/tb.tmp" && mv "$WORK/cli/tb.tmp" "$WORK/cli/tailbond.json"
+N0="$(grep -c 'took away the routes and resolver files' "$WORK/client.log")"
 start_laptop
-if wait_for 20 "restored at start" grep -q 'took away the routes and resolver files' "$WORK/client.log"; then
+# a new line (the log is appended: earlier stops logged it too)
+if wait_for 20 "restored at start" sh -c "[ \$(grep -c 'took away the routes and resolver files' '$WORK/client.log') -gt $N0 ]"; then
   ! ip -n "$NS_C" route show 198.51.100.50 | grep -q . && grep -q 'revert tb0' "$WORK/resolvectl.log" \
     && ok "restart after kill -9 took them away (direct routes; resolvectl revert tb0)" \
     || bad "left after restart: $(ip -n "$NS_C" route show | grep -E '198.51|192.0.2' | tr '\n' ';') $(ip netns exec "$NS_C" iptables -S OUTPUT | grep tailbond)"

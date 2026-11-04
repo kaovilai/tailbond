@@ -492,8 +492,10 @@ kill -9 "$HUB_PID"; wait "$HUB_PID" 2>/dev/null || true
 pkill -9 -f "$WORK/hub/client.conf" 2>/dev/null || true
 test -f /etc/resolver/ts.net && ok "after kill -9 the resolver file is still there (nobody to take it away yet)" || bad "resolver file gone before the restart?"
 jq '.client.disconnected = true' "$WORK/hub/tailbond.json" >"$WORK/hub/tb.tmp" && mv "$WORK/hub/tb.tmp" "$WORK/hub/tailbond.json"
+N0="$(grep -c 'took away the routes and resolver files' "$WORK/hub.log")"
 start_hub
-if wait_for 30 "restored at start" grep -q 'took away the routes and resolver files' "$WORK/hub.log"; then
+# a new line (the log is appended: earlier stops logged it too)
+if wait_for 30 "restored at start" sh -c "[ \$(grep -c 'took away the routes and resolver files' '$WORK/hub.log') -gt $N0 ]"; then
   ! test -f /etc/resolver/ts.net && ! netstat -rn -f inet | grep -q '^203.0.113.50 ' \
     && ok "restart after kill -9 took the resolver file and host routes away" || bad "left after restart: $(ls /etc/resolver) $(netstat -rn -f inet | grep '^203.0.113.50 ')"
 else

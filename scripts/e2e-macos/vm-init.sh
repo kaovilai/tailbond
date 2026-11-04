@@ -10,6 +10,9 @@
 # tb.port=PORT (mqvpn's UDP port, forwarded 1:1).
 /bin/busybox mkdir -p /proc /sys /dev /tmp /run /bin /sbin /usr/sbin
 /bin/busybox --install -s
+# the kernel starts /init with no PATH; busybox's shell has a default but
+# doesn't export it, and tailbondd looks up tailscale (the fake) by PATH
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
