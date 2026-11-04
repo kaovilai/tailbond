@@ -1,0 +1,15 @@
+# The entrypoint's environment (deploy/docker/entrypoint.sh). Changes apply
+# on the next pod start: kubectl -n tailbond rollout restart deploy/tailbond
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tailbond
+data:
+  # what phones and routers dial: the Service's external IP or a DNS name for it
+  TAILBOND_PUBLIC_ADDR: tailbond.example.net
+  # the Service's UDP port must be the same number
+  TAILBOND_PORT: "443"
+  TAILBOND_SUBNET: 10.77.0.0/24
+  TAILBOND_MODE: speed
+  # notify or off: the image never updates itself, a release is a new tag
+  TAILBOND_UPDATE_POLICY: notify

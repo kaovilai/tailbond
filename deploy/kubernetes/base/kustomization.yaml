@@ -1,0 +1,18 @@
+# tailbond server on Kubernetes (docs/deploy.md#kubernetes).
+#   kubectl apply -k deploy/kubernetes/base        # this
+#   kubectl apply -k deploy/kubernetes/tailscale   # or: plus a Tailscale sidecar
+# Set TAILBOND_PUBLIC_ADDR (configmap.yaml) to the Service's external
+# address first; pin a release with `images:` in an overlay of your own.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tailbond
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+images:
+  - name: ghcr.io/kaovilai/tailbond
+    newTag: latest

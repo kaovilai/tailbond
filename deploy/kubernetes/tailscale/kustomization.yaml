@@ -1,0 +1,13 @@
+# The base plus a Tailscale sidecar (UNTESTED: not in CI). The pod joins your
+# tailnet and advertises the tunnel subnet, so tailnet devices reach bonded
+# clients and you reach the dashboard at http://tailbond:8077 (set a
+# password in secret tailbond-ui first: then it listens beyond 127.0.0.1).
+# Approve the 10.77.0.0/24 route once in the Tailscale admin console.
+#   kubectl -n tailbond create secret generic tailscale-auth --from-literal=TS_AUTHKEY=tskey-auth-...
+#   kubectl apply -k deploy/kubernetes/tailscale
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - path: sidecar.yaml

@@ -1,0 +1,97 @@
+# One server: mqvpn owns the tunnel subnet, so never two pods at once
+# (replicas 1, Recreate).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tailbond
+  labels:
+    app.kubernetes.io/name: tailbond
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tailbond
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tailbond
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        # IP forwarding in the pod's own network namespace only. A sysctls:
+        # entry would need net.ipv4.ip_forward in every kubelet's
+        # --allowed-unsafe-sysctls; this short privileged step doesn't, and
+        # the namespace is privileged for NET_ADMIN anyway.
+        - name: ip-forward
+          image: ghcr.io/kaovilai/tailbond
+          imagePullPolicy: IfNotPresent
+          command: [sysctl, -w, net.ipv4.ip_forward=1, net.ipv6.conf.all.forwarding=1]
+          securityContext:
+            privileged: true
+      containers:
+        - name: tailbond
+          image: ghcr.io/kaovilai/tailbond
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: tailbond
+            - secretRef:
+                name: tailbond-ui
+          ports:
+            - name: tunnel
+              containerPort: 443
+              protocol: UDP
+          securityContext:
+            # root in the container, with only these capabilities: NET_ADMIN
+            # (TUN device, addresses, nftables NAT), NET_BIND_SERVICE (UDP 443)
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [NET_ADMIN, NET_BIND_SERVICE]
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            exec:
+              command: [/usr/local/bin/tailbond-healthcheck]
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            exec:
+              command: [/usr/local/bin/tailbond-healthcheck]
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: [/usr/local/bin/tailbond-healthcheck]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: tun
+              mountPath: /dev/net/tun
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: tailbond-data
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        # The TUN device from the node; the default device rules of runc
+        # and crun let a container open it.
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice

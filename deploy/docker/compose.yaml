@@ -1,12 +1,16 @@
-# tailbond server with Docker Compose or Podman Compose. UNTESTED TEMPLATE.
-#   TAILBOND_PUBLIC_ADDR=vps.example.net TAILBOND_UI_PASSWORD=change-me docker compose up -d --build
-# See docs/deploy.md.
+# tailbond server with Podman Compose or Docker Compose (docs/deploy.md).
+#   TAILBOND_PUBLIC_ADDR=vps.example.net TAILBOND_UI_PASSWORD=change-me podman compose up -d
+#   (or: docker compose up -d)
+# Uses the published image; pin a release with TAILBOND_IMAGE=ghcr.io/kaovilai/tailbond:vX.Y.Z.
+# Build from source instead: build the Linux bundle, then
+#   deploy/docker/build-image.sh && TAILBOND_IMAGE=localhost/tailbond:dev podman compose up -d
+# The image never updates itself: pull a new tag (`podman compose pull && podman compose up -d`).
 services:
   tailbond:
-    build: .
-    image: tailbond-server:local
+    image: ${TAILBOND_IMAGE:-ghcr.io/kaovilai/tailbond:latest}
     restart: unless-stopped
-    cap_add: [NET_ADMIN]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE]
     devices: ["/dev/net/tun:/dev/net/tun"]
     sysctls:
       net.ipv4.ip_forward: "1"
@@ -23,6 +27,18 @@ services:
       - "127.0.0.1:8077:8077/tcp"
     volumes:
       - tailbond-data:/data
+    # A fixed address: the host's conntrack keeps sending a router's UDP flow
+    # to the address the container had, so a replaced container must get it
+    # again or that router can't reconnect while it keeps sending.
+    networks:
+      tailbond:
+        ipv4_address: 10.89.77.2
+
+networks:
+  tailbond:
+    ipam:
+      config:
+        - subnet: 10.89.77.0/24
 
 volumes:
   tailbond-data:

@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tailbond
+spec:
+  template:
+    spec:
+      containers:
+        - name: tailscale
+          image: ghcr.io/tailscale/tailscale:v1.104.4
+          env:
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: tailscale-auth
+                  key: TS_AUTHKEY
+            - name: TS_HOSTNAME
+              value: tailbond
+            # keep in step with TAILBOND_SUBNET
+            - name: TS_ROUTES
+              value: 10.77.0.0/24
+            # kernel networking (tailscale0) in the pod's namespace, state on the PVC
+            - name: TS_USERSPACE
+              value: "false"
+            - name: TS_STATE_DIR
+              value: /var/lib/tailscale
+            - name: TS_KUBE_SECRET
+              value: ""
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [NET_ADMIN, NET_RAW]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/tailscale
+              subPath: tailscale
+            - name: tun
+              mountPath: /dev/net/tun

@@ -23,8 +23,10 @@ Built files live only on [GitHub Releases](https://github.com/kaovilai/tailbond/
 **Deploy a server:**
 [![Any VPS (cloud-init)](https://img.shields.io/badge/deploy-cloud--init-0D9488)](docs/deploy.md#any-vps-cloud-init)
 [![Docker / Podman](https://img.shields.io/badge/deploy-Docker%20%2F%20Podman-0D9488)](docs/deploy.md#docker--podman)
-[![Fly.io](https://img.shields.io/badge/deploy-Fly.io-0D9488)](docs/deploy.md#flyio)  
-Untested templates. The tested paths are the Fedora RPM, the VPS installer and GL.iNet routers. Heroku, Vercel, Cloudflare and Railway can't host a server (no inbound UDP or TUN); see [docs/deploy.md](docs/deploy.md).
+[![Kubernetes](https://img.shields.io/badge/deploy-Kubernetes-0D9488)](docs/deploy.md#kubernetes)
+[![Fly.io](https://img.shields.io/badge/deploy-Fly.io-0D9488)](docs/deploy.md#flyio)
+[![Server image](https://img.shields.io/badge/image-ghcr.io%2Fkaovilai%2Ftailbond-0D9488)](https://github.com/kaovilai/tailbond/pkgs/container/tailbond)  
+The server image (amd64, arm64) is CI-tested in Podman, Docker Compose and a kind cluster; cloud-init and Fly.io are untested templates. Heroku, Vercel, Cloudflare and Railway can't host a server (no inbound UDP or TUN); see [docs/deploy.md](docs/deploy.md).
 
 **Speedify-style bonding to your own server:** tailbond joins Wi-Fi, mobile data, Ethernet and nearby phones into one faster, steadier tunnel to a server you run, with your [Tailscale](https://tailscale.com) tailnet reachable through it.
 
@@ -86,6 +88,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 | GL.iNet Flint 3 (GL-BE9300) | Home server | [GL.iNet](docs/glinet.md) | CI-tested; **tested on real hardware** |
 | Fedora 43+ | Home server | [Fedora](docs/fedora-server.md) (RPM, COPR) | CI-tested |
 | Debian, Ubuntu, AlmaLinux / RHEL / Rocky, Fedora (VPS) | Home or backup server | [VPS](docs/vps.md) (`install.sh`, Ansible) | CI-tested |
+| Container: Docker, Podman, Kubernetes | Home or backup server | [Deploy](docs/deploy.md) (`ghcr.io/kaovilai/tailbond`) | CI-tested (Podman, kind) |
 | GL.iNet Slate 7 (GL-BE3600), OpenWrt 23.05+ aarch64 | Travel router (hub) | [GL.iNet](docs/glinet.md) | CI-tested |
 | macOS (Apple silicon) | Hub | [macOS](docs/macos.md) (`install.sh`, Homebrew) | CI-tested |
 | Linux laptop | Hub | [VPS guide, `--client`](docs/vps.md#a-linux-laptop-instead-client-role) | CI-tested |

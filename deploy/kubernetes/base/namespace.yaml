@@ -1,0 +1,8 @@
+# NET_ADMIN and the privileged sysctl init container are above the
+# "baseline" Pod Security level, so this namespace is "privileged".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tailbond
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
