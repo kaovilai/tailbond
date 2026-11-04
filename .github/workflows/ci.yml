@@ -440,7 +440,7 @@ jobs:
             /tmp/b/tailbond-linux-x86_64/uninstall.sh --purge
             ! systemctl is-active -q tailbond'
           sudo podman rm -f tb
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         if: matrix.image == 'almalinux:10'
         with:
           go-version-file: agent/go.mod
