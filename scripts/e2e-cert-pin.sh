@@ -9,7 +9,8 @@
 # starting mqvpn), must not reach it with the pinned mqvpn CLI either, and
 # must connect again once the real server is back. A client pinned to the
 # second server's certificate connects to it (the pin works with any
-# self-signed certificate).
+# self-signed certificate). An empty pin (`--cert-sha256 "" --insecure`, or
+# an empty CertSHA256 in a config file with Insecure = true) is refused.
 #
 #   scripts/e2e-cert-pin.sh            (needs root: re-execs with sudo)
 #   KEEP=1 scripts/e2e-cert-pin.sh     leave namespaces and agents running
@@ -178,6 +179,44 @@ if [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ] && grep -q 'does not match the pinned' "
 else
   bad "mqvpn --cert-sha256 <real server> against the impostor: exit $RC: $(tail -4 "$WORK/cli-wrong.log" | tr '\n' ' ')"
 fi
+# An empty pin (an unset $PIN) is an error, never "no pin": with --insecure,
+# or Insecure = true in the file, it would otherwise accept any certificate.
+# Both must stop mqvpn (or at worst fail the handshake), never reach the
+# impostor's tunnel.
+cat >"$WORK/empty-pin.conf" <<EOF
+[Server]
+Address = 10.212.1.1:443
+Insecure = true
+CertSHA256 =
+
+[Auth]
+Key = $KEY
+
+[Interface]
+TunName = tbx0
+ManageRoutes = false
+Reconnect = false
+EOF
+for how in cli file; do
+  if [ "$how" = cli ]; then
+    set -- --mode client --server 10.212.1.1:443 --cert-sha256 "" --insecure \
+      --auth-key "$KEY" --tun-name tbx0 --no-reconnect --no-manage-routes
+  else
+    set -- --config "$WORK/empty-pin.conf"
+  fi
+  set +e
+  ip netns exec "$NS_C" timeout 20 "$MQVPN" "$@" >"$WORK/cli-empty-$how.log" 2>&1
+  RC=$?
+  set -e
+  what='--cert-sha256 "" --insecure'; [ "$how" = file ] && what='CertSHA256 = (empty), Insecure = true'
+  if [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ] && ! grep -q 'ESTABLISHED' "$WORK/cli-empty-$how.log" \
+    && grep -qE 'must be 64 hex digits|does not match the pinned' "$WORK/cli-empty-$how.log"; then
+    ok "$what: refused (exit $RC: $(grep -m1 -oE 'must be 64 hex digits|does not match the pinned' "$WORK/cli-empty-$how.log"))"
+  else
+    bad "$what against the impostor: exit $RC: $(tail -4 "$WORK/cli-empty-$how.log" | tr '\n' ' ')"
+  fi
+done
+set --
 set +e
 ip netns exec "$NS_C" timeout 20 "$MQVPN" --mode client --server 10.212.1.1:443 --cert-sha256 "${PIN_B^^}" \
   --auth-key "$KEY" --tun-name tbx0 --no-reconnect --no-manage-routes >"$WORK/cli-right.log" 2>&1 &
