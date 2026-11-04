@@ -53,7 +53,11 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 - **Hotel Wi-Fi:** captive-portal detection and sign-in that works with GL.iNet's own repeater Login Mode.
 - **[Pair & Share](docs/pair-and-share.md):** Android phones and iPhones (the free-signed tailbond Share app) lend their mobile data over Wi-Fi to the hub, which bonds it with its own links.
 - **[Mac as the hub](docs/macos.md):** a MacBook bonds its Wi-Fi, an Ethernet or USB-C adapter, an iPhone over USB and nearby phones' shares.
-- **Phone as the hub** for a laptop, through a proxy on the phone: *in progress*.
+- **[Phone hub](docs/phone-hub.md):**
+  - An Android phone shares its bonded connection with a laptop through a
+    proxy, and the Mac's "Use phone hub" points the system proxy at it.
+  - Android also bonds nearby phones' shared data itself.
+  - On the iPhone this is experimental and not bonded yet.
 - **Setup health:** direct-vs-relayed Tailscale peers, CGNAT detection and port reachability, each with how to fix it.
 - **[Updates](docs/updates.md) and [backups](docs/backup-restore.md):** GitHub releases with checksums; COPR/dnf on Fedora, one click on VPS, GL routers and Macs, Homebrew, Obtainium on Android; encrypted config backup and restore.
 - **"Get tailbond" page:** type the server's name (`homebox/`) in any browser on the tailnet: the app or installer for that device (Android, Mac, iPhone, Linux), with the steps.

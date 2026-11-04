@@ -8,7 +8,9 @@
 #   web-05   "Get tailbond" per platform tab (Android, Mac, iPhone, Linux) at
 #            phone and desktop widths; web-06 a Mac picking Android (QR);
 #   web-07   the Mac's / laptop's own dashboard opened by "Open tailbond and
-#            ask homebox" (/?ask=…: Setup, the server's name filled in).
+#            ask homebox" (/?ask=…: Setup, the server's name filled in);
+#   web-08   the Mac's "Use a phone's bonded connection" card: a phone found,
+#            none, in use, lost (phone_hub states patched into its status).
 #
 #   scripts/ux/web-screens.sh [outdir]
 #

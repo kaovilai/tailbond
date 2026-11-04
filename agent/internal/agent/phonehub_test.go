@@ -23,6 +23,8 @@ type fakeSysProxy struct {
 	service string
 	rec     *sysproxy.Record
 	calls   []string
+	// another writer undid the restore of this service
+	clobbered string
 }
 
 func (f *fakeSysProxy) ActiveService(context.Context) (string, error) {
@@ -64,6 +66,20 @@ func (f *fakeSysProxy) Active() (sysproxy.Record, bool) {
 		return sysproxy.Record{}, false
 	}
 	return *f.rec, true
+}
+
+func (f *fakeSysProxy) Matches(_ context.Context, r sysproxy.Record) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.clobbered != r.Service, nil
+}
+
+func (f *fakeSysProxy) PutBack(_ context.Context, r sysproxy.Record) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "putback "+r.Service)
+	f.clobbered = ""
+	return nil
 }
 
 func (f *fakeSysProxy) log() string {
@@ -117,6 +133,7 @@ func hubAgent(t *testing.T) (*Agent, *fakeSysProxy, *[]hubCand, *sync.Mutex) {
 	fs := &fakeSysProxy{service: "Wi-Fi"}
 	a.sysProxy = fs
 	a.hubLocal = "127.0.0.1:0"
+	a.hubRecheck = []time.Duration{50 * time.Millisecond}
 	var mu sync.Mutex
 	cands := &[]hubCand{}
 	a.hubBrowse = func(context.Context) []hubCand {
@@ -248,11 +265,19 @@ func TestPhoneHubStopPACAndStartupRestore(t *testing.T) {
 	if w := req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"use": "nope"}); w.Code != 409 {
 		t.Fatalf("unknown hub: %d", w.Code)
 	}
-	// a record left by a crash is put back at start
+	// a record left by a crash is put back at start, and again when
+	// another writer undoes it
 	fs.rec = &sysproxy.Record{Service: "iPhone USB", Mode: "socks"}
+	fs.mu.Lock()
+	fs.clobbered = "iPhone USB"
+	fs.mu.Unlock()
 	a.restoreSysProxy()
-	if !strings.HasSuffix(fs.log(), "restore iPhone USB") {
+	if !strings.Contains(fs.log(), "restore iPhone USB") {
 		t.Fatalf("startup restore: %s", fs.log())
+	}
+	time.Sleep(300 * time.Millisecond)
+	if !strings.HasSuffix(fs.log(), "putback iPhone USB") {
+		t.Fatalf("recheck: %s", fs.log())
 	}
 }
 

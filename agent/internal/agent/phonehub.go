@@ -77,6 +77,8 @@ type systemProxy interface {
 	UsePAC(ctx context.Context, service, url string) error
 	Restore(ctx context.Context) error
 	Active() (sysproxy.Record, bool)
+	Matches(ctx context.Context, rec sysproxy.Record) (bool, error)
+	PutBack(ctx context.Context, rec sysproxy.Record) error
 }
 
 // hubCand is a phone hub found nearby.
@@ -136,7 +138,39 @@ func (a *Agent) restoreSysProxy() {
 			return
 		}
 		a.Logf("phone hub: put back the proxy settings of %q from before tailbondd last stopped", r.Service)
+		// at start-up other writers of the same preferences run too (the
+		// previous run's mqvpn being stopped puts its DNS back), and a stale
+		// commit of theirs can undo this: check again a little later
+		go a.recheckRestored(r)
 	}
+}
+
+func (a *Agent) recheckRestored(r sysproxy.Record) {
+	for _, d := range a.recheckDelays() {
+		time.Sleep(d)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ok, err := a.sysProxy.Matches(ctx, r)
+		if err == nil && !ok {
+			a.mu.Lock()
+			inUse := a.client != nil && a.client.hub != nil && a.client.hub.use != nil
+			a.mu.Unlock()
+			if !inUse { // the user picked a hub meanwhile: theirs now
+				a.Logf("phone hub: the proxy settings of %q changed back; putting them back again", r.Service)
+				err = a.sysProxy.PutBack(ctx, r)
+			}
+		}
+		cancel()
+		if err != nil {
+			a.Logf("phone hub: checking the restored proxy settings: %v", err)
+		}
+	}
+}
+
+func (a *Agent) recheckDelays() []time.Duration {
+	if a.hubRecheck != nil {
+		return a.hubRecheck
+	}
+	return []time.Duration{3 * time.Second, 10 * time.Second, 30 * time.Second}
 }
 
 func (a *Agent) phoneHubWatcher(ctx context.Context) {

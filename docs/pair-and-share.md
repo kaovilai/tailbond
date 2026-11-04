@@ -134,6 +134,15 @@ the route monitor leaves it alone), and keeps the relay protocol
 the sharer. The Android SDK fork doesn't need the patch: a phone only shares,
 it never bonds a share.
 
+## The other way round: a phone as the hub
+
+- **An Android phone can bond nearby phones' shares into its own tunnel.**
+  It is a Pair & Share hub like a travel router or a Mac: **Use nearby
+  phones' shared data**, relay paths via patch 0004.
+- **A phone can lend its whole bonded tunnel to a laptop through a proxy.**
+  This is the [phone hub](phone-hub.md). Its proxy entries in the home
+  server's list carry `kind: "proxy"`, and Pair & Share hubs skip them.
+
 ## Limits and what isn't tested
 
 - Hubs are OpenWrt routers, Linux clients and Macs. A phone running tailbond

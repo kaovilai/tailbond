@@ -199,6 +199,20 @@ its frames and MACs are checked against the Go reference
 (`agent/internal/share/testdata/vectors.json`). The phone never bonds other
 phones' shares: hubs are the travel router and Linux.
 
+## Share bonded connection (phone hub) and nearby phones' data
+
+- **Share → Share bonded connection:** a laptop on this phone's hotspot or
+  USB tethering uses the phone's whole bonded tunnel through a SOCKS5 /
+  HTTP CONNECT proxy on port 1888. The password comes from your home
+  server's share key. On a Mac: **Use a phone's bonded connection**. The
+  notification shows devices and bytes and has **Stop sharing**.
+- **Share → Use nearby phones' shared data** (on by default): while
+  tailbond is on, phones on the same Wi-Fi that share their mobile data are
+  bonded into this phone's tunnel as extra paths (relay paths, patch
+  0004).
+
+Details, what's tested and the limits: [phone-hub.md](phone-hub.md).
+
 ## Emulator end-to-end test
 
 CI job `android-e2e` runs the real app on an x86_64 Android 14 emulator

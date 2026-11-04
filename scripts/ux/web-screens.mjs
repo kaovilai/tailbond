@@ -140,4 +140,35 @@ if (client) {
   await page.screenshot({ path: `${out}/web-07-mac-dashboard-ask-prefilled.png` });
   await ctx.close();
 }
+// "Use a phone's bonded connection" on the Mac's dashboard (docs/phone-hub.md):
+// the client's real status with phone_hub states patched in (discovery
+// needs a phone; the card is what's under test)
+if (client) {
+  const base = await (await fetch(client + 'api/status')).json();
+  const wifi = { id: 1001, iface: 'en0', kind: 'wifi', label: 'Wi-Fi', priority: 'primary', enabled: true, state: 'active',
+    tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0, srtt_ms: 31 };
+  const pixel = { id: 'and-7f3c2a-hub', label: 'Pixel 9', addr: '192.168.43.1:1888', via: 'mdns' };
+  const states = {
+    'found': { found: [pixel] },
+    'none': { found: [] },
+    'using': { found: [pixel], using: { ...pixel, mode: 'socks', service: 'Wi-Fi', local: '127.0.0.1:1889',
+      since: new Date().toISOString(), up_bytes: 48200000, down_bytes: 912000000, conns: 6 } },
+    'lost': { found: [], note: "Lost the phone hub, so the proxy is off again and this Mac uses its own connection." },
+  };
+  for (const [name, hub] of Object.entries(states)) {
+    const st = { ...base, paired: true, platform: 'darwin', state: 'disconnected', paths: name === 'using' ? [] : [wifi],
+      use_local: true, use_shares: true, shares: [], phone_hub: hub };
+    const ctx = await browser.newContext({ ...desktop, userAgent: uas.mac });
+    const page = await ctx.newPage();
+    await page.route('**/api/status', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(st) }));
+    await page.route('**/api/events', (r) => r.fulfill({ contentType: 'text/event-stream', body: `data: ${JSON.stringify(st)}\n\n` }));
+    await page.goto(client);
+    await page.waitForSelector('#phone-hub:not(.hidden)');
+    await page.waitForTimeout(500);
+    const card = await page.$('#phone-hub');
+    await card.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${out}/web-08-mac-phone-hub-${name}.png`, fullPage: true });
+    await ctx.close();
+  }
+}
 await browser.close();

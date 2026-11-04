@@ -82,6 +82,7 @@ type Agent struct {
 	hubBrowse  func(context.Context) []hubCand
 	hubRouters func(context.Context) []hubCand
 	hubLocal   string
+	hubRecheck []time.Duration
 	dl         dlState // the phone page's downloads: checksums, the macOS bundle fetch
 	// landingUp: the phone landing page listens on a Tailscale IP.
 	landingUp atomic.Bool

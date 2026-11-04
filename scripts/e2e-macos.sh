@@ -334,7 +334,12 @@ info "after kill -9 (nobody to restore it yet): $(socks)"
 "$TAILBONDD" -config "$WORK/hub/tailbond.json" >>"$WORK/hub.log" 2>&1 &
 HUB_PID=$!
 if wait_for 30 "restored at start" grep -q "put back the proxy settings of \"$SVC\"" "$WORK/hub.log"; then
-  [ "$(socks)" = "$ORIG" ] && ok "restored at start: $(socks)" || bad "after restart: $(socks), want $ORIG"
+  is_orig() { [ "$(socks)" = "$ORIG" ]; }
+  # tailbondd checks again at +3, +10, +30 s (other writers at start-up)
+  wait_for 20 "the original setting stays" is_orig && sleep 4 && is_orig \
+    && ok "restored at start: $(socks)" || bad "after restart: $(socks), want $ORIG"
+  grep -q "changed back; putting them back again" "$WORK/hub.log" \
+    && info "tailbondd had to put them back a second time: $(grep -c 'changed back' "$WORK/hub.log") time(s)"
 else
   bad "no restore at start: $(socks)"
 fi

@@ -874,6 +874,38 @@ each other; sharing isn't available here."*), and `sharing`
 `{enabled,iface,label,port,state,error,used_bytes,cap_mb,hubs[]}` for this
 machine's own share.
 
+## Phone hub
+
+User guide and design: [phone-hub.md](phone-hub.md). A phone running
+tailbond lends its whole bonded tunnel to a laptop through a proxy.
+
+- **The proxy:** SOCKS5 + HTTP CONNECT on TCP 1888, with the reference
+  implementation in `agent/internal/proxy`, ported to Kotlin
+  (`ProxyServer.kt`) and Swift (`TailbondShareKit`).
+  - User `tailbond`. The password is the first 16 characters of
+    `base32(HMAC-SHA256(share_key, "tbp1-proxy"))`, lower case
+    (`testdata/vectors.json`).
+  - Only LAN-arriving connections from private or link-local sources are
+    served.
+  - Upstream sockets are on the phone's VPN network (Android), so the
+    traffic goes into the tunnel.
+- **Discovery:** mDNS `_tailbond-proxy._tcp`, and the server's sharer
+  registry with `kind: "proxy"`.
+- **tailbondd (client role):**
+  - `GET/POST /api/phone-hub` and `GET /proxy.pac`, with
+    `phone_hub` in `/api/status`.
+  - A loopback forwarder on 127.0.0.1:1889 relays to the hub with the
+    password.
+  - On macOS the system SOCKS proxy (or the PAC URL) of the default route's
+    network service points at it: `internal/sysproxy`, with a restore record
+    in `state_dir/phone-hub-proxy.json` put back on stop and at the next
+    start.
+  - `tailbondd restore-proxy` does the same for `uninstall.sh`.
+- **Android as a Pair & Share hub:** relay paths through
+  `mqvpn_android_reactor_add_relay_path` (patch 0004). The Android native
+  libraries are now built from the patched copy of mqvpn
+  (`android/scripts/build-native.sh`).
+
 ## Captive portals
 
 Client role (travel router). Each usable WAN is checked for a sign-in page;

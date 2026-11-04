@@ -271,6 +271,34 @@ func (m *Mac) Restore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := m.PutBack(ctx, rec); err != nil {
+		return err
+	}
+	if err := os.Remove(m.RecordPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Matches reports whether rec's service has its previous setting again.
+func (m *Mac) Matches(ctx context.Context, rec Record) (bool, error) {
+	if rec.Mode == "pac" {
+		p, err := m.GetPAC(ctx, rec.Service)
+		return err == nil && p == rec.PrevPAC, err
+	}
+	s, err := m.Get(ctx, rec.Service)
+	if err != nil {
+		return false, err
+	}
+	want := rec.Previous
+	if want.Server == "" { // nothing to put back but the state
+		return s.Enabled == want.Enabled, nil
+	}
+	return s.Enabled == want.Enabled && s.Server == want.Server && s.Port == want.Port, nil
+}
+
+// PutBack applies rec's previous setting (Restore without the record file).
+func (m *Mac) PutBack(ctx context.Context, rec Record) error {
 	onOff := func(b bool) string {
 		if b {
 			return "on"
@@ -322,9 +350,6 @@ func (m *Mac) Restore(ctx context.Context) error {
 		if out, err := m.run(ctx, "networksetup", state...); err != nil {
 			return fmt.Errorf("networksetup %s: %v: %s", state[0], err, strings.TrimSpace(string(out)))
 		}
-	}
-	if err := os.Remove(m.RecordPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
 	return nil
 }
