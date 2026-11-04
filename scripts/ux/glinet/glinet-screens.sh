@@ -4,6 +4,8 @@
 # and phone 390x844 → out/ux/glinet/<name>/ (default name: latest).
 #
 #   scripts/ux/glinet/glinet-screens.sh [round-N]
+#   scripts/ux/glinet/glinet-screens.sh share
+#       Pair & Share only → out/ux/share/glinet/
 #   scripts/ux/glinet/glinet-screens.sh bypass-failover
 #       bypass rules + more servers only → out/ux/bypass-failover/glinet/
 #
@@ -15,7 +17,10 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 SET=""
-if [[ "${1:-}" == bypass-failover ]]; then
+if [[ "${1:-}" == share ]]; then
+    SET=share
+    OUT="$REPO/out/ux/share/glinet"
+elif [[ "${1:-}" == bypass-failover ]]; then
     SET=bypass-failover
     OUT="$REPO/out/ux/bypass-failover/glinet"
 else

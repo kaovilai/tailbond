@@ -203,7 +203,11 @@ http.server.HTTPServer(("10.200.9.9", 80), H).serve_forever()
 EOF
 ip netns exec "$NS_S" python3 "$WORK/portal.py" "$WORK/portal-state.json" "$WORK/portal.log" >/dev/null 2>&1 &
 PORTAL_PID=$!
-echo '{"ssid":"Hotel-Guest","state":2,"portal":false,"portal_detecting":false,"portal_url":"","bare_mode":false,"auto_portal":true}' >"$WORK/gl-repeater.json"
+# The GL repeater mock, replaced in one rename: the fake ubus reading a
+# half-written file would look like "no GL" and make the agent probe wlan0
+# itself and run portal hooks out of turn.
+gl_repeater() { printf '%s\n' "$1" >"$WORK/gl-repeater.json.tmp" && mv -f "$WORK/gl-repeater.json.tmp" "$WORK/gl-repeater.json"; }
+gl_repeater '{"ssid":"Hotel-Guest","state":2,"portal":false,"portal_detecting":false,"portal_url":"","bare_mode":false,"auto_portal":true}'
 cat >"$WORK/ts-cli/ubus" <<EOF
 #!/bin/sh
 # fake ubus: OpenWrt netifd (eth0 = wan, wlan0 = wwan) and GL's repeater
@@ -254,6 +258,8 @@ printf "config interface 'lan'\n\toption device 'lan0'\n" >"$WORK/fakeroot/etc/c
 printf "config client 'client'\n\tlist lan_network 'lan'\n\toption rule_priority '1077'\n\toption portal_table '78'\n" >"$WORK/fakeroot/etc/config/tailbond"
 printf "config dnsmasq\n\tlist server '10.77.0.1'\n\toption noresolv '1'\n\toption rebind_protection '1'\n" >"$WORK/fakeroot/etc/config/dhcp"
 fuci() { FAKE_ROOT="$WORK/fakeroot" "$WORK/stubs/uci" "$@"; }
+# the client hooks caught up: the last one was client-up, and it finished
+hooks_settled() { grep -E ' client-(up|down) ' "$WORK/hook-history.log" | tail -1 | grep -q ' client-up ' && [ -e "$WORK/hook-client-up.done" ]; }
 ok "fake portal, GL repeater mock (auto_portal on, no portal), lan0"
 
 say "hooks"
@@ -434,6 +440,11 @@ else
 fi
 grep -q '^Path = eth0' "$WORK/cli/state/client.conf" && grep -q '^Path = wlan0' "$WORK/cli/state/client.conf" \
   && ok "client.conf binds both paths" || bad "client.conf paths: $(grep Path "$WORK/cli/state/client.conf")"
+# Speed reorders: mqvpn takes its 8-byte header off after the cap, so the
+# cap is 1288 and the TUN still gets IPv6's minimum
+TBMTU="$(ip -n "$NS_C" -o link show tb0 2>/dev/null | sed -n 's/.* mtu \([0-9]*\) .*/\1/p')"
+[ "$TBMTU" = 1280 ] && ok "tb0 MTU 1280 in Speed (cap $(sed -n 's/^MTU = //p' "$WORK/cli/state/client.conf"))" \
+  || bad "tb0 MTU is ${TBMTU:-unknown}, not 1280 (client.conf: $(grep '^MTU' "$WORK/cli/state/client.conf"))"
 
 say "traffic through the tunnel"
 if ip netns exec "$NS_C" ping -c 5 -i 0.3 -W 2 10.77.0.1 >"$WORK/ping1" 2>&1; then
@@ -577,14 +588,20 @@ else
 fi
 wait_for 10 "portal-close hook" test -e "$WORK/hook-portal-close.done" && ok "portal-close ran" || bad "portal-close missing"
 ! ip -n "$NS_C" rule | grep -q 'lookup 78' && ok "LAN rule removed" || bad "rule left: $(ip -n "$NS_C" rule)"
-fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '10.77.0.1' && ! fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '@eth0' \
-  && [ "$(fuci -q get 'dhcp.@dnsmasq[0].rebind_protection')" = 1 ] && ok "dnsmasq restored" || bad "dnsmasq not restored: $(fuci show dhcp)"
+# eth0 rejoining bonding restarts mqvpn: client-down (drops the tunnel DNS)
+# then client-up (adds it back) may run right after portal-close, so check
+# once the client hooks have caught up.
+dns_restored() {
+  hooks_settled && fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '10.77.0.1' && ! fuci -q get 'dhcp.@dnsmasq[0].server' | grep -q '@eth0' \
+    && [ "$(fuci -q get 'dhcp.@dnsmasq[0].rebind_protection')" = 1 ]
+}
+wait_for 30 "dnsmasq restored" dns_restored && ok "dnsmasq restored" || bad "dnsmasq not restored: $(fuci show dhcp; tail -n 4 "$WORK/hook-history.log")"
 wait_for 30 "eth0 back in bonding" grep -q '^Path = eth0' "$WORK/cli/state/client.conf" && ok "eth0 rejoined bonding" || bad "eth0 not rejoined"
 rm -f "$WORK/hook-portal-open.env" "$WORK/hook-portal-close.env" "$WORK/hook-portal-open.done" "$WORK/hook-portal-close.done"
 
 say "captive portal on wlan0 (wwan): GL's repeater owns it"
 grep -q '^wwan /generate_204' "$WORK/portal.log" && bad "tailbond probed the GL-owned repeater" || ok "no tailbond probe over wlan0 (GL owns the repeater)"
-echo '{"ssid":"Hotel-Guest","state":2,"portal":true,"portal_detecting":false,"portal_url":"http://10.200.9.9/login","bare_mode":false,"auto_portal":true}' >"$WORK/gl-repeater.json"
+gl_repeater '{"ssid":"Hotel-Guest","state":2,"portal":true,"portal_detecting":false,"portal_url":"http://10.200.9.9/login","bare_mode":false,"auto_portal":true}'
 if wait_for 15 "wlan0 portal from GL" sh -c "[ \"\$(ip netns exec $NS_C curl -fsS -m 2 http://$API/api/status | jq -r '.paths[] | select(.iface == \"wlan0\") | .captive_source + \" \" + .captive')\" = 'glinet portal' ]"; then
   ok "wlan0: captive=portal from GL (captive_source=glinet: the panel defers to GL's page)"
 else
@@ -594,7 +611,7 @@ wait_for 30 "wlan0 out of bonding" sh -c "! grep -q '^Path = wlan0' $WORK/cli/st
   && ok "wlan0 out of bonding; eth0 carries the tunnel" || bad "paths: $(grep Path "$WORK/cli/state/client.conf")"
 [ ! -e "$WORK/hook-portal-open.env" ] && ok "no sign-in bypass before GL's Login Mode" || bad "bypass opened without Login Mode"
 capi -X POST -d '{"name":"wwan"}' "http://$API/api/captive/signin" >/dev/null 2>&1 || true
-echo '{"ssid":"Hotel-Guest","state":2,"portal":true,"portal_detecting":false,"portal_url":"http://10.200.9.9/login","bare_mode":true,"auto_portal":true}' >"$WORK/gl-repeater.json"
+gl_repeater '{"ssid":"Hotel-Guest","state":2,"portal":true,"portal_detecting":false,"portal_url":"http://10.200.9.9/login","bare_mode":true,"auto_portal":true}'
 wait_for 10 "portal-open (GL)" sh -c "test -e $WORK/hook-portal-open.done && grep -q '^TB_PORTAL_SOURCE=glinet' $WORK/hook-portal-open.env 2>/dev/null" \
   && grep -q '^TB_PORTAL_DEV=wlan0' "$WORK/hook-portal-open.env" && ok "GL Login Mode on: our bypass follows it (wlan0)" || bad "portal-open env: $(cat "$WORK/hook-portal-open.env" 2>/dev/null)"
 ip -n "$NS_C" route get 198.51.100.7 from 192.168.8.100 iif lan0 2>&1 | grep -q 'dev wlan0' \
@@ -604,7 +621,7 @@ ip -n "$NS_C" route get 198.51.100.7 from 192.168.8.100 iif lan0 2>&1 | grep -q 
 ip netns exec "$NS_C" curl -fsS -m 3 --interface wlan0 http://10.200.9.9/hotspot-detect.html | grep -q Success \
   && tail -n1 "$WORK/portal.log" | grep -q '^wwan /hotspot-detect' && ok "GL-style check over wlan0 reaches the portal directly" || bad "GL check path: $(tail -n2 "$WORK/portal.log")"
 ip -n "$NS_C" route get 10.200.9.9 oif wlan0 2>&1 | grep -q 'dev wlan0' && ok "router traffic bound to wlan0 not hijacked by tb0" || bad "oif route"
-echo '{"ssid":"Hotel-Guest","state":2,"portal":false,"portal_detecting":false,"portal_url":"","bare_mode":false,"auto_portal":true}' >"$WORK/gl-repeater.json"
+gl_repeater '{"ssid":"Hotel-Guest","state":2,"portal":false,"portal_detecting":false,"portal_url":"","bare_mode":false,"auto_portal":true}'
 wait_for 10 "portal-close (GL)" test -e "$WORK/hook-portal-close.done" && ok "GL left Login Mode: bypass reverted" || bad "no portal-close"
 ! ip -n "$NS_C" rule | grep -q 'lookup 78' && ok "LAN rule removed" || bad "rule left"
 wait_for 30 "wlan0 back in bonding" grep -q '^Path = wlan0' "$WORK/cli/state/client.conf" && ok "wlan0 rejoined bonding, no action in either UI" || bad "wlan0 not rejoined"
@@ -638,8 +655,6 @@ await_src() {
   done
   echo "$got"
 }
-# the client hooks caught up: the last one was client-up, and it finished
-hooks_settled() { grep -E ' client-(up|down) ' "$WORK/hook-history.log" | tail -1 | grep -q ' client-up ' && [ -e "$WORK/hook-client-up.done" ]; }
 cstatus() { capi "http://$API/api/status"; }
 connected() { cstatus | jq -e '.state == "connected"' >/dev/null; }
 

@@ -6,7 +6,8 @@
 mkdir -p /etc/tailbond/state
 chmod 700 /etc/tailbond /etc/tailbond/state
 if [ ! -f /etc/tailbond/state/role-chosen ]; then
-	model="$(cat /tmp/sysinfo/model /tmp/sysinfo/board_name 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+	# BusyBox tr on GL firmware has no [:upper:] classes: use ranges.
+	model="$(cat /tmp/sysinfo/model /tmp/sysinfo/board_name 2>/dev/null | tr 'A-Z' 'a-z')"
 	case "$model" in
 	*be9300* | *"flint 3"* | *flint3*)
 		# GL-BE9300 (Flint 3): the home router in this setup

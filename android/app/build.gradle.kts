@@ -42,6 +42,15 @@ val updateRepo: String = (setting("TB_UPDATE_REPO") ?: "kaovilai/tailbond").trim
         }
     }
 
+/**
+ * ABIs to package (comma-separated): -Ptailbond.abis / TB_ANDROID_ABIS, default
+ * arm64-v8a (phones). The emulator e2e builds an x86_64 debug APK with
+ * x86_64 (android/scripts/build-e2e-apk.sh); each ABI needs its prebuilt
+ * native libs (android/scripts/build-native.sh). Same list in sdk-native.
+ */
+val abis: List<String> = (setting("tailbond.abis") ?: setting("TB_ANDROID_ABIS") ?: "arm64-v8a")
+    .split(',', ' ').map { it.trim() }.filter { it.isNotEmpty() }
+
 /** Release signing from the environment only (android/scripts/build-release-apk.sh); never from files in the repo. */
 val releaseKeystore: String? = setting("TB_RELEASE_KEYSTORE")
 
@@ -61,9 +70,9 @@ android {
         versionCode = versionCodeOf(tbVersion)
         versionName = tbVersion
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
-        // must match sdk-native's abiFilters (only arm64 prebuilts exist)
+        // must match sdk-native's abiFilters (the ABIs with prebuilt native libs)
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += abis
         }
     }
 

@@ -7,4 +7,7 @@
     <string name="notif_connected">Connected through %1$s</string>
     <string name="action_disconnect">Disconnect</string>
     <string name="err_not_paired">This phone isn\'t paired with a home server yet</string>
+    <string name="share_channel">Sharing mobile data</string>
+    <string name="share_starting">Starting to share mobile data…</string>
+    <string name="share_stop">Stop sharing</string>
 </resources>

@@ -3,6 +3,7 @@ package dev.tailbond.app.ui
 import android.app.Application
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
@@ -51,6 +52,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class AppEntry(val pkg: String, val label: String)
+
+private const val TAG = "tailbond"
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = Repository.get(app)
@@ -226,9 +229,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         peerStatus.value = peerStatus.value.copy(loading = true)
         val err = withContext(Dispatchers.IO) {
             try {
-                repo.savePeers(PeersClient.fetch(key, host, dev.tailbond.app.BuildConfig.VERSION_NAME)); null
+                val list = PeersClient.fetch(key, host, dev.tailbond.app.BuildConfig.VERSION_NAME)
+                repo.savePeers(list)
+                Log.i(TAG, "machine list from $host: ${list.peers.size} machines")
+                // pairings older than Pair & Share: learn this pairing's share key the
+                // same way (sharing waiting for it starts within a second)
+                if (repo.shareKey(server.payload) == null) {
+                    dev.tailbond.app.share.ShareKey.fetch(key, host)?.let { repo.saveShareKey(server.payload, it) }
+                }
+                null
             } catch (e: Exception) {
-                e.message ?: e.javaClass.simpleName
+                (e.message ?: e.javaClass.simpleName).also { Log.w(TAG, "machine list from $host failed: $it") }
             }
         }
         peerStatus.value = PeersUi(loading = false, error = err)
@@ -437,6 +448,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setPath(kind: PathKind, s: PathSetting) = repo.updateSettings { it.withPath(kind, s) }
     fun setRouteMode(r: RouteMode) = repo.updateSettings { it.copy(routeMode = r) }
     fun setCapMb(mb: Long) = repo.updateSettings { it.copy(cellularCapMb = mb.coerceAtLeast(0)) }
+    fun setShareMinBattery(pct: Int) = repo.updateSettings { it.copy(shareMinBattery = pct.coerceIn(0, 90)) }
+    fun setShareCapMb(mb: Long) = repo.updateSettings { it.copy(shareCapMb = mb.coerceAtLeast(0)) }
+    fun setShareAllowedHubs(hubs: List<String>) = repo.updateSettings { it.copy(shareAllowedHubs = hubs.map { h -> h.trim() }.filter { h -> h.isNotEmpty() }.distinct()) }
     fun setBackupFec(on: Boolean) = repo.updateSettings { it.copy(experimentalBackupFec = on) }
     fun resetCellular() = repo.resetCellularBytes()
 

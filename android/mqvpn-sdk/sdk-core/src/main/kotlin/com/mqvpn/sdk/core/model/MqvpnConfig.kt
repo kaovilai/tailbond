@@ -95,6 +95,12 @@ data class MqvpnConfig(
      * this value and nothing else is checked, and [insecure] is ignored.
      */
     val certSha256: String? = null,
+    /**
+     * tailbond: TUN MTU cap (mqvpn `MTU`, `mqvpn_config_set_tun_mtu`): 0 =
+     * mqvpn's auto value (1382 with the default packet size), 1280-9000 = at
+     * most this. The reorder header (8 bytes) comes off after the cap.
+     */
+    val tunMtu: Int = 0,
 ) : Parcelable {
 
     /** tailbond: mqvpn_reinjection_t. */
