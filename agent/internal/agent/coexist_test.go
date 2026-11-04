@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/netip"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,9 @@ import (
 // plan is applied with ip/resolvectl, taken away when the tunnel goes down,
 // and the API switches Work VPN traffic.
 func TestCoexistLinuxClient(t *testing.T) {
+	if goruntime.GOOS != "linux" {
+		t.Skip("the Linux client's commands (ip, resolvectl); darwin's are in internal/coexist and e2e-macos")
+	}
 	if !(func() bool { a := clientAgent(t, nil); return a.coexistOn() })() {
 		t.Skip("coexistence runs on a Mac or a Linux client (this host looks like OpenWrt)")
 	}
