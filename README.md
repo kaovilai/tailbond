@@ -120,6 +120,8 @@ android/scripts/setup-sdk.sh && android/scripts/build-apk.sh            # Androi
 scripts/build-mqvpn-macos.sh && agent/build.sh darwin/arm64 && packaging/macos/build-bundle.sh   # Mac → out/macos/ (on a Mac)
 scripts/e2e-netns.sh                    # end-to-end test (needs sudo)
 scripts/e2e-share.sh                    # Pair & Share end-to-end (needs sudo)
+# the two Mac end-to-end tests boot out/e2e-vm/{vmlinuz,initramfs.gz}: build it on an
+# arm64 Linux host first (scripts/e2e-macos/build-server-vm.sh, see its header)
 scripts/e2e-macos.sh                    # Mac hub end-to-end (on a Mac, sudo, QEMU; docs/macos.md)
 scripts/e2e-macos-server.sh             # Mac as server end-to-end (on a Mac, sudo, QEMU)
 ```

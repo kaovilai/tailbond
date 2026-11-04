@@ -178,7 +178,8 @@ ip) up || { echo "Tailscale is stopped." >&2; exit 1; }; [ "\$2" = -6 ] || echo 
 whois)
   [ "\$3" = "$ASKER" ] || { echo "no such peer" >&2; exit 1; }
   echo '{"Node":{"ID":9,"StableID":"nE2EPIXEL","Name":"pixel.tail1234.ts.net.","ComputedName":"pixel","Hostinfo":{"Hostname":"Pixel 9","OS":"android"}},"UserProfile":{"LoginName":"alex@example.com","DisplayName":"Alex"}}' ;;
-debug) printf '{"AdvertiseRoutes":[%s]}\n' "\$(cat "$WORK/ts-routes" 2>/dev/null)" ;;
+debug) [ -f "$WORK/prefs-broken" ] && { echo "debug prefs: not available" >&2; exit 1; }
+  printf '{"AdvertiseRoutes":[%s]}\n' "\$(cat "$WORK/ts-routes" 2>/dev/null)" ;;
 set)
   for a in "\$@"; do
     case "\$a" in --advertise-routes=*) r="\${a#--advertise-routes=}"; echo "\$r" >>"$WORK/ts-advertised"; printf '"%s"' "\$r" | sed 's/,/","/g' >"$WORK/ts-routes" ;; esac
@@ -407,6 +408,24 @@ grep -q "100.64.0.0/10" <<<"$NAT" && bad "tailnet NAT with Tailscale disabled: $
 [ -s "$WORK/ts-advertised" ] && bad "advertised with Tailscale disabled: $(cat "$WORK/ts-advertised")" || ok "no route advertised with Tailscale disabled"
 TB_STATE_DIR="$WORK/h" "$ROOT/packaging/macos/hooks/server-down" | sed 's/^/  /'
 SRV="$WORK/h" check_clean "after the disable_tailscale hook run"
+
+say "advertised routes: never replaced from an unreadable list; others (an exit node) kept"
+hook_ts() { # run server-up then server-down with Tailscale on, the routes as given
+  : >"$WORK/ts-advertised"
+  env PATH="$WORK/bin:$PATH" TB_STATE_DIR="$WORK/h" TB_TUN=lo0 TB_SUBNET="$SUBNET" TB_PORT="$PORT" TB_WEB_PORTS="8077 80" \
+    TB_TAILSCALE=1 TB_ADVERTISE_ROUTE=1 "$ROOT/packaging/macos/hooks/server-up" >"$WORK/hook-ts.log" 2>&1
+  TB_STATE_DIR="$WORK/h" "$ROOT/packaging/macos/hooks/server-down" >/dev/null
+}
+printf '"0.0.0.0/0","::/0"' >"$WORK/ts-routes"
+touch "$WORK/prefs-broken"
+hook_ts
+[ -s "$WORK/ts-advertised" ] && bad "routes replaced although they couldn't be read: $(cat "$WORK/ts-advertised")" \
+  || ok "debug prefs unreadable: routes left alone ($(grep -o "can't read the advertised routes" "$WORK/hook-ts.log"))"
+rm -f "$WORK/prefs-broken"
+hook_ts
+[ "$(cat "$WORK/ts-advertised")" = "0.0.0.0/0,::/0,$SUBNET" ] && ok "exit node routes kept: advertised 0.0.0.0/0,::/0,$SUBNET" \
+  || bad "advertised: $(cat "$WORK/ts-advertised") ($(tail -n 3 "$WORK/hook-ts.log"))"
+SRV="$WORK/h" check_clean "after the route hook runs"
 
 echo
 echo "e2e-macos-server: $PASS passed, $FAIL failed"

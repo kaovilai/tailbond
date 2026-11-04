@@ -53,7 +53,11 @@ type Agent struct {
 	// hookMu: one hook at a time, also while drainHooks runs the queue at
 	// shutdown and hookWorker may still be in the middle of one (a down hook
 	// must never overlap the up hook whose changes it undoes)
-	hookMu   sync.Mutex
+	hookMu sync.Mutex
+	// stopping the hook worker: drainHooks cancels it and waits for it to
+	// exit, so a hook it already took off the queue finishes first
+	hookStop context.CancelFunc
+	hookDone chan struct{}
 	pollMu   sync.Mutex // serializes poll (the rater is not concurrency-safe)
 	secretMu sync.Mutex // stateSecret: each secret is created once
 
@@ -227,7 +231,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 		return err
 	}
-	go a.hookWorker(ctx)
+	// its own context: drainHooks stops it also on the restart paths, where
+	// ctx stays live
+	hctx, hcancel := context.WithCancel(ctx)
+	a.hookStop, a.hookDone = hcancel, make(chan struct{})
+	go func() { a.hookWorker(hctx); close(a.hookDone) }()
 	a.Logf("tailbondd %s starting, role=%s mode=%s config=%s", a.opts.Version, cfg.Role, cfg.Mode, a.store.Path())
 	a.setupCrash()
 
@@ -294,8 +302,13 @@ func (a *Agent) hookWorker(ctx context.Context) {
 }
 
 // drainHooks runs queued hooks synchronously at shutdown (down hooks
-// matter), after the one hookWorker may be running.
+// matter), once the worker has stopped: a hook it already dequeued runs to
+// completion before this returns.
 func (a *Agent) drainHooks() {
+	if a.hookStop != nil {
+		a.hookStop()
+		<-a.hookDone
+	}
 	a.hookMu.Lock()
 	defer a.hookMu.Unlock()
 	for {

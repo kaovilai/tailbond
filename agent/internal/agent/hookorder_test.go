@@ -47,3 +47,38 @@ func TestDrainHooksWaitsForRunningHook(t *testing.T) {
 		t.Fatalf("order %v", order)
 	}
 }
+
+// The worker took the down hook off the queue but hasn't started it when
+// drainHooks runs (PR 19 review): drainHooks must still return only after
+// it ran.
+func TestDrainHooksWaitsForDequeuedHook(t *testing.T) {
+	a := &Agent{hookq: make(chan func(), 32)}
+	hctx, hcancel := context.WithCancel(context.Background())
+	a.hookStop, a.hookDone = hcancel, make(chan struct{})
+	ran := make(chan struct{})
+	taken := make(chan struct{})
+	go func() {
+		// a worker that is slow between dequeue and run
+		defer close(a.hookDone)
+		for {
+			select {
+			case f := <-a.hookq:
+				close(taken)
+				time.Sleep(200 * time.Millisecond)
+				a.hookMu.Lock()
+				f()
+				a.hookMu.Unlock()
+			case <-hctx.Done():
+				return
+			}
+		}
+	}()
+	a.hookq <- func() { close(ran) }
+	<-taken
+	a.drainHooks()
+	select {
+	case <-ran:
+	default:
+		t.Fatal("drainHooks returned before the dequeued down hook ran")
+	}
+}

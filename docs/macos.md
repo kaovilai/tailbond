@@ -419,7 +419,12 @@ over Tailscale and the "Get tailbond" page.
 You need Tailscale on the Mac (for pairing over Tailscale, the dashboard
 from your other devices, and the tailnet for bonded devices) and either a
 public IPv4 address at home or a DNS name for it, with a UDP port forwarded
-to the Mac on your router.
+to the Mac on your router. **Start Tailscale before installing**: the
+installer uses it only if `tailscale status` works then (see below).
+
+Download the bundle and check it against `SHA256SUMS` as in
+[The release bundle](#the-release-bundle) (step 1), or
+[build it from source](#build-from-source), then, in the folder it's in:
 
 ```sh
 tar -xzf tailbond-macos-arm64.tar.gz
@@ -482,9 +487,14 @@ While the server runs, the `server-up` hook
   once in the admin console if your tailnet machines should reach bonded
   devices; bonded devices reach the tailnet without it.
 
-When Tailscale starts after tailbond (the apps start at login, tailbond at
-boot) or its interface changes, tailbondd notices within about 20 s and runs
-the hook again for the pf rules and the route. With `--no-tailscale`
+Tailscale is used only if it was running when you installed (as on Linux:
+the server's certificate, which devices pin, depends on it). Installed
+without it? Start Tailscale, then run `install.sh --role server` again; it
+switches Tailscale on, and devices paired before then pair again (the
+certificate changes). With Tailscale on, when it starts after tailbond
+(after a restart, the apps start at login, tailbond at boot) or its
+interface changes, tailbondd notices within about 20 s and runs the hook
+again for the pf rules and the route. With `--no-tailscale`
 (`"disable_tailscale": true`) the hook leaves Tailscale alone: no tailnet NAT,
 no route advertised.
 
@@ -553,7 +563,8 @@ interfaces to it. It checks that:
   Mac's Tailscale address), and the server's DNS forwarder; a tailnet
   machine reaches the client through the advertised route; the subnet is
   advertised;
-- the dashboard and the phone page answer the tailnet and the tunnel, and
+- the dashboard answers the tailnet and, through the tunnel, the client;
+  the phone page (on the Tailscale address only) answers the tailnet; both
   refuse other sources, also after the server is stopped; with the macOS
   firewall on, mqvpn is allowed in; another firewall's pf anchor, its pf
   reference and pf's main ruleset survive tailbond's start, stop and

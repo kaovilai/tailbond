@@ -182,8 +182,17 @@ fi
 if [ "${TB_ADVERTISE_ROUTE:-1}" = 0 ]; then
   log "tailscale: not advertising $TB_SUBNET (no_advertise_route)"
 elif [ -n "$TS_CLI" ] && "$TS_CLI" status >/dev/null 2>&1; then
-  cur="$("$TS_CLI" debug prefs 2>/dev/null | tr -d ' \n\t' | sed -n 's/.*"AdvertiseRoutes":\[\([^]]*\)\].*/\1/p' | tr -d '"')"
+  # set --advertise-routes replaces the whole list: only change it when the
+  # current one could be read (an explicit list or null), never from an
+  # empty read, which would drop the user's other routes (an exit node too)
+  prefs="$("$TS_CLI" debug prefs 2>/dev/null | tr -d ' \n\t')" || prefs=""
+  case "$prefs" in
+    *'"AdvertiseRoutes":['*) cur="$(printf '%s' "$prefs" | sed -n 's/.*"AdvertiseRoutes":\[\([^]]*\)\].*/\1/p' | tr -d '"')" ;;
+    *'"AdvertiseRoutes":null'*) cur="" ;;
+    *) cur="?" ;;
+  esac
   case ",$cur," in
+    ",?,") log "tailscale: can't read the advertised routes (tailscale debug prefs): leaving them as they are; advertise $TB_SUBNET yourself (tailscale set --advertise-routes=<your routes>,$TB_SUBNET)" ;;
     *",$TB_SUBNET,"*) log "tailscale: $TB_SUBNET already advertised" ;;
     *)
       routes="${cur:+$cur,}$TB_SUBNET"
