@@ -67,7 +67,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 - **Bypass rules (router):** chosen websites, devices, addresses or ports go direct or through one chosen link.
 - **Hotel Wi-Fi:** captive-portal detection and sign-in that works with GL.iNet's own repeater Login Mode.
 - **[Pair & Share](docs/pair-and-share.md):** Android phones and iPhones (the free-signed tailbond Share app) lend their mobile data over Wi-Fi to the hub, which bonds it with its own links.
-- **[Mac as the hub](docs/macos.md):** a MacBook bonds its Wi-Fi, an Ethernet or USB-C adapter, an iPhone over USB and nearby phones' shares.
+- **[Mac as the hub](docs/macos.md):** a MacBook bonds its Wi-Fi, an Ethernet or USB-C adapter, an iPhone over USB and nearby phones' shares; a [menu bar app](docs/macos.md#menu-bar) shows the links, other VPNs and updates.
 - **[Next to a work VPN](docs/macos.md#using-tailbond-with-netbird-or-another-work-vpn)** (Mac, Linux client): NetBird, the Tailscale app or another VPN keep their addresses and DNS. tailbond routes only tailnet machines' own addresses and uses split DNS; the work VPN's traffic goes Direct or Bonded.
 - **[Phone hub](docs/phone-hub.md):**
   - An Android phone shares its bonded connection with a laptop through a

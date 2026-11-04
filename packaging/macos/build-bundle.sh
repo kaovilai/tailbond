@@ -6,7 +6,9 @@
 #   out/macos/tailbond-macos-arm64.tar.gz   tailbond-macos-arm64/{bin/tailbondd,
 #       bin/mqvpn, hooks/, install.sh, uninstall.sh, the LaunchDaemon plist,
 #       icons/ (PNG sizes, tailbond.icns when built on a Mac; rendered from
-#       assets/brand/tailbond-icon.svg, needs rsvg-convert), README.md,
+#       assets/brand/tailbond-icon.svg, needs rsvg-convert), tailbond.app
+#       (the menu bar app, when out/macos/tailbond.app is built; required
+#       with TB_REQUIRE_APP=1), README.md,
 #       VERSION, licenses}
 #   out/macos/tailbond.rb                   packaging/macos/tailbond.rb with this
 #       version and the tarball's SHA-256 (TB_FORMULA_URL: where it downloads
@@ -50,6 +52,12 @@ install -m 0644 "$PKG/com.tailbond.tailbondd.plist" "$d/"
 # the app icon (docs/brand.md), rendered from the SVG here (rsvg-convert):
 # the PNG sizes, and tailbond.icns on a Mac (iconutil)
 "$ROOT/scripts/brand/render-macos-icons.sh" "$d/icons"
+# the menu bar app (packaging/macos/build-app.sh), when built
+if [ -d "$OUT/tailbond.app" ]; then
+    ditto "$OUT/tailbond.app" "$d/tailbond.app" 2>/dev/null || cp -R "$OUT/tailbond.app" "$d/tailbond.app"
+elif [ -n "${TB_REQUIRE_APP:-}" ]; then
+    die "no $OUT/tailbond.app: packaging/macos/build-app.sh"
+fi
 install -m 0644 "$ROOT/docs/macos.md" "$d/README.md"
 install -m 0644 "$ROOT/LICENSE" "$d/LICENSE"
 install -m 0644 "$ROOT/NOTICE" "$d/NOTICE"

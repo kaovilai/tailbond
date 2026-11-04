@@ -1,0 +1,14 @@
+{"role":"client","mode":"streaming","state":"connected","server":"homebox.tail1234.ts.net:443","tunnel_ip":"10.77.0.3","uptime_sec":800,
+ "totals":{"tx_bps":300000,"rx_bps":4200000,"tx_bytes":1,"rx_bytes":1},
+ "paths":[
+  {"id":1,"iface":"en0","kind":"wifi","state":"active","srtt_ms":44,"min_rtt_ms":30,"loss_pct":0,"tx_bps":300000,"rx_bps":4200000,"tx_bytes":1,"rx_bytes":1,"enabled":true,"label":"Wi-Fi"},
+  {"id":2,"iface":"en5","kind":"ethernet","state":"failed","srtt_ms":0,"min_rtt_ms":0,"loss_pct":0,"tx_bps":0,"rx_bps":0,"tx_bytes":0,"rx_bytes":0,"enabled":true}
+ ],
+ "clients":[],"tailscale":null,"control_api":true,"paired":true,"version":"0.2.0",
+ "update":{"current":"0.2.0","policy":"notify","method":"brew","state":"idle"},
+ "platform":"darwin",
+ "coexist":{"netbird":{"cli":true,"running":true,"logged_in":true,"connected":true,"iface":"utun100","addr":"100.92.1.2/16","mtu":1280},
+  "foreign":[{"name":"NetBird","kind":"netbird","iface":"utun100","addrs":["100.92.1.2/16"],"prefixes":["100.92.0.0/16","10.20.0.0/16"]}],
+  "split_dns":true,"dns_domains":["corp.example","netbird.cloud"],"tailnet_via_tailscale_app":false,
+  "work_vpn":"direct","work_vpn_effective":"direct","tailnet_routes":6,"direct_routes":3,
+  "warnings":["NetBird's network 10.20.0.0/16 is also your home LAN's: NetBird keeps it"]}}

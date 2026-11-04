@@ -117,6 +117,40 @@ not kept in git. Or let Homebrew build it: copy
 `packaging/macos/tailbond.rb` into the tap as above and
 `brew install --HEAD local/tailbond/tailbond` (a few minutes).
 
+## Menu bar
+
+The bundle installs **tailbond.app** in /Applications: an icon in the menu
+bar (no Dock icon) that opens a small window over tailbond's own API
+(127.0.0.1:8077):
+
+- **State**: Connected (to which server, how many links), Connecting,
+  Off, Not paired, or *tailbond isn't running*; the speeds; an on/off
+  switch.
+- **Mode**: Fastest, Smooth calls and video, Most reliable, Save mobile data.
+- **Connections**: each link (Wi-Fi, Ethernet, an iPhone over USB, a
+  nearby phone's share) with its delay and speed, standby, or what's wrong.
+- **Next to other VPNs** ([below](#using-tailbond-with-netbird-or-another-work-vpn)):
+  NetBird or another VPN that's on, whether its traffic goes **Direct** or
+  **Bonded** (a switch), work names on its DNS, the Tailscale app, and any
+  warning. Hidden when there's nothing to say.
+- **Updates**: the version, *up to date* or *Update available*, the
+  policy (**Right away**, Automatic (night), Tell me, Off) as a menu, and
+  **Check now**.
+- After a crash, **Report a problem…** ([reporting.md](reporting.md));
+  **Open dashboard**; **Open at login** (on after the first launch;
+  System Settings → General → Login Items lists it); **Quit** (tailbond
+  itself keeps running: it's the LaunchDaemon).
+
+It's ad-hoc signed (no Apple Developer ID), like the binaries, and
+install.sh clears the quarantine flag, so it opens without a Gatekeeper
+prompt. It reads and changes only what the dashboard does; with a dashboard
+password set, it asks you to sign in on the dashboard instead.
+`/Applications/tailbond.app/Contents/MacOS/tailbond --status` prints the
+same summary in Terminal. Homebrew installs keep it in
+`$(brew --prefix)/opt/tailbond/tailbond.app` (the formula's caveats say how
+to link it). Source: `macos/TailbondMenu` (SwiftUI `MenuBarExtra`, macOS
+13+), built by `packaging/macos/build-app.sh`.
+
 ## Bond your connections
 
 The **Connections** tab lists everything the Mac can use, by the name macOS

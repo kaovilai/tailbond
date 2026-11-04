@@ -50,6 +50,8 @@ class Tailbond < Formula
       bin.install "bin/mqvpn", "bin/tailbondd"
       (lib/"tailbond/hooks").install Dir["hooks/*"]
       (share/"tailbond/icons").install Dir["icons/*"] if Dir.exist?("icons")
+      # the menu bar app (docs/macos.md "Menu bar"); see caveats
+      prefix.install "tailbond.app" if Dir.exist?("tailbond.app")
     end
   end
 
@@ -82,6 +84,8 @@ class Tailbond < Formula
       Start tailbond (root: it opens a utun tunnel device):
         sudo brew services start tailbond
       Dashboard: http://127.0.0.1:8077 (Setup: paste your home server's pairing link)
+      Menu bar app (release installs): open #{opt_prefix}/tailbond.app
+        or link it into Applications: ln -sf #{opt_prefix}/tailbond.app /Applications/
     EOS
   end
 

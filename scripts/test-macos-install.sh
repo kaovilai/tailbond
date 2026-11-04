@@ -8,8 +8,9 @@
 # 1. The bundle as a user gets it: quarantined like a browser download,
 #    unpacked, sudo ./install.sh: the LaunchDaemon runs tailbondd (client
 #    role, unpaired) on 127.0.0.1:8077; install.sh --update --force from the
-#    same bundle (binaries swapped, .prev kept, health check); uninstall.sh
-#    --purge leaves nothing behind.
+#    same bundle (binaries swapped, .prev kept, health check); the menu bar
+#    app in /Applications (ad-hoc signed, not quarantined, reads the running
+#    agent: tailbond --status); uninstall.sh --purge leaves nothing behind.
 # 2. The Homebrew formula (tailbond.rb with a file:// URL to the tarball):
 #    brew install, brew test, sudo brew services start, the dashboard
 #    answers, brew uninstall.
@@ -50,6 +51,22 @@ if [ -n "$IP" ]; then
 fi
 sudo test -f /usr/local/etc/tailbond/install.env && ok "install.env written" || bad "no install.env"
 
+say "menu bar app (tailbond.app)"
+APP=/Applications/tailbond.app
+if [ -d "$B/tailbond.app" ]; then
+  [ -x "$APP/Contents/MacOS/tailbond" ] && ok "installed in /Applications" || bad "no $APP"
+  codesign --verify --strict "$APP" 2>/dev/null && ok "signature verifies (ad-hoc)" || bad "codesign --verify: $(codesign --verify --strict "$APP" 2>&1)"
+  codesign -dv "$APP" 2>&1 | grep -q 'Signature=adhoc' && ok "ad-hoc signed" || bad "signature: $(codesign -dv "$APP" 2>&1 | tail -n 3)"
+  [ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist" 2>/dev/null)" = true ] && ok "menu bar only (LSUIElement)" || bad "LSUIElement not set"
+  xattr -p com.apple.quarantine "$APP/Contents/MacOS/tailbond" >/dev/null 2>&1 && bad "app is quarantined" || ok "app carries no quarantine flag"
+  out="$("$APP/Contents/MacOS/tailbond" --status 2>&1)" && ok "the app reads the running agent: $(echo "$out" | head -n 1)" || bad "tailbond --status: $out"
+  echo "$out" | grep -q '^tailbond: Not paired' && ok "it says Not paired (fresh install)" || bad "--status said: $out"
+  echo "$out" | grep -q 'Right away' && ok "it shows the update policy (Right away)" || bad "no update policy in: $out"
+  "$APP/Contents/MacOS/tailbond" --status http://127.0.0.1:1 >/dev/null 2>&1 && bad "--status succeeded with no agent" || ok "--status fails when nothing answers"
+else
+  bad "the bundle has no tailbond.app"
+fi
+
 say "install.sh --update --force (same bundle)"
 pid0="$(sudo launchctl print "system/$LABEL" | awk '/pid =/{print $3; exit}')"
 sudo /usr/local/lib/tailbond/install.sh --update --force --bundle-dir "$B" && ok "update ran" || bad "update failed"
@@ -62,7 +79,7 @@ say "uninstall.sh --purge"
 sudo /usr/local/lib/tailbond/uninstall.sh --purge
 sudo launchctl print "system/$LABEL" >/dev/null 2>&1 && bad "daemon still loaded" || ok "daemon gone"
 left="$(ls -d /usr/local/bin/tailbondd /usr/local/bin/mqvpn /usr/local/lib/tailbond /usr/local/etc/tailbond \
-  /usr/local/var/lib/tailbond /Library/LaunchDaemons/$LABEL.plist 2>/dev/null || true)"
+  /usr/local/var/lib/tailbond /Library/LaunchDaemons/$LABEL.plist /Applications/tailbond.app 2>/dev/null || true)"
 [ -z "$left" ] && ok "nothing left behind" || bad "left behind: $left"
 
 say "Homebrew formula (file:// tarball)"

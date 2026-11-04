@@ -35,6 +35,9 @@ fi
 # an mqvpn left behind (it restores routes and DNS on SIGTERM)
 if [ -f "$STATE/mqvpn.pid" ]; then kill "$(cat "$STATE/mqvpn.pid")" 2>/dev/null || true; fi
 rm -f "$PLIST"
+# the menu bar app
+pkill -x tailbond 2>/dev/null || true
+rm -rf "${TB_APP_DIR:-/Applications}/tailbond.app"
 rm -f "$PREFIX/bin/tailbondd" "$PREFIX/bin/mqvpn" "$PREFIX/bin/tailbondd.prev" "$PREFIX/bin/mqvpn.prev"
 rm -rf "$PREFIX/lib/tailbond"
 rm -f "$ETC/install.env"

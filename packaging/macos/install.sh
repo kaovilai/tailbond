@@ -161,6 +161,28 @@ install_hooks() {
     local h
     for h in "$BUNDLE"/hooks/*; do install -m 0755 "$h" "$HOOKS/$(basename "$h")"; done
 }
+# the menu bar app (docs/macos.md "Menu bar"): into $APPDIR, ad-hoc signed
+APPDIR="${TB_APP_DIR:-/Applications}"
+install_app() {
+    [ -d "$BUNDLE/tailbond.app" ] || return 0
+    pkill -x tailbond 2>/dev/null || true
+    rm -rf "$APPDIR/tailbond.app.tbnew"
+    install -d -m 0755 "$APPDIR"
+    ditto "$BUNDLE/tailbond.app" "$APPDIR/tailbond.app.tbnew"
+    unquarantine "$APPDIR/tailbond.app.tbnew"
+    rm -rf "$APPDIR/tailbond.app"
+    mv "$APPDIR/tailbond.app.tbnew" "$APPDIR/tailbond.app"
+    say "menu bar app: $APPDIR/tailbond.app"
+}
+# open_app: start it for the person at the screen (install.sh runs as root)
+open_app() {
+    [ -d "$APPDIR/tailbond.app" ] && [ -z "${TB_NO_LAUNCHD:-}" ] && [ -z "${TB_NO_APP_OPEN:-}" ] || return 0
+    local u uid
+    u="$(stat -f %Su /dev/console 2>/dev/null || true)"
+    [ -n "$u" ] && [ "$u" != root ] || return 0
+    uid="$(id -u "$u" 2>/dev/null)" || return 0
+    launchctl asuser "$uid" sudo -u "$u" open "$APPDIR/tailbond.app" 2>/dev/null || true
+}
 do_update() {
     [ -f "$MANIFEST" ] || die "no tailbond install found ($MANIFEST): run install.sh without --update first"
     local cur new b ok=0 why
@@ -175,6 +197,7 @@ do_update() {
     install_hooks
     install -m 0755 "$BUNDLE/install.sh" "$LIBDIR/install.sh"
     install -m 0755 "$BUNDLE/uninstall.sh" "$LIBDIR/uninstall.sh"
+    if [ -d "$APPDIR/tailbond.app" ] || [ -d "$BUNDLE/tailbond.app" ]; then install_app; open_app; fi
     set_kv "$MANIFEST" TB_VERSION "$new"
     if launchd_on; then
         tb_restart
@@ -234,6 +257,8 @@ chmod 0644 "$PLIST.tbnew"
 mv -f "$PLIST.tbnew" "$PLIST"
 printf 'TB_PREFIX=%s\nTB_VERSION=%s\nTB_PLIST=%s\n' "$PREFIX" "$VERSION" "$PLIST" >"$MANIFEST"
 tb_start
+install_app
+open_app
 
 if launchd_on; then
     for _ in $(seq 1 20); do [ -n "$(hello_version)" ] && break; sleep 1; done

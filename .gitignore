@@ -12,3 +12,6 @@ local.properties
 *.icns
 *.so
 *.a
+
+# SwiftPM build trees (macos/TailbondMenu, ios/TailbondShareKit)
+.build/
