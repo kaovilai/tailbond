@@ -11,15 +11,15 @@ Every component below MUST follow this document. Change it here first.
 | Component | Path | Runs on | Role |
 |---|---|---|---|
 | `tailbondd` agent + web UI | `agent/` (Go, UI embedded) | Fedora (x86_64/aarch64), GL.iNet (aarch64 musl), macOS (arm64) | supervises mqvpn, serves dashboard + API, Tailscale glue |
-| mqvpn patches | `patches/mqvpn/*.patch` | all | client-side control API, relay paths, their macOS wiring (see below) |
+| mqvpn patches | `patches/mqvpn/*.patch` | all | client-side control API, relay paths, their macOS wiring, server mode on macOS (see below) |
 | Fedora package | `packaging/fedora/` | Fedora 43+ | RPM: `tailbond-server` (mqvpn + tailbondd + units + firewalld service) |
 | OpenWrt / GL.iNet package | `packaging/openwrt/` | Flint 3 (GL-BE9300), Slate 7 (GL-BE3600), any aarch64_cortex-a53 OpenWrt | `.ipk` with static musl mqvpn + tailbondd, init.d, UCI, GL admin panel (VPN → tailbond: oui view + `/rpc` Lua object, [glinet.md](glinet.md)) |
 | Android app | `android/` | Android 8+ arm64 | fork of mqvpn's Android app, rebranded `dev.tailbond.app` |
-| macOS client | `packaging/macos/` | Apple silicon Macs | the hub on a laptop: LaunchDaemon, `install.sh`, Homebrew formula, darwin hooks ([macos.md](macos.md)) |
+| macOS client and server | `packaging/macos/` | Apple silicon Macs | the hub on a laptop, or the home server (`install.sh --role server`: forwarding, pf NAT/firewall anchor, power assertion in the darwin `server-up`/`server-down` hooks, [macos.md](macos.md#mac-as-home-server)): LaunchDaemon, `install.sh`, Homebrew formula (hub) |
 | Generic Linux server bundle | `packaging/linux/` (+ Ansible role `packaging/ansible/roles/tailbond/`) | Debian/Ubuntu, Alma/RHEL/Rocky 9–10, Fedora; x86_64 | static mqvpn + tailbondd, `install.sh` (ports, subnet, firewall, systemd memory limits), for a VPS server ([vps.md](vps.md)) |
 
 Roles of `tailbondd` (`--role` / config `role`):
-- `server`: home endpoint (Fedora box or Flint 3). Runs `mqvpn --mode server`.
+- `server`: home endpoint (Fedora box, Flint 3 or a Mac). Runs `mqvpn --mode server`.
 - `client`: travel router (Slate 7), Linux laptop or Mac. Runs `mqvpn --mode client` over all WANs; routes LAN through the tunnel (router) or the machine's own traffic (laptop, Mac: mqvpn's `manage_routes`).
 
 ## Network layout (defaults)
@@ -91,6 +91,8 @@ must accept payloads without them):
 Upstream mqvpn only serves the control API in server mode. `patches/mqvpn/0001-client-control-api.patch` adds it to client mode on Linux: `[Control] Listen` / `--control-port` in client mode serve `get_status` and `get_stats` with the **same JSON shape as server mode**, as one client object whose path entries additionally carry `"iface"` (the bound interface name). Keep the patch upstreamable (small, confined to `src/platform/linux/` + `src/platform/posix/`).
 
 `patches/mqvpn/0003-darwin-client-control-and-relay-paths.patch` (on top of 0001 and 0002) does the same on macOS: the Darwin CLI compiles the same `control_socket.c` (plain POSIX + libevent; it stays in `src/platform/linux/`, a move to `posix/` being a pure rename) and serves the client API (no RX offload counters there), and a relay path (`NAME@HOST:PORT`) is wired into `platform_darwin.c`: its socket is not `IP_BOUND_IF`-pinned and is routed normally, and the route monitor, the reactivate re-pin and the scoped server pins (`#F1`) skip it, since its name is not an interface. Interface paths are unchanged. `test_control_socket` joins mqvpn's Darwin ctest set, which already runs the relay bind tests (`test_bind_posix_socket`).
+
+`patches/mqvpn/0005-darwin-server-mode.patch` builds `--mode server` on macOS (`src/platform/darwin/server_darwin.c`): a trimmed twin of the Linux server loop over a utun (the kernel picks the unit, logged as `TUN utunN configured: …` like Linux), the client subnets routed to it with `route -interface`, the same control API; no TUN offloads, UDP GSO/GRO or hybrid TCP egress lane. Forwarding, NAT and the firewall stay with the platform hook, as on Linux.
 
 ## tailbondd HTTP API (served on `:8077`, UI at `/`)
 

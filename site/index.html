@@ -153,7 +153,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
       <li><b>Connections</b><span>Hotel Wi-Fi, 5G, ethernet, a phone tethered over USB, or a friend's phone sharing its data.</span></li>
       <li><b>Hub</b><span>The Android app, a GL.iNet travel router that bonds for every device on its Wi-Fi, or a Mac (Apple silicon) with a menu bar app.</span></li>
       <li><b>Bonded tunnel</b><span>Faster together, or duplicated for calls that never drop. Fails over in seconds.</span></li>
-      <li><b>Your server</b><span>A Flint 3 or Fedora box at home, or a VPS, with automatic failover between them.</span></li>
+      <li><b>Your server</b><span>A Flint 3, a Fedora box or a Mac at home, or a VPS, with automatic failover between them.</span></li>
       <li><b>Internet + tailnet</b><span>Reach the NAS by its MagicDNS name, from anywhere.</span></li>
     </ol>
   </section>
@@ -185,6 +185,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
           <tr><td>Fedora</td><td>Home server (RPM)</td><td>RPM build, install and removal in CI</td></tr>
           <tr><td>Any Linux VPS</td><td>Server, failover backup</td><td>Installer tested in CI (AlmaLinux, Debian, Ubuntu); bonding and failover end to end in network namespaces</td></tr>
           <tr><td>macOS (Apple silicon)</td><td>Hub (Wi-Fi, ethernet, iPhone USB, phone shares), menu bar app</td><td>Bonding, nearby phones' shares, the phone hub and a work VPN (NetBird stand-in) end to end on a macOS runner against a Linux server VM; installer, Homebrew formula and menu bar app tested in CI. Not yet on a real Mac; next to the Tailscale app untested</td></tr>
+          <tr><td>macOS (Apple silicon)</td><td>Home server</td><td>Server, NAT, firewall rules and pairing over a Tailscale stand-in end to end on a macOS runner, with a Linux client bonding two paths in a VM; installer tested in CI. Not yet on a real Mac behind a home router; no real Tailscale variant tested</td></tr>
           <tr><td>Android</td><td>Hub for itself (Wi-Fi + 5G), Pair &amp; Share sharer</td><td>Unit tests, plus connect-and-pass-traffic on an emulator in CI</td></tr>
           <tr><td>iPhone</td><td>Pair &amp; Share sharer (free-signed app you build)</td><td>Unit tests and build on an iOS simulator in CI</td></tr>
         </tbody>
@@ -194,9 +195,9 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
 
   <section id="start">
     <h2>Get started</h2>
-    <p class="lead">You need a server you control (a GL.iNet router, a Fedora box or a VPS) with a public IP or a forwarded UDP port.</p>
+    <p class="lead">You need a server you control (a GL.iNet router, a Fedora box, a Mac that stays at home or a VPS) with a public IP or a forwarded UDP port.</p>
     <ol class="steps">
-      <li><b>Set up the server</b><span><a href="https://github.com/kaovilai/tailbond/blob/main/docs/glinet.md">GL.iNet</a>, <a href="https://github.com/kaovilai/tailbond/blob/main/docs/fedora-server.md">Fedora</a> or a <a href="https://github.com/kaovilai/tailbond/blob/main/docs/vps.md">VPS</a>.</span></li>
+      <li><b>Set up the server</b><span><a href="https://github.com/kaovilai/tailbond/blob/main/docs/glinet.md">GL.iNet</a>, <a href="https://github.com/kaovilai/tailbond/blob/main/docs/fedora-server.md">Fedora</a>, <a href="https://github.com/kaovilai/tailbond/blob/main/docs/macos.md#mac-as-home-server">a Mac</a> or a <a href="https://github.com/kaovilai/tailbond/blob/main/docs/vps.md">VPS</a>.</span></li>
       <li><b>Open its "Get tailbond" page</b><span>On your Android phone, while Tailscale is on: <code>http://&lt;server&gt;/</code>. Travel router? Follow the <a href="https://github.com/kaovilai/tailbond/blob/main/docs/glinet.md">GL.iNet guide</a> instead.</span></li>
       <li><b>Install and ask to connect</b><span>Install the app and tap Connect; approve the request on your server.</span></li>
       <li><b>Add more links</b><span>Plug in a phone, share a friend's data, or bring the travel router.</span></li>

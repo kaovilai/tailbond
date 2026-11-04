@@ -58,23 +58,35 @@ TS_CLI=""
 # on PATH (tailscaled, or the app's CLI integration), else inside the app
 if command -v tailscale >/dev/null 2>&1; then TS_CLI=tailscale
 elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then TS_CLI=/Applications/Tailscale.app/Contents/MacOS/Tailscale; fi
-TS_IF=""
+TS_IF="" TS_IP="" TS_IP6=""
 if [ -n "$TS_CLI" ]; then
   TS_IP="$("$TS_CLI" ip -4 2>/dev/null | head -n1)"
+  TS_IP6="$("$TS_CLI" ip -6 2>/dev/null | head -n1)"
   if [ -n "$TS_IP" ]; then
     # the utun holding the Tailscale address
     TS_IF="$(ifconfig 2>/dev/null | awk -v ip="$TS_IP" '/^[a-z0-9]+:/ {i = $1; sub(":", "", i)} $1 == "inet" && $2 == ip {print i; exit}')"
   fi
 fi
 
+# the uplinks to NAT out of: the default route's interface and every other
+# Ethernet/Wi-Fi port (en*), so a switch from one to another keeps working
+UPLINKS="$WAN"
+for i in $(ifconfig -l 2>/dev/null); do
+  case "$i" in en[0-9]*) [ "$i" = "$WAN" ] || UPLINKS="$UPLINKS $i" ;; esac
+done
+# the addresses tailbondd serves the dashboard and the phone page on, other
+# than loopback: its tunnel address and the Tailscale ones
+TUN_IP="$(ifconfig "$TB_TUN" 2>/dev/null | awk '$1 == "inet" {print $2; exit}')"
+WEB_TO="$(echo "$TUN_IP $TS_IP $TS_IP6" | xargs)"
+
 # ---- pf ------------------------------------------------------------------------------
 WEB="${TB_WEB_PORTS:-8077 80}"
 rules() {
   echo "# tailbond server (packaging/macos/hooks/server-up)"
-  if [ -n "$WAN" ]; then
-    echo "nat on $WAN inet from $TB_SUBNET to any -> ($WAN)"
-    [ -n "$TB_SUBNET6" ] && echo "nat on $WAN inet6 from $TB_SUBNET6 to any -> ($WAN)"
-  fi
+  for u in $UPLINKS; do
+    echo "nat on $u inet from $TB_SUBNET to any -> ($u)"
+    [ -n "$TB_SUBNET6" ] && echo "nat on $u inet6 from $TB_SUBNET6 to any -> ($u)"
+  done
   if [ -n "$TS_IF" ]; then
     echo "nat on $TS_IF inet from $TB_SUBNET to $TAILNET4 -> ($TS_IF)"
     [ -n "$TB_SUBNET6" ] && echo "nat on $TS_IF inet6 from $TB_SUBNET6 to $TAILNET6 -> ($TS_IF)"
@@ -84,10 +96,15 @@ rules() {
   echo "pass in quick inet from $TAILNET4 to $TB_SUBNET"
   [ -n "$TB_SUBNET6" ] && echo "pass in quick inet6 from $TAILNET6 to $TB_SUBNET6"
   echo "pass in quick proto udp to port $TB_PORT"
-  echo "pass in quick on lo0 proto tcp to port { $WEB }"
-  echo "pass in quick on $TB_TUN proto tcp to port { $WEB }"
-  echo "pass in quick proto tcp from { $TAILNET4 $TAILNET6 } to port { $WEB }"
-  echo "block drop in quick proto tcp to port { $WEB }"
+  # only what tailbondd listens on: a web server of your own on another
+  # address keeps its port 80
+  if [ -n "$WEB_TO" ]; then
+    echo "pass in quick on lo0 proto tcp to { $WEB_TO } port { $WEB }"
+    echo "pass in quick on $TB_TUN proto tcp to { $WEB_TO } port { $WEB }"
+    echo "pass in quick proto tcp from { $TAILNET4 $TAILNET6 } to { $WEB_TO } port { $WEB }"
+    echo "block drop in quick proto tcp to { $WEB_TO } port { $WEB }"
+  fi
+  return 0
 }
 # the stock /etc/pf.conf (loaded at boot) hooks com.apple/* in; without it
 # the anchor would never be evaluated
@@ -99,12 +116,12 @@ rec ANCHOR "$ANCHOR"
 tok="$(pfctl -E 2>&1 | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -n1)"
 rec PF_TOKEN "$tok"
 if rules | pfctl -q -a "$ANCHOR" -f - 2>&1; then
-  log "pf: anchor $ANCHOR: nat $TB_SUBNET${TB_SUBNET6:+ $TB_SUBNET6} out ${WAN:-<no default route>}${TS_IF:+, to the tailnet out $TS_IF}; tcp $WEB from loopback, $TB_TUN and the tailnet only"
+  log "pf: anchor $ANCHOR: nat $TB_SUBNET${TB_SUBNET6:+ $TB_SUBNET6} out ${UPLINKS:-<no uplink>}${TS_IF:+, to the tailnet out $TS_IF}; tcp $WEB on ${WEB_TO:-<none>} from loopback, $TB_TUN and the tailnet only"
 else
   log "ERROR: pf: could not load anchor $ANCHOR: bonded clients won't reach the internet"
   fail=1
 fi
-[ -n "$WAN" ] || log "WARNING: no default route: no NAT to the internet until there is one (restart tailbond then)"
+[ -n "$UPLINKS" ] || log "WARNING: no uplink: no NAT to the internet until there is one (restart tailbond then)"
 if [ -n "$TS_CLI" ] && [ -z "$TS_IF" ]; then log "tailscale: not up (no Tailscale address): bonded clients reach the internet, not the tailnet"; fi
 
 # ---- application firewall --------------------------------------------------------

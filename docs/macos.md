@@ -6,6 +6,9 @@ USB-C adapter, an **iPhone plugged in over USB**, and the mobile data that
 to your home server. It's the same client role as the travel router and a
 Linux laptop: the same dashboard, the same settings, the same tunnel.
 
+A Mac that stays at home can also **be** the home server instead: see
+[Mac as home server](#mac-as-home-server).
+
 - Apple silicon (arm64) Macs. Intel Macs: not built (see [Limits](#limits-and-what-isnt-tested)).
 - No paid Apple account: the binaries are unsigned (ad-hoc signed by the
   linker, which is all Apple silicon needs to run them), and you install
@@ -401,6 +404,156 @@ brew uninstall tailbond
 
 Stopping tailbond stops mqvpn, which removes its routes, DNS servers and
 kill-switch rules.
+
+## Mac as home server
+
+A Mac that stays at home (a Mac mini, an iMac, a MacBook that stays plugged
+in with its lid open) can be the server your hubs bond to, instead of a
+GL.iNet router, a Fedora box or a VPS. It does the same job as the
+[Linux server](vps.md): it ends the bonded tunnel, sends the traffic on to
+the internet and to your tailnet, and serves the dashboard, the pairing
+over Tailscale and the "Get tailbond" page.
+
+### Install the server
+
+You need Tailscale on the Mac (for pairing over Tailscale, the dashboard
+from your other devices, and the tailnet for bonded devices) and either a
+public IPv4 address at home or a DNS name for it, with a UDP port forwarded
+to the Mac on your router.
+
+```sh
+tar -xzf tailbond-macos-arm64.tar.gz
+sudo tailbond-macos-arm64/install.sh --role server --public-addr home.example.net
+```
+
+- `--public-addr`: what devices dial from away: your home's public IP or a
+  DNS name for it. Without it, pairing links carry the Mac's home-network
+  address, which only works at home.
+- `--port N`: the tunnel's UDP port. Default: the first free of 443, 8443,
+  4443, 10443, 50443 (an existing server keeps its own). Forward this port
+  to the Mac on your router.
+- `--subnet CIDR`: the tunnel's IPv4 subnet. Default: the first /24 from
+  `10.78.0.0` that nothing on the Mac uses. `--subnet6` sets an IPv6 one.
+- `--no-tailscale`: don't use Tailscale even if it's running (then no
+  tailnet for bonded devices and no dashboard from other devices).
+
+The dashboard is `http://127.0.0.1:8077` on the Mac and
+`http://<mac's tailscale name>:8077` from your tailnet; add devices on its
+**Devices** tab, or let them ask over Tailscale and approve them there. The
+"Get tailbond" page is `http://<mac's tailscale name>/`. Same files as the
+hub (`/usr/local/...`, the LaunchDaemon `com.tailbond.tailbondd`); updates
+(**Right away** by default, `install.sh --update`), backups (dashboard
+**Updates & backup**, or `tailbondd backup`/`restore`) and the uninstaller
+work as for the hub. Homebrew installs the hub only: use the bundle for a
+server.
+
+### What it changes on the Mac
+
+While the server runs, the `server-up` hook
+(`/usr/local/lib/tailbond/hooks/server-up`):
+
+- turns on IP forwarding (`net.inet.ip.forwarding`, and
+  `net.inet6.ip6.forwarding` with an IPv6 subnet);
+- loads the pf anchor `com.apple/251.tailbond.server` (macOS's own
+  `/etc/pf.conf` evaluates `com.apple/*`) and enables pf with a reference
+  token: bonded devices' traffic is NATed out the default route's interface
+  (and the Mac's other Ethernet and Wi-Fi ports, so a switch between them
+  keeps working), and out Tailscale's interface toward `100.64.0.0/10` and
+  `fd7a:115c:a1e0::/48`; tailnet machines reach bonded devices through the
+  advertised route without NAT; the dashboard (tcp/8077) and the phone page
+  (tcp/80), on the addresses tailbond serves them on, answer only loopback,
+  bonded devices on the tunnel and tailnet addresses (a web server of your
+  own on another address keeps its port 80);
+- with the macOS firewall on (System Settings → Network → Firewall), allows
+  incoming connections for `mqvpn` and `tailbondd`. "Block all incoming
+  connections" would stop phones and routers from connecting: the hook warns
+  about it;
+- holds a power assertion (`caffeinate -i -s`) so the Mac doesn't idle-sleep;
+- advertises the tunnel subnet in Tailscale (`tailscale set
+  --advertise-routes`, keeping the routes already advertised). Approve it
+  once in the admin console if your tailnet machines should reach bonded
+  devices; bonded devices reach the tailnet without it.
+
+Everything except the route and the firewall entries is written first to
+`/usr/local/var/lib/tailbond/server-net.state`. `server-down` (the server
+stops) puts it all back from there: the anchor emptied, pf's reference
+released (pf goes back off if nothing else uses it), the forwarding values
+as they were before, the assertion dropped. After a crash (tailbondd killed),
+the next start first restores from the record, and `uninstall.sh` does too.
+
+### Keep it awake
+
+A sleeping Mac answers nobody: bonded devices lose the server until it
+wakes.
+
+- tailbond holds off **idle** sleep while the server runs. The display can
+  still turn off. **Setup health** on the dashboard says whether the Mac is
+  being kept awake.
+- **A MacBook sleeps when its lid closes**, whatever tailbond does, unless
+  it's in closed-display mode (power adapter, external display and keyboard
+  connected). Keep the lid open and the charger in. On battery, Setup
+  health flags it.
+- A desktop Mac also benefits from System Settings → Energy → **Prevent
+  automatic sleeping when the display is off** and **Start up automatically
+  after a power failure** (`sudo pmset -a autorestart 1`); tailbond starts
+  at boot by itself (LaunchDaemon).
+
+### Tailscale on a Mac server
+
+Tailscale's docs say all three macOS variants (the Standalone app, the App
+Store app and the open-source `tailscaled`) can be a subnet router
+([Subnet routers](https://tailscale.com/docs/features/subnet-routers),
+[the three variants](https://tailscale.com/docs/concepts/macos-variants)).
+tailbond calls the `tailscale` CLI on `PATH`, else the one inside
+`/Applications/Tailscale.app`, as root from its LaunchDaemon. What that
+means per variant:
+
+| Variant | Runs before login | tailbond as a server |
+|---|---|---|
+| Standalone app (Tailscale's `.pkg`, recommended by Tailscale) | no | should work while you're logged in; **not tested** |
+| Mac App Store app | no (sandboxed) | should work while you're logged in; `tailscale cert` may not reach the sandbox, so tailbond falls back to a self-signed (pinned) certificate; **not tested** |
+| Open-source `tailscaled` (a LaunchDaemon) | yes | the best fit for a server that reboots unattended; **not tested** |
+
+With either app, a Mac that restarts and sits at the login screen has no
+Tailscale until someone logs in: tailbond runs, bonded devices still reach
+the internet, but not the tailnet, and the dashboard and pairing over
+Tailscale wait. CI uses a stand-in for Tailscale (a fake CLI and a utun
+with a tailnet address behind it), not any real variant.
+
+### What CI checks, and what it doesn't
+
+CI (job `macos-server`, GitHub's `macos-latest` arm64 runner) runs
+`scripts/e2e-macos-server.sh`: the Mac is the server (mqvpn's server mode
+on a utun, [patch 0005](../patches/mqvpn/0005-darwin-server-mode.patch), with
+the hooks above), and a Linux client in a QEMU VM bonds two network
+interfaces to it. It checks that:
+
+- a pair request from a tailnet address is accepted (whois), approved and
+  delivered; the client connects and the server sees two active paths;
+- the client reaches the internet through the Mac's NAT (pf's state table
+  shows the translation), a tailnet machine through the tunnel (it sees the
+  Mac's Tailscale address), and the server's DNS forwarder; a tailnet
+  machine reaches the client through the advertised route; the subnet is
+  advertised;
+- the dashboard and the phone page answer the tailnet and the tunnel, and
+  drop other sources; with the macOS firewall on, mqvpn is allowed in;
+- a power assertion is held and Setup health says so; the server's
+  settings back up and restore;
+- pf, both forwarding sysctls and the power assertion are back to how they
+  were after a stop, after `kill -9` and a restart, and after `kill -9` and
+  the uninstaller's restore.
+
+`scripts/test-macos-install.sh` (job `macos`) installs with `--role server`
+under launchd, checks the anchor and forwarding, updates, and uninstalls.
+
+Not tested:
+
+- **A real Mac behind a real home router** (port forwarding, a public
+  address, real phones and travel routers connecting from away).
+- **Any real Tailscale variant** on the Mac (above).
+- **IPv6** through the Mac (the hooks NAT an IPv6 subnet; CI's is IPv4 only).
+- **Sleep** itself: CI checks that the assertion is held, not that a real
+  Mac stays awake through a night, nor clamshell mode.
 
 ## Limits and what isn't tested
 
