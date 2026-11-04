@@ -52,6 +52,7 @@ final class SummaryTests: XCTestCase {
         XCTAssertFalse(s.update.warn)
         XCTAssertTrue(s.canInstall)
         XCTAssertTrue(s.text.contains("Report a problem"))
+        XCTAssertTrue(s.text.contains("Install updates: Right away"), s.text)
     }
 
     func testNotPairedAndUnreachable() throws {

@@ -63,7 +63,7 @@ if [ -d "$B/tailbond.app" ]; then
   xattr -p com.apple.quarantine "$APP/Contents/MacOS/tailbond" >/dev/null 2>&1 && bad "app is quarantined" || ok "app carries no quarantine flag"
   out="$("$APP/Contents/MacOS/tailbond" --status 2>&1)" && ok "the app reads the running agent: $(echo "$out" | head -n 1)" || bad "tailbond --status: $out"
   echo "$out" | grep -q '^tailbond: Not paired' && ok "it says Not paired (fresh install)" || bad "--status said: $out"
-  echo "$out" | grep -q 'Right away' && ok "it shows the update policy (Right away)" || bad "no update policy in: $out"
+  echo "$out" | grep -q "Install updates: Right away" && ok "it shows the update policy (Install updates: Right away)" || bad "no update policy in: $out"
   "$APP/Contents/MacOS/tailbond" --status http://127.0.0.1:1 >/dev/null 2>&1 && bad "--status succeeded with no agent" || ok "--status fails when nothing answers"
 else
   bad "the bundle has no tailbond.app"

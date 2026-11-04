@@ -215,6 +215,7 @@ public struct MenuSummary: Equatable {
         for l in links { out.append("  \(l.name): \(l.detail)") }
         for l in coexist { out.append("  \(l.warn ? "! " : "")\(l.text)") }
         if !update.text.isEmpty { out.append("  \(update.text)") }
+        if !updatePolicy.isEmpty { out.append("  Install updates: \(Self.policyLabel(updatePolicy))") }
         if let c = crash { out.append("  ! tailbond stopped unexpectedly (\(c)): Report a problem…") }
         return out.joined(separator: "\n")
     }
