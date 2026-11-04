@@ -44,14 +44,29 @@ jobs:
           fetch-depth: 0
       - name: Next version
         id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git fetch --tags --force -q
-          last=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          # Stable vX.Y.Z only: a prerelease tag (v1.2.3-beta.1) must not become the base.
+          last=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
           if [ -z "$last" ]; then
             next=v0.1.0
           else
             if [ -z "$(git rev-list "$last"..HEAD)" ]; then
-              echo "main hasn't changed since $last; nothing to release"
+              # Nothing new on main. Recover a tag whose release build never
+              # started (tag pushed, CI dispatch failed): dispatch it if the tag
+              # has no release and no build queued or running.
+              if gh release view "$last" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                echo "main hasn't changed since $last, which is released; nothing to do"
+              elif [ -n "$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$last" --limit 1 --json status --jq '.[] | select(.status != "completed") | .status')" ]; then
+                echo "the release build for $last is still running"
+              elif [ -n "$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$last" --limit 1 --json conclusion --jq '.[].conclusion')" ]; then
+                echo "$last already has a finished build without a release (it failed); fix main and merge again"
+              else
+                echo "$last has no release build; starting it"
+                gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$last"
+              fi
               echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
             fi
             IFS=. read -r maj min pat <<<"${last#v}"

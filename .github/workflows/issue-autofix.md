@@ -40,6 +40,10 @@ tools:
     - "wc"
   github:
     toolsets: [repos, issues, pull_requests, actions]
+    # Public repo: gh-aw hides content from outside contributors unless it's
+    # approved. A maintainer adding "autofix" is that approval.
+    min-integrity: approved
+    approval-labels: [autofix]
 network:
   allowed:
     - defaults
