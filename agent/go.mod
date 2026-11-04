@@ -2,6 +2,8 @@ module github.com/kaovilai/tailbond/agent
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/miekg/dns v1.1.73
 	github.com/quic-go/quic-go v0.64.1
