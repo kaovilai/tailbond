@@ -578,7 +578,8 @@
         else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts. Leave the router on; it comes back by itself, and this page with it, in about a minute."));
         else if (off) body.push(big(["Updates are off"]), line("tailbond doesn't check for new versions. Choose Tell me below to hear about them.", { color: "#909399" }));
         else if (u.available && !S.retry) {
-          body.push(big(["Update available: " + u.available, notes]));
+          body.push(big(["Update available: " + u.available + (u.security ? " (security fix)" : ""), notes]));
+          if (u.waiting) body.push(line("It " + u.waiting + ".", { color: "#909399" }));
           if (u.method === "dnf") body.push(line("Updates for this server come from dnf. In a terminal on this server, run:"), cmdRow("sudo dnf upgrade tailbond-server"));
           else if (selfUp) body.push(line("You can update now or later; everything keeps working meanwhile.", { color: "#909399" }));
           else {
@@ -586,7 +587,7 @@
             body.push(line(["This build can't update itself; install the new release from ", h("a", { class: "tb-link", attrs: { href: "https://github.com/" + repo + "/releases", target: "_blank", rel: "noopener" } }, "the releases page"), "."]));
           }
         } else if (S.noCheck) {
-          body.push(big(["Couldn't check for updates"]), line("Couldn't reach GitHub (" + u.error + "). tailbond tries again tomorrow; Check now tries again now.", { color: "#b07a12" }));
+          body.push(big(["Couldn't check for updates"]), line("Couldn't reach GitHub (" + u.error + "). tailbond tries again later by itself; Check now tries again now.", { color: "#b07a12" }));
         } else if (!S.retry) body.push(big(["Up to date"]));
         var meta = [], lv = u.last_result_version, la = u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "";
         if (u.last_check && !off) meta.push("Checked " + fmtAgo(u.last_check));
@@ -648,9 +649,12 @@
           else set.push(line([auto, "they come from dnf-automatic, which updates every package on this computer."]));
           set.push(h("div", { class: "tb-help" }, ["These are done on the computer itself, by whoever looks after it. A new version reaches dnf shortly after the release. If an update misbehaves: ", h("code", "sudo dnf downgrade tailbond-server")]));
         } else {
-          set.push(segOf(selfUp ? [["notify", "Tell me"], ["auto", "Automatic"], ["off", "Off"]] : [["notify", "Tell me"], ["off", "Off"]], policy, "Update policy"),
-            h("div", { class: "tb-help" }, policy === "off" ? "Doesn't check for new versions."
-              : policy === "auto" ? "Installs new versions by itself between " + win[0] + " and " + (win[1] || "05:00") + " (this router's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
+          // without self-install, Right away and Automatic mean Tell me
+          var shown = selfUp ? policy : (policy === "off" ? "off" : "notify");
+          set.push(segOf(selfUp ? [["immediate", "Right away"], ["auto", "Automatic (night)"], ["notify", "Tell me"], ["off", "Off"]] : [["notify", "Tell me"], ["off", "Off"]], shown, "Update policy"),
+            h("div", { class: "tb-help" }, shown === "off" ? "Doesn't check for new versions."
+              : shown === "immediate" ? "Checks every hour and installs a new version as soon as it's safe: after a call or a big download in progress ends (it waits at most 30 minutes; security fixes don't wait). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
+              : shown === "auto" ? "Checks every hour and installs new versions by itself between " + win[0] + " and " + (win[1] || "05:00") + " (this router's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
               : "Checks GitHub once a day and shows new versions here" + (selfUp ? "; nothing installs until you click Update now." : ".")));
         }
         body.push(h("div", { class: "tb-sec" }, set));

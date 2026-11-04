@@ -656,6 +656,9 @@ jobs:
       artifact-metadata: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          # the commits since the previous release (security marker below)
+          fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
           path: dist/
@@ -691,7 +694,17 @@ jobs:
           pre=()
           # v1.2.3-beta.1: a pre-release, which the update check never offers
           [[ "$TAG" == *-* ]] && pre=(--prerelease)
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag "${pre[@]}" assets/*
+          # A security release: a "Security: yes" trailer on any commit since
+          # the previous release. "[security]" in the notes makes "Right away"
+          # installs skip their wait for a quiet moment (docs/updates.md); a
+          # maintainer can also add it by editing the notes later.
+          prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$TAG^" 2>/dev/null || true)"
+          notes=()
+          if git log --format=%B "${prev:+$prev..}$TAG" | grep -qiE '^Security: *(yes|true) *$'; then
+            notes=(--notes "[security] This release fixes a security issue. Installs on Right away take it without waiting for a quiet moment.")
+            echo "security release (a Security: yes trailer since ${prev:-the start})"
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "${notes[@]}" --verify-tag "${pre[@]}" assets/*
 
   copr:
     name: COPR build (Fedora)

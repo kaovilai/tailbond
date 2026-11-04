@@ -269,19 +269,31 @@ Two ways to stay current:
   GitHub releases and installs updates for you. In Obtainium tap **Add App**,
   paste `https://github.com/kaovilai/tailbond`, keep the source "GitHub", and
   set the APK filter to `^tailbond-[0-9.]+\.apk$` (leaves out `-debug` and
-  pre-release APKs). It works only with the release APK (same key as the
-  one installed), not a debug build.
-- **In the app**: Settings → **Updates**. About once a day (when the app
-  comes to the front or the page opens, and the last check is older than
-  24 h; **Check now** any time) it asks
+  pre-release APKs). Then set Obtainium to check often: **Obtainium →
+  Settings → Background update checking interval → 1 hour**, so a release
+  reaches the phone within the hour. It works only with the release APK
+  (same key as the one installed), not a debug build.
+- **In the app**: Settings → **Updates**. **Android never lets an app
+  install itself without your tap**, so "Right away" here means *tell me
+  within the hour*:
+  - **Right away** (the default on a new install) checks every hour, while
+    the app is on screen or the tunnel is on. When a new version is out, a
+    notification says **Update ready: tap to install**. Tapping it
+    downloads the APK, and Android asks you to install it. You're told once
+    per version.
+  - **Tell me** checks about once a day (when the app comes to the front and
+    the last check is older than 24 h) and shows it in the app only.
+  - **Off** doesn't check by itself.
+
+  **Check now** works any time. An install from before this keeps its
+  policy. Each check asks
   `GET https://api.github.com/repos/<repo>/releases/latest`. `<repo>` is
   built in: `BuildConfig.UPDATE_REPO`, from the Gradle property or env
   `TB_UPDATE_REPO` (default `kaovilai/tailbond`). A newer `tag_name` than
   the app's `versionName` shows **Update available: vX.Y.Z** with **What's
   new** (the release page) and **Download update**, which opens the APK in
   the browser; open the download and tap Update, and Android installs it over
-  the app because it's signed with the same key. Policy **Tell me**
-  (default) or **Off** (no checks by itself). A build whose version isn't a
+  the app because it's signed with the same key. A build whose version isn't a
   numbered release (`dev`, `-dirty`) shows the latest release but never
   says "Update available". A debug build says it can't take release APKs.
 

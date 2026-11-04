@@ -23,6 +23,7 @@ import (
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/pairing"
 	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/update"
 )
 
 // fakeGitHub is GitHub's latest-release API plus the release's files.
@@ -33,6 +34,13 @@ type fakeGitHub struct {
 	sums    map[string]string // name -> sha256 (override = tampered)
 	calls   int
 	srv     *httptest.Server
+	// conditional requests: answered 304 when If-None-Match matches
+	notModified int
+	security    bool
+}
+
+func (g *fakeGitHub) etag() string {
+	return fmt.Sprintf(`"%s-%v"`, g.version, g.security)
 }
 
 func targz(t *testing.T, files map[string]string) []byte {
@@ -58,12 +66,22 @@ func newFakeGitHub(t *testing.T, version string) *fakeGitHub {
 		switch {
 		case r.URL.Path == "/repos/kaovilai/tailbond/releases/latest":
 			g.calls++
+			if r.Header.Get("If-None-Match") == g.etag() {
+				g.notModified++
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", g.etag())
 			var as []map[string]any
 			for n := range g.files {
 				as = append(as, map[string]any{"name": n, "browser_download_url": g.srv.URL + "/dl/" + n, "size": len(g.files[n])})
 			}
 			as = append(as, map[string]any{"name": "SHA256SUMS", "browser_download_url": g.srv.URL + "/dl/SHA256SUMS"})
-			json.NewEncoder(w).Encode(map[string]any{"tag_name": "v" + g.version, "html_url": "https://github.com/kaovilai/tailbond/releases/tag/v" + g.version, "assets": as})
+			body := "What's changed"
+			if g.security {
+				body = "[security] fixes a vulnerability"
+			}
+			json.NewEncoder(w).Encode(map[string]any{"tag_name": "v" + g.version, "body": body, "html_url": "https://github.com/kaovilai/tailbond/releases/tag/v" + g.version, "assets": as})
 		case r.URL.Path == "/dl/SHA256SUMS":
 			for n, b := range g.files {
 				s := sha256.Sum256(b)
@@ -133,7 +151,7 @@ func TestUpdateCheckNotifyAndInstall(t *testing.T) {
 	g := newFakeGitHub(t, "0.2.0")
 	a, calls := updAgent(t, g, methodStatic)
 	// notify (default): shown, not installed
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	v := a.updateView()
 	if v.Available != "0.2.0" || v.Policy != "notify" || v.Method != "static" || v.Repo != "kaovilai/tailbond" || !strings.HasSuffix(v.NotesURL, "/v0.2.0") || v.Error != "" || len(*calls) != 0 {
 		t.Fatalf("notify: %+v calls %v", v, *calls)
@@ -142,7 +160,7 @@ func TestUpdateCheckNotifyAndInstall(t *testing.T) {
 	if w := req(t, a, "POST", "/api/update/install", "127.0.0.1:1", "", map[string]any{}); w.Code != http.StatusAccepted {
 		t.Fatalf("install: %d %s", w.Code, w.Body)
 	}
-	a.updateTick(ctx, true)
+	a.updateTick(ctx, true, true)
 	if len(*calls) != 1 {
 		t.Fatalf("runner calls %v (%+v)", *calls, a.updateView())
 	}
@@ -165,7 +183,7 @@ func TestUpdateCheckNotifyAndInstall(t *testing.T) {
 	g.mu.Lock()
 	g.sums[bundleName()+".tar.gz"] = strings.Repeat("0", 64)
 	g.mu.Unlock()
-	a.updateTick(ctx, true)
+	a.updateTick(ctx, true, true)
 	if v := a.updateView(); v.State != "failed" || !strings.Contains(v.Error, "SHA-256") || len(*calls) != 1 {
 		t.Fatalf("tampered: %+v calls %d", v, len(*calls))
 	}
@@ -187,19 +205,19 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 	}
 	// ... at night only (devices drop for a few seconds)
 	a.upd.now = func() time.Time { return time.Date(2026, 11, 3, 14, 0, 0, 0, time.Local) }
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	if len(*calls) != 0 || a.updateView().Available != "0.2.0" {
 		t.Fatalf("auto installed in the afternoon: %v", *calls)
 	}
 	a.upd.now = func() time.Time { return time.Date(2026, 11, 3, 3, 30, 0, 0, time.Local) }
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	if len(*calls) != 1 || a.updateView().AutoWindow != "03:00-05:00" {
 		t.Fatalf("auto didn't install at night: %+v", a.updateView())
 	}
 	// a dev build shows releases but never installs by itself
 	a.opts.Version = "v0.1.0-12-gabcdef"
 	*calls = nil
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	if len(*calls) != 0 || a.updateView().Available != "0.2.0" {
 		t.Fatalf("dev build: %+v %v", a.updateView(), *calls)
 	}
@@ -209,7 +227,7 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 	g.mu.Lock()
 	before := g.calls
 	g.mu.Unlock()
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	g.mu.Lock()
 	after := g.calls
 	g.mu.Unlock()
@@ -219,7 +237,7 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 	// dnf / none: no one-click install, the reason says what to do
 	a.upd.method = methodDnf
 	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "notify"})
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	if v := a.updateView(); v.DnfAutomatic != "download" {
 		t.Fatalf("dnf_automatic: %+v", v)
 	}
@@ -233,7 +251,7 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 	a.upd.method = methodStatic
 	a.opts.Version = "0.2.0"
 	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "notify"})
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	if v := a.updateView(); v.Available != "" {
 		t.Fatalf("up to date: %+v", v)
 	}
@@ -242,7 +260,7 @@ func TestUpdateAutoOffDevAndMethods(t *testing.T) {
 	}
 	// GitHub unreachable: the error is shown
 	g.srv.Close()
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	if v := a.updateView(); !strings.Contains(v.Error, "couldn't check") {
 		t.Fatalf("unreachable: %+v", v)
 	}
@@ -256,7 +274,7 @@ func TestUpdateIPKAndResult(t *testing.T) {
 	a.upd.ipkCmd = "/usr/lib/tailbond/update-ipk"
 	os.WriteFile(filepath.Join(a.upd.pkgDir, "tailbond_0.1.0-r1_aarch64_cortex-a53.ipk"), []byte("old"), 0o644)
 	os.WriteFile(filepath.Join(a.upd.pkgDir, "current"), []byte("tailbond_0.1.0-r1_aarch64_cortex-a53.ipk\n"), 0o644)
-	a.updateTick(ctx, true)
+	a.updateTick(ctx, true, true)
 	if len(*calls) != 1 {
 		t.Fatalf("no install: %+v", a.updateView())
 	}
@@ -279,11 +297,11 @@ func TestUpdateIPKAndResult(t *testing.T) {
 	// Update now does
 	*calls = nil
 	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "auto"})
-	a.updateTick(ctx, false)
+	a.updateTick(ctx, true, false)
 	if len(*calls) != 0 {
 		t.Fatalf("auto retried the rolled-back version: %v", *calls)
 	}
-	a.updateTick(ctx, true)
+	a.updateTick(ctx, true, true)
 	if len(*calls) != 1 {
 		t.Fatal("Update now didn't retry it")
 	}
@@ -438,5 +456,151 @@ func TestBackupPush(t *testing.T) {
 	decode(t, req(t, a, "GET", "/api/backups", "127.0.0.1:1", "", nil), &list)
 	if len(list) != 1 || list[0].Client != "slate7" || strings.Contains(list[0].Name, "/") {
 		t.Fatalf("list %+v", list)
+	}
+}
+
+// ---- "Right away" (immediate) and the check cadence ----
+
+func TestCheckCadence(t *testing.T) {
+	for _, c := range []struct {
+		policy string
+		every  int
+		want   time.Duration
+	}{
+		{config.UpdateImmediate, 24, time.Hour},
+		{config.UpdateAuto, 24, time.Hour},
+		{config.UpdateNotify, 24, 24 * time.Hour},
+		{config.UpdateNotify, 6, 6 * time.Hour},
+	} {
+		if got := checkEvery(config.UpdateSettings{Policy: c.policy, CheckEveryHours: c.every}); got != c.want {
+			t.Errorf("%s/%dh: every %v, want %v", c.policy, c.every, got, c.want)
+		}
+	}
+	// a config from before "update" existed keeps Tell me; new ones get Right away
+	old := &config.Config{}
+	if old.UpdateOrDefault().Policy != config.UpdateNotify {
+		t.Errorf("old config: %s", old.UpdateOrDefault().Policy)
+	}
+	if config.Default().UpdateOrDefault().Policy != config.UpdateImmediate {
+		t.Errorf("new install: %s", config.Default().UpdateOrDefault().Policy)
+	}
+}
+
+func TestInstallVerdict(t *testing.T) {
+	t0 := time.Date(2026, 11, 3, 14, 0, 0, 0, time.Local)
+	rel := &update.Release{Version: "0.2.0"}
+	sec := &update.Release{Version: "0.2.1", Security: true}
+	for _, c := range []struct {
+		name    string
+		policy  string
+		rel     *update.Release
+		busy    bool
+		window  bool
+		waited  time.Duration
+		want    bool
+		wantWhy bool
+	}{
+		{"immediate, quiet", config.UpdateImmediate, rel, false, false, 0, true, false},
+		{"immediate, on a call", config.UpdateImmediate, rel, true, false, 10 * time.Minute, false, true},
+		{"immediate, busy 29 min", config.UpdateImmediate, rel, true, false, 29 * time.Minute, false, true},
+		{"immediate, busy 30 min: install anyway", config.UpdateImmediate, rel, true, false, 30 * time.Minute, true, false},
+		{"immediate, security skips the wait", config.UpdateImmediate, sec, true, false, 0, true, false},
+		{"auto, afternoon", config.UpdateAuto, rel, false, false, 0, false, true},
+		{"auto, night", config.UpdateAuto, rel, true, true, 0, true, false},
+		{"notify", config.UpdateNotify, sec, false, true, time.Hour, false, false},
+	} {
+		got, why := installVerdict(c.policy, c.rel, c.busy, c.window, t0, t0.Add(c.waited))
+		if got != c.want || (why != "") != c.wantWhy {
+			t.Errorf("%s: %v %q", c.name, got, why)
+		}
+	}
+	if !trafficLooksBusy(status.Totals{TxBps: 64_000, RxBps: 64_000}) || trafficLooksBusy(status.Totals{TxBps: 2_000, RxBps: 900_000}) ||
+		!trafficLooksBusy(status.Totals{RxBps: 5_000_000}) {
+		t.Error("busy heuristic")
+	}
+}
+
+// A day with a fake clock: "Right away" checks on start, then hourly (with
+// jitter), reuses the ETag, installs a new release on the next check when
+// quiet, waits up to 30 minutes while busy, and doesn't wait for a security
+// release.
+func TestImmediateFakeClock(t *testing.T) {
+	g := newFakeGitHub(t, "0.1.0")
+	a, calls := updAgent(t, g, methodStatic)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 3, 14, 0, 0, 0, time.Local)
+	a.upd.now = func() time.Time { return now }
+	a.upd.jitter = func() time.Duration { return 5 * time.Minute }
+	busy := false
+	a.upd.trafficBusy = func() bool { return busy }
+	a.store.Update(func(c *config.Config) error { c.Update.Policy = config.UpdateImmediate; return nil })
+	// what the loop does each minute
+	minute := func(n int) {
+		for range n {
+			now = now.Add(time.Minute)
+			if check, install := a.updateDue(); check || install {
+				a.updateTick(ctx, check, false)
+			}
+		}
+	}
+	a.updateTick(ctx, true, false) // the check on start
+	if g.calls != 1 || len(*calls) != 0 {
+		t.Fatalf("start: %d calls, %d installs", g.calls, len(*calls))
+	}
+	minute(64) // the next check is 1h + 5 min (jitter) after the first
+	if g.calls != 1 {
+		t.Fatalf("checked early: %d", g.calls)
+	}
+	minute(1) // nothing new: answered 304 (the ETag)
+	if g.calls != 2 || g.notModified != 1 {
+		t.Fatalf("after 65 min: %d checks, %d 304s", g.calls, g.notModified)
+	}
+	if nc := a.updateView().NextCheck; nc == nil || !nc.Equal(now.Add(65*time.Minute).UTC()) {
+		t.Fatalf("next check %v", nc)
+	}
+	// a release comes out; quiet: installed at the next check (one cycle)
+	g.publish(t, "0.2.0")
+	minute(66)
+	if len(*calls) != 1 || g.calls != 3 {
+		t.Fatalf("0.2.0: %d installs after %d checks", len(*calls), g.calls)
+	}
+	// still on 0.1.0 (the fake installer did nothing); start over busy
+	a.opts.Version = "0.2.0"
+	busy = true
+	g.publish(t, "0.3.0")
+	minute(66) // found at the next check, deferred
+	if len(*calls) != 1 || a.updateView().Waiting == "" {
+		t.Fatalf("installed during a call: %d, %+v", len(*calls), a.updateView())
+	}
+	minute(27) // found 2 minutes ago: 29 minutes now
+	if len(*calls) != 1 {
+		t.Fatal("installed before the 30-minute cap")
+	}
+	minute(2)
+	if len(*calls) != 2 {
+		t.Fatalf("not installed after waiting 30 minutes: %+v", a.updateView())
+	}
+	// a security release doesn't wait for the call to end
+	a.opts.Version = "0.3.0"
+	g.mu.Lock()
+	g.security = true
+	g.mu.Unlock()
+	g.publish(t, "0.3.1")
+	a.updateTick(ctx, true, false)
+	if len(*calls) != 3 || !a.updateView().Security {
+		t.Fatalf("security release waited: %d %+v", len(*calls), a.updateView())
+	}
+	// Tell me checks daily and never installs by itself
+	a.opts.Version = "0.3.1"
+	a.store.Update(func(c *config.Config) error { c.Update.Policy = config.UpdateNotify; return nil })
+	a.updateTick(ctx, true, false)
+	before := g.calls
+	minute(23 * 60)
+	if g.calls != before {
+		t.Fatalf("notify checked %d times in 23h", g.calls-before)
+	}
+	minute(2 * 60)
+	if g.calls != before+1 {
+		t.Fatalf("notify: %d checks in 25h", g.calls-before)
 	}
 }

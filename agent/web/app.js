@@ -1190,7 +1190,8 @@ function renderUpdates(st) {
   else if (off) now.push(h('p', { class: 'ub-big', text: 'Updates are off' }),
     h('p', { class: 'muted small', text: "tailbond doesn't check for new versions. Choose Tell me below to hear about them." }));
   else if (u.available && !retry) {
-    now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, notes ? ' · ' : '', notes));
+    now.push(h('p', { class: 'ub-big' }, `Update available: ${u.available}`, u.security ? ' (security fix)' : '', notes ? ' · ' : '', notes));
+    if (u.waiting) now.push(h('p', { class: 'muted small', text: `It ${u.waiting}.` }));
     if (u.method === 'dnf') {
       now.push(h('p', { class: 'small', text: 'Updates for this server come from dnf. In a terminal on this server, run:' }), cmdRow(DNF_CMD));
     } else if (u.method === 'brew') {
@@ -1203,7 +1204,7 @@ function renderUpdates(st) {
     }
   } else if (noCheck) {
     now.push(h('p', { class: 'ub-big', text: "Couldn't check for updates" }),
-      h('p', { class: 'small warn-text', text: `Couldn't reach GitHub (${u.error}). tailbond tries again tomorrow; Check now tries again now.` }));
+      h('p', { class: 'small warn-text', text: `Couldn't reach GitHub (${u.error}). tailbond tries again later by itself; Check now tries again now.` }));
   } else if (!retry) now.push(h('p', { class: 'ub-big', text: 'Up to date' }));
 
   const meta = [];
@@ -1263,11 +1264,15 @@ function renderUpdates(st) {
     else set.push(h('p', { class: 'small' }, auto, 'they come from dnf-automatic, which updates every package on this computer.'));
     set.push(h('p', { class: 'muted small' }, 'These are done on the computer itself, by whoever looks after it. A new version reaches dnf shortly after the release. If an update misbehaves: ', h('code', { text: 'sudo dnf downgrade tailbond-server' })));
   } else {
-    const opts = selfUpdates(u) ? [['notify', 'Tell me'], ['auto', 'Automatic'], ['off', 'Off']] : [['notify', 'Tell me'], ['off', 'Off']];
-    set.push(seg(opts, policy, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
-    set.push(h('p', { class: 'muted small', text: policy === 'off' ? "Doesn't check for new versions."
-      : policy === 'auto' ? `Installs new versions by itself between ${win[0]} and ${win[1] || '05:00'} (this machine's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself.`
-      : `Checks GitHub once a day and shows new versions here${selfUpdates(u) ? '; nothing installs until you click Update now' : ''}.` }));
+    const self = selfUpdates(u);
+    const opts = self ? [['immediate', 'Right away'], ['auto', 'Automatic (night)'], ['notify', 'Tell me'], ['off', 'Off']] : [['notify', 'Tell me'], ['off', 'Off']];
+    // without self-install (Homebrew) Right away and Automatic mean Tell me
+    const shown = self ? policy : (policy === 'off' ? 'off' : 'notify');
+    set.push(seg(opts, shown, (v) => updAction('/api/update/policy', { policy: v }, 'Saved'), 'Update policy'));
+    set.push(h('p', { class: 'muted small', text: shown === 'off' ? "Doesn't check for new versions."
+      : shown === 'immediate' ? "Checks every hour and installs a new version as soon as it's safe: after a call or a big download in progress ends (it waits at most 30 minutes; security fixes don't wait). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself."
+      : shown === 'auto' ? `Checks every hour and installs new versions by itself between ${win[0]} and ${win[1] || '05:00'} (this machine's time). Devices drop for a few seconds; if a new version doesn't start, it goes back by itself.`
+      : `Checks GitHub once a day and shows new versions here${self ? '; nothing installs until you click Update now' : ''}.` }));
   }
   kids.push(h('div', { class: 'ub-sec' }, set));
   box.replaceChildren(...kids);

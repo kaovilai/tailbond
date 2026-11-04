@@ -80,7 +80,8 @@ data class AppSettings(
     /** Websites that skip the tunnel (Android 13+, excludeRoute). */
     val websites: List<WebsiteRule> = emptyList(),
     /** `update.policy` (docs/architecture.md, "Updates"): tell me (check once a day) or off. */
-    val updatePolicy: UpdatePolicy = UpdatePolicy.NOTIFY,
+    /** New installs: Right away; saved settings keep theirs (docs/updates.md). */
+    val updatePolicy: UpdatePolicy = UpdatePolicy.IMMEDIATE,
     /** Pair & Share: stop sharing mobile data below this battery percent unless charging (0 = never). */
     val shareMinBattery: Int = 20,
     /** Pair & Share: monthly limit on shared mobile data in MB (0 = none). */

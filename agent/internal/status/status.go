@@ -214,7 +214,7 @@ type Update struct {
 	Current   string `json:"current"`
 	Available string `json:"available,omitempty"`
 	NotesURL  string `json:"notes_url,omitempty"` // the release page (changelog)
-	Policy    string `json:"policy"`              // notify | auto | off
+	Policy    string `json:"policy"`              // immediate | auto | notify | off
 	Repo      string `json:"repo,omitempty"`
 	// Method: static (install.sh bundle) | opkg (OpenWrt) | dnf (RPM: dnf
 	// upgrade) | none; one-click install for static and opkg
@@ -230,6 +230,12 @@ type Update struct {
 	Error             string `json:"error,omitempty"`
 	// AutoWindow: when policy auto installs (local time, "03:00-05:00")
 	AutoWindow string `json:"auto_window,omitempty"`
+	// Waiting: why a release that will install by itself hasn't yet
+	// ("waiting for a quiet moment", "waiting for 03:00")
+	Waiting string `json:"waiting,omitempty"`
+	// Security: the available release is a security release
+	Security  bool       `json:"security,omitempty"`
+	NextCheck *time.Time `json:"next_check,omitempty"`
 	// DnfAutomatic (method dnf): install | download (Fedora's default: a
 	// dnf-automatic timer that only downloads) | off; for every package
 	DnfAutomatic string     `json:"dnf_automatic,omitempty"`

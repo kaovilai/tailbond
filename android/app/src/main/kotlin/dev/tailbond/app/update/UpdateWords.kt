@@ -82,9 +82,14 @@ object UpdateWords {
         "so Android won't install a release over it. Back up first (Settings → Backup) so you keep your settings. " +
         "Then uninstall tailbond, install the release APK, and restore the backup."
 
-    const val OBTAINIUM_TITLE = "Automatic: use Obtainium"
+    const val OBTAINIUM_TITLE = "Hands-off: use Obtainium"
 
     fun obtainium(repo: String): String =
-        "tailbond doesn't install updates by itself. To get them automatically on this phone, install Obtainium, a free app that " +
-            "follows tailbond's GitHub releases (github.com/$repo) and installs each new version for you. Add tailbond in it by that address."
+        "Android doesn't let an app install its own updates without your tap, so tailbond can only tell you (Right away: within the hour). " +
+            "To have them installed for you, install Obtainium, a free app that follows tailbond's GitHub releases (github.com/$repo) " +
+            "and installs each new version. Add tailbond in it by that address, and set Obtainium to check every hour " +
+            "(Obtainium → Settings → Background update checking interval → 1 hour)."
+
+    const val NOTIFY_TITLE = "Update ready: tap to install"
+    fun notifyText(version: String) = "tailbond $version is out. Tap to download it; Android then asks you to install it."
 }

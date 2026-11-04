@@ -648,13 +648,24 @@ over the app (same signing key). Automatic updates: Obtainium.
 ### Config (`update`, all optional)
 
 ```json
-"update": {"policy": "notify", "repo": "kaovilai/tailbond", "check_every_hours": 24, "api_url": ""}
+"update": {"policy": "immediate", "repo": "kaovilai/tailbond", "check_every_hours": 24, "api_url": ""}
 ```
 
-- `policy`: `notify` (default: check and show; install on request), `auto`
-  (install when found, between 03:00 and 05:00 local time, methods `static`
-  and `opkg`; a version that rolled back isn't installed automatically
-  again), `off` (no checks).
+- `policy`:
+  - `immediate`: written into new configs. It checks hourly (plus up to 10
+    minutes of jitter) and at start, and installs as soon as traffic is
+    quiet. "Busy" is both directions at 48 kbit/s or more (a call), or
+    2 Mbit/s or more together; it waits at most 30 minutes. A release whose
+    notes carry `[security]` installs at once.
+  - `auto`: checks hourly, installs between 03:00 and 05:00 local time.
+  - `notify`: a config without a policy reads as this. It checks every
+    `check_every_hours`, and installs on request.
+  - `off`: no checks.
+  - `immediate` and `auto` install with methods `static` and `opkg`. A
+    version that rolled back isn't installed by itself again. A version is
+    installed by itself at most once an hour (the installer restarts
+    tailbondd).
+- Checks use `If-None-Match` with the last answer's ETag.
 - Older keys (`channel`, `window`, `pin`, `source`, `mirror`, …) are ignored.
 
 ### Status (`/api/status`, additive)
@@ -670,6 +681,9 @@ over the app (same signing key). Automatic updates: Obtainium.
 
 - `state`: `idle` | `checking` | `downloading` | `installing` | `failed` |
   `rolled_back` | `off`.
+- `waiting`: why a release that installs by itself hasn't yet ("installs
+  after the call or download in progress (at most 30 minutes)");
+  `security`: the available release is a security release; `next_check`.
 - `auto_window`: when `auto` installs (`"03:00-05:00"`); `dnf_automatic`
   (method `dnf`): `install` | `download` (a dnf-automatic timer with Fedora's
   default `apply_updates = no`) | `off`; it covers every package.

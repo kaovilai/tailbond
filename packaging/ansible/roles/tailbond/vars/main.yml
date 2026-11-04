@@ -18,9 +18,16 @@ _tailbond_conf_omitempty:
   server:
     disable_dns: false
 
+# The update policy: tailbond_update_policy when set; else the existing
+# config's, or notify for one that never chose; immediate for a new server.
+_tailbond_update_policy: >-
+  {{ tailbond_update_policy if tailbond_update_policy | length > 0
+     else ((((_tailbond_conf_raw.content | b64decode | from_json).update | default({})).policy | default('notify'))
+           if _tailbond_conf_raw.content is defined else 'immediate') }}
+
 # The update block the role owns.
 _tailbond_update_owned:
-  policy: "{{ tailbond_update_policy }}"
+  policy: "{{ _tailbond_update_policy }}"
   repo: "{{ tailbond_repo }}"
 
 # Owned by the role: set on every run, everything else is left alone

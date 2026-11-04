@@ -233,9 +233,17 @@ class TailbondVpnService : MqvpnVpnService() {
     private fun multi(): Boolean = servers.size > 1
 
     /** Once a second: health in, switch decisions out. */
+    private var lastUpdateTick = 0L
+
     private fun tick() {
         val e = engine ?: return
         if (!running) return
+        // updates: Right away checks hourly also while the app isn't on screen
+        val t = clock()
+        if (t - lastUpdateTick >= 5 * 60_000L) {
+            lastUpdateTick = t
+            dev.tailbond.app.update.UpdateManager.get(this).onForeground()
+        }
         val live = LiveState.live.value
         val working = session != null && live.state == ConnState.CONNECTED && live.paths.any { it.status == PathGate.STATUS_ACTIVE }
         e.reportHealth(working)

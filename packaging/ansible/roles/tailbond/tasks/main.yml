@@ -20,13 +20,13 @@
       - tailbond_subnet != '10.77.0.0/24'
       - tailbond_firewall in ['firewalld', 'ufw', 'nftables', 'none']
       - tailbond_tailscale | bool or tailbond_public_addr | length > 0
-      - tailbond_update_policy in ['notify', 'auto', 'off']
+      - tailbond_update_policy in ['', 'immediate', 'auto', 'notify', 'off']
       - tailbond_version is match('^(v?\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?)?$')
     fail_msg: >-
       Unsupported platform, or tailbond_subnet unset / 10.77.0.0/24 (the home
       server default; pick a free /24, e.g. from `install.sh --dry-run`), or
       no tailbond_public_addr without Tailscale, or tailbond_update_policy not
-      notify/auto/off, or tailbond_version not like 0.2.0.
+      empty/immediate/auto/notify/off, or tailbond_version not like 0.2.0.
 
 - name: Work out the IPv6 subnet
   ansible.builtin.set_fact:

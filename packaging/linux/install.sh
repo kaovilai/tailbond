@@ -60,9 +60,11 @@ Options:
   --no-tailscale        don't use Tailscale even if it runs here
   --tailscale           use Tailscale on a re-run that had it off (re-pair after)
   --landing-port N      phone page port on the Tailscale IPs (-1 = off)
-  --update-policy P     notify (default: the dashboard shows new releases,
-                        "Update now" installs), auto (installs them by
-                        itself) or off; see docs/updates.md
+  --update-policy P     immediate (default for new installs: installs a
+                        release as soon as it's safe), auto (at night),
+                        notify (the dashboard shows it, "Update now"
+                        installs) or off; an existing config keeps its own
+                        unless this is given; see docs/updates.md
   --update              update the binaries only (see above)
   --version vX.Y.Z      with --update: that release instead of the latest
   --repo OWNER/NAME     with --update: where releases come from (default
@@ -139,7 +141,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-case "$OPT_UPOLICY" in ""|auto|notify|off) ;; *) echo "install.sh: --update-policy $OPT_UPOLICY: notify, auto or off" >&2; exit 2 ;; esac
+case "$OPT_UPOLICY" in ""|immediate|auto|notify|off) ;; *) echo "install.sh: --update-policy $OPT_UPOLICY: immediate, auto, notify or off" >&2; exit 2 ;; esac
 case "$OPT_UVERSION" in ""|v[0-9]*|[0-9]*) ;; *) echo "install.sh: --version $OPT_UVERSION: like v1.2.3" >&2; exit 2 ;; esac
 case "$OPT_REPO" in ""|[A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;; *) echo "install.sh: --repo $OPT_REPO: owner/name" >&2; exit 2 ;; esac
 
@@ -760,8 +762,11 @@ jstr() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 # keeps the existing block. Nothing else in it is touched (repo,
 # check_every_hours; the dashboard sets those too).
 render_update() {
-    local u=""
-    [ -n "$OPT_UPOLICY" ] && u="\"policy\": $(jstr "$OPT_UPOLICY")"
+    local u="" p="$OPT_UPOLICY"
+    # a new install updates right away; an existing config keeps its own
+    # (one without a policy keeps Tell me: docs/updates.md)
+    [ -z "$p" ] && [ "$EXISTS" != 1 ] && p=immediate
+    [ -n "$p" ] && u="\"policy\": $(jstr "$p")"
     [ -n "$u" ] && printf '\n  "update": {%s},' "$u"
     return 0
 }
@@ -872,8 +877,11 @@ note "firewall: $FW"
 E_UPOLICY="$(json_get "$CONF" update.policy)"
 if [ -n "$OPT_UPOLICY" ]; then UP_WHY="--update-policy"
 elif [ -n "$E_UPOLICY" ]; then UP_WHY="kept from $CONF"
-else UP_WHY="default"; fi
-note "updates: ${OPT_UPOLICY:-${E_UPOLICY:-notify}}  [$UP_WHY]; update later with: sudo $LIBDIR/install.sh --update"
+elif [ "$EXISTS" = 1 ]; then UP_WHY="kept: this config never chose, so Tell me"
+else UP_WHY="default for new installs"; fi
+UP_NOW="${OPT_UPOLICY:-$E_UPOLICY}"
+[ -z "$UP_NOW" ] && { [ "$EXISTS" = 1 ] && UP_NOW=notify || UP_NOW=immediate; }
+note "updates: $UP_NOW  [$UP_WHY]; update later with: sudo $LIBDIR/install.sh --update"
 note "binaries: $BINDIR/{mqvpn,tailbondd}; hooks: $HOOKS; config: $CONF; state: $STATE"
 note "systemd: $UNIT (MemoryHigh=$MEM_HIGH MemoryMax=$MEM_MAX OOMScoreAdjust=$OOM_ADJ GOMEMLIMIT=$GOMEMLIMIT)"
 note "SELinux: $(selinux_on && echo "$(getenforce 2>/dev/null || echo on), contexts restored with restorecon" || echo "not enabled")"

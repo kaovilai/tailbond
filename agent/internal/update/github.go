@@ -52,7 +52,15 @@ type Release struct {
 	Tag      string
 	NotesURL string // the release page (changelog)
 	Assets   []Asset
+	// Security: the release notes carry SecurityMarker (the release job
+	// adds it when a commit has a "Security: yes" trailer; a maintainer can
+	// add it by editing the notes). "Right away" installs those without
+	// waiting for a quiet moment.
+	Security bool
 }
+
+// SecurityMarker in a release's name or notes flags a security release.
+const SecurityMarker = "[security]"
 
 type Asset struct {
 	Name string
@@ -65,6 +73,8 @@ type Asset struct {
 func ParseRelease(b []byte) (*Release, error) {
 	var r struct {
 		TagName    string `json:"tag_name"`
+		Name       string `json:"name"`
+		Body       string `json:"body"`
 		HTMLURL    string `json:"html_url"`
 		Draft      bool   `json:"draft"`
 		Prerelease bool   `json:"prerelease"`
@@ -84,7 +94,8 @@ func ParseRelease(b []byte) (*Release, error) {
 	if !ok {
 		return nil, fmt.Errorf("release tag %q isn't a version", r.TagName)
 	}
-	out := &Release{Version: v.String(), Tag: r.TagName, NotesURL: r.HTMLURL}
+	out := &Release{Version: v.String(), Tag: r.TagName, NotesURL: r.HTMLURL,
+		Security: strings.Contains(strings.ToLower(r.Name+"\n"+r.Body), SecurityMarker)}
 	for _, a := range r.Assets {
 		if a.Name == "" || strings.ContainsAny(a.Name, "/\\") || a.URL == "" {
 			continue
@@ -156,15 +167,30 @@ func (c Client) http() *http.Client {
 	return &http.Client{Timeout: 10 * time.Minute}
 }
 
+// errNotModified: a conditional API request (If-None-Match) found the
+// resource unchanged.
+var errNotModified = errors.New("not modified")
+
 func (c Client) get(ctx context.Context, u string, api bool, w io.Writer, max int64) error {
+	_, err := c.getETag(ctx, u, api, "", w, max)
+	return err
+}
+
+// getETag is get with a conditional request: etag ("" = none) goes out as
+// If-None-Match, and the response's ETag comes back. A 304 is
+// errNotModified (GitHub doesn't count those against the rate limit).
+func (c Client) getETag(ctx context.Context, u string, api bool, etag string, w io.Writer, max int64) (string, error) {
 	if !strings.HasPrefix(u, "https://") && !(c.allowHTTP() && strings.HasPrefix(u, "http://")) {
-		return fmt.Errorf("refusing %s: not https", u)
+		return "", fmt.Errorf("refusing %s: not https", u)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return err
+		return "", err
+	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
 	}
 	if api {
 		req.Header.Set("Accept", "application/vnd.github+json")
@@ -175,22 +201,24 @@ func (c Client) get(ctx context.Context, u string, api bool, w io.Writer, max in
 	}
 	resp, err := c.http().Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	switch {
+	case resp.StatusCode == http.StatusNotModified && etag != "":
+		return etag, errNotModified
 	case resp.StatusCode == http.StatusNotFound && api:
-		return errors.New("no release yet")
+		return "", errors.New("no release yet")
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
-		return fmt.Errorf("GitHub said HTTP %d (rate limit?)", resp.StatusCode)
+		return "", fmt.Errorf("GitHub said HTTP %d (rate limit?)", resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("%s: HTTP %d", u, resp.StatusCode)
+		return "", fmt.Errorf("%s: HTTP %d", u, resp.StatusCode)
 	}
 	n, err := io.Copy(w, io.LimitReader(resp.Body, max+1))
 	if err == nil && n > max {
 		err = errors.New("download too large")
 	}
-	return err
+	return resp.Header.Get("ETag"), err
 }
 
 // Latest asks GET /repos/<repo>/releases/latest.
@@ -204,6 +232,26 @@ func (c Client) Latest(ctx context.Context, repo string) (*Release, error) {
 		return nil, err
 	}
 	return ParseRelease(b.Bytes())
+}
+
+// LatestIfChanged is Latest as a conditional request: etag is the ETag of
+// the last answer ("" = none). Unchanged since: (nil, etag, true, nil),
+// and the caller keeps the release it has.
+func (c Client) LatestIfChanged(ctx context.Context, repo, etag string) (rel *Release, newETag string, unchanged bool, err error) {
+	repo, err = RepoPath(repo)
+	if err != nil {
+		return nil, "", false, err
+	}
+	var b bytes.Buffer
+	newETag, err = c.getETag(ctx, c.api()+"/repos/"+repo+"/releases/latest", true, etag, &b, 4<<20)
+	if errors.Is(err, errNotModified) {
+		return nil, etag, true, nil
+	}
+	if err != nil {
+		return nil, "", false, err
+	}
+	rel, err = ParseRelease(b.Bytes())
+	return rel, newETag, false, err
 }
 
 // Tag asks GET /repos/<repo>/releases/tags/<tag>.

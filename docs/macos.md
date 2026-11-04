@@ -195,8 +195,16 @@ ad-hoc one. A Homebrew install isn't quarantined.
 
 ## Updates
 
-The dashboard checks GitHub for new releases once a day (**Updates &
-backup**). With the bundle install, **Update now** downloads
+**Updates & backup → When a new version is out**:
+
+- A new bundle install updates **Right away**: it checks GitHub every hour
+  and installs a new release as soon as you're not on a call or in a big
+  download (at most 30 minutes later; security releases at once).
+- **Automatic (night)** waits for 03:00–05:00.
+- **Tell me** only shows it.
+
+A Mac installed before this keeps its policy. The menu-bar app (coming)
+shows the same choice. With the bundle install, **Update now** downloads
 `tailbond-macos-arm64.tar.gz`, checks it against the release's `SHA256SUMS`
 and runs its `install.sh --update`: the old binaries are kept as `.prev` and
 put back if the new version isn't running within 60 s. By hand:
@@ -205,7 +213,8 @@ put back if the new version isn't running within 60 s. By hand:
 sudo /usr/local/lib/tailbond/install.sh --update
 ```
 
-With Homebrew, the dashboard shows the command to run. `sudo brew services`
+With Homebrew, tailbond can't replace its own files (Homebrew owns them),
+so every policy means "tell me": the dashboard shows the command to run. `sudo brew services`
 makes the installed files root-owned (Homebrew does that for every root
 service), so give them back to yourself before `brew` changes them:
 

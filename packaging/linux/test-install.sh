@@ -74,12 +74,15 @@ check "unit: Restart=on-failure" has '^Restart=on-failure$'
 check "unit: restarts on exit 75 (self-update)" has '^RestartForceExitStatus=75$'
 check "unit: nothing forbids running updates from /var/lib/tailbond" hasnt '^(NoExecPaths|ExecPaths|ReadOnlyPaths|InaccessiblePaths|TemporaryFileSystem)='
 check "unit: /var/lib/tailbond writable" has '^ReadWritePaths=.*/var/lib/tailbond'
-check "no update block unless asked" hasnt '"update":'
+check "a new install updates right away" grep -q '"update": {"policy": "immediate"}' <<<"$out"
+check "summary: immediate, the default for new installs" grep -q 'updates: immediate  \[default for new installs\]' <<<"$out"
 out="$(dry --update-policy auto)"
 check "--update-policy -> update block" grep -q '"update": {"policy": "auto"}' <<<"$out"
 check "summary names the policy" grep -q 'updates: auto  \[--update-policy\]' <<<"$out"
 out="$(dry --update-policy sometimes)"
-check "bad --update-policy refused" grep -q 'notify, auto or off' <<<"$out"
+check "bad --update-policy refused" grep -q 'immediate, auto, notify or off' <<<"$out"
+out="$(dry --update-policy immediate)"
+check "--update-policy immediate" grep -q '"update": {"policy": "immediate"}' <<<"$out"
 out="$(dry --update-source https://mirror.example/channels)"
 check "--update-source is gone (releases come from GitHub)" grep -q 'unknown option --update-source' <<<"$out"
 check "nothing written by --dry-run" test ! -e /usr/local/bin/tailbondd -a ! -e /etc/tailbond
@@ -145,6 +148,8 @@ p = "/etc/tailbond/tailbond.json"
 c = json.load(open(p))
 c["server"]["users"] = [{"name": "slate7", "key": "dGVzdC1rZXk=", "created": 1}]
 c["approvers"] = ["alex@example.com"]
+# a config from before "update" existed: it must keep Tell me
+c.pop("update", None)
 json.dump(c, open(p, "w"), indent=2)
 EOF
 # Something grabbed the port since: kept anyway (paired devices use it), with a warning.
@@ -162,6 +167,8 @@ check "subnet kept ($SUB1)" grep -q "\"subnet\": \"$SUB1\"" /etc/tailbond/tailbo
 check "port kept ($PORT1)" grep -q "\"port\": $PORT1," /etc/tailbond/tailbond.json
 check "still no Tailscale" grep -q '"disable_tailscale": true' /etc/tailbond/tailbond.json
 check "backup of the previous config" test -f /etc/tailbond/tailbond.json.bak
+check "an existing config without a policy gets none (keeps Tell me)" sh -c '! grep -q "\"update\"" /etc/tailbond/tailbond.json'
+check "summary says so" grep -q 'updates: notify  \[kept: this config never chose, so Tell me\]' <<<"$out"
 upd() { python3 -c 'import json,sys; print((json.load(open("/etc/tailbond/tailbond.json")).get("update") or {}).get(sys.argv[1], ""))' "$1"; }
 "$I" --update-policy off >/dev/null 2>&1
 check "re-run with --update-policy off writes the update block" test "$(upd policy)" = off

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # End-to-end update test of the static (VPS) install: builds tailbondd as
-# 0.0.1, 0.0.2, 0.0.4 and 0.0.5, a broken 0.0.3 (exits at once), packs each
+# 0.0.1, 0.0.2, 0.0.4, 0.0.5 and 0.0.6, a broken 0.0.3 (exits at once), packs each
 # into the generic bundle (the template's mqvpn, this tree's install.sh and
 # hooks), then runs packaging/linux/test-update.sh in a container (podman):
 # fake GitHub release → the agent sees it → Update now → rollback of a
@@ -33,7 +33,7 @@ pack() { # VERSION TAILBONDD
     echo "$1" >"$d/VERSION"
     tar -C "$OUT/p" -czf "$OUT/tailbond-linux-$ARCH-$1.tar.gz" "tailbond-linux-$ARCH"
 }
-for v in 0.0.1 0.0.2 0.0.4 0.0.5; do
+for v in 0.0.1 0.0.2 0.0.4 0.0.5 0.0.6; do
     (cd "$ROOT/agent" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$v" -o "$OUT/tailbondd-$v" ./cmd/tailbondd)
     pack "$v" "$OUT/tailbondd-$v"
 done

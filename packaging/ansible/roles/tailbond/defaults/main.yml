@@ -70,11 +70,14 @@ tailbond_firewalld_zone: public
 # Zone tailscale0 is in (tcp 8077 and the phone page from tailnet addresses).
 tailbond_firewalld_tailscale_zone: "{{ tailbond_firewalld_zone }}"
 
-# The agent's update check (docs/updates.md): notify (default: the
-# dashboard shows a new release, so you know to bump tailbond_version), auto
-# or off. With this role tailbond_version is the truth: a role run puts it
-# back if someone pressed "Update now" in between.
-tailbond_update_policy: notify
+# The agent's update policy (docs/updates.md): immediate (installs a release
+# as soon as it's safe), auto (at night), notify (the dashboard shows it) or
+# off. Empty (the default): a new server gets immediate, an existing one
+# keeps what its config says (one that never chose keeps notify).
+# A pinned tailbond_version is the truth: a role run puts it back after the
+# agent updated itself, so with immediate or auto leave tailbond_version
+# empty once installed, or bump it with each release.
+tailbond_update_policy: ""
 
 # Start and enable the service.
 tailbond_start: true

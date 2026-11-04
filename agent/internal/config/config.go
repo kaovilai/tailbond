@@ -279,16 +279,19 @@ type Config struct {
 // Keys of older versions (channel, window, pin, source, mirror, …) are
 // ignored.
 type UpdateSettings struct {
-	Policy          string `json:"policy,omitempty"` // notify (default) | auto | off
-	Repo            string `json:"repo,omitempty"`   // owner/name or https://github.com/owner/name
+	// Policy: immediate (new installs) | auto | notify (configs without
+	// one: they keep Tell me) | off. docs/updates.md.
+	Policy          string `json:"policy,omitempty"`
+	Repo            string `json:"repo,omitempty"` // owner/name or https://github.com/owner/name
 	CheckEveryHours int    `json:"check_every_hours,omitempty"`
 	APIURL          string `json:"api_url,omitempty"` // default https://api.github.com
 }
 
 const (
-	UpdateNotify = "notify"
-	UpdateAuto   = "auto"
-	UpdateOff    = "off"
+	UpdateNotify    = "notify"
+	UpdateAuto      = "auto"
+	UpdateImmediate = "immediate" // "Right away": installs a release as soon as it's safe
+	UpdateOff       = "off"
 )
 
 type BackupSettings struct {
@@ -402,6 +405,9 @@ func Default() *Config {
 			Subnet6:          DefaultSubnet6,
 			UseTailscaleCert: true,
 		},
+		// new installs update right away; a config without "update"
+		// (written by an older version) keeps Tell me (UpdateOrDefault)
+		Update: &UpdateSettings{Policy: UpdateImmediate},
 	}
 }
 
@@ -504,9 +510,9 @@ func (c *Config) Validate() error {
 	}
 	if u := c.Update; u != nil {
 		switch u.Policy {
-		case "", UpdateNotify, UpdateAuto, UpdateOff:
+		case "", UpdateNotify, UpdateAuto, UpdateImmediate, UpdateOff:
 		default:
-			return fmt.Errorf("update.policy must be notify, auto or off, not %q", u.Policy)
+			return fmt.Errorf("update.policy must be immediate, auto, notify or off, not %q", u.Policy)
 		}
 		if u.Repo != "" && !updateRepoRE.MatchString(u.Repo) {
 			return fmt.Errorf("update.repo must be owner/name or https://github.com/owner/name, not %q", u.Repo)

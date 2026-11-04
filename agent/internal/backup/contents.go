@@ -230,8 +230,10 @@ func set(b bool) string {
 // policy and modeName: the words the dashboards use.
 func policy(c *config.Config) string {
 	switch c.UpdateOrDefault().Policy {
+	case config.UpdateImmediate:
+		return "Right away"
 	case config.UpdateAuto:
-		return "Automatic"
+		return "Automatic (night)"
 	case config.UpdateOff:
 		return "Off"
 	}

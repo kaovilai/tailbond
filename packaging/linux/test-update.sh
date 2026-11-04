@@ -6,7 +6,7 @@
 #
 #   test-update.sh DIR    DIR has tailbond-linux-<arch>-<v>.tar.gz for
 #                         v = 0.0.1 (installed first), 0.0.2, 0.0.3 (a broken
-#                         tailbondd), 0.0.4, 0.0.5
+#                         tailbondd), 0.0.4, 0.0.5, 0.0.6
 #
 # A fake GitHub (python http.server: /repos/kaovilai/tailbond/releases/latest
 # and the assets + SHA256SUMS) and no systemd: tailbondd runs under a restart
@@ -18,7 +18,10 @@
 #   dashboard says so (state rolled_back);
 # - the installed install.sh --update alone (no bundle) downloads the latest
 #   release and installs it;
-# - a release whose file doesn't match SHA256SUMS is refused (both paths).
+# - a release whose file doesn't match SHA256SUMS is refused (both paths);
+# - a new install's policy is "Right away" (immediate); under it a new
+#   release installs by itself within one check cycle (TB_TEST_UPDATE_EVERY
+#   shortens the hourly cycle to 15 s).
 set -uo pipefail
 
 DIR="${1:?usage: test-update.sh <dir with the bundles>}"
@@ -77,22 +80,26 @@ tar -C "$W/b1" -xzf "$DIR/tailbond-linux-$ARCH-0.0.1.tar.gz"
 check "install.sh (0.0.1)" grep -q 'tailbond 0.0.1 server install' "$W/install.log"
 check "install.env records 0.0.1" grep -qx 'TB_VERSION=0.0.1' /etc/tailbond/install.env
 check "install.sh kept at /usr/local/lib/tailbond/install.sh" test -x /usr/local/lib/tailbond/install.sh
+check "a new install updates right away (policy immediate)" \
+  python3 -c 'import json; assert json.load(open("/etc/tailbond/tailbond.json"))["update"]["policy"] == "immediate"'
+# the manual steps first: Tell me
 python3 - <<'EOF'
 import json
 p = "/etc/tailbond/tailbond.json"
 c = json.load(open(p))
-c["update"] = {"api_url": "http://127.0.0.1:8099"}
+c["update"] = {"api_url": "http://127.0.0.1:8099", "policy": "notify"}
 json.dump(c, open(p, "w"), indent=2)
 EOF
 
 publish 0.0.1
 (cd "$GH" && exec python3 -m http.server 8099 --bind 127.0.0.1 >/dev/null 2>&1) &
 export TB_TEST_RESTART='pkill -x tailbondd'
+export TB_TEST_UPDATE_EVERY=15s
 ( while [ ! -e "$W/stop" ]; do /usr/local/bin/tailbondd -config /etc/tailbond/tailbond.json >>"$W/agent.log" 2>&1; sleep 1; done ) &
 trap 'touch "$W/stop"; pkill -x tailbondd; pkill -f "http.server 8099"' EXIT
 check "agent 0.0.1 up" wait_for 30 is_version 0.0.1
 check "method static" test "$(status_upd method)" = static
-check "policy notify by default" test "$(status_upd policy)" = notify
+check "policy notify (set for the manual steps)" test "$(status_upd policy)" = notify
 
 say "0.0.2 released: shown, then Update now"
 publish 0.0.2
@@ -135,6 +142,20 @@ wait_for 20 upd_is available 0.0.5
 post /api/update/install >/dev/null
 check "agent: refused (failed, SHA-256)" wait_for 30 upd_has 'SHA-256'
 check "still 0.0.4" is_version 0.0.4
+
+say "Right away: a new release installs by itself within one check cycle"
+curl -fsS -m 5 -H 'Content-Type: application/json' -d '{"policy": "immediate"}' "$API/api/update/policy" >/dev/null
+check "policy immediate" test "$(status_upd policy)" = immediate
+publish 0.0.6
+T0=$(date +%s)
+# one cycle (15 s here, an hour normally) plus the install and restart
+if wait_for 90 is_version 0.0.6; then
+  ok "0.0.6 installed by itself after $(( $(date +%s) - T0 )) s, no Update now"
+else
+  bad "0.0.6 not installed by itself: $(api "$API/api/update")"
+fi
+check "result ok" wait_for 20 upd_is last_result ok
+check "agent log says why" grep -q 'installing it now (policy immediate' "$W/agent.log"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

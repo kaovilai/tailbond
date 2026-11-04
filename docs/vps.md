@@ -53,7 +53,7 @@ The installer prints every decision. Override any of them:
 | `--no-tailscale` | Tailscale is used when `tailscale status` works |
 | `--landing-port N` | 80, or 8078 when something listens on `*:80`; `-1` = off |
 | `--memory-high`, `--memory-max` | `96M`, `160M` |
-| `--update-policy P` | `notify`: [Updates](#updates) |
+| `--update-policy P` | new installs `immediate`; an existing config keeps its own: [Updates](#updates) |
 | `--update [--version vX.Y.Z]` | update the binaries only (below) |
 | `--no-firewall`, `--no-start`, `--mqvpn`, `--tailbondd`, `--bundle-dir`, `--config` | |
 
@@ -267,9 +267,12 @@ for `tailbond_firewall: ufw`).
 
 ## Updates
 
-The dashboard checks GitHub's latest release about once a day and shows it.
-**Update now** (or policy **Automatic**) runs the new bundle's
-`install.sh --update`; by hand:
+A new install updates **Right away**: it checks GitHub's latest release
+every hour and installs a new one as soon as no call or big transfer is
+going through (at most 30 minutes later; security releases at once). An
+install from before this keeps its policy (one that never chose: Tell me,
+once a day). **Update now**, Right away and **Automatic (night)** all run
+the new bundle's `install.sh --update`; by hand:
 
 ```sh
 sudo /usr/local/lib/tailbond/install.sh --update                   # the latest release
@@ -281,20 +284,29 @@ release, checks the SHA-256, replaces only the binaries and hooks (keeping
 `tailbondd.prev` / `mqvpn.prev`), restarts tailbond and puts the old
 binaries back if it isn't up on the new version within 60 seconds. Run from
 an unpacked bundle, `sudo ./install.sh --update` installs that bundle.
-`--update-policy notify|auto|off` sets the dashboard's policy. More:
-[updates.md](updates.md).
+`--update-policy immediate|auto|notify|off` sets the policy; a re-run
+without it keeps the config's. More: [updates.md](updates.md).
 
 **Ansible**: `tailbond_version` is the version; bump it and run the playbook
 (the role downloads that release's bundle and checks it against
-`SHA256SUMS`). `tailbond_update_policy` (default `notify`) is the dashboard's
-policy; with the role in charge keep it `notify` or `off`, since the next
-playbook run puts `tailbond_version` back.
+`SHA256SUMS`). `tailbond_update_policy` is the policy:
+
+- empty (the default): a new server gets `immediate`, an existing one
+  keeps what its config says;
+- or `immediate`, `auto`, `notify` or `off`.
+
+A pinned `tailbond_version` is the truth on every playbook run: it puts
+that version back after the server updated itself. To let a server follow
+releases by itself, run the role once with `tailbond_version` and then
+without it (an empty `tailbond_version` installs `tailbond_bundle` from the
+controller, so keep that run for upgrades you push yourself). Or keep
+pinning and set `notify`:
 
 ```yaml
     - role: tailbond
       vars:
         tailbond_version: "0.2.0"
-        tailbond_update_policy: notify
+        tailbond_update_policy: notify   # the playbook decides the version
 ```
 
 ## Troubleshooting

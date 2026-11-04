@@ -56,10 +56,18 @@ needs it) and the tunnel connects once paired. The LAN keeps its internet
 until then (the kill switch arms only when paired and on). One command, if
 you do have SSH: `opkg install /tmp/tailbond_*_neon-vfpv4.ipk`.
 
-The tailbond panel shows when a new release is out; **Update now** (or
-**Automatic**) installs it with `opkg`, checked against the release's
-`SHA256SUMS`, and puts the previous package back if the new one doesn't come
-up ([updates.md](updates.md)).
+Updates (tailbond panel → Updates):
+
+- **Right away**, the default on a new install, checks every hour. It
+  installs a new release with `opkg` as soon as nobody is on a call or
+  pulling a big download through the router: at most 30 minutes later, and
+  at once for a security release.
+- **Automatic (night)** installs between 03:00 and 05:00.
+- **Tell me** only shows it until you press **Update now**.
+
+Each install is checked against the release's `SHA256SUMS`, and the
+previous package comes back if the new one doesn't come up. A router
+installed before this keeps its policy ([updates.md](updates.md)).
 
 A firmware upgrade removes every package you installed, tailbond too
 (Speedify documents the same for its GL package). With **Keep Settings**
