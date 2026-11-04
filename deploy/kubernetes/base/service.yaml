@@ -1,0 +1,23 @@
+# The tunnel (UDP). LoadBalancer on a cloud. Without a load balancer
+# controller, use the nodePort Kubernetes assigns (or pin one with
+# `nodePort:`) and include it in the address: TAILBOND_PUBLIC_ADDR=<node address>:<nodePort>.
+# externalTrafficPolicy Local keeps the routers' own addresses (no SNAT); a
+# load balancer sends traffic only to the node running the pod. On the
+# nodePort path only that node answers, so either pin the pod to the node
+# you advertise (nodeSelector) or set `Cluster` here (any node forwards;
+# the server then sees a node's address instead of each router's).
+# The dashboard (8077) isn't exposed: kubectl port-forward, or Tailscale.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tailbond
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: tailbond
+  ports:
+    - name: tunnel
+      protocol: UDP
+      port: 443
+      targetPort: tunnel

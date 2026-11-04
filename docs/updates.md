@@ -25,7 +25,9 @@ panel or the app. Each platform then updates the way it normally does:
 | Home server on Fedora (RPM) | `dnf`, from the [COPR repository](fedora-server.md#updates): `sudo dnf upgrade tailbond-server`, or automatically with `dnf-automatic`. The dashboard only tells you. | Settings → Updates → Off (no checks); `dnf` is up to you |
 | VPS / any Linux (bundle, `install.sh`) | **Right away** (new installs): by itself, as soon as it's safe. Or **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update` | Settings → Updates → Off, or `install.sh --update-policy off` |
 | VPS with Ansible | `tailbond_update_policy` (empty: new servers get Right away, existing ones keep theirs); a pinned `tailbond_version` wins on the next role run ([vps.md](vps.md#updates)) | `tailbond_update_policy: off` |
+| Server image (Docker, Podman, Kubernetes) | Never by itself: a release is a new image tag (`ghcr.io/kaovilai/tailbond:vX.Y.Z`, `latest`); pull it and replace the container, `/data` stays ([deploy.md](deploy.md#the-server-image)). The dashboard only tells you | `TAILBOND_UPDATE_POLICY=off` (no checks) |
 | GL.iNet travel router | **Right away** (new installs), **Automatic (night)**, or **Update now** in the tailbond panel | tailbond panel → Updates → Off |
+| GL.iNet router, Plug-ins page (custom source) | **APPLICATIONS → Plug-ins → Upgrade** from tailbond's signed opkg feed ([glinet.md](glinet.md#install-and-update-from-gls-plug-ins-page)). It's a plain `opkg upgrade`: no health check and no rollback. The panel's updates (row above) keep working alongside it | Plug-ins → Manage Sources → delete the `tailbond` source |
 | Mac (bundle, `install.sh`) | **Right away** (new installs), or **Update now** in the dashboard, or `sudo /usr/local/lib/tailbond/install.sh --update` | Updates → Off |
 | Mac (Homebrew) | the dashboard shows the commands: the release's `tailbond.rb` into the local tap, `brew reinstall local/tailbond/tailbond`, `sudo brew services start tailbond` ([macos.md](macos.md#updates)) | Updates → Off |
 | Android phone | **Right away** (new installs): an hourly check and a notification, *Update ready: tap to install* (Android always asks before installing an app). Hands-off: [Obtainium](android.md#updates) set to check every hour | Settings → Updates → Off; remove the app from Obtainium |
@@ -111,3 +113,37 @@ Push a `v*` tag. CI builds everything, writes `SHA256SUMS`, attests the files
 COPR build when the `COPR_CONFIG` secret is set
 ([fedora-server.md](fedora-server.md#copr)). The release fails if the Android
 signing secrets are missing ([android.md](android.md#updates), "The release key").
+
+**The opkg feed key**, made once: `scripts/release/gen-opkg-key.sh --backup
+DIR` creates a usign key pair. It sets the secret key as repository secret
+`TB_OPKG_SIGNING_KEY`, writes the public key to
+`packaging/openwrt/files/etc/opkg/keys/<fingerprint>` (commit it: the
+package installs it on routers), and saves an encrypted backup in DIR
+(`--restore FILE.gpg` puts the key back). With the secret set, each
+release publishes `Packages`, `Packages.gz`, `Packages.sig` and
+`tailbond-opkg.pub` ([glinet.md](glinet.md#install-and-update-from-gls-plug-ins-page)).
+Without it, the release goes out with no feed and a warning. If the
+secret's public key isn't in the package, the release fails.
+
+**Rotating the feed key.** A feed carries one signature. A router that
+only has the old public key refuses a feed signed by a new key, so it
+can't fetch the release that would bring that new key. While the current
+secret key still works, rotate in two steps:
+
+1. `scripts/release/gen-opkg-key.sh --next --backup DIR` makes the new key
+   and backs it up. It adds the new public key next to the current one and
+   leaves the secret alone. Commit with the command it prints. Releases
+   keep being signed with the current key but now ship both public keys,
+   so every router that updates also gets the new one.
+2. Some releases later: `scripts/release/gen-opkg-key.sh --restore
+   NEW.gpg --force`. The secret becomes the new key, and the old public
+   key is removed. Commit with the printed command, which also stages the
+   removal.
+
+A router that hasn't updated since before step 1 needs the new key by
+hand once ([glinet.md](glinet.md#install-and-update-from-gls-plug-ins-page),
+step 1). So does every router if the key is lost or leaked, because then
+step 1 is impossible (or unsafe): `--force` replaces the key at once.
+
+The script stops if it can't list the repository's secrets (`gh` not
+logged in, network), because it can't tell whether a key already exists.

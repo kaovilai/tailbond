@@ -88,8 +88,17 @@ jobs:
         run: scripts/ci/check-tracked-files.sh
       - name: Brand SVGs draw (beam gradient in user space, web copies match)
         run: scripts/brand/check-svgs.sh
-      - name: Release asset names (stable latest/download names, SHA256SUMS)
+      - name: Release asset names (stable latest/download names, SHA256SUMS, signed opkg feed)
         run: scripts/release/test-collect-assets.sh
+      - name: hadolint (the server image's Dockerfile)
+        env:
+          HADOLINT_VERSION: v2.15.1
+          HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/hadolint" "https://github.com/hadolint/hadolint/releases/download/$HADOLINT_VERSION/hadolint-linux-x86_64"
+          echo "$HADOLINT_SHA256  $RUNNER_TEMP/hadolint" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/hadolint"
+          "$RUNNER_TEMP/hadolint" deploy/docker/Dockerfile
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -514,7 +523,7 @@ jobs:
           # tailbond_<version>-r1_<arch>.ipk on v* tags (else 0.1.0-r<n>)
           TB_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}-r1', github.ref_name) || '' }}
         run: packaging/openwrt/build-ipk.sh
-      - name: Install test in OpenWrt 23.05 arm64
+      - name: Install test in OpenWrt 23.05 arm64 (and the signed opkg feed)
         env:
           # rootful: the container needs the OpenWrt feed (lua, uhttpd)
           PODMAN: sudo podman
@@ -685,6 +694,117 @@ jobs:
         run: |
           sudo -E env "PATH=$PATH" scripts/e2e-update-vps.sh out/linux/tailbond-linux-x86_64.tar.gz docker.io/library/almalinux:10
 
+  # The server image (deploy/docker, docs/deploy.md), built per architecture
+  # on a native runner from the Linux bundles above (the same tailbondd and
+  # static mqvpn), then tested: a client bonding 2 paths through the
+  # published UDP port, NAT, the dashboard, state across a new container on
+  # the same volume (scripts/e2e-oci.sh), and compose.yaml in podman and
+  # docker compose. Job "release" pushes these exact images.
+  oci-image:
+    name: Server image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: linux-bundle
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, bundle: x86_64, runner: ubuntu-24.04 }
+          - { arch: arm64, bundle: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      IMAGE: localhost/tailbond:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-bundle
+          path: out/linux/
+      - name: Install podman, podman-compose
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q podman podman-compose iproute2 jq
+      - name: Build the image (podman, --format docker)
+        run: PODMAN="sudo podman" deploy/docker/build-image.sh ${{ matrix.arch }}
+      - name: Image metadata (arch, labels, HEALTHCHECK, binaries)
+        run: |
+          sudo podman image inspect "$IMAGE" | jq '.[0] | {Architecture, Labels, Healthcheck: (.Config.Healthcheck // .Healthcheck)}' | tee "$RUNNER_TEMP/meta.json"
+          jq -e --arg a "${{ matrix.arch }}" '.Architecture == $a
+            and .Labels["org.opencontainers.image.source"] == "https://github.com/kaovilai/tailbond"
+            and (.Labels["org.opencontainers.image.version"] | length > 0)
+            and .Healthcheck.Test == ["CMD", "/usr/local/bin/tailbond-healthcheck"]' "$RUNNER_TEMP/meta.json"
+          sudo podman run --rm --entrypoint /opt/tailbond/bin/tailbondd "$IMAGE" -version
+          sudo podman image ls "$IMAGE"
+      - name: e2e-oci (podman; a client bonds 2 paths; NAT, dashboard, restart on the same volume)
+        run: scripts/e2e-oci.sh "$IMAGE" out/linux/tailbond-linux-${{ matrix.bundle }}.tar.gz
+      - name: compose.yaml (podman compose, docker compose)
+        env:
+          PODMAN_COMPOSE_PROVIDER: podman-compose
+          TB_REQUIRE_COMPOSE: "1"
+        run: scripts/test-compose.sh "$IMAGE"
+      - name: Save the image
+        run: |
+          mkdir -p out/oci
+          sudo podman save --format docker-archive -o out/oci/tailbond-${{ matrix.arch }}.tar "$IMAGE"
+          sudo chown "$(id -u)" out/oci/tailbond-${{ matrix.arch }}.tar
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-image-${{ matrix.arch }}
+          path: out/oci/tailbond-${{ matrix.arch }}.tar
+          if-no-files-found: error
+
+  # deploy/kubernetes: kubeconform on both kustomizations, then the amd64
+  # image in kind (Docker, the runner's engine; host UDP 443 -> NodePort ->
+  # the Service, as a load balancer would) with the same client e2e. The
+  # Tailscale sidecar overlay is only validated, not run (it needs a tailnet).
+  kubernetes:
+    name: Kubernetes (kubeconform, kind e2e)
+    runs-on: ubuntu-24.04
+    needs: [linux-bundle, oci-image]
+    timeout-minutes: 30
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-bundle
+          path: out/linux/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-image-amd64
+          path: out/oci/
+      - name: Install kubeconform ${{ env.KUBECONFORM_VERSION }}, kind ${{ env.KIND_VERSION }}
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/kc.tgz" "https://github.com/yannh/kubeconform/releases/download/$KUBECONFORM_VERSION/kubeconform-linux-amd64.tar.gz"
+          echo "$KUBECONFORM_SHA256  $RUNNER_TEMP/kc.tgz" | sha256sum -c -
+          curl -fsSLo "$RUNNER_TEMP/kind" "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64"
+          echo "$KIND_SHA256  $RUNNER_TEMP/kind" | sha256sum -c -
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/kc.tgz" kubeconform
+          chmod +x "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
+      - name: kubeconform (base, tailscale overlay)
+        run: |
+          set -o pipefail # a kustomize error fails the step
+          for k in base tailscale; do
+            kubectl kustomize "deploy/kubernetes/$k" | kubeconform -strict -summary -
+          done
+      - name: kind cluster, the image loaded
+        run: |
+          kind create cluster --config scripts/ci/kind-config.yaml --wait 120s
+          kind load image-archive out/oci/tailbond-amd64.tar --name tailbond
+      - name: e2e-oci (kind; a client outside the cluster bonds 2 paths through the Service)
+        env:
+          TB_OCI_BACKEND: kind
+        run: KUBECONFIG="$HOME/.kube/config" scripts/e2e-oci.sh localhost/tailbond:ci out/linux/tailbond-linux-x86_64.tar.gz
+      - name: Cluster state
+        if: failure()
+        run: |
+          kubectl get all,pvc,events -n tailbond -o wide || true
+          kubectl -n tailbond describe pod || true
+
   ansible:
     name: Ansible role lint
     runs-on: ubuntu-24.04
@@ -750,10 +870,12 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, macos-e2e-server, macos]
+    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, oci-image, kubernetes, macos-e2e-server, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # the server image: ghcr.io/<owner>/tailbond (docs/deploy.md)
+      packages: write
       # build provenance (actions/attest-build-provenance): no keys
       id-token: write
       attestations: write
@@ -766,9 +888,44 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist/
+      # The images job oci-image built and tested (amd64 + arm64), as one
+      # multi-arch tag vX.Y.Z before the release exists; X.Y and latest
+      # move only after it does (job image-tags), so `latest` is always a release.
+      - name: Push the server image (vX.Y.Z)
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for a in amd64 arm64; do
+            podman load -i "dist/oci-image-$a/tailbond-$a.tar"
+            podman tag localhost/tailbond:ci "localhost/tailbond:$a"
+          done
+          podman manifest create localhost/tailbond:release containers-storage:localhost/tailbond:amd64 containers-storage:localhost/tailbond:arm64
+          podman manifest inspect localhost/tailbond:release | jq -e '[.manifests[].platform.architecture] | sort == ["amd64", "arm64"]'
+          printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # the attestation below (push-to-registry) reads only Docker's
+          # ~/.docker/config.json, which docker login writes natively
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # v2s2: Docker media types keep HEALTHCHECK in the image config
+          podman manifest push --all --format v2s2 --digestfile "$RUNNER_TEMP/digest" localhost/tailbond:release "docker://$repo:$TAG"
+          echo "name=$repo" >>"$GITHUB_OUTPUT"
+          echo "digest=$(cat "$RUNNER_TEMP/digest")" >>"$GITHUB_OUTPUT"
+      # gh attestation verify oci://ghcr.io/<owner>/tailbond:vX.Y.Z -R <owner>/tailbond
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
       # stable names (releases/latest/download/<name>) plus the versioned
-      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
-      - name: Collect assets and SHA256SUMS
+      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh. With
+      # secret TB_OPKG_SIGNING_KEY (scripts/release/gen-opkg-key.sh) also the
+      # signed opkg feed (Packages, Packages.gz, Packages.sig); without it a
+      # warning and no feed.
+      - name: Collect assets, opkg feed and SHA256SUMS
+        env:
+          TB_OPKG_SIGNING_KEY: ${{ secrets.TB_OPKG_SIGNING_KEY }}
         # not "assets/": the repo has one (logos), which would end up in the release
         run: scripts/release/collect-assets.sh dist release-assets
       # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
@@ -1040,3 +1197,26 @@ jobs:
           python3 scripts/sbom/sbom.py snapshot sbom/*.spdx.json --sha "$GITHUB_SHA" --ref "$GITHUB_REF" >"$RUNNER_TEMP/snapshot.json"
           gh api --method POST "repos/$GITHUB_REPOSITORY/dependency-graph/snapshots" --input "$RUNNER_TEMP/snapshot.json" \
             --jq '"snapshot \(.id): \(.result) \(.message)"'
+
+  # The release exists: the server image's X.Y and latest tags point at the
+  # vX.Y.Z that job release pushed (not for pre-releases).
+  image-tags:
+    name: Server image tags (X.Y, latest)
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Tag ghcr.io/<owner>/tailbond X.Y and latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          minor="$(sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/' <<<"$TAG")"
+          command -v skopeo || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
+          printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in "$minor" latest; do
+            skopeo copy --all --preserve-digests "docker://$repo:$TAG" "docker://$repo:$t"
+          done

@@ -255,7 +255,12 @@ on the runner, which the emulator reaches as `10.0.2.2`:
   grants VPN consent with `appops set dev.tailbond.app ACTIVATE_VPN allow`,
   opens the `tailbond://pair` deep link and taps **Add phone** (found with
   `uiautomator dump`), then connects with the app's own connect action (the
-  one the quick settings tile sends). It checks: a VPN network in `dumpsys
+  one the quick settings tile sends). Before the app starts it waits for the
+  emulator's Wi-Fi to be **validated**, not just connected: now and then the
+  emulator brings Wi-Fi up with no DNS server and it never carries traffic,
+  so the script takes it down and up again (up to three bring-ups) instead
+  of letting the Wi-Fi path and the Pair & Share hub's link (bound to Wi-Fi,
+  10.0.2.2 is on its subnet) fail on a dead network. It checks: a VPN network in `dumpsys
   connectivity`, `tun0` with `10.77.0.x` and MTU 1280 (in every mode), `ping 10.77.0.1`, the token through the tunnel (and
   not before it), the server's `/api/status` (the phone connected, kind
   `android`), the machine list from `GET /api/peers`, **two paths** (the
