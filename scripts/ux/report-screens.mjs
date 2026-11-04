@@ -56,6 +56,9 @@ for (const [vp, opts] of Object.entries(vps)) {
   ok(crash.includes('panic: send on closed channel') && crash.includes('key=[redacted]'), 'crash details are shown redacted');
   clean('preview', logs + crash);
   ok(await page.isDisabled('#rep-open'), 'Open GitHub issue is off at first');
+  ok((await page.textContent('#rep-why')).includes('say what happened'), 'it says why the button is off');
+  ok((await page.textContent('#rep-account')).includes('GitHub account'), 'it says a GitHub account is needed, and what to do without one');
+  ok(await page.$eval('#rep-logs', (e) => getComputedStyle(e).whiteSpace) === 'pre-wrap', 'long log lines wrap (readable without scrolling sideways)');
   await page.screenshot({ path: `${out}/report-02-preview-${vp}.png` });
   await page.fill('#rep-what', 'The tunnel drops when I plug in the iPhone; token=hunter2');
   ok(await page.isDisabled('#rep-open'), 'still off until the checkbox is ticked');
@@ -114,6 +117,7 @@ for (const [vp, opts] of Object.entries(vps)) {
   clean('GL preview', text);
   const open = dlg.getByRole('button', { name: 'Open GitHub issue' });
   ok(await open.isDisabled(), 'GL: Open GitHub issue is off at first');
+  ok(await page.isVisible('#tb-rep-why'), 'GL: it says why the button is off');
   await page.screenshot({ path: `${out}/report-12-gl-preview-${vp}.png` });
   await dlg.locator('textarea').first().fill('The tunnel drops when I plug in the iPhone');
   ok(await open.isDisabled(), 'GL: still off until the checkbox is ticked');

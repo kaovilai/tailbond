@@ -45,6 +45,7 @@ final class ReportTests: XCTestCase {
         XCTAssertEqual(t["confirm"], ReportText.confirm)
         XCTAssertEqual(t["security_note"], ReportText.securityNote)
         XCTAssertEqual(t["security_url"], ReportText.securityURL)
+        XCTAssertEqual(t["account_note"], ReportText.accountNote)
         XCTAssertEqual(t["repo"], ReportText.repo)
         XCTAssertEqual(t["max_url"], String(ReportText.maxURL))
         XCTAssertEqual(ProblemReport.fileName("2026-11-04T06:51:24Z"), "tailbond-report-20261104-065124.txt")

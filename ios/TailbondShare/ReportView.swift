@@ -43,7 +43,7 @@ struct ReportView: View {
                     }
                 }
                 Section("What happened, and what did you expect?") {
-                    TextField("Sharing stops after a minute; I expected it to keep going.", text: $what, axis: .vertical)
+                    TextField("e.g. Sharing stops after a minute; I expected it to keep going.", text: $what, axis: .vertical)
                         .lineLimit(3...8)
                         .accessibilityIdentifier("report-what")
                 }
@@ -77,6 +77,15 @@ struct ReportView: View {
                         copied = true
                     }
                     ShareLink("Save report file", item: reportFile)
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if what.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("To open the issue: say what happened (the first box), then turn on the switch above.")
+                        } else if !ok {
+                            Text("To open the issue: turn on the switch above once you have read the report.")
+                        }
+                        Text(ReportText.accountNote)
+                    }
                 }
             }
             .navigationTitle("Report a problem")

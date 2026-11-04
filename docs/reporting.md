@@ -24,7 +24,9 @@ nothing is public until you press **Submit new issue** on GitHub.
    crash details if there was a crash, and the newest log lines.
 3. **A checkbox you must tick:** *I've read this report and it has nothing
    I don't want public.* **Open GitHub issue** stays off until it's ticked
-   and *what happened* isn't empty.
+   and *what happened* isn't empty; a line under it says which is missing.
+   Submitting the issue needs a GitHub account; without one, **Save report
+   file** and send it to whoever set up tailbond for you.
 4. **Copy full report** (the whole text, to the clipboard) and **Save
    report file** (`tailbond-report-<time>.txt`): for a security report,
    for a long log, or to send it another way.
@@ -53,6 +55,7 @@ Every field is redacted when shown and again when the link or file is made
 | your user name in `/home/…` and `/Users/…` | `/home/[user]` |
 | public IPv4 addresses | `[public IPv4]` |
 | public IPv6 addresses (2000::/3) | `[public IPv6]` |
+| your work VPN's internal names (its split-DNS domains, `*.corp.example`; the agent on a Mac or Linux laptop, which knows them) | `[work name]` |
 
 Kept, because they help and identify nobody: private, CGNAT/tailnet,
 loopback and link-local addresses (`10.77.0.2`, `192.168.8.1`,

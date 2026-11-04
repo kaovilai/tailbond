@@ -44,6 +44,7 @@ public struct AgentClient {
     public func connect(_ on: Bool) async throws { _ = try await call("POST", on ? "/api/connect" : "/api/disconnect") }
     public func setUpdatePolicy(_ p: String) async throws { _ = try await call("POST", "/api/update/policy", ["policy": p]) }
     public func checkUpdate() async throws { _ = try await call("POST", "/api/update/check") }
+    public func installUpdate() async throws { _ = try await call("POST", "/api/update/install") }
     public func setWorkVPN(_ w: String) async throws { _ = try await call("POST", "/api/coexist", ["work_vpn": w]) }
     public func dismissCrash() async throws { _ = try await call("POST", "/api/report/crash/dismiss") }
 

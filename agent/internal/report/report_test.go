@@ -85,7 +85,7 @@ func TestVectors(t *testing.T) {
 			t.Errorf("%s: URL %d long", c.Name, len(u))
 		}
 	}
-	texts := map[string]string{"notice": Notice, "confirm": Confirm, "security_note": SecurityNote, "security_url": SecurityURL, "repo": Repo, "max_url": itoa(MaxURL)}
+	texts := map[string]string{"notice": Notice, "confirm": Confirm, "security_note": SecurityNote, "security_url": SecurityURL, "account_note": AccountNote, "repo": Repo, "max_url": itoa(MaxURL)}
 	for k, want := range texts {
 		if !*update && v.Texts[k] != want {
 			t.Errorf("texts.%s = %q, want %q", k, v.Texts[k], want)

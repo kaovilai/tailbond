@@ -58,6 +58,7 @@ class ReportTest {
         assertEquals(t.s("confirm"), ReportText.CONFIRM)
         assertEquals(t.s("security_note"), ReportText.SECURITY_NOTE)
         assertEquals(t.s("security_url"), ReportText.SECURITY_URL)
+        assertEquals(t.s("account_note"), ReportText.ACCOUNT_NOTE)
         assertEquals(t.s("repo"), ReportText.REPO)
         assertEquals(t.s("max_url"), ReportText.MAX_URL.toString())
     }

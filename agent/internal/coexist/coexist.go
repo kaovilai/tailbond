@@ -526,8 +526,8 @@ func Make(in Input) Plan {
 			default:
 				pl.WorkEffective = WorkDirect
 				pl.Warnings = append(pl.Warnings, fmt.Sprintf(
-					"Work VPN traffic can't be bonded here: it needs tailbond's tunnel MTU %d (NetBird's %d + %d), and this uplink allows %d. Using Direct.",
-					need, nbMTU, BondedOverhead, max(in.Uplink.MTU-TailbondOverhead, 0)))
+					"Bonded isn't possible on this connection: NetBird's packets (%d bytes) plus tailbond's wrapping (%d) are more than this connection carries inside tailbond (%d). Work traffic goes Direct.",
+					nbMTU, BondedOverhead, max(in.Uplink.MTU-TailbondOverhead, 0)))
 			}
 		}
 		if pl.WorkEffective == WorkDirect {

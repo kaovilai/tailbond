@@ -11,13 +11,14 @@ final class SummaryTests: XCTestCase {
     func testConnected() throws {
         let s = MenuSummary(try fixture("connected"))
         XCTAssertEqual(s.title, "Connected")
-        XCTAssertEqual(s.subtitle, "to homebox · 2 links")
+        XCTAssertEqual(s.subtitle, "to homebox · 2 of 3 links in use")
         XCTAssertEqual(s.tone, .good)
         XCTAssertEqual(s.rates, "↓ 23.4 Mbps  ↑ 1.2 Mbps")
         XCTAssertEqual(s.links.map(\.name), ["Wi-Fi (en0)", "iPhone (USB) (en7)", "Sam's phone (sh5a1b2c)"])
         XCTAssertEqual(s.links.map(\.detail), ["38 ms · ↓ 14.1 Mbps", "61 ms · ↓ 9.3 Mbps", "standby"])
         XCTAssertTrue(s.coexist.isEmpty)
-        XCTAssertEqual(s.update.text, "tailbond 0.2.0 · up to date · Right away")
+        XCTAssertEqual(s.update.text, "tailbond 0.2.0 is up to date")
+        XCTAssertFalse(s.canInstall)
         XCTAssertEqual(s.updatePolicy, "immediate")
         XCTAssertNil(s.crash)
     }
@@ -29,18 +30,27 @@ final class SummaryTests: XCTestCase {
         XCTAssertEqual(s.coexist.map(\.text), [
             "NetBird is on (100.92.1.2/16): its traffic goes Direct (not through tailbond)",
             "Work names (corp.example, netbird.cloud) use the work VPN's DNS",
-            "NetBird's network 10.20.0.0/16 is also your home LAN's: NetBird keeps it",
+            "Bonded isn't possible on this connection: NetBird's packets (1280 bytes) plus tailbond's wrapping (80) are more than this connection carries inside tailbond (1180). Work traffic goes Direct.",
         ])
         XCTAssertEqual(s.coexist.map(\.warn), [false, false, true])
-        XCTAssertEqual(s.links[1].detail, "not working")
-        XCTAssertEqual(s.update.text, "tailbond 0.2.0 · up to date · Tell me")
+        XCTAssertEqual(s.workExplain, [
+            "Direct: the work VPN and its networks (100.92.0.0/16, 10.20.0.0/16) use this Mac's own internet, as without tailbond.",
+            "Bonded: they go through tailbond to homebox, then out to your company: steadier, but through your home.",
+        ])
+        XCTAssertEqual(s.links[1].detail, "can't reach homebox")
+        XCTAssertEqual(s.update.text, "tailbond 0.2.0 is up to date")
     }
 
     func testCrashAndSecurityUpdate() throws {
         let s = MenuSummary(try fixture("crash-update"))
-        XCTAssertEqual(s.crash, "2026-11-04T06:51:24Z")
-        XCTAssertEqual(s.update.text, "Update available: 0.2.1 (security) (waiting for a quiet moment) · Right away")
-        XCTAssertTrue(s.update.warn)
+        XCTAssertNotNil(s.crash)
+        // (newer ICU puts a narrow no-break space before AM: compare the parts)
+        let w = MenuSummary.when("2026-11-04T06:51:24Z", timeZone: TimeZone(identifier: "UTC")!, locale: Locale(identifier: "en_US"))
+        XCTAssertTrue(w.hasPrefix("Nov 4, 2026") && w.contains("6:51") && w.hasSuffix("AM"), w)
+        XCTAssertEqual(MenuSummary.when("not a time"), "not a time")
+        XCTAssertEqual(s.update.text, "Update available: tailbond 0.2.1. It installs by itself as soon as no call or big download is running (within 30 minutes).")
+        XCTAssertFalse(s.update.warn)
+        XCTAssertTrue(s.canInstall)
         XCTAssertTrue(s.text.contains("Report a problem"))
     }
 

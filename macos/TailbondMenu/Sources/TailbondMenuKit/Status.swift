@@ -131,13 +131,18 @@ public struct NetBirdInfo: Decodable, Equatable {
 
 public struct ForeignVPN: Decodable, Equatable {
     public var name = "", kind = "", iface = ""
-    public init(name: String, kind: String, iface: String) { self.name = name; self.kind = kind; self.iface = iface }
-    enum CodingKeys: String, CodingKey { case name, kind, iface }
+    /// the networks it routes (NetBird's own range, the company subnets it pushes)
+    public var prefixes: [String] = []
+    public init(name: String, kind: String, iface: String, prefixes: [String] = []) {
+        self.name = name; self.kind = kind; self.iface = iface; self.prefixes = prefixes
+    }
+    enum CodingKeys: String, CodingKey { case name, kind, iface, prefixes }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? ""
         iface = try c.decodeIfPresent(String.self, forKey: .iface) ?? ""
+        prefixes = try c.decodeIfPresent([String].self, forKey: .prefixes) ?? []
     }
 }
 

@@ -60,6 +60,7 @@ public final class MenuModel: ObservableObject {
     public func setOn(_ on: Bool) { act(on ? "Turning on" : "Turning off") { try await self.client.connect(on) } }
     public func setPolicy(_ p: String) { act("Changing updates") { try await self.client.setUpdatePolicy(p) } }
     public func checkUpdate() { act("Checking for updates") { try await self.client.checkUpdate() } }
+    public func installUpdate() { act("Installing the update") { try await self.client.installUpdate() } }
     public func setWorkVPN(_ w: String) { act("Changing the work VPN's traffic") { try await self.client.setWorkVPN(w) } }
     public func dismissCrash() { act("Dismissing") { try await self.client.dismissCrash() } }
 }

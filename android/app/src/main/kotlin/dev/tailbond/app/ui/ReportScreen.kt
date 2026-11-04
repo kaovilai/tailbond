@@ -171,6 +171,15 @@ fun ReportScreen(modifier: Modifier = Modifier) {
             Checkbox(checked = ok, onCheckedChange = { ok = it })
             Text(ReportText.CONFIRM, style = MaterialTheme.typography.bodyMedium)
         }
+        if (!(ok && what.isNotBlank())) {
+            Text(
+                if (what.isBlank()) "To open the issue: say what happened (the first box), then tick the box above."
+                else "To open the issue: tick the box above once you have read the report.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("report-why"),
+            )
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = {
@@ -187,5 +196,6 @@ fun ReportScreen(modifier: Modifier = Modifier) {
             }) { Text("Copy full report") }
             OutlinedButton(onClick = { save.launch(Report.fileName(Instant.now().toString().substringBefore('.') + "Z")) }) { Text("Save report file") }
         }
+        Text(ReportText.ACCOUNT_NOTE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

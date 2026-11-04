@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/kaovilai/tailbond/agent/internal/report"
+	"github.com/kaovilai/tailbond/agent/internal/status"
 )
 
 func TestReportPreviewAndURL(t *testing.T) {
@@ -96,5 +97,28 @@ func TestMqvpnCrashSignal(t *testing.T) {
 	a.noteChildCrash(errors.New("exit status 1"))
 	if _, err := os.Stat(a.crashPath(crashLast)); err == nil {
 		t.Error("SIGTERM recorded as a crash")
+	}
+}
+
+// The work VPN's internal names (its split-DNS domains) are this machine's
+// secret: the report says [work name].
+func TestReportRedactsWorkNames(t *testing.T) {
+	a := pairServer(t)
+	a.mu.Lock()
+	a.snap = &status.Status{Role: "client", Coexist: &status.Coexist{DNSDomains: []string{"corp.example.", "netbird.cloud"}}}
+	a.mu.Unlock()
+	a.Logf("resolving git.eu.corp.example via 10.92.0.5; peer laptop.netbird.cloud; not notcorp.example.org")
+	var got map[string]string
+	json.Unmarshal(req(t, a, "GET", "/api/report", "127.0.0.1:1", "", nil).Body.Bytes(), &got)
+	if !strings.Contains(got["logs"], "resolving [work name] via 10.92.0.5; peer [work name];") {
+		t.Errorf("logs: %q", got["logs"])
+	}
+	if got["account_note"] != report.AccountNote {
+		t.Errorf("account note: %q", got["account_note"])
+	}
+	var out map[string]string
+	json.Unmarshal(req(t, a, "POST", "/api/report", "127.0.0.1:1", "", map[string]any{"what": "can't open wiki.corp.example"}).Body.Bytes(), &out)
+	if strings.Contains(out["url"], "corp.example") || !strings.Contains(out["full"], "can't open [work name]") {
+		t.Errorf("POST: %q", out["full"])
 	}
 }

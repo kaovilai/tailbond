@@ -2,5 +2,5 @@
  "totals":{"tx_bps":90000,"rx_bps":800000,"tx_bytes":1,"rx_bytes":1},
  "paths":[{"id":1,"iface":"en0","kind":"wifi","state":"active","srtt_ms":52,"min_rtt_ms":40,"loss_pct":0,"tx_bps":90000,"rx_bps":800000,"tx_bytes":1,"rx_bytes":1,"enabled":true,"label":"Wi-Fi"}],
  "clients":[],"tailscale":null,"control_api":true,"paired":true,"version":"0.2.0",
- "update":{"current":"0.2.0","available":"0.2.1","policy":"immediate","method":"static","state":"idle","waiting":"waiting for a quiet moment","security":true},
+ "update":{"current":"0.2.0","available":"0.2.1","policy":"immediate","method":"static","state":"idle","waiting":"waiting for a quiet moment"},
  "platform":"darwin","crash":"2026-11-04T06:51:24Z"}

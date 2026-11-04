@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"runtime/debug"
 	"strings"
@@ -189,19 +190,44 @@ func (a *Agent) reportLogs(n int) string {
 	return b.String()
 }
 
+// redactLocal: what only this machine knows is private, on top of
+// report.Redact: the work VPN's internal names (the split-DNS domains,
+// docs/macos.md "Using tailbond with NetBird"), as [work name].
+func (a *Agent) redactLocal(s string) string {
+	st := a.Snapshot()
+	if st == nil || st.Coexist == nil {
+		return s
+	}
+	for _, d := range st.Coexist.DNSDomains {
+		d = strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".")
+		if !strings.Contains(d, ".") {
+			continue
+		}
+		re := regexp.MustCompile(`(?i)\b(?:[a-z0-9-]+\.)*` + regexp.QuoteMeta(d) + `\b`)
+		s = re.ReplaceAllString(s, "[work name]")
+	}
+	return s
+}
+
+func (a *Agent) redactReport(r report.Report) report.Report {
+	f := a.redactLocal
+	return report.Report{Component: r.Component, Version: f(r.Version), Device: f(r.Device), What: f(r.What),
+		Steps: f(r.Steps), Logs: f(r.Logs), Crash: f(r.Crash)}
+}
+
 // GET /api/report: the report to preview, redacted.
 func (a *Agent) hReportGet(w http.ResponseWriter, r *http.Request) {
 	crash := ""
 	if b, err := os.ReadFile(a.crashPath(crashLast)); err == nil {
 		crash = string(b)
 	}
-	rep := report.Report{
+	rep := a.redactReport(report.Report{
 		Component: a.component(),
 		Version:   a.opts.Version,
 		Device:    deviceInfo(),
 		Logs:      a.reportLogs(300),
 		Crash:     crash,
-	}
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"component":     rep.Component,
 		"version":       report.Redact(rep.Version),
@@ -213,6 +239,7 @@ func (a *Agent) hReportGet(w http.ResponseWriter, r *http.Request) {
 		"confirm":       report.Confirm,
 		"security_note": report.SecurityNote,
 		"security_url":  report.SecurityURL,
+		"account_note":  report.AccountNote,
 	})
 }
 
@@ -224,6 +251,7 @@ func (a *Agent) hReportPost(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	rep = a.redactReport(rep)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"url":       rep.IssueURL(),
 		"full":      rep.Full(),

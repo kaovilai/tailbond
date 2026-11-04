@@ -27,8 +27,12 @@ const MaxURL = 7000
 // Notice is shown above every report preview, in every app.
 const Notice = "Nothing is sent automatically: tailbond has no telemetry and makes no network call for this. " +
 	"The report opens in your browser as a GitHub issue that you can still edit, and once you submit it, it is public. " +
-	"Keys, pairing links, public IP addresses, email addresses, your tailnet's name and similar details were replaced with [brackets]; " +
-	"read it and remove anything else you don't want public (Wi-Fi names, device names)."
+	"Keys, pairing links, public IP addresses, email addresses, your tailnet's name, your work VPN's internal names (where tailbond knows them) and similar details were replaced with [brackets]. " +
+	"Private addresses (10.x, 192.168.x, 100.x) stay: they help find the problem. " +
+	"Read it and remove anything else you don't want public (Wi-Fi names, device names)."
+
+// AccountNote: submitting needs a GitHub account, and what to do without one.
+const AccountNote = "Submitting the issue needs a GitHub account. No account? Save the report file and send it to whoever set up tailbond for you."
 
 // Confirm is the checkbox the user must tick before the issue opens.
 const Confirm = "I've read this report and it has nothing I don't want public."

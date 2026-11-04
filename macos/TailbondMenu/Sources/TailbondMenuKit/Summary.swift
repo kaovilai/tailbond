@@ -30,8 +30,12 @@ public struct MenuSummary: Equatable {
     /// Offer the Work VPN traffic choice (another VPN with its own network is up)
     public let workVPNChoice: Bool
     public let workVPN: String
+    /// what Direct and Bonded each mean here (shown under the switch)
+    public let workExplain: [String]
     public let update: Line
     public let updatePolicy: String
+    /// an update is ready and this install can install it on request (Install now)
+    public let canInstall: Bool
     public let crash: String?
     public let connected: Bool
 
@@ -76,7 +80,8 @@ public struct MenuSummary: Equatable {
             title = "tailbond isn't running"
             subtitle = unreachable ?? "Nothing answers on 127.0.0.1:8077. Start it: sudo launchctl kickstart -k system/com.tailbond.tailbondd"
             tone = .bad; symbol = "exclamationmark.triangle"; rates = ""; links = []; coexist = []
-            workVPNChoice = false; workVPN = ""; update = Line(text: "", warn: false); updatePolicy = ""; crash = nil; connected = false
+            workVPNChoice = false; workVPN = ""; workExplain = []; update = Line(text: "", warn: false); updatePolicy = ""
+            canInstall = false; crash = nil; connected = false
             return
         }
         let server = s.activeServer.isEmpty ? s.server : s.activeServer
@@ -86,7 +91,9 @@ public struct MenuSummary: Equatable {
         switch s.state {
         case "connected":
             title = "Connected"
-            subtitle = (short.isEmpty ? "" : "to \(short) · ") + (active == 1 ? "1 link" : "\(active) links")
+            let n = s.paths.count
+            let used = active == n ? (active == 1 ? "1 link" : "\(active) links") : "\(active) of \(n) links in use"
+            subtitle = (short.isEmpty ? "" : "to \(short) · ") + used
             tone = .good; symbol = "point.3.filled.connected.trianglepath.dotted"
         case "connecting":
             title = "Connecting…"
@@ -113,7 +120,7 @@ public struct MenuSummary: Equatable {
                 case "active":
                     detail = "\(p.srttMs) ms · ↓ \(Self.rate(p.rxBps))"; tone = .good
                 case "standby": detail = "standby"; tone = .off
-                case "failed": detail = p.captive == "portal" ? "Wi-Fi sign-in needed" : "not working"; tone = .bad
+                case "failed": detail = p.captive == "portal" ? "Wi-Fi sign-in needed" : (short.isEmpty ? "can't reach your server" : "can't reach \(short)"); tone = .bad
                 default: detail = "starting"; tone = .busy
                 }
             }
@@ -150,26 +157,55 @@ public struct MenuSummary: Equatable {
         coexist = cx
         workVPNChoice = choice
         workVPN = work.isEmpty ? "direct" : work
+        var nets: [String] = []
+        for f in s.coexist?.foreign ?? [] where f.kind != "tailscale" {
+            for p in f.prefixes where !nets.contains(p) { nets.append(p) }
+        }
+        let netWords = nets.isEmpty ? "" : " and its networks (\(nets.prefix(3).joined(separator: ", "))\(nets.count > 3 ? ", …" : ""))"
+        let home = short.isEmpty ? "your home server" : short
+        workExplain = choice ? [
+            "Direct: the work VPN\(netWords) use this Mac's own internet, as without tailbond.",
+            "Bonded: they go through tailbond to \(home), then out to your company: steadier, but through your home.",
+        ] : []
 
         // updates (docs/updates.md)
         let u = s.update ?? UpdateInfo()
         updatePolicy = u.policy.isEmpty ? "notify" : u.policy
-        let pol = Self.policyLabel(updatePolicy)
         let cur = u.current.isEmpty ? s.version : u.current
+        let available = !u.available.isEmpty && u.state != "installing"
+        canInstall = available && u.method == "static"
         switch true {
         case u.state == "installing":
             update = Line(text: "Installing tailbond \(u.available)…", warn: false)
         case u.state == "failed":
             update = Line(text: "An update didn't install; still on \(cur)", warn: true)
-        case !u.available.isEmpty && updatePolicy != "off":
-            let why = u.waiting.isEmpty ? "" : " (\(u.waiting))"
-            update = Line(text: "Update available: \(u.available)\(u.security ? " (security)" : "")\(why) · \(pol)", warn: u.security)
+        case available:
+            var t = "Update available: tailbond \(u.available)\(u.security ? " (a security fix)" : "")."
+            if u.method == "brew" {
+                t += " Update with Homebrew (the dashboard has the commands)."
+            } else if updatePolicy == "immediate" && !u.waiting.isEmpty {
+                t += " It installs by itself as soon as no call or big download is running (within 30 minutes)."
+            } else if updatePolicy == "auto" {
+                t += " It installs by itself tonight (03:00-05:00)."
+            }
+            update = Line(text: t, warn: u.security)
         case updatePolicy == "off":
-            update = Line(text: "tailbond \(cur) · updates off", warn: false)
+            update = Line(text: "tailbond \(cur): automatic checks are off", warn: false)
         default:
-            update = Line(text: "tailbond \(cur) · up to date · \(pol)", warn: false)
+            update = Line(text: "tailbond \(cur) is up to date", warn: false)
         }
-        crash = s.crash.isEmpty ? nil : s.crash
+        crash = s.crash.isEmpty ? nil : Self.when(s.crash)
+    }
+
+    /// An RFC 3339 time as the Mac shows dates ("Nov 4, 2026 at 6:51 AM").
+    public static func when(_ rfc3339: String, timeZone: TimeZone = .current, locale: Locale = .current) -> String {
+        guard let d = ISO8601DateFormatter().date(from: rfc3339) else { return rfc3339 }
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        f.timeZone = timeZone
+        f.locale = locale
+        return f.string(from: d)
     }
 
     /// --status: one block of text for a terminal (and the CI check).

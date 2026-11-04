@@ -900,7 +900,7 @@
         var lbl = function (t) { return h("div", { class: "tb-label" }, t); };
         var inp = function (k, ph) { return h("input", { class: "tb-input", attrs: { placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } }); };
         var area = function (k, rows, mono, ph) {
-          return h("textarea", { class: "tb-input", style: { height: (rows * 20 + 16) + "px", fontFamily: mono ? "ui-monospace,Menlo,monospace" : "inherit", fontSize: mono ? "12px" : "14px", whiteSpace: mono ? "pre" : "normal" },
+          return h("textarea", { class: "tb-input", style: { height: (rows * 20 + 16) + "px", fontFamily: mono ? "ui-monospace,Menlo,monospace" : "inherit", fontSize: mono ? "12px" : "14px", whiteSpace: mono ? "pre-wrap" : "normal", overflowWrap: mono ? "anywhere" : "normal" },
             attrs: { spellcheck: mono ? "false" : "true", placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } });
         };
         var canOpen = u.ok && u.what.trim() !== "";
@@ -910,8 +910,8 @@
           h("div", { class: "tb-muted tb-small", style: { marginBottom: "8px" } }, [String(d.security_note || "").replace(/\(.*\)\.?$/, ""), " ",
             h("a", { class: "tb-link", attrs: { href: d.security_url, target: "_blank", rel: "noopener" } }, "Report a vulnerability privately"), "."]),
           d.crash ? h("div", { class: "tb-small", style: { color: "#e6a23c", marginBottom: "8px" } }, "tailbond stopped unexpectedly" + (d.crash_at ? " (" + new Date(d.crash_at).toLocaleString() + ")" : "") + "; its crash details are below.") : null,
-          lbl("What happened, and what did you expect?"), area("what", 3, false, "After the firmware upgrade the panel shows Disconnected; I expected Connected."),
-          lbl("Steps to reproduce (optional)"), area("steps", 2, false),
+          lbl("What happened, and what did you expect?"), area("what", 3, false, "e.g. After the firmware upgrade the panel shows Disconnected; I expected Connected."),
+          lbl("Steps to reproduce (optional)"), area("steps", 2, false, "e.g. 1. Upgrade the firmware  2. Open VPN → tailbond"),
           lbl("Where"), inp("component"),
           lbl("tailbond version"), inp("version"),
           lbl("Router and firmware"), inp("device"),
@@ -919,6 +919,9 @@
           lbl("Logs (newest last)"), area("logs", 8, true),
           h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "A link holds about 7 KB, so the issue gets the newest lines; Copy full report and Save report file have all of them."),
           h("div", { style: { marginTop: "12px" } }, [h("span", { class: "tb-check" + (u.ok ? " on" : ""), attrs: { role: "checkbox", "aria-checked": String(u.ok), tabindex: 0, id: "tb-rep-ok" }, on: { click: function () { u.ok = !u.ok; } } }, [h("i"), d.confirm])]),
+          !canOpen ? h("div", { class: "tb-muted tb-small", attrs: { id: "tb-rep-why" }, style: { marginTop: "6px" } },
+            u.what.trim() === "" ? "To open the issue: say what happened (the first box), then tick the box above." : "To open the issue: tick the box above once you have read the report.") : null,
+          h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, d.account_note || ""),
           u.err ? h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "10px" } }, u.err) : null
         ];
         var foot = [this.btn(h, "Cancel", close), this.btn(h, "Copy full report", function () { self.repCopy(); }), this.btn(h, "Save report file", function () { self.repSave(); }),

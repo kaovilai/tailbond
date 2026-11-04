@@ -64,11 +64,16 @@ public struct MenuContent: View {
             }
             Spacer()
             if model.status?.paired == true {
-                Toggle("", isOn: Binding(get: { s.connected || model.status?.state == "connecting" }, set: { model.setOn($0) }))
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .disabled(model.busy)
-                    .accessibilityLabel("tailbond on")
+                let on = s.connected || model.status?.state == "connecting"
+                VStack(alignment: .trailing, spacing: 2) {
+                    Toggle("", isOn: Binding(get: { on }, set: { model.setOn($0) }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(Brand.ok)
+                        .disabled(model.busy)
+                        .accessibilityLabel("tailbond on")
+                    Text(on ? "On" : "Off").font(.caption2.weight(.semibold)).foregroundStyle(on ? Brand.ok : .secondary)
+                }
             }
         }
     }
@@ -113,6 +118,8 @@ public struct MenuContent: View {
                 }
                 .pickerStyle(.segmented)
                 .disabled(model.busy)
+                Text("Now: \(s.workVPN == "bonded" ? "Bonded" : "Direct")").font(.caption.weight(.semibold))
+                ForEach(s.workExplain, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
     }
@@ -122,7 +129,7 @@ public struct MenuContent: View {
             Label {
                 Text(s.update.text).fixedSize(horizontal: false, vertical: true)
             } icon: {
-                Image(systemName: s.update.warn ? "exclamationmark.triangle.fill" : "arrow.down.circle")
+                Image(systemName: s.update.warn ? "exclamationmark.triangle.fill" : (s.update.text.hasPrefix("Update available") ? "arrow.down.circle" : "checkmark.circle"))
                     .foregroundStyle(s.update.warn ? Brand.warn : .secondary)
             }
             .font(.caption)
@@ -132,7 +139,11 @@ public struct MenuContent: View {
                 }
                 .pickerStyle(.menu)
                 .disabled(model.busy)
-                Button("Check now") { model.checkUpdate() }.disabled(model.busy)
+                if s.canInstall {
+                    Button("Install now") { model.installUpdate() }.disabled(model.busy)
+                } else {
+                    Button("Check now") { model.checkUpdate() }.disabled(model.busy)
+                }
             }
         }
     }
@@ -154,7 +165,8 @@ public struct MenuContent: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Button("Open dashboard") { openURL(model.client.dashboard) }
-                Button("Report a problem…") { openURL(model.client.report) }
+                // after a crash the box above has it
+                if s.crash == nil { Button("Report a problem…") { openURL(model.client.report) } }
                 Spacer()
                 Button("Quit") { quit() }
             }

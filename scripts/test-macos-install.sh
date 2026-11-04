@@ -50,6 +50,8 @@ if [ -n "$IP" ]; then
   curl -fsS -m 3 "http://$IP:8077/api/hello" >/dev/null 2>&1 && bad "dashboard reachable from the network ($IP)" || ok "dashboard not reachable on $IP (this Mac only)"
 fi
 sudo test -f /usr/local/etc/tailbond/install.env && ok "install.env written" || bad "no install.env"
+rep="$(curl -fsS -m 5 http://127.0.0.1:8077/api/report)"
+echo "$rep" | grep -q '"component":"Mac"' && echo "$rep" | grep -q '"device":"macOS ' && ok "Report a problem fills in Mac and macOS" || bad "report: $(echo "$rep" | head -c 300)"
 
 say "menu bar app (tailbond.app)"
 APP=/Applications/tailbond.app

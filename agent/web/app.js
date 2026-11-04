@@ -1357,8 +1357,8 @@ async function openReport() {
   let rep;
   try { rep = await api('GET', '/api/report'); } catch (e) { toast(e.message, true); return; }
   const field = (label, el, hint) => h('label', { class: 'field' }, h('span', { text: label }), el, hint ? h('small', { class: 'muted', text: hint }) : null);
-  const what = h('textarea', { id: 'rep-what', rows: 3, required: true, placeholder: 'After plugging in the iPhone the tunnel drops; I expected it to add a path.' });
-  const steps = h('textarea', { id: 'rep-steps', rows: 2, placeholder: '1. …  2. …' });
+  const what = h('textarea', { id: 'rep-what', rows: 3, required: true, placeholder: 'e.g. After plugging in the iPhone the tunnel drops; I expected it to add a connection.' });
+  const steps = h('textarea', { id: 'rep-steps', rows: 2, placeholder: 'e.g. 1. Plug in the iPhone  2. Open a video call' });
   const comp = h('input', { id: 'rep-component', value: rep.component || '' });
   const ver = h('input', { id: 'rep-version', value: rep.version || '' });
   const dev = h('input', { id: 'rep-device', value: rep.device || '' });
@@ -1368,7 +1368,14 @@ async function openReport() {
   crash.value = rep.crash || '';
   const ok = h('input', { type: 'checkbox', id: 'rep-ok' });
   const open = h('button', { class: 'btn primary', type: 'button', id: 'rep-open', disabled: true }, 'Open GitHub issue');
-  const gate = () => { open.disabled = !(ok.checked && what.value.trim()); };
+  // why the button is off, until it isn't
+  const why = h('p', { class: 'muted small', id: 'rep-why' });
+  const gate = () => {
+    open.disabled = !(ok.checked && what.value.trim());
+    why.textContent = !what.value.trim() ? 'To open the issue: say what happened (the first box), then tick the box above.'
+      : !ok.checked ? 'To open the issue: tick the box above once you have read the report.' : '';
+  };
+  gate();
   ok.addEventListener('change', gate);
   what.addEventListener('input', gate);
   const body = () => ({ component: comp.value, version: ver.value, device: dev.value, what: what.value, steps: steps.value, logs: logs.value, crash: crash.value });
@@ -1394,6 +1401,8 @@ async function openReport() {
     rep.crash ? field('Crash details', crash, 'Edit or clear anything you don\'t want public.') : null,
     field('Logs (newest last)', logs, 'A link holds about 7 KB, so the issue gets the newest lines; "Copy full report" and "Save report file" have all of them.'),
     h('label', { class: 'check' }, ok, ' ', rep.confirm),
+    why,
+    h('p', { class: 'muted small', id: 'rep-account', text: rep.account_note || '' }),
     h('div', { class: 'row end wrap' },
       h('button', { class: 'btn', type: 'button', onclick: closeDlg }, 'Cancel'),
       h('button', { class: 'btn', type: 'button', id: 'rep-copy', onclick: async () => {

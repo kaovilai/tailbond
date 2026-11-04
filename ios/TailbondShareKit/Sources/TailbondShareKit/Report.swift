@@ -12,8 +12,10 @@ public enum ReportText {
     public static let maxURL = 7000
     public static let notice = "Nothing is sent automatically: tailbond has no telemetry and makes no network call for this. " +
         "The report opens in your browser as a GitHub issue that you can still edit, and once you submit it, it is public. " +
-        "Keys, pairing links, public IP addresses, email addresses, your tailnet's name and similar details were replaced with [brackets]; " +
-        "read it and remove anything else you don't want public (Wi-Fi names, device names)."
+        "Keys, pairing links, public IP addresses, email addresses, your tailnet's name, your work VPN's internal names (where tailbond knows them) and similar details were replaced with [brackets]. " +
+        "Private addresses (10.x, 192.168.x, 100.x) stay: they help find the problem. " +
+        "Read it and remove anything else you don't want public (Wi-Fi names, device names)."
+    public static let accountNote = "Submitting the issue needs a GitHub account. No account? Save the report file and send it to whoever set up tailbond for you."
     public static let confirm = "I've read this report and it has nothing I don't want public."
     public static let securityNote = "A security problem? Don't open a public issue: report it privately on GitHub (Security → Report a vulnerability)."
     public static let securityURL = "https://github.com/\(repo)/security/advisories/new"
