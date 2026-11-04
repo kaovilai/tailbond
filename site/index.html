@@ -78,7 +78,7 @@ a { color: var(--primary); }
 .flow .node { fill: var(--bg); stroke: var(--border); stroke-width: 2; }
 .flow .lan { stroke-dasharray: 2 9; }
 .flow .pkt { offset-rotate: 0deg; opacity: 0; fill: var(--card); stroke-width: 3; }
-.flow .pkt.up { stroke: var(--shared); } .flow .pkt.down { stroke: var(--teal-400); } .flow .pkt.own { stroke: var(--eth); }
+.flow .pkt.up { stroke: var(--shared); } .flow .pkt.down { stroke: var(--primary); } .flow .pkt.own { stroke: var(--eth); }
 @media (prefers-reduced-motion: no-preference) {
   .flow .pkt { animation: ride 3.2s linear infinite; }
   .flow .pkt.d1 { animation-delay: -.8s; } .flow .pkt.d2 { animation-delay: -1.6s; } .flow .pkt.d3 { animation-delay: -2.4s; }
@@ -215,7 +215,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
       <ul class="legend">
         <li><span class="lanl" style="border-color:var(--wifi)"></span>Hub to phone, local Wi-Fi</li>
         <li><span style="border-color:var(--shared)"></span>Phone to server, its mobile data</li>
-        <li><span style="border-color:var(--teal-400)"></span>Replies</li>
+        <li><span style="border-color:var(--primary)"></span>Replies</li>
         <li><span style="border-color:var(--eth)"></span>The hub's own connection</li>
       </ul>
       <button type="button" class="pausebtn" aria-pressed="false">Pause animation</button>
