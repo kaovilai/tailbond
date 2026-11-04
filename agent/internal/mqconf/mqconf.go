@@ -57,8 +57,15 @@ type ServerParams struct {
 }
 
 type ClientParams struct {
-	Server       string // host:port
-	ServerName   string // SNI / verify name
+	Server     string // host:port
+	ServerName string // SNI / verify name
+	// CertSHA256 pins the server's leaf certificate (hex SHA-256 of its
+	// DER, ':' allowed): mqvpn then accepts only that certificate, on every
+	// handshake, reconnects included (patches/mqvpn/0005).
+	CertSHA256 string
+	// Insecure: the server's certificate is self-signed (pairing
+	// "insecure"). mqvpn never runs with Insecure on: such a server needs
+	// CertSHA256, which replaces the CA check.
 	Insecure     bool
 	Key          string
 	DNS          []string
@@ -200,7 +207,17 @@ func Client(p ClientParams) (string, error) {
 	if p.ServerName != "" {
 		w.kv("ServerName", p.ServerName)
 	}
-	w.kv("Insecure", boolStr(p.Insecure))
+	pin, err := NormalizePin(p.CertSHA256)
+	if err != nil {
+		return "", err
+	}
+	if p.Insecure && pin == "" {
+		return "", fmt.Errorf("the server's certificate is self-signed and the pairing has no cert_sha256 pin; pair again")
+	}
+	if pin != "" {
+		w.kv("CertSHA256", pin)
+	}
+	w.kv("Insecure", "false")
 
 	w.section("Auth")
 	w.kv("Key", p.Key)
@@ -253,6 +270,21 @@ func Client(p ClientParams) (string, error) {
 	}
 	w.reorder(m)
 	return header + w.b.String(), nil
+}
+
+var pinRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// NormalizePin returns a certificate pin as 64 lowercase hex digits ("" for
+// none), accepting any case and ':' separators.
+func NormalizePin(s string) (string, error) {
+	pin := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(s), ":", ""))
+	if pin == "" {
+		return "", nil
+	}
+	if !pinRe.MatchString(pin) {
+		return "", fmt.Errorf("cert_sha256 must be 64 hex digits (the SHA-256 of the server certificate)")
+	}
+	return pin, nil
 }
 
 func orDefault(s, d string) string {

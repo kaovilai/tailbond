@@ -529,7 +529,7 @@ with a tailnet address behind it), not any real variant.
 CI (job `macos-server`, GitHub's `macos-latest` arm64 runner) runs
 `scripts/e2e-macos-server.sh`: the Mac is the server (mqvpn's server mode
 on a utun and its TCP egress,
-[patch 0005](../patches/mqvpn/0005-darwin-server-mode.patch), with the hooks
+[patch 0006](../patches/mqvpn/0006-darwin-server-mode.patch), with the hooks
 above), and a Linux client in a QEMU VM bonds two network
 interfaces to it. It checks that:
 

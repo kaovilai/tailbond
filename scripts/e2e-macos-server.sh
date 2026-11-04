@@ -5,7 +5,7 @@
 # "Mac as home server"; CI: job macos-server on GitHub's macos-latest arm64
 # runner):
 #
-#   server   tailbondd (server role) + the patched mqvpn (patch 0005, server
+#   server   tailbondd (server role) + the patched mqvpn (patch 0006, server
 #            mode on a utun) on this Mac, with the real macOS hooks
 #            (packaging/macos/hooks: forwarding, pf NAT and firewall
 #            anchor, application firewall, power assertion).
@@ -274,7 +274,7 @@ tcpdump -n -l -i "$TUN" -c 40 host 1.1.1.1 >"$WORK/tcpdump-tun.log" 2>&1 &
 TD2=$!
 sleep 1
 # TCP rides mqvpn's hybrid TCP lane: the server connects out itself (its
-# TCP egress, patch 0005); datagrams (UDP, ICMP) are forwarded and NATed
+# TCP egress, patch 0006); datagrams (UDP, ICMP) are forwarded and NATed
 OUT="$(probe 'what=http&url=http://1.1.1.1/cdn-cgi/trace')"
 DOUT="$(probe 'what=dns&name=github.com&server=1.1.1.1')"
 STATES="$(pfctl -s state 2>/dev/null | grep '1\.1\.1\.1:53' || true)"

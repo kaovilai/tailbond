@@ -119,8 +119,14 @@ jobs:
             mqvpn-native-${{ runner.os }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-native.sh', 'scripts/lib/*.sh') }}-
       - name: Build patched mqvpn
         run: scripts/build-mqvpn-native.sh
+      - name: mqvpn certificate pin unit tests (patches/mqvpn/0005)
+        run: |
+          out/build/mqvpn-native/src/build/tests/test_cert_pin
+          out/build/mqvpn-native/src/build/tests/test_config_bridge
       - name: Client control API smoke test
         run: sudo scripts/smoke-client-control.sh
+      - name: e2e-cert-pin (an impostor server with another certificate is refused)
+        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-cert-pin.sh
       - name: e2e-netns
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
       - name: e2e-backup (backup, wipe, restore, the client reconnects)
@@ -211,22 +217,30 @@ jobs:
         run: |
           signers=("$ANDROID_HOME"/build-tools/*/apksigner)
           signer="$(printf '%s\n' "${signers[@]}" | sort -V | tail -n1)"
+          # Release APKs only: the debug builds (tailbond-debug*.apk, incl.
+          # the x86_64 emulator one) are signed with the debug key on purpose.
+          checked=0
           for apk in out/android/tailbond-*.apk; do
-            [ "$apk" = out/android/tailbond-debug.apk ] && continue
+            case "$apk" in out/android/tailbond-debug*.apk) continue ;; esac
             got="$("$signer" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n1)"
             echo "$apk: $got"
             if [ "${got,,}" != "${WANT,,}" ]; then
               echo "::error::$apk is signed with $got, not the release key $WANT (TB_RELEASE_CERT_SHA256). A new key makes every user reinstall: restore the old key with scripts/release/gen-android-keystore.sh --restore."
               exit 1
             fi
+            checked=$((checked + 1))
           done
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::no release APK in out/android to check"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
         with:
           name: android-release-apk
           path: |
             out/android/tailbond-*.apk
-            !out/android/tailbond-debug.apk
+            !out/android/tailbond-debug*.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: failure()
@@ -425,7 +439,7 @@ jobs:
           if-no-files-found: error
 
   # The Mac as home server (docs/macos.md "Mac as home server"): job macos's
-  # mqvpn (server mode on a utun, patch 0005) and tailbondd on this runner
+  # mqvpn (server mode on a utun, patch 0006) and tailbondd on this runner
   # with the macOS hooks, a Linux client bonding two paths in the QEMU VM
   # from job macos-e2e-server, a stand-in Tailscale (scripts/e2e-macos-server.sh).
   macos-server:
@@ -789,12 +803,13 @@ jobs:
       # stable names (releases/latest/download/<name>) plus the versioned
       # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
       - name: Collect assets and SHA256SUMS
-        run: scripts/release/collect-assets.sh dist assets
+        # not "assets/": the repo has one (logos), which would end up in the release
+        run: scripts/release/collect-assets.sh dist release-assets
       # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
       # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: assets/*
+          subject-path: release-assets/*
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -813,7 +828,7 @@ jobs:
             notes=(--notes "[security] This release fixes a security issue. Installs on Right away take it without waiting for a quiet moment.")
             echo "security release (a Security: yes trailer since ${prev:-the start})"
           fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "${notes[@]}" --verify-tag "${pre[@]}" assets/*
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "${notes[@]}" --verify-tag "${pre[@]}" release-assets/*
 
   copr:
     name: COPR build (Fedora)

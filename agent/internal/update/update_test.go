@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -179,5 +180,27 @@ func TestLatestAndDownload(t *testing.T) {
 	}
 	if _, err := (Client{API: srv.URL}).Latest(ctx, "other/repo"); err == nil || !strings.Contains(err.Error(), "no release") {
 		t.Fatalf("404: %v", err)
+	}
+}
+
+// GitHub answers 404 on releases/latest both for "no release yet" and for a
+// repository that doesn't exist (or is private): only the first is
+// ErrNoRelease.
+func TestNoReleaseVsNoRepo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/kaovilai/tailbond" {
+			w.Write([]byte(`{"full_name":"kaovilai/tailbond"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	c := Client{API: srv.URL, HTTP: srv.Client()}
+	if _, _, _, err := c.LatestIfChanged(context.Background(), "kaovilai/tailbond", ""); !errors.Is(err, ErrNoRelease) {
+		t.Fatalf("repo with no release: %v", err)
+	}
+	_, _, _, err := c.LatestIfChanged(context.Background(), "kaovilai/tailbnod", "")
+	if err == nil || errors.Is(err, ErrNoRelease) || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("misspelled repo: %v", err)
 	}
 }
