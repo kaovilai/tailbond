@@ -157,6 +157,12 @@ fi
 check "result ok" wait_for 20 upd_is last_result ok
 check "agent log says why" grep -q 'installing it now (policy immediate' "$W/agent.log"
 
+if [ "$FAIL" != 0 ]; then
+  echo "---- agent log (tail) ----"; tail -n 60 "$W/agent.log" 2>/dev/null
+  echo "---- install.env ----"; cat /etc/tailbond/install.env 2>/dev/null
+  echo "---- update-result.json ----"; cat /var/lib/tailbond/update-result.json 2>/dev/null; echo
+  echo "---- install.sh --update logs ----"; tail -n 20 /var/lib/tailbond/update*.log 2>/dev/null
+fi
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
