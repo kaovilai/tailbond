@@ -36,7 +36,7 @@ printf '%s\n' "$TOKEN" >/www/token
 dd if=/dev/urandom of=/www/blob bs=1024 count=2048 2>/dev/null
 cat >/etc/tailbond/tailbond.json <<JSON
 {"role": "server", "mqvpn_bin": "/usr/bin/mqvpn", "state_dir": "/var/lib/tailbond", "hooks_dir": "/usr/lib/tailbond/hooks",
- "listen": "0.0.0.0:8077", "mode": "speed", "disable_tailscale": true,
+ "listen": "0.0.0.0:8077", "mode": "speed",
  "server": {"port": $PORT, "public_addr": "$PUBLIC", "subnet": "10.77.0.0/24", "use_tailscale_cert": false}}
 JSON
 tailbondd -config /etc/tailbond/tailbond.json >/tmp/server.log 2>&1 &

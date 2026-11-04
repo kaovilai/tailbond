@@ -549,6 +549,11 @@ Android's sign-in can't load: turn it off while you sign in, then on again
 
 ## Known limitations
 
+- **One VPN at a time.** Android runs only one VPN app at once, so tailbond
+  can't run next to NetBird, the Tailscale app or another VPN on the same
+  phone. Turning one on turns the other off. On a Mac or a Linux laptop
+  both can run ([macos.md](macos.md#using-tailbond-with-netbird-or-another-work-vpn)).
+
 - **Untested on a device.** No phone or emulator was available while building
   (WSL2 has no KVM, so no emulator). Tested: unit tests, lint, a successful
   debug build. Untested: the tunnel itself, QR scanning, the tile, always-on,

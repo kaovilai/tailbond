@@ -60,6 +60,8 @@ type clientState struct {
 	share *shareState
 	// Use phone hub (phonehub.go)
 	hub *phoneHubState
+	// other VPNs (coexist.go)
+	cx *coexistState
 }
 
 type usageFile struct {
@@ -97,7 +99,9 @@ func (a *Agent) startClient(ctx context.Context) {
 	// writer wins
 	a.initSysProxy()
 	a.restoreSysProxy()
+	a.coexistRestore() // left by a crash: before mqvpn starts
 	go a.phoneHubWatcher(ctx)
+	go a.coexistWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
 	} else if !a.paired() {
@@ -378,12 +382,15 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 		}
 	}
 	dns := p.DNS
-	if cfg.Client.NoDNS {
+	// another VPN here (NetBird, the Tailscale app): mqvpn leaves the
+	// system's DNS alone, tailbondd sets up split DNS (coexist.go)
+	split, mtu := a.coexistPreStart(ctx, cfg)
+	if cfg.Client.NoDNS || split {
 		dns = nil
 	}
 	ini, err := mqconf.Client(mqconf.ClientParams{
 		Server: p.Server, ServerName: p.SNI, Insecure: p.Insecure, Key: p.Key, DNS: dns,
-		Paths: a.pathSpecs(paths), TunName: config.DefaultTunName, MTU: clientMTU(cfg), Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
+		Paths: a.pathSpecs(paths), TunName: config.DefaultTunName, MTU: mtu, Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
 		ManageRoutes: cfg.Client.RoutesManaged(), KillSwitch: cfg.Client.KillSwitch, LogLevel: cfg.LogLevel,
 	})
 	if err != nil {
@@ -566,6 +573,7 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	a.serversView(st, a.workingFrom(st, now))
 	a.shareStatus(st)
 	st.PhoneHub = a.phoneHubStatus()
+	st.Coexist = a.coexistStatus()
 	return st
 }
 

@@ -133,6 +133,14 @@ type Client struct {
 	// leaves outside the tunnel while it runs. Off by default; it also
 	// blocks the LAN, so phones' shares don't work with it on.
 	KillSwitch bool `json:"kill_switch,omitempty"`
+	// Living next to other VPNs (Mac, Linux client; docs/macos.md "Using
+	// tailbond with NetBird"). WorkVPN: the work VPN's own traffic, "direct"
+	// (default: via the physical uplink) or "bonded" (through tailbond).
+	// SplitDNS: split DNS even with no other VPN. Coexist "off": don't look
+	// for other VPNs at all.
+	WorkVPN  string `json:"work_vpn,omitempty"`
+	SplitDNS bool   `json:"split_dns,omitempty"`
+	Coexist  string `json:"coexist,omitempty"`
 }
 
 // ShareConfig: this machine lends Iface's data to hubs on its LAN.
@@ -233,6 +241,20 @@ func (c *Client) LeasesPath() string {
 func (c *Client) CaptiveDetect() bool { return c.CaptivePortalDetect == nil || *c.CaptivePortalDetect }
 
 func (c *Client) RoutesManaged() bool { return c.ManageRoutes == nil || *c.ManageRoutes }
+
+// Work VPN traffic and coexistence switches.
+const (
+	WorkVPNDirect = "direct"
+	WorkVPNBonded = "bonded"
+	CoexistOff    = "off"
+)
+
+func (c *Client) WorkVPNOrDefault() string {
+	if c.WorkVPN == "" {
+		return WorkVPNDirect
+	}
+	return c.WorkVPN
+}
 
 type Config struct {
 	Role       string `json:"role"`
@@ -507,6 +529,16 @@ func (c *Config) Validate() error {
 	}
 	if _, err := c.Client.MarkMask(); err != nil {
 		return err
+	}
+	switch c.Client.WorkVPN {
+	case "", WorkVPNDirect, WorkVPNBonded:
+	default:
+		return fmt.Errorf("client.work_vpn must be direct or bonded, not %q", c.Client.WorkVPN)
+	}
+	switch c.Client.Coexist {
+	case "", CoexistOff:
+	default:
+		return fmt.Errorf("client.coexist must be empty or off, not %q", c.Client.Coexist)
 	}
 	if u := c.Update; u != nil {
 		switch u.Policy {

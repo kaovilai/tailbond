@@ -131,6 +131,38 @@ type Status struct {
 	Platform string `json:"platform,omitempty"`
 	// Client role: phone hubs nearby and the one in use (docs/phone-hub.md).
 	PhoneHub *PhoneHub `json:"phone_hub,omitempty"`
+	// Client role on a Mac or Linux: other VPNs and how tailbond keeps out
+	// of their way (docs/macos.md "Using tailbond with NetBird").
+	Coexist *Coexist `json:"coexist,omitempty"`
+}
+
+// Coexist: other VPNs found, and what tailbond does about them.
+type Coexist struct {
+	// NetBird: what its CLI said (cli false: not installed).
+	NetBird                any              `json:"netbird"`
+	Foreign                []CoexistForeign `json:"foreign"`
+	SplitDNS               bool             `json:"split_dns"`
+	DNSDomains             []string         `json:"dns_domains,omitempty"`
+	TailnetViaTailscaleApp bool             `json:"tailnet_via_tailscale_app"`
+	WorkVPN                string           `json:"work_vpn"`
+	WorkVPNEffective       string           `json:"work_vpn_effective"`
+	WantMTU                int              `json:"want_mtu,omitempty"`
+	TailnetRoutes          int              `json:"tailnet_routes"`
+	DirectRoutes           int              `json:"direct_routes"`
+	Skipped                []string         `json:"skipped,omitempty"`
+	Warnings               []string         `json:"warnings,omitempty"`
+	// Conflicts: something in the routing table steps on another VPN.
+	Conflicts []string `json:"conflicts,omitempty"`
+	Error     string   `json:"error,omitempty"`
+}
+
+// CoexistForeign is another VPN's interface.
+type CoexistForeign struct {
+	Name     string   `json:"name"`
+	Kind     string   `json:"kind"`
+	Iface    string   `json:"iface"`
+	Addrs    []string `json:"addrs,omitempty"`
+	Prefixes []string `json:"prefixes,omitempty"`
 }
 
 // PhoneHub is "Use phone hub": phones sharing their bonded connection as a

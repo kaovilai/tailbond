@@ -35,6 +35,16 @@
 # and killing tailbondd (-9, then starting it as launchd would) put back the
 # original settings.
 #
+# Other VPNs (docs/macos.md "Using tailbond with NetBird"): the real NetBird
+# package, logged out, is detected without fuss; then a NetBird stand-in (a
+# wireguard-go utun owning 100.92.0.0/16, an /etc/resolver/corp.example
+# answered by tb-dnsstub, a `netbird status --json` stub on PATH): no route
+# of tailbond's covers 100.92/16, a tailnet machine inside it is reached by
+# a /32, ts.net resolves via the tunnel while corp.example keeps its own
+# resolver and the global resolver is untouched, NetBird's endpoints route
+# via en0 (Direct), Bonded raises the MTU or falls back, and a disconnect
+# and a killed agent take routes and resolver files away.
+#
 #   MQVPN=out/macos/mqvpn TAILBONDD=out/agent/darwin-arm64/tailbondd \
 #   SHARESIM=out/agent/darwin-arm64/tb-sharesim VM=out/e2e-vm scripts/e2e-macos.sh
 #
@@ -46,13 +56,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MQVPN="${MQVPN:-$ROOT/out/macos/mqvpn}"
 TAILBONDD="${TAILBONDD:-$ROOT/out/agent/darwin-arm64/tailbondd}"
 SHARESIM="${SHARESIM:-$ROOT/out/agent/darwin-arm64/tb-sharesim}"
+DNSSTUB="${DNSSTUB:-$ROOT/out/agent/darwin-arm64/tb-dnsstub}"
 VM="${VM:-$ROOT/out/e2e-vm}"
 API=127.0.0.1:8077   # the hub's dashboard
 SAPI=127.0.0.1:18077 # the server's API, forwarded into the VM
 PORT=4443
 
 if [ "$(id -u)" -ne 0 ]; then
-  exec sudo --preserve-env=KEEP,VERBOSE,PATH MQVPN="$MQVPN" TAILBONDD="$TAILBONDD" SHARESIM="$SHARESIM" VM="$VM" "$0" "$@"
+  exec sudo --preserve-env=KEEP,VERBOSE,PATH MQVPN="$MQVPN" TAILBONDD="$TAILBONDD" SHARESIM="$SHARESIM" DNSSTUB="$DNSSTUB" VM="$VM" "$0" "$@"
 fi
 [ "$(uname -s)" = Darwin ] || { echo "run this on macOS"; exit 2; }
 for f in "$MQVPN" "$TAILBONDD" "$SHARESIM"; do [ -x "$f" ] || { echo "missing $f"; exit 2; }; done
@@ -62,7 +73,7 @@ for c in qemu-system-aarch64 curl jq nc; do command -v "$c" >/dev/null || { echo
 WORK="$(mktemp -d /tmp/tailbond-e2e-macos.XXXXXX)"
 chmod 755 "$WORK"
 PASS=0 FAIL=0
-QEMU_PID="" HUB_PID="" PIXEL_PID="" IPHONE_PID="" PHUB_PID="" SVC=""
+QEMU_PID="" HUB_PID="" PIXEL_PID="" IPHONE_PID="" PHUB_PID="" SVC="" DNS_PID="" WG=""
 say()  { printf '\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS + 1)); }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=$((FAIL + 1)); }
@@ -83,7 +94,9 @@ wait_for() { # wait_for <seconds> <description> <command...>
 cleanup() {
   local rc=$?
   if [ -n "${KEEP:-}" ]; then echo "KEEP set: VM, agents and feth0/feth1 left running; work dir $WORK"; return; fi
-  for p in "$HUB_PID" "$PIXEL_PID" "$IPHONE_PID" "$PHUB_PID"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  for p in "$HUB_PID" "$PIXEL_PID" "$IPHONE_PID" "$PHUB_PID" "$DNS_PID"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  rm -f /etc/resolver/corp.example
+  [ -n "$WG" ] && { rm -f "/var/run/wireguard/$WG.sock"; pkill -f "wireguard-go utun" 2>/dev/null || true; }
   sleep 2
   # never leave the runner's proxy pointing at a dead forwarder
   if [ -n "$SVC" ]; then
@@ -345,6 +358,147 @@ else
 fi
 wait_for 90 "hub connected again" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
   && ok "hub connected again after the restart" || bad "hub not connected after the restart"
+
+say "other VPNs: the real NetBird package, not logged in"
+NB_REAL="$(command -v netbird || ls /opt/homebrew/bin/netbird /usr/local/bin/netbird 2>/dev/null | head -n1 || true)"
+if [ -n "$NB_REAL" ]; then
+  "$NB_REAL" service install >/dev/null 2>&1 || true
+  "$NB_REAL" service start >/dev/null 2>&1 || true
+  sleep 3
+  info "netbird status: $("$NB_REAL" status 2>&1 | head -n 2 | tr '\n' ' ')"
+  if wait_for 60 "coexist sees NetBird" sh -c "curl -fsS -m 3 http://$API/api/coexist | jq -e '.netbird.cli == true'"; then
+    CX="$(hapi "http://$API/api/coexist")"
+    jq -e '.netbird.logged_in == false and ([.foreign[] | select(.kind == "netbird")] | length == 0)' <<<"$CX" >/dev/null \
+      && ok "a logged-out NetBird is seen and left be: $(jq -c '.netbird | {cli, running, logged_in, error}' <<<"$CX")" \
+      || bad "logged-out NetBird: $(jq -c . <<<"$CX")"
+  else
+    bad "NetBird's CLI not seen: $(hapi "http://$API/api/coexist" | jq -c .)"
+  fi
+  hapi "http://$API/api/status" | jq -e '.state == "connected"' >/dev/null && ok "hub still connected" || bad "hub not connected"
+  "$NB_REAL" service stop >/dev/null 2>&1 || true
+  "$NB_REAL" service uninstall >/dev/null 2>&1 || true
+else
+  info "NOTE: the NetBird package isn't installed here (brew install netbirdio/tap/netbird failed): smoke test skipped"
+fi
+
+say "other VPNs: a NetBird stand-in (wireguard-go utun on 100.92.0.0/16, corp.example resolver, netbird CLI stub)"
+WG_TUN_NAME_FILE="$WORK/wg.name" wireguard-go utun >"$WORK/wg.log" 2>&1
+WG="$(cat "$WORK/wg.name" 2>/dev/null)"
+if [ -n "$WG" ] && ifconfig "$WG" inet 100.92.1.2 100.92.1.2 netmask 255.255.0.0 up && route -n add -net 100.92.0.0/16 -interface "$WG" >/dev/null; then
+  ifconfig "$WG" mtu 1280
+  ok "second VPN on $WG: $(netstat -rn -f inet | awk -v w="$WG" '$NF == w {print $1}' | tr '\n' ' ')"
+else
+  bad "can't make a second VPN utun: $(cat "$WORK/wg.log")"
+fi
+"$DNSSTUB" -listen 127.0.0.1:5390 -a corp.example=10.92.0.5 >"$WORK/dnsstub.log" 2>&1 &
+DNS_PID=$!
+mkdir -p /etc/resolver
+printf 'nameserver 127.0.0.1\nport 5390\n' >/etc/resolver/corp.example
+mkdir -p "$WORK/nbstub"
+cat >"$WORK/nbstub/netbird" <<'NB'
+#!/bin/sh
+[ "$1 $2" = "status --json" ] || exit 0
+cat <<'J'
+{"peers":{"total":1,"connected":1,"details":[{"fqdn":"laptop.netbird.cloud","netbirdIp":"100.92.4.9","status":"Connected",
+  "iceCandidateEndpoint":{"local":"192.168.64.2:51820","remote":"203.0.113.50:51820"},"relayAddress":""}]},
+ "management":{"url":"https://192.0.2.10:443","connected":true},"signal":{"url":"https://192.0.2.11:443","connected":true},
+ "relays":{"total":1,"available":1,"details":[{"uri":"rels://198.51.100.77:443","available":true}]},
+ "netbirdIp":"100.92.1.2/16","networks":[],"dnsServers":[{"servers":["127.0.0.1:5390"],"domains":["corp.example"],"enabled":true}]}
+J
+NB
+chmod +x "$WORK/nbstub/netbird"
+# the hub with DNS on, the stub first on PATH
+kill "$HUB_PID" 2>/dev/null; wait "$HUB_PID" 2>/dev/null || true
+jq '.client.no_dns = false' "$WORK/hub/tailbond.json" >"$WORK/hub/tb.tmp" && mv "$WORK/hub/tb.tmp" "$WORK/hub/tailbond.json"
+start_hub() { PATH="$WORK/nbstub:$PATH" "$TAILBONDD" -config "$WORK/hub/tailbond.json" >>"$WORK/hub.log" 2>&1 & HUB_PID=$!; }
+start_hub
+wait_for 90 "hub connected next to the second VPN" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
+  && ok "hub connected" || { bad "hub not connected: $(hapi "http://$API/api/status" | jq -c '{state, error}')"; }
+tbtun() { grep -o 'TUN utun[0-9]* configured' "$WORK/hub.log" | tail -n1 | awk '{print $2}'; }
+TB="$(tbtun)"
+iface_of() { route -n get "$1" 2>/dev/null | awk '/interface:/ {print $2}'; }
+cxj() { hapi "http://$API/api/coexist"; }
+if wait_for 60 "tailnet /32 on tailbond's utun" sh -c "[ \"\$(route -n get 100.92.5.5 2>/dev/null | awk '/interface:/ {print \$2}')\" = '$TB' ]"; then
+  ok "100.92.5.5 (a tailnet machine inside NetBird's /16) via $TB; 100.92.9.9 via $(iface_of 100.92.9.9)"
+else
+  bad "100.92.5.5 via $(iface_of 100.92.5.5), want $TB; coexist $(cxj | jq -c .)"
+fi
+[ "$(iface_of 100.92.9.9)" = "$WG" ] && ok "the rest of 100.92.0.0/16 stays with $WG" || bad "100.92.9.9 via $(iface_of 100.92.9.9)"
+netstat -rn -f inet | awk -v t="$TB" '$NF == t {print $1}' | grep -Eq '^(100\.92/16|100\.64/10|100/8)$' \
+  && bad "a covering route on $TB: $(netstat -rn -f inet | awk -v t="$TB" '$NF == t {print $1}' | tr '\n' ' ')" \
+  || ok "nothing on $TB covers 100.92/16: $(netstat -rn -f inet | awk -v t="$TB" '$NF == t {print $1}' | tr '\n' ' ')"
+cxj | jq -e --arg w "$WG" '.foreign | any(.iface == $w and .kind == "netbird")' >/dev/null && cxj | jq -e '.split_dns and .work_vpn == "direct"' >/dev/null \
+  && ok "API: NetBird on $WG, split DNS, Work VPN traffic Direct" || bad "API: $(cxj | jq -c .)"
+
+say "other VPNs: DNS split, never global"
+wait_for 30 "resolver file" test -f /etc/resolver/ts.net && ok "/etc/resolver/ts.net: $(tr '\n' ' ' </etc/resolver/ts.net)" || bad "no /etc/resolver/ts.net"
+SD="$(scutil --dns)"
+grep -A3 'domain   : ts.net' <<<"$SD" | grep -q 'nameserver\[0\] : 10.77.0.1' && ok "scutil --dns: ts.net → 10.77.0.1" || bad "scutil --dns has no ts.net → 10.77.0.1"
+grep -A4 'domain   : corp.example' <<<"$SD" | grep -q '127.0.0.1' && ok "scutil --dns: corp.example → the other VPN's resolver, untouched" || bad "corp.example resolver gone"
+awk '/^resolver #1/,/^$/' <<<"$SD" | grep -q '10.77.0.1' && bad "the global resolver points at tailbond: $(awk '/^resolver #1/,/^$/' <<<"$SD" | tr '\n' ' ')" \
+  || ok "the global resolver is the Mac's own: $(awk '/^resolver #1/,/^$/' <<<"$SD" | grep nameserver | head -n1 | xargs)"
+dscacheutil -q host -a name app.corp.example | grep -q 'ip_address: 10.92.0.5' && ok "app.corp.example resolves via the other VPN's DNS (10.92.0.5)" \
+  || bad "corp.example: $(dscacheutil -q host -a name app.corp.example | tr '\n' ' '); stub: $(tail -n 2 "$WORK/dnsstub.log" | tr '\n' ' ')"
+tcpdump -n -l -i "$TB" -c 1 udp port 53 >"$WORK/dns.pcap.txt" 2>/dev/null &
+TD=$!
+sleep 1
+dscacheutil -q host -a name build.tail1234.ts.net >/dev/null 2>&1 || true
+sleep 3
+kill "$TD" 2>/dev/null || true
+grep -q '10.77.0.1.53' "$WORK/dns.pcap.txt" && ok "*.ts.net queries go to the tunnel's DNS: $(head -n1 "$WORK/dns.pcap.txt" | cut -c1-120)" \
+  || bad "no ts.net query on $TB: $(cat "$WORK/dns.pcap.txt")"
+grep -Eq '^DNS *=' "$WORK/hub/client.conf" && bad "mqvpn got DNS servers (global DNS)" || ok "mqvpn runs without DNS servers"
+
+say "other VPNs: Work VPN traffic Direct (host routes via en0) and Bonded (the MTU rule)"
+# stand-ins for tailbond's catch-all, for the TEST-NET ranges NetBird's endpoints are in
+for n in 203.0.113.0/24 198.51.100.0/24 192.0.2.0/24; do route -n add -net "$n" -interface "$TB" >/dev/null 2>&1; done
+UP="$(netstat -rn -f inet | awk '$1 == "default" && $NF !~ /^(utun|ppp|ipsec)/ {print $NF; exit}')"
+if wait_for 45 "NetBird's endpoints direct" sh -c "[ \"\$(route -n get 203.0.113.50 | awk '/interface:/ {print \$2}')\" = '$UP' ]"; then
+  ok "Direct: NetBird's endpoints via $UP (203.0.113.50 $(iface_of 203.0.113.50), 198.51.100.77 $(iface_of 198.51.100.77), 192.0.2.10 $(iface_of 192.0.2.10)); 203.0.113.99 via $(iface_of 203.0.113.99)"
+else
+  bad "203.0.113.50 via $(iface_of 203.0.113.50), want $UP; $(cxj | jq -c '{direct_routes, warnings, error}')"
+fi
+hapi -X POST -d '{"work_vpn": "bonded"}' "http://$API/api/coexist" >/dev/null
+if wait_for 90 "Bonded: MTU raised" sh -c "curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"bonded\" and .want_mtu == 1360'" \
+   && wait_for 60 "reconnected" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'"; then
+  TB="$(tbtun)"
+  ifconfig "$TB" | grep -Eq 'mtu 13(52|60)' && ok "Bonded: $TB $(ifconfig "$TB" | grep -o 'mtu [0-9]*') for $WG's 1280 + 80" || bad "Bonded: $TB $(ifconfig "$TB" | grep -o 'mtu [0-9]*')"
+  wait_for 20 "no host route" sh -c "! netstat -rn -f inet | grep -q '^203.0.113.50 '" && ok "Bonded: NetBird's endpoints have no host route via $UP" || bad "host route still there"
+else
+  bad "Bonded: $(cxj | jq -c '{work_vpn_effective, want_mtu, warnings}')"
+fi
+ifconfig "$WG" mtu 1420
+if wait_for 60 "Bonded can't fit" sh -c "curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"direct\" and (.warnings | length) > 0'"; then
+  ok "$WG at 1420 needs 1500: back to Direct, warned: $(cxj | jq -r '.warnings[0]' | cut -c1-100)"
+else
+  bad "no fallback: $(cxj | jq -c '{work_vpn_effective, want_mtu, warnings}')"
+fi
+hapi -X POST -d '{"work_vpn": "direct"}' "http://$API/api/coexist" >/dev/null
+ifconfig "$WG" mtu 1280
+
+say "other VPNs: disconnect, and a killed agent, take routes and resolver files away"
+wait_for 60 "connected" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" || true
+wait_for 30 "resolver back" test -f /etc/resolver/ts.net || true
+hapi -X POST -d '{}' "http://$API/api/disconnect" >/dev/null
+if wait_for 30 "resolver gone" sh -c '! test -f /etc/resolver/ts.net'; then
+  ok "disconnect: /etc/resolver/ts.net and the host routes gone ($(netstat -rn -f inet | grep -c '^203.0.113.50 ') left); corp.example kept: $(test -f /etc/resolver/corp.example && echo yes)"
+else
+  bad "after disconnect: $(ls /etc/resolver)"
+fi
+hapi -X POST -d '{}' "http://$API/api/connect" >/dev/null
+wait_for 90 "connected again" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" || true
+wait_for 45 "resolver back" test -f /etc/resolver/ts.net && ok "connected again: split DNS back" || bad "split DNS not back"
+kill -9 "$HUB_PID"; wait "$HUB_PID" 2>/dev/null || true
+pkill -9 -f "$WORK/hub/client.conf" 2>/dev/null || true
+test -f /etc/resolver/ts.net && ok "after kill -9 the resolver file is still there (nobody to take it away yet)" || bad "resolver file gone before the restart?"
+jq '.client.disconnected = true' "$WORK/hub/tailbond.json" >"$WORK/hub/tb.tmp" && mv "$WORK/hub/tb.tmp" "$WORK/hub/tailbond.json"
+start_hub
+if wait_for 30 "restored at start" grep -q 'took away the routes and resolver files' "$WORK/hub.log"; then
+  ! test -f /etc/resolver/ts.net && ! netstat -rn -f inet | grep -q '^203.0.113.50 ' \
+    && ok "restart after kill -9 took the resolver file and host routes away" || bad "left after restart: $(ls /etc/resolver) $(netstat -rn -f inet | grep '^203.0.113.50 ')"
+else
+  bad "no restore at start: $(tail -n 5 "$WORK/hub.log" | tr '\n' ' ')"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -920,6 +920,71 @@ tailbond lends its whole bonded tunnel to a laptop through a proxy.
   libraries are now built from the patched copy of mqvpn
   (`android/scripts/build-native.sh`).
 
+## Living next to other VPNs
+
+On a Mac or a Linux client (not OpenWrt: a router's tailnet routes, DNS and
+bypass belong to its hooks), `internal/coexist` keeps tailbond out of other
+VPNs' way: NetBird, the Tailscale app, any VPN with its own tunnel
+interface. The user guide is [macos.md](macos.md#using-tailbond-with-netbird-or-another-work-vpn).
+
+- **Detection** (every 5 s; the NetBird CLI and name lookups every 30 s):
+  - `netbird status --json`: address, interface (by address), MTU, match
+    domains, endpoints (ICE remote candidates, relays, signal, management);
+  - the routing table (`netstat -rn`, `ip route`);
+  - the interfaces;
+  - `tailscale status` when Tailscale isn't disabled.
+  - Another VPN is a tunnel-like interface (utun, wt, tailscale, tun, wg,
+    ipsec, ppp, zt) other than tailbond's, with routes or addresses outside
+    link-local. One owning 100.64.0.0/10 or fd7a:115c:a1e0::/48, or holding
+    a /32 in 100.64/10, is Tailscale.
+- **Route ownership rules** (`coexist.Make`, pure):
+  - Tailnet machines get host routes (/32, /128) on tailbond's tunnel, from
+    the home server's `GET /api/peers` (refreshed every minute). None at all
+    while the Tailscale app runs.
+  - The tunnel subnet is routed too.
+  - Never a prefix that equals or covers a route another interface owns;
+    never another VPN's own address.
+  - The catch-alls `0/1` and `128/1` don't count as covering: any VPN's own
+    routes are more specific.
+  - A tailbond route found covering another VPN's is reported as a conflict
+    (dashboard health).
+- **Split DNS.** With another VPN present (or `client.split_dns`), mqvpn
+  starts without DNS servers, so it never sets the global resolver.
+  tailbondd points `ts.net` and the tailnet's suffix (when not under ts.net)
+  at the tunnel's DNS:
+  - macOS: `/etc/resolver/<domain>` files with a marker line, and files
+    without the marker are left alone;
+  - Linux: `resolvectl dns|domain ~ts.net|default-route false` on the
+    tunnel link only.
+  - Another VPN appearing or going away restarts mqvpn with or without DNS.
+- **Work VPN traffic** (`client.work_vpn`):
+  - `direct`: the endpoints get host routes via the uplink's gateway
+    (on-link LAN addresses excepted).
+  - `bonded`: the tunnel MTU must be at least the work VPN's MTU +
+    `BondedOverhead` (80). tailbond raises it (and restarts mqvpn) when
+    `uplink MTU - 100` allows, else it warns and uses `direct`.
+- **Kill switch.**
+  - macOS: a pf anchor `com.apple/249.tailbond` with quick passes for the
+    other VPNs' interfaces and the endpoints. pf evaluates `com.apple`
+    anchors in name order, so it comes before mqvpn's `250.mqvpn` block.
+  - Linux: `iptables -I OUTPUT … -m comment --comment tailbond-coexist -j
+    ACCEPT`.
+- **Bypass rules** of kind `ip` and `domain` with target `direct` become
+  host or network routes via the uplink (domains resolved).
+- **Restore record.** `state_dir/coexist.json` lists every route, resolver
+  domain and allowance before anything is added. Changes are applied as a
+  diff. A disconnect, a stop, and the next start after a crash (before mqvpn
+  starts) take everything away.
+- **API.**
+  - `GET /api/coexist`, and `coexist` in `/api/status`: `netbird`,
+    `foreign[]`, `split_dns`, `dns_domains`, `tailnet_via_tailscale_app`,
+    `work_vpn`, `work_vpn_effective`, `want_mtu`, `tailnet_routes`,
+    `direct_routes`, `skipped`, `warnings`, `conflicts`.
+  - `POST /api/coexist {"work_vpn", "split_dns"}`.
+- **Android** can't run two VPN apps at once (Android allows one VPN), so
+  this doesn't apply there. **Routers** aren't affected: their LAN devices
+  run their own VPNs.
+
 ## Captive portals
 
 Client role (travel router). Each usable WAN is checked for a sign-in page;

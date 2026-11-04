@@ -80,6 +80,8 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/phone-hub", a.hPhoneHub)
 	mux.HandleFunc("POST /api/phone-hub", a.hPhoneHub)
 	mux.HandleFunc("GET /proxy.pac", a.hProxyPAC)
+	mux.HandleFunc("GET /api/coexist", a.hCoexist)
+	mux.HandleFunc("POST /api/coexist", a.hCoexist)
 	// Updates, the update mirror, backups (docs/architecture.md)
 	mux.HandleFunc("GET /api/update", a.hUpdateGet)
 	mux.HandleFunc("POST /api/update/check", a.hUpdateCheck)

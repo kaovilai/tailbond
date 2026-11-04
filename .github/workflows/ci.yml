@@ -353,6 +353,7 @@ jobs:
         run: |
           agent/build.sh darwin/arm64
           (cd agent && CGO_ENABLED=0 go build -trimpath -o ../out/agent/darwin-arm64/tb-sharesim ./cmd/tb-sharesim)
+          (cd agent && CGO_ENABLED=0 go build -trimpath -o ../out/agent/darwin-arm64/tb-dnsstub ./cmd/tb-dnsstub)
       - uses: actions/upload-artifact@v7
         with:
           name: macos-arm64
@@ -364,8 +365,11 @@ jobs:
         with:
           name: macos-e2e-server
           path: out/e2e-vm/
-      - name: QEMU (the e2e server VM)
-        run: brew install qemu
+      - name: QEMU (the e2e server VM), wireguard-go (a second VPN's utun)
+        run: brew install qemu wireguard-go
+      # the real NetBird package, for a logged-out smoke test (no account)
+      - name: NetBird (not logged in)
+        run: brew install netbirdio/tap/netbird || echo "::warning::brew install netbirdio/tap/netbird failed; the e2e notes it"
       - name: e2e-macos (hub on this Mac, 2 phone shares, server in a VM)
         run: scripts/e2e-macos.sh
       - uses: actions/upload-artifact@v7

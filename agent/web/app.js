@@ -335,6 +335,7 @@ function renderClientPaths(st) {
   renderLocalHead(st);
   renderShares(st);
   renderPhoneHub(st);
+  renderCoexist(st);
   const empty = $('#paths-empty');
   if (!els.length) {
     const hub = st.phone_hub && st.phone_hub.using;
@@ -466,6 +467,42 @@ function renderPhoneHub(st) {
       kids.push(h('p', { class: 'muted small', text: 'Not found? A VPN with a kill switch can block local devices: allow local network access in it.' }), again);
     }
   }
+  box.replaceChildren(...kids);
+}
+
+// Other VPNs on this machine (docs/macos.md "Using tailbond with NetBird"):
+// what was found, that tailbond leaves its addresses and DNS alone, and the
+// work VPN's own traffic (Direct / Bonded).
+function renderCoexist(st) {
+  const box = $('#coexist');
+  if (!box) return;
+  const cx = st.coexist;
+  const nb = cx && cx.netbird || {};
+  const others = (cx && cx.foreign) || [];
+  const show = st.role === 'client' && cx && (others.length || nb.cli || (cx.conflicts || []).length);
+  box.classList.toggle('hidden', !show);
+  if (!show || box.contains(document.activeElement)) return;
+  const kids = [h('h3', { text: 'Other VPNs on this ' + (st.platform === 'darwin' ? 'Mac' : 'machine') })];
+  for (const c of cx.conflicts || []) kids.push(h('div', { class: 'banner', text: `Conflict: ${c}. tailbond won't add routes like this; turn tailbond off and on to clear it.` }));
+  for (const w of cx.warnings || []) kids.push(h('div', { class: 'banner warn', text: w }));
+  const nbOn = others.some((f) => f.kind === 'netbird');
+  if (nbOn) {
+    const f = others.find((x) => x.kind === 'netbird');
+    kids.push(h('p', {}, h('b', { text: 'NetBird detected (work VPN): ' }), `its addresses and DNS are left alone (${f.iface}${nb.addr ? ', ' + nb.addr : ''}).`));
+    const seg2 = seg([['direct', 'Direct'], ['bonded', 'Bonded']], cx.work_vpn, async (v) => {
+      try { await api('POST', '/api/coexist', { work_vpn: v }); toast('Saved'); pollOnce(); } catch (e) { toast(e.message, true); }
+    }, 'Work VPN traffic');
+    kids.push(h('div', { class: 'row ub-seg-row' }, h('span', { class: 'small', text: 'Work VPN traffic' }), seg2));
+    kids.push(h('p', { class: 'muted small', text: cx.work_vpn_effective === 'bonded'
+      ? `Bonded: NetBird's own traffic goes through tailbond's bonded tunnel${cx.want_mtu ? ` (tailbond's MTU raised to ${cx.want_mtu} to fit it)` : ''}.`
+      : "Direct: NetBird's own traffic (to its peers, relays and servers) goes straight out over this machine's connection, not bonded. The most compatible choice." }));
+  } else if (nb.cli) {
+    kids.push(h('p', { class: 'muted small', text: `NetBird is installed${nb.error ? ` (${nb.error})` : ''}. When it's connected, tailbond leaves its addresses and DNS alone.` }));
+  }
+  if (cx.tailnet_via_tailscale_app) kids.push(h('p', { class: 'small', text: 'The Tailscale app is running: it reaches your tailnet machines itself, so tailbond doesn\'t route them.' }));
+  for (const f of others.filter((x) => x.kind === 'vpn')) kids.push(h('p', { class: 'muted small', text: `Another VPN on ${f.iface}${f.prefixes && f.prefixes.length ? ` (${f.prefixes.slice(0, 3).join(', ')})` : ''}: its routes are left alone.` }));
+  if (cx.split_dns) kids.push(h('p', { class: 'muted small', text: `DNS: only tailnet names (${(cx.dns_domains || ['ts.net']).join(', ')}) go to tailbond; everything else keeps this machine's DNS.` }));
+  kids.push(h('p', { class: 'muted small', text: `${cx.tailnet_routes} tailnet route(s) and ${cx.direct_routes} direct route(s) in place.` }));
   box.replaceChildren(...kids);
 }
 

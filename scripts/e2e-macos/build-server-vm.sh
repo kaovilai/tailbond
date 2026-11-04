@@ -64,7 +64,24 @@ install -m 0755 "$MQVPN" "$OUT/root/usr/bin/mqvpn"
 install -m 0755 "$TAILBONDD" "$OUT/root/usr/bin/tailbondd"
 install -m 0755 "$ROOT/scripts/e2e-macos/vm-init.sh" "$OUT/root/init"
 # no Tailscale in the VM: the server role checks it and carries on
-printf '#!/bin/sh\n[ "$1" = status ] && echo '"'"'{"BackendState":"Stopped"}'"'"'\nexit 1\n' >"$OUT/root/usr/bin/tailscale"
+# a fake tailscale CLI: the server's tailnet for GET /api/peers. "build"
+# sits inside the simulated NetBird range on the Mac (100.92.0.0/16), so the
+# hub must reach it by a /32 (scripts/e2e-macos.sh, other VPNs).
+cat >"$OUT/root/usr/bin/tailscale" <<'TS'
+#!/bin/sh
+case "$1" in
+status) cat <<'J'
+{"BackendState":"Running","MagicDNSSuffix":"tail1234.ts.net","CurrentTailnet":{"Name":"alex@example.com"},
+ "Self":{"HostName":"homebox","DNSName":"homebox.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.1.1"],"Online":true},
+ "Peer":{"n1":{"HostName":"nas","DNSName":"nas.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.101.2.2"],"Online":true},
+         "n2":{"HostName":"build","DNSName":"build.tail1234.ts.net.","OS":"linux","TailscaleIPs":["100.92.5.5"],"Online":true}}}
+J
+;;
+debug) echo '{"AdvertiseRoutes":[]}' ;;
+cert|whois) echo "not in this test" >&2; exit 1 ;;
+*) exit 0 ;;
+esac
+TS
 chmod 0755 "$OUT/root/usr/bin/tailscale"
 (cd "$OUT/root" && find . | LC_ALL=C sort | cpio -o -H newc --quiet -R 0:0 | gzip -9) >"$OUT/initramfs.gz"
 rm -rf "$OUT/root"

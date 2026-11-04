@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kaovilai/tailbond/agent/internal/coexist"
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/glrepeater"
 	"github.com/kaovilai/tailbond/agent/internal/hooks"
@@ -83,7 +84,11 @@ type Agent struct {
 	hubRouters func(context.Context) []hubCand
 	hubLocal   string
 	hubRecheck []time.Duration
-	dl         dlState // the phone page's downloads: checksums, the macOS bundle fetch
+	// other VPNs (coexist.go): test hooks for commands and /etc/resolver
+	cxRun         coexist.Runner
+	cxResolverDir string
+	cxIfaces      func() map[string][]netip.Prefix
+	dl            dlState // the phone page's downloads: checksums, the macOS bundle fetch
 	// landingUp: the phone landing page listens on a Tailscale IP.
 	landingUp atomic.Bool
 	// glRead reads GL firmware's repeater portal state (tests stub it).
@@ -242,6 +247,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			if a.client != nil {
 				a.clearBypass()
 				a.stopHub("")
+				a.coexistRestore()
 			}
 			return nil
 		case err := <-srvErr:
@@ -255,6 +261,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			if a.client != nil {
 				a.clearBypass()
 				a.stopHub("")
+				a.coexistRestore()
 			}
 			return ErrRestart
 		case <-t.C:

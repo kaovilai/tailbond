@@ -157,6 +157,70 @@ to the phone with a password derived from your home server's share key.
 - Only apps that follow the system proxy go through the phone, and only
   TCP traffic does: browsers yes, video calls and games no.
 
+## Using tailbond with NetBird (or another work VPN)
+
+tailbond and a work VPN can both be on: NetBird, the Tailscale app, or any
+other VPN with its own utun. tailbond never touches their addresses, routes
+or DNS. The dashboard says what it found, for example: *NetBird detected
+(work VPN): its addresses and DNS are left alone · Work VPN traffic:
+Direct*. It warns if something in the routing table steps on another VPN.
+
+How tailbond stays out of the way:
+
+- **Addresses.** NetBird's peers live in 100.64.0.0/10, like Tailscale's
+  (often a /16 such as 100.92.0.0/16).
+  - tailbond reaches your tailnet machines by host routes to their actual
+    addresses: a /32 or /128 per machine from your home server's machine
+    list, refreshed as it changes. It also routes its own tunnel subnet.
+  - It never adds a route that equals or covers a route another VPN's
+    interface owns, and never one to another VPN's own address.
+  - A tailnet machine whose address falls inside NetBird's range still
+    works: only that one address goes to tailbond.
+  - tailbond's catch-all routes (`0/1`, `128/1`) are less specific than any
+    VPN's own routes, so those keep winning.
+- **The Tailscale app.** If it is running on the Mac, tailbond routes no
+  tailnet machines at all: Tailscale reaches them itself. The dashboard
+  says so.
+- **DNS.** With another VPN present, tailbond never sets the Mac's global
+  DNS servers. Instead it uses split DNS:
+  - it writes `/etc/resolver/ts.net` (and one for your tailnet's own suffix
+    when that isn't under ts.net), pointing at the tunnel's DNS;
+  - every other name keeps the Mac's DNS, NetBird's match domains included;
+  - the files are removed on disconnect, and after a crash at the next
+    start (from a restore record);
+  - a resolver file tailbond didn't write is never touched.
+- **Work VPN traffic** (NetBird's own WireGuard UDP to its peers, relays,
+  signal and management servers). Choose on the dashboard's *Other VPNs*
+  card, or with `POST /api/coexist {"work_vpn": "direct"|"bonded"}`:
+  - **Direct** (default): tailbond adds host routes for those endpoints via
+    the physical uplink (en0 …), from `netbird status --json`, resolved and
+    refreshed. This is the most compatible choice, but work traffic isn't
+    bonded: it uses whatever connection the Mac is on.
+  - **Bonded**: NetBird's traffic rides tailbond's bonded tunnel. For that,
+    tailbond's tunnel MTU must be at least NetBird's interface MTU + 80, so
+    tailbond raises its own MTU (and reconnects) when the uplink leaves room:
+    the uplink's MTU minus tailbond's 100 bytes of overhead. If it can't,
+    the card shows a warning and tailbond uses Direct.
+- **Kill switch.** With `client.kill_switch` on, tailbond allows NetBird's
+  interface and (in Direct mode) its endpoints. This is the pf anchor
+  `com.apple/249.tailbond`, evaluated before tailbond's own block.
+- **Bypass rules.** IP-range and domain rules with the target *direct*
+  always go straight out via the uplink, like the travel router's bypass
+  feature: corporate ranges, work domains. Domains are resolved and kept as
+  host routes.
+
+Detection uses `netbird status --json` when the NetBird CLI is installed (a
+logged-out NetBird is fine: it's simply not in the way yet). Without the
+CLI, tailbond looks at which utun interfaces own which routes.
+`"client": {"coexist": "off"}` turns all of this off; `"split_dns": true`
+uses split DNS even with no other VPN.
+
+**Not tested with a real NetBird login.** The CI uses a NetBird stand-in
+(a wireguard-go utun on 100.92.0.0/16, a resolver for `corp.example`, a
+`netbird status --json` stub) and the real NetBird package logged out.
+Also not tested: NetBird's routed networks (its "networks"), its DNS route
+management, or a real kill-switch session next to it.
+
 ## Hotel Wi-Fi that keeps devices apart
 
 Many hotel and café networks block devices from talking to each other
