@@ -40,7 +40,7 @@ func (a *Agent) hUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	a.upd.mu.Lock()
 	rel := a.upd.rel
 	a.upd.mu.Unlock()
-	if rel == nil || !update.Newer(rel.Version, a.opts.Version) {
+	if rel == nil || !(update.Newer(rel.Version, a.opts.Version) || !isRelease(a.opts.Version)) {
 		httpErr(w, http.StatusConflict, errors.New("no newer release found: check first"))
 		return
 	}

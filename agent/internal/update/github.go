@@ -171,6 +171,10 @@ func (c Client) http() *http.Client {
 // resource unchanged.
 var errNotModified = errors.New("not modified")
 
+// ErrNoRelease: the repository has no published release yet. A check that
+// gets it worked; there's just nothing to install.
+var ErrNoRelease = errors.New("no release yet")
+
 func (c Client) get(ctx context.Context, u string, api bool, w io.Writer, max int64) error {
 	_, err := c.getETag(ctx, u, api, "", w, max)
 	return err
@@ -208,7 +212,7 @@ func (c Client) getETag(ctx context.Context, u string, api bool, etag string, w 
 	case resp.StatusCode == http.StatusNotModified && etag != "":
 		return etag, errNotModified
 	case resp.StatusCode == http.StatusNotFound && api:
-		return "", errors.New("no release yet")
+		return "", ErrNoRelease
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
 		return "", fmt.Errorf("GitHub said HTTP %d (rate limit?)", resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
@@ -247,11 +251,30 @@ func (c Client) LatestIfChanged(ctx context.Context, repo, etag string) (rel *Re
 	if errors.Is(err, errNotModified) {
 		return nil, etag, true, nil
 	}
+	if errors.Is(err, ErrNoRelease) {
+		err = c.noReleaseOrNoRepo(ctx, repo)
+	}
 	if err != nil {
 		return nil, "", false, err
 	}
 	rel, err = ParseRelease(b.Bytes())
 	return rel, newETag, false, err
+}
+
+// noReleaseOrNoRepo: GitHub answers 404 on releases/latest both when the
+// repository has no release and when the repository doesn't exist or is
+// private. Asking for the repository itself tells them apart.
+func (c Client) noReleaseOrNoRepo(ctx context.Context, repo string) error {
+	var b bytes.Buffer
+	_, err := c.getETag(ctx, c.api()+"/repos/"+repo, true, "", &b, 1<<20)
+	switch {
+	case err == nil:
+		return ErrNoRelease
+	case errors.Is(err, ErrNoRelease): // 404 on the repository itself
+		return fmt.Errorf("repository %s not found on GitHub (check the name; private repositories can't be used)", repo)
+	default:
+		return err
+	}
 }
 
 // Tag asks GET /repos/<repo>/releases/tags/<tag>.

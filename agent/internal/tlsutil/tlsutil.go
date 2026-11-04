@@ -93,8 +93,9 @@ func Fingerprint(der []byte) string {
 var ErrPinMismatch = errors.New("server certificate does not match the pinned SHA-256")
 
 // CheckPin performs a QUIC handshake with the mqvpn server (ALPN h3) and
-// compares its leaf certificate with pin. mqvpn itself runs with
-// Insecure=true in that case, so this is what enforces the pin.
+// compares its leaf certificate with pin. It is an early, readable check
+// only: mqvpn itself is given the pin (CertSHA256) and enforces it on every
+// handshake of the tunnel.
 func CheckPin(ctx context.Context, addr, sni, pin string) error {
 	pin = strings.ToLower(strings.ReplaceAll(pin, ":", ""))
 	var got string
