@@ -11,15 +11,15 @@ Every component below MUST follow this document. Change it here first.
 | Component | Path | Runs on | Role |
 |---|---|---|---|
 | `tailbondd` agent + web UI | `agent/` (Go, UI embedded) | Fedora (x86_64/aarch64), GL.iNet (aarch64 musl), macOS (arm64) | supervises mqvpn, serves dashboard + API, Tailscale glue |
-| mqvpn patches | `patches/mqvpn/*.patch` | all | client-side control API, relay paths, their macOS wiring (see below) |
+| mqvpn patches | `patches/mqvpn/*.patch` | all | client-side control API, relay paths, their macOS wiring, server mode on macOS (see below) |
 | Fedora package | `packaging/fedora/` | Fedora 43+ | RPM: `tailbond-server` (mqvpn + tailbondd + units + firewalld service) |
 | OpenWrt / GL.iNet package | `packaging/openwrt/` | Flint 3 (GL-BE9300), Slate 7 (GL-BE3600), any aarch64_cortex-a53 OpenWrt | `.ipk` with static musl mqvpn + tailbondd, init.d, UCI, GL admin panel (VPN → tailbond: oui view + `/rpc` Lua object, [glinet.md](glinet.md)) |
 | Android app | `android/` | Android 8+ arm64 | fork of mqvpn's Android app, rebranded `dev.tailbond.app` |
-| macOS client | `packaging/macos/` | Apple silicon Macs | the hub on a laptop: LaunchDaemon, `install.sh`, Homebrew formula, darwin hooks ([macos.md](macos.md)) |
+| macOS client and server | `packaging/macos/` | Apple silicon Macs | the hub on a laptop, or the home server (`install.sh --role server`: forwarding, pf NAT/firewall anchor, power assertion in the darwin `server-up`/`server-down` hooks, [macos.md](macos.md#mac-as-home-server)): LaunchDaemon, `install.sh`, Homebrew formula (hub) |
 | Generic Linux server bundle | `packaging/linux/` (+ Ansible role `packaging/ansible/roles/tailbond/`) | Debian/Ubuntu, Alma/RHEL/Rocky 9–10, Fedora; x86_64 | static mqvpn + tailbondd, `install.sh` (ports, subnet, firewall, systemd memory limits), for a VPS server ([vps.md](vps.md)) |
 
 Roles of `tailbondd` (`--role` / config `role`):
-- `server`: home endpoint (Fedora box or Flint 3). Runs `mqvpn --mode server`.
+- `server`: home endpoint (Fedora box, Flint 3 or a Mac). Runs `mqvpn --mode server`.
 - `client`: travel router (Slate 7), Linux laptop or Mac. Runs `mqvpn --mode client` over all WANs; routes LAN through the tunnel (router) or the machine's own traffic (laptop, Mac: mqvpn's `manage_routes`).
 
 ## Network layout (defaults)
@@ -92,13 +92,15 @@ Upstream mqvpn only serves the control API in server mode. `patches/mqvpn/0001-c
 
 `patches/mqvpn/0003-darwin-client-control-and-relay-paths.patch` (on top of 0001 and 0002) does the same on macOS: the Darwin CLI compiles the same `control_socket.c` (plain POSIX + libevent; it stays in `src/platform/linux/`, a move to `posix/` being a pure rename) and serves the client API (no RX offload counters there), and a relay path (`NAME@HOST:PORT`) is wired into `platform_darwin.c`: its socket is not `IP_BOUND_IF`-pinned and is routed normally, and the route monitor, the reactivate re-pin and the scoped server pins (`#F1`) skip it, since its name is not an interface. Interface paths are unchanged. `test_control_socket` joins mqvpn's Darwin ctest set, which already runs the relay bind tests (`test_bind_posix_socket`).
 
+`patches/mqvpn/0006-darwin-server-mode.patch` builds `--mode server` on macOS (`src/platform/darwin/server_darwin.c`): a trimmed twin of the Linux server loop over a utun (the kernel picks the unit, logged as `TUN utunN configured: …` like Linux), the client subnets routed to it with `route -interface`, the same control API, and the hybrid TCP lane's server-side egress (built on macOS too, with the same egress fd registry as Linux); no TUN offloads or UDP GSO/GRO. Forwarding, NAT and the firewall stay with the platform hook, as on Linux.
+
 ## mqvpn certificate pin (patch)
 
 `patches/mqvpn/0005-cli-cert-pin.patch` adds `--cert-sha256 HEX` / `[Server] CertSHA256` (JSON `cert_sha256`) to the mqvpn CLI (Linux, macOS, Windows): 64 hex digits, any case, `:` separators allowed; malformed is a startup error. The shared CLI→library config bridge installs a verifier with `mqvpn_config_set_cert_verifier` that accepts only a chain whose leaf certificate (DER) hashes to the pin (constant-time compare; no chain or hostname check, the pin is the identity, as in the Android app's `jni_cert_verify`), and turns `insecure` off, since the library lets `insecure` override any verifier. libmqvpn calls the verifier in every handshake. Tests: mqvpn's `test_cert_pin` and `test_config_bridge`, `scripts/e2e-cert-pin.sh` (a server swapped for one with another self-signed certificate at the same address while the client is connected: no tunnel, and the impostor never sees the key), and a wrong-pin check in `scripts/e2e-macos.sh`.
 
 ## tailbondd HTTP API (served on `:8077`, UI at `/`)
 
-Auth: if `ui_password` is set, a session cookie from `POST /api/login {"password"}`. Without one (server role), requests from tailnet addresses get the admin API only when `tailscale whois` puts the device under the server's owner (the login of `tailscale status` Self's user; none for a tagged machine) or a login in `approvers`; others get 403 `{"ok":false,"error":"owner only","owner":"<allowed logins>"}`. Loopback and other sources, the phone page and the pair-request endpoints are unaffected; a tagged server with no `approvers` keeps the old rule (anyone who can reach it). `POST /api/settings` also takes `approvers` (list of logins); `GET` reports `owner` and `approvers`. Pair-request replies (to the requester) additionally carry `device`, `user`, `ip`: how the approval card shows it. Server role binds `127.0.0.1` plus the Tailscale IP by default (or the configured `listen` host), and always also its tunnel IP (`10.77.0.1:8077`, bound once `tb0` has it) unless `listen` is a wildcard. Client role binds the LAN.
+Auth: if `ui_password` is set, a session cookie from `POST /api/login {"password"}`. Without one (server role), requests from tailnet addresses get the admin API only when `tailscale whois` puts the device under the server's owner (the login of `tailscale status` Self's user; none for a tagged machine) or a login in `approvers`; others get 403 `{"ok":false,"error":"owner only","owner":"<allowed logins>"}`. Loopback and other sources, the phone page and the pair-request endpoints are unaffected; a tagged server with no `approvers` keeps the old rule (anyone who can reach it). `POST /api/settings` also takes `approvers` (list of logins); `GET` reports `owner` and `approvers`. Pair-request replies (to the requester) additionally carry `device`, `user`, `ip`: how the approval card shows it. Server role binds `127.0.0.1` plus the Tailscale IP by default (or the configured `listen` host), and always also its tunnel IP (`10.77.0.1:8077`, bound once `tb0` has it) unless `listen` is a wildcard; a listener on a Tailscale or the tunnel address (the phone page's included) answers only loopback, tailnet and tunnel-subnet sources (403 otherwise), whatever the firewall does. Client role binds the LAN.
 
 Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come from bonded clients. There the agent serves **only** `GET /api/peers` with a client API token (below); everything else is 404, with or without `ui_password`.
 
@@ -302,7 +304,7 @@ One single-page app (vanilla JS + SVG, no build step, embedded with `go:embed`),
 
 | Hook | When | Args / env |
 |---|---|---|
-| `server-up` | after mqvpn server starts | env `TB_TUN`, `TB_SUBNET`, `TB_SUBNET6`, `TB_PORT`, `TB_DNS_IP`, `TB_WEB_PORTS` (additive: the tcp ports the agent serves to the tailnet, dashboard then phone page, e.g. `8077 80`), `TB_ADVERTISE_ROUTE` (additive: `0` when `server.no_advertise_route` is set) |
+| `server-up` | after mqvpn server starts | env `TB_TUN`, `TB_SUBNET`, `TB_SUBNET6`, `TB_PORT`, `TB_DNS_IP`, `TB_WEB_PORTS` (additive: the tcp ports the agent serves to the tailnet, dashboard then phone page, e.g. `8077 80`), `TB_ADVERTISE_ROUTE` (additive: `0` when `server.no_advertise_route` or `disable_tailscale` is set), `TB_TAILSCALE` (additive: `0` with `disable_tailscale`: leave Tailscale alone), `TB_REFRESH` (additive, macOS: `1` when the agent runs it again because Tailscale came up or changed interface; the hooks run one at a time) |
 | `server-down` | after mqvpn server stops | same |
 | `client-up` | tunnel connected | env `TB_TUN`, `TB_TUNNEL_IP`, `TB_SERVER_IP`, `TB_TAILNET_ROUTES`; additive: `TB_SERVER_NAME`, `TB_SUBNET` (the active server's tunnel subnet), `TB_DNS_IP` (its tunnel DNS, `""` when it has none) |
 | `client-down` | tunnel down | the env `client-up` got for that tunnel (a server switch tears down the old server's routes, then brings up the new one's); `TB_RELEASE=1` when the user turned tailbond off or unpaired (the LAN goes back to the WANs whatever the kill switch says); additive: `TB_SWITCH=1` when another server is about to take over |

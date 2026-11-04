@@ -30,7 +30,7 @@ The server image (amd64, arm64) is CI-tested in Podman, Docker Compose and a kin
 
 **Speedify-style bonding to your own server:** tailbond joins Wi-Fi, mobile data, Ethernet and nearby phones into one faster, steadier tunnel to a server you run, with your [Tailscale](https://tailscale.com) tailnet reachable through it.
 
-> **Status: early.** Every part is built and tested in CI: unit tests, network-namespace end-to-end tests, an OpenWrt install test in a container, an Android emulator test, a macOS runner test against a Linux server VM, and simulated user testing. On real hardware, only the **GL.iNet Flint 3 as a home server** has run so far; travel routers, phones, Macs and VPSes have not. Expect rough edges and please [file issues](https://github.com/kaovilai/tailbond/issues/new/choose).
+> **Status: early.** Every part is built and tested in CI: unit tests, network-namespace end-to-end tests, an OpenWrt install test in a container, an Android emulator test, macOS runner tests with the Mac as hub (against a Linux server VM) and as server (with a Linux client VM), and simulated user testing. On real hardware, only the **GL.iNet Flint 3 as a home server** has run so far; travel routers, phones, Macs and VPSes have not. Expect rough edges and please [file issues](https://github.com/kaovilai/tailbond/issues/new/choose).
 
 ## How it works
 
@@ -69,6 +69,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 - **Bypass rules (router):** chosen websites, devices, addresses or ports go direct or through one chosen link.
 - **Hotel Wi-Fi:** captive-portal detection and sign-in that works with GL.iNet's own repeater Login Mode.
 - **[Pair & Share](docs/pair-and-share.md):** Android phones and iPhones (the free-signed tailbond Share app) lend their mobile data over Wi-Fi to the hub, which bonds it with its own links.
+- **[Mac as the home server](docs/macos.md#mac-as-home-server):** a Mac that stays at home ends the bonded tunnel, NATs to the internet and your tailnet with its own firewall (pf), and keeps itself awake while serving.
 - **[Mac as the hub](docs/macos.md):** a MacBook bonds its Wi-Fi, an Ethernet or USB-C adapter, an iPhone over USB and nearby phones' shares; a [menu bar app](docs/macos.md#menu-bar) shows the links, other VPNs and updates.
 - **[Next to a work VPN](docs/macos.md#using-tailbond-with-netbird-or-another-work-vpn)** (Mac, Linux client): NetBird, the Tailscale app or another VPN keep their addresses and DNS. tailbond routes only tailnet machines' own addresses and uses split DNS; the work VPN's traffic goes Direct or Bonded.
 - **[Phone hub](docs/phone-hub.md):**
@@ -91,6 +92,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 | Container: Docker, Podman, Kubernetes | Home or backup server | [Deploy](docs/deploy.md) (`ghcr.io/kaovilai/tailbond`) | CI-tested (Podman, kind) |
 | GL.iNet Slate 7 (GL-BE3600), OpenWrt 23.05+ aarch64 | Travel router (hub) | [GL.iNet](docs/glinet.md) | CI-tested |
 | macOS (Apple silicon) | Hub | [macOS](docs/macos.md) (`install.sh`, Homebrew) | CI-tested |
+| macOS (Apple silicon) | Home server | [Mac as home server](docs/macos.md#mac-as-home-server) (`install.sh --role server`) | CI-tested (runner + Linux client VM; not on a real Mac or with a real Tailscale) |
 | Linux laptop | Hub | [VPS guide, `--client`](docs/vps.md#a-linux-laptop-instead-client-role) | CI-tested |
 | Android 8+ | Phone (bonds itself) and sharer | [Android](docs/android.md) | CI-tested (emulator) |
 | iPhone (iOS 16+) | Sharer (tailbond Share) | [iOS](docs/ios.md) | CI-tested (simulator) |
@@ -101,7 +103,7 @@ More: [coming from Tailscale](docs/coming-from-tailscale.md) · [setup tips for 
 
 ## Quick start
 
-1. **Home server:** install on a Fedora box (`sudo dnf copr enable kaovilai/tailbond && sudo dnf install tailbond-server`), a GL.iNet Flint 3 ([GL.iNet](docs/glinet.md)) or a VPS ([VPS](docs/vps.md)), with Tailscale on.
+1. **Home server:** install on a Fedora box (`sudo dnf copr enable kaovilai/tailbond && sudo dnf install tailbond-server`), a GL.iNet Flint 3 ([GL.iNet](docs/glinet.md)), a Mac that stays at home ([Mac as home server](docs/macos.md#mac-as-home-server)) or a VPS ([VPS](docs/vps.md)), with Tailscale on.
 2. **Each device:** with Tailscale on, open **`homebox/`** (your server's Tailscale name, with the slash) in its browser. The "Get tailbond" page has the app or installer and the steps for that device.
 3. **Approve** it on the server's page (`http://homebox:8077`). It connects and bonds whatever links it has.
 
@@ -123,7 +125,10 @@ android/scripts/setup-sdk.sh && android/scripts/build-apk.sh            # Androi
 scripts/build-mqvpn-macos.sh && agent/build.sh darwin/arm64 && packaging/macos/build-bundle.sh   # Mac → out/macos/ (on a Mac)
 scripts/e2e-netns.sh                    # end-to-end test (needs sudo)
 scripts/e2e-share.sh                    # Pair & Share end-to-end (needs sudo)
+# the two Mac end-to-end tests boot out/e2e-vm/{vmlinuz,initramfs.gz}: build it on an
+# arm64 Linux host first (scripts/e2e-macos/build-server-vm.sh, see its header)
 scripts/e2e-macos.sh                    # Mac hub end-to-end (on a Mac, sudo, QEMU; docs/macos.md)
+scripts/e2e-macos-server.sh             # Mac as server end-to-end (on a Mac, sudo, QEMU)
 ```
 
 [CI](.github/workflows/ci.yml) builds and tests all of it and publishes releases on `v*` tags, with the same file names in every release (`releases/latest/download/<name>`: [scripts/release/collect-assets.sh](scripts/release/collect-assets.sh)).

@@ -1,11 +1,13 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Install tailbond on a Mac (the client/hub role, docs/macos.md) from this
-# unpacked bundle (tailbond-macos-arm64.tar.gz):
+# Install tailbond on a Mac from this unpacked bundle
+# (tailbond-macos-arm64.tar.gz): the client/hub role (docs/macos.md), or the
+# home server (docs/macos.md "Mac as home server"):
 #
 #   sudo ./install.sh                       # install and start (unpaired)
 #   sudo ./install.sh --pair 'tailbond://pair?d=…'
+#   sudo ./install.sh --role server --public-addr home.example.net
 #   sudo /usr/local/lib/tailbond/install.sh --update   # the latest release
 #
 # Puts tailbondd and mqvpn in /usr/local/bin, the hooks in
@@ -13,7 +15,16 @@
 # state in /usr/local/var/lib/tailbond, the log in
 # /usr/local/var/log/tailbond.log, and the LaunchDaemon
 # com.tailbond.tailbondd (root: mqvpn needs a utun device). The dashboard
-# is http://127.0.0.1:8077 on this Mac only.
+# is http://127.0.0.1:8077 on this Mac only; a server also serves it (and the
+# phone page on port 80) on its Tailscale address, to the tailnet only.
+#
+# --role server: the tunnel's UDP port is --port, else the one already
+# configured, else the first free of 443 8443 4443 10443 50443; the subnet
+# --subnet, else the configured one, else the first /24 from 10.78.0.0 that
+# no route or address here uses; Tailscale (its certificate, the subnet
+# route) is used when `tailscale status` works, unless --no-tailscale. The
+# hooks turn on forwarding, NAT and the firewall rules (a pf anchor) while
+# the server runs and put everything back when it stops.
 #
 # Unsigned binaries, no Apple Developer ID: the bundle's quarantine flag
 # (set when a browser downloads it) is removed here, which is all Gatekeeper
@@ -45,10 +56,17 @@ warn() { printf 'warning: %s\n' "$*" >&2; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'U'
 Options:
   --pair URI          pair with your home server (the link from its Devices tab)
+  --role client|server  what this Mac is (default: as installed, else client)
+  --public-addr HOST  server: the address devices dial from away (your home's
+                      public IP or DNS name; forward the UDP port to this Mac)
+  --port N            server: the tunnel's UDP port
+  --subnet CIDR       server: IPv4 tunnel subnet (a /24)
+  --subnet6 CIDR      server: IPv6 tunnel subnet
+  --no-tailscale      server: don't use Tailscale even if it runs here
   --update            update the binaries only (see the header of this script)
   --version vX.Y.Z    with --update: that release instead of the latest
   --repo OWNER/NAME   with --update: where releases come from (kaovilai/tailbond)
@@ -66,7 +84,73 @@ set_kv() {
     mv -f "$tmp" "$1"
 }
 
+# ---- server helpers (scripts/test-macos-install-helpers.sh tests them) ------------
+# udp_holder PORT: what else holds udp/PORT locally ("" = free or ours)
+udp_holder() { { lsof -nP -iUDP:"$1" 2>/dev/null || true; } | lsof_local_holder "$1"; }
+# lsof_local_holder PORT < lsof output: the first process whose LOCAL
+# endpoint is PORT. lsof -iUDP:P also lists sockets whose remote port is P
+# (a browser's QUIC to some server's 443): "local->remote" in NAME.
+lsof_local_holder() {
+    awk -v p="$1" 'NR > 1 && $1 != "mqvpn" {
+        n = $NF; split(n, e, "->"); if (e[1] ~ (":" p "$")) { print $1; exit } }'
+}
+ip2int() { local IFS=.; read -r a b c d <<<"$1"; echo $(( (a << 24) | (b << 16) | (c << 8) | d )); }
+# overlaps CIDR CIDR (IPv4; as packaging/linux/install.sh)
+overlaps() {
+    local a="${1%/*}" la="${1#*/}" b="${2%/*}" lb="${2#*/}"
+    [ "$la" = "$1" ] && la=32
+    [ "$lb" = "$2" ] && lb=32
+    local l=$(( la < lb ? la : lb ))
+    local m=$(( l == 0 ? 0 : (0xFFFFFFFF << (32 - l)) & 0xFFFFFFFF ))
+    [ $(( $(ip2int "$a") & m )) -eq $(( $(ip2int "$b") & m )) ]
+}
+# netstat_prefixes < `netstat -rn -f inet`: each destination as a CIDR.
+# macOS abbreviates: "10/8", "10.64/10", "192.168.64" (= .0/24), "10" (/8),
+# a full address is a host; "default", link-local scoped routes ("%en0")
+# and the header are skipped.
+netstat_prefixes() {
+    awk '$1 ~ /^[0-9]+(\.[0-9]+)*(\/[0-9]+)?$/ { print $1 }' | while read -r d; do
+        local base="${d%/*}" bits="" n
+        [ "$base" != "$d" ] && bits="${d#*/}"
+        n="$(printf '%s' "$base" | awk -F. '{ print NF }')"
+        [ -n "$bits" ] || bits=$(( n * 8 ))
+        while [ "$n" -lt 4 ]; do base="$base.0"; n=$((n + 1)); done
+        echo "$base/$bits"
+    done
+}
+# ifconfig_prefixes < `ifconfig`: each IPv4 address with its netmask
+ifconfig_prefixes() {
+    awk '$1 == "inet" { m = ""; for (i = 2; i < NF; i++) if ($i == "netmask") m = $(i + 1); print $2, m }' |
+        while read -r ip m; do
+            local bits=32 v
+            case "$m" in 0x*) v=$(( m )); bits=0; while [ "$v" -ne 0 ]; do bits=$(( bits + (v & 1) )); v=$(( v >> 1 )); done ;; esac
+            echo "$ip/$bits"
+        done
+}
+used_prefixes() { { netstat -rn -f inet 2>/dev/null | netstat_prefixes; ifconfig 2>/dev/null | ifconfig_prefixes; } | sort -u; }
+# subnet_clash CIDR [USED]: the first used prefix it overlaps (USED: the
+# list, default this Mac's routes and addresses)
+subnet_clash() {
+    local u used="${2-$(used_prefixes)}"
+    while read -r u; do
+        [ -n "$u" ] || continue
+        if overlaps "$1" "$u"; then echo "$u"; return 0; fi
+    done <<<"$used"
+    return 1
+}
+# pick_subnet [USED]: the first 10.N.0.0/24 (N 78..99) that overlaps nothing
+pick_subnet() {
+    local n used="${1-$(used_prefixes)}"
+    for n in $(seq 78 99); do
+        subnet_clash "10.$n.0.0/24" "$used" >/dev/null || { echo "10.$n.0.0/24"; return 0; }
+    done
+    return 1
+}
+# sourced by a test: the helpers only
+if [ -n "${TB_INSTALL_SOURCE_ONLY:-}" ]; then return 0 2>/dev/null || exit 0; fi
+
 PAIR="" UPDATE=0 OPT_UVERSION="" OPT_REPO="" FORCE=0
+OPT_ROLE="" OPT_PUBLIC="" OPT_PORT="" OPT_SUBNET="" OPT_SUBNET6="" OPT_NOTS=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --pair) [ $# -ge 2 ] || die "--pair needs a value"; PAIR="$2"; shift ;;
@@ -75,6 +159,12 @@ while [ $# -gt 0 ]; do
         --repo) [ $# -ge 2 ] || die "--repo needs a value"; OPT_REPO="$2"; shift ;;
         --bundle-dir) [ $# -ge 2 ] || die "--bundle-dir needs a value"; BUNDLE="$(cd "$2" && pwd)"; shift ;;
         --force) FORCE=1 ;;
+        --role) [ $# -ge 2 ] || die "--role needs a value"; OPT_ROLE="$2"; shift ;;
+        --public-addr) [ $# -ge 2 ] || die "--public-addr needs a value"; OPT_PUBLIC="$2"; shift ;;
+        --port) [ $# -ge 2 ] || die "--port needs a value"; OPT_PORT="$2"; shift ;;
+        --subnet) [ $# -ge 2 ] || die "--subnet needs a value"; OPT_SUBNET="$2"; shift ;;
+        --subnet6) [ $# -ge 2 ] || die "--subnet6 needs a value"; OPT_SUBNET6="$2"; shift ;;
+        --no-tailscale) OPT_NOTS=1 ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option $1 (--help)" ;;
     esac
@@ -89,6 +179,11 @@ launchd_on() { [ -z "${TB_NO_LAUNCHD:-}" ]; }
 tb_stop() {
     launchd_on || return 0
     launchctl bootout "system/$LABEL" 2>/dev/null || true
+    # bootout can return before tailbondd has stopped mqvpn and run its hooks
+    for _ in $(seq 1 30); do
+        pgrep -f "^$BINDIR/tailbondd" >/dev/null 2>&1 || break
+        sleep 1
+    done
 }
 tb_start() {
     launchd_on || return 0
@@ -239,7 +334,52 @@ unquarantine "$BUNDLE"
 VERSION="$(cat "$BUNDLE/VERSION" 2>/dev/null || echo dev)"
 "$BUNDLE/bin/tailbondd" -version >/dev/null || die "$BUNDLE/bin/tailbondd doesn't run on this Mac"
 
-say "installing tailbond $VERSION"
+# ---- role ------------------------------------------------------------------------------
+E_ROLE="$(sed -n 's/^ *"role": *"\([a-z]*\)".*/\1/p' "$CONF" 2>/dev/null | head -n1 || true)"
+ROLE="${OPT_ROLE:-${E_ROLE:-client}}"
+case "$ROLE" in client|server) ;; *) die "--role client or server, not $ROLE" ;; esac
+[ "$ROLE" = server ] || [ -z "$OPT_PUBLIC$OPT_PORT$OPT_SUBNET$OPT_SUBNET6" ] || die "--public-addr, --port and --subnet are for --role server"
+[ "$ROLE" = client ] || [ -z "$PAIR" ] || die "--pair is for the client role"
+
+# the tailscale CLI: on PATH (tailscaled, the app's CLI integration), else in the app
+ts_cli() {
+    if command -v tailscale >/dev/null 2>&1; then echo tailscale
+    elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then echo /Applications/Tailscale.app/Contents/MacOS/Tailscale; fi
+}
+server_args() { # -> SARGS (tailbondd configure flags), notes on stdout
+    SARGS="-role server -listen :8077"
+    local p="" n ts
+    if [ -n "$OPT_PORT" ]; then
+        case "$OPT_PORT" in ''|*[!0-9]*) die "--port $OPT_PORT: not a port" ;; esac
+        p="$(udp_holder "$OPT_PORT")"; [ -z "$p" ] || die "--port $OPT_PORT: udp/$OPT_PORT is in use by $p"
+        SARGS="$SARGS -port $OPT_PORT"
+    elif [ "$E_ROLE" != server ]; then
+        for n in 443 8443 4443 10443 50443; do
+            if [ -z "$(udp_holder "$n")" ]; then SARGS="$SARGS -port $n"; p=ok; break; fi
+        done
+        [ "$p" = ok ] || die "no free UDP port among 443 8443 4443 10443 50443; pass --port N"
+    fi
+    if [ -n "$OPT_SUBNET" ]; then
+        n="$(subnet_clash "$OPT_SUBNET" || true)"
+        [ -z "$n" ] || warn "--subnet $OPT_SUBNET overlaps $n (a route or address here)"
+        SARGS="$SARGS -subnet $OPT_SUBNET"
+    elif [ "$E_ROLE" != server ]; then
+        n="$(pick_subnet)" || die "no free /24 among 10.78.0.0-10.99.0.0 (something here routes them all); pass --subnet"
+        SARGS="$SARGS -subnet $n"
+    fi
+    [ -z "$OPT_SUBNET6" ] || SARGS="$SARGS -subnet6 $OPT_SUBNET6"
+    [ -z "$OPT_PUBLIC" ] || SARGS="$SARGS -public-addr $OPT_PUBLIC"
+    ts="$(ts_cli)"
+    if [ "$OPT_NOTS" = 1 ]; then SARGS="$SARGS -tailscale off"
+    elif [ -n "$ts" ] && "$ts" status >/dev/null 2>&1; then SARGS="$SARGS -tailscale on"
+    elif [ "$E_ROLE" != server ]; then
+        SARGS="$SARGS -tailscale off"
+        warn "Tailscale isn't running on this Mac: no tailnet access for devices, no dashboard from the tailnet (start it, then re-run with --role server)"
+    fi
+}
+
+say "installing tailbond $VERSION ($ROLE role)"
+[ "$ROLE" = client ] || server_args
 tb_stop
 install -d -m 0755 "$BINDIR" "$LIBDIR" "$LOGDIR" "$(dirname "$PLIST")"
 install -d -m 0700 "$ETC" "$STATE"
@@ -248,21 +388,27 @@ install_hooks
 install -m 0755 "$BUNDLE/install.sh" "$LIBDIR/install.sh"
 install -m 0755 "$BUNDLE/uninstall.sh" "$LIBDIR/uninstall.sh"
 if [ ! -f "$CONF" ]; then
-    "$BINDIR/tailbondd" -init -role client -config "$CONF" >/dev/null
+    "$BINDIR/tailbondd" -init -role "$ROLE" -config "$CONF" >/dev/null
     # the defaults are /usr/local paths
     if [ "$PREFIX" != /usr/local ]; then
         sed "s|/usr/local/|$PREFIX/|g" "$CONF" >"$CONF.tbnew" && mv -f "$CONF.tbnew" "$CONF"
     fi
     chmod 0600 "$CONF"
-    say "wrote $CONF (client role)"
+    say "wrote $CONF ($ROLE role)"
 else
     say "keeping $CONF"
+fi
+if [ "$ROLE" = server ]; then
+    # shellcheck disable=SC2086 # SARGS: flags without spaces
+    "$BINDIR/tailbondd" configure -config "$CONF" $SARGS || die "can't write the server settings to $CONF"
+elif [ "$E_ROLE" = server ]; then
+    "$BINDIR/tailbondd" configure -config "$CONF" -role client -listen 127.0.0.1:8077 || die "can't switch $CONF to the client role"
 fi
 sed -e "s|/usr/local/bin/tailbondd|$BINDIR/tailbondd|" -e "s|/usr/local/etc/tailbond/|$ETC/|" \
     -e "s|/usr/local/var/log/|$LOGDIR/|g" -e "s|/usr/local/bin:|$BINDIR:|" "$BUNDLE/$LABEL.plist" >"$PLIST.tbnew"
 chmod 0644 "$PLIST.tbnew"
 mv -f "$PLIST.tbnew" "$PLIST"
-printf 'TB_PREFIX=%s\nTB_VERSION=%s\nTB_PLIST=%s\n' "$PREFIX" "$VERSION" "$PLIST" >"$MANIFEST"
+printf 'TB_PREFIX=%s\nTB_VERSION=%s\nTB_PLIST=%s\nTB_ROLE=%s\n' "$PREFIX" "$VERSION" "$PLIST" "$ROLE" >"$MANIFEST"
 tb_start
 install_app
 open_app
@@ -279,5 +425,13 @@ if launchd_on; then
     fi
 fi
 say "tailbond $VERSION is installed. Dashboard: http://127.0.0.1:8077"
-[ -n "$PAIR" ] || say "Pair it: open the dashboard, Setup tab, and paste the link from your home server's Devices tab."
+if [ "$ROLE" = server ]; then
+    jv() { sed -n "s/^ *\"$1\": *\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}$/\1/p" "$CONF" | head -n1; }
+    say "server: udp/$(jv port), subnet $(jv subnet), public address ${OPT_PUBLIC:-$(jv public_addr)}"
+    [ -n "$(jv public_addr)" ] || warn "no --public-addr: pairing links carry this Mac's LAN address, which works only at home. Re-run with --public-addr <your home's public IP or DNS name> and forward udp/$(jv port) to this Mac on your router."
+    say "Keep this Mac awake and plugged in: tailbond holds off idle sleep while it serves, but a closed MacBook lid still sleeps it (docs/macos.md)."
+    say "Add devices: dashboard, Devices tab."
+else
+    [ -n "$PAIR" ] || say "Pair it: open the dashboard, Setup tab, and paste the link from your home server's Devices tab."
+fi
 say "Update later: sudo $LIBDIR/install.sh --update    Remove: sudo $LIBDIR/uninstall.sh"

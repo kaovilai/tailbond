@@ -11,7 +11,11 @@
 #    same bundle (binaries swapped, .prev kept, health check); the menu bar
 #    app in /Applications (ad-hoc signed, not quarantined, reads the running
 #    agent: tailbond --status); uninstall.sh --purge leaves nothing behind.
-# 2. The Homebrew formula (tailbond.rb with a file:// URL to the tarball):
+# 2. The Mac as home server: install.sh --role server --public-addr --port
+#    (no Tailscale on the runner): the server runs, the hooks load the pf
+#    anchor and turn forwarding on; --update keeps the role; uninstall.sh
+#    --purge puts pf and the sysctls back.
+# 3. The Homebrew formula (tailbond.rb with a file:// URL to the tarball):
 #    brew install, brew test, sudo brew services start, the dashboard
 #    answers, brew uninstall.
 set -euo pipefail
@@ -82,6 +86,35 @@ sudo /usr/local/lib/tailbond/uninstall.sh --purge
 sudo launchctl print "system/$LABEL" >/dev/null 2>&1 && bad "daemon still loaded" || ok "daemon gone"
 left="$(ls -d /usr/local/bin/tailbondd /usr/local/bin/mqvpn /usr/local/lib/tailbond /usr/local/etc/tailbond \
   /usr/local/var/lib/tailbond /Library/LaunchDaemons/$LABEL.plist /Applications/tailbond.app 2>/dev/null || true)"
+[ -z "$left" ] && ok "nothing left behind" || bad "left behind: $left"
+
+say "the Mac as home server: install.sh --role server"
+ANCHOR=com.apple/251.tailbond.server
+fwd() { echo "$(sysctl -n net.inet.ip.forwarding)/$(sysctl -n net.inet6.ip6.forwarding)"; }
+anchor_rules() { { sudo pfctl -a "$ANCHOR" -s nat 2>/dev/null; sudo pfctl -a "$ANCHOR" -s rules 2>/dev/null; } | grep -v '^$' || true; }
+FWD0="$(fwd)"
+sudo "$B/install.sh" --role server --public-addr 203.0.113.7 --port 4443 && ok "install.sh --role server" || bad "server install failed"
+wait_hello 30 && hello | grep -q '"role":"server"' && ok "server role: $(hello)" || bad "role: $(hello)"
+st() { curl -fsS -m 3 http://127.0.0.1:8077/api/status; }
+for _ in $(seq 1 30); do st | grep -q '"state":"connected"' && break; sleep 1; done
+st | grep -q '"state":"connected"' && ok "server running (mqvpn server mode on a utun)" || { bad "server state: $(st | head -c 300)"; sudo tail -n 40 /usr/local/var/log/tailbond.log || true; }
+C=/usr/local/etc/tailbond/tailbond.json
+sudo grep -q '"listen": ":8077"' "$C" && sudo grep -q '"port": 4443' "$C" && sudo grep -q '"public_addr": "203.0.113.7"' "$C" && sudo grep -q '"subnet": "10\.' "$C" \
+  && ok "config: listen :8077, port 4443, public_addr, a 10.x subnet" || bad "config: $(sudo cat "$C")"
+for _ in $(seq 1 15); do [ -n "$(anchor_rules)" ] && break; sleep 1; done
+anchor_rules | grep -q '^nat on ' && ok "pf anchor loaded: $(anchor_rules | head -n1)" || bad "no pf anchor rules"
+[ "$(sysctl -n net.inet.ip.forwarding)" = 1 ] && ok "forwarding on" || bad "forwarding $(fwd)"
+sudo test -f /usr/local/var/lib/tailbond/server-net.state && ok "restore record written" || bad "no restore record"
+if [ -n "$IP" ]; then
+  curl -fsS -m 3 "http://$IP:8077/api/hello" >/dev/null 2>&1 && bad "server dashboard reachable from the network ($IP)" || ok "server dashboard not on $IP"
+fi
+sudo /usr/local/lib/tailbond/install.sh --update --force --bundle-dir "$B" >/dev/null && wait_hello 30 && hello | grep -q '"role":"server"' \
+  && ok "--update keeps the server role" || bad "after --update: $(hello)"
+sudo /usr/local/lib/tailbond/uninstall.sh --purge
+[ -z "$(anchor_rules)" ] && ok "uninstall: pf anchor empty" || bad "uninstall left pf rules: $(anchor_rules)"
+[ "$(fwd)" = "$FWD0" ] && ok "uninstall: forwarding back to $FWD0" || bad "forwarding $(fwd), was $FWD0"
+pgrep -f "caffeinate -i -s -w" >/dev/null && bad "a power assertion was left" || ok "uninstall: no power assertion left"
+left="$(ls -d /usr/local/bin/tailbondd /usr/local/lib/tailbond /usr/local/etc/tailbond /usr/local/var/lib/tailbond 2>/dev/null || true)"
 [ -z "$left" ] && ok "nothing left behind" || bad "left behind: $left"
 
 say "Homebrew formula (file:// tarball)"

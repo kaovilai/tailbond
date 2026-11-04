@@ -690,7 +690,7 @@ func (a *Agent) serveOn(ctx context.Context, what string, h http.Handler, addrs 
 				}
 				continue
 			}
-			srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+			srv := &http.Server{Handler: a.sourceGuard(addr, h), ReadHeaderTimeout: 10 * time.Second}
 			mu.Lock()
 			bound[addr] = srv
 			mu.Unlock()

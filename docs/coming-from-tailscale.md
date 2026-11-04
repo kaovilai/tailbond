@@ -7,6 +7,7 @@ depends on the device:
 | Device | With the Tailscale app | Shows in the Tailscale admin console as |
 |---|---|---|
 | Home server (GL.iNet Flint 3, Fedora) or VPS | **Run both.** Keep Tailscale on; tailbond uses it | The same one machine as before, now advertising tailbond's tunnel subnet as a route |
+| Mac as home server ([macos.md](macos.md#mac-as-home-server)) | **Run both.** Keep Tailscale on (any of its three Mac variants; `tailscaled` runs before login, the apps don't). CI-tested with a Tailscale stand-in, not with a real variant | The same one Mac, advertising tailbond's tunnel subnet as a route |
 | Android phone | **One or the other at a time.** Android runs one VPN; tailbond takes over from Tailscale while it's connected | Its existing entry, offline while tailbond is on. Nothing new is added |
 | GL.iNet travel router (Slate 7) | **Run both.** GL's built-in Tailscale stays on | Its existing entry, if it has one. Nothing new is added |
 | iPhone (tailbond Share) | **Run both.** The Share app isn't a VPN | Unchanged |
@@ -17,19 +18,19 @@ tailnet their traffic comes **from the server** (it's masqueraded), so
 Tailscale ACLs, `tailscale whois` and "last seen" all see the server, not the
 phone or router behind it.
 
-Use one home server: a Flint 3 **or** a Fedora box, not both. A VPS can be a
-second, failover server.
+Use one home server: a Flint 3, a Fedora box **or** a Mac, not two of them.
+A VPS can be a second, failover server.
 
 ## Home server or VPS: run both
 
 1. Turn Tailscale on first: GL.iNet **APPLICATIONS → Tailscale**; Fedora or a
-   VPS `sudo tailscale up`.
+   VPS `sudo tailscale up`; a Mac: the Tailscale app, or `tailscaled`.
 2. Install tailbond ([GL.iNet](glinet.md), [Fedora](fedora-server.md),
-   [VPS](vps.md)). It finds Tailscale and advertises the tunnel subnet next to
+   [VPS](vps.md), [Mac](macos.md#mac-as-home-server)). It finds Tailscale and advertises the tunnel subnet next to
    any routes you already advertise.
 3. In the [admin console](https://login.tailscale.com/admin/machines),
    approve the tunnel subnet route on the server, once (`10.77.0.0/24` on
-   a Flint 3 or Fedora; a VPS picks a free one, shown on its dashboard)
+   a Flint 3 or Fedora; a VPS or a Mac picks a free one, shown on its dashboard)
    ([subnet routers](https://tailscale.com/docs/features/subnet-routers)).
    Until then, bonded devices can still reach the tailnet, but tailnet
    machines can't reach the bonded devices.

@@ -90,6 +90,8 @@ jobs:
         run: scripts/brand/check-svgs.sh
       - name: Release asset names (stable latest/download names, SHA256SUMS, signed opkg feed)
         run: scripts/release/test-collect-assets.sh
+      - name: macOS installer helpers (port holders, subnet overlap) on canned output
+        run: scripts/test-macos-install-helpers.sh
       - name: hadolint (the server image's Dockerfile)
         env:
           HADOLINT_VERSION: v2.15.1
@@ -382,6 +384,8 @@ jobs:
         with:
           path: out/build/mqvpn-macos
           key: mqvpn-macos-${{ runner.arch }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-macos.sh', 'scripts/lib/*.sh') }}
+          # a new patch rebuilds only what it touches (the sync re-patches every file)
+          restore-keys: mqvpn-macos-${{ runner.arch }}-${{ steps.mq.outputs.sha }}-
       - name: Build patched mqvpn and run its Darwin unit tests
         run: TB_TEST=1 scripts/build-mqvpn-macos.sh
       - name: go vet + go test (darwin)
@@ -436,7 +440,9 @@ jobs:
           tar -tzf out/macos/tailbond-macos-arm64.tar.gz | grep -qx 'tailbond-macos-arm64/tailbond.app/Contents/MacOS/tailbond'
           tar -tzf out/macos/tailbond-macos-arm64.tar.gz | grep -qx 'tailbond-macos-arm64/icons/tailbond.icns'
       - name: Install test (install.sh, --update, uninstall.sh, Homebrew formula)
-        run: scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
+        run: |
+          /bin/bash scripts/test-macos-install-helpers.sh   # macOS's own bash 3.2
+          scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
       - uses: actions/upload-artifact@v7
         with:
           name: macos-bundle
@@ -444,6 +450,38 @@ jobs:
             out/macos/tailbond-macos-arm64.tar.gz
             out/macos/tailbond.rb
           if-no-files-found: error
+
+  # The Mac as home server (docs/macos.md "Mac as home server"): job macos's
+  # mqvpn (server mode on a utun, patch 0006) and tailbondd on this runner
+  # with the macOS hooks, a Linux client bonding two paths in the QEMU VM
+  # from job macos-e2e-server, a stand-in Tailscale (scripts/e2e-macos-server.sh).
+  macos-server:
+    name: macOS server (e2e, Linux client in a VM)
+    runs-on: macos-latest
+    needs: [macos, macos-e2e-server]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-arm64
+          path: out/
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-e2e-server
+          path: out/e2e-vm/
+      - name: QEMU (the client VM)
+        run: brew install qemu
+      - name: e2e-macos-server (server on this Mac, Linux client in a VM)
+        run: |
+          chmod 0755 out/macos/mqvpn out/agent/darwin-arm64/tailbondd
+          scripts/e2e-macos-server.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-macos-server-logs
+          path: out/e2e-macos-server/
+          if-no-files-found: ignore
 
   # tailbond Share for iPhone (ios/, docs/ios.md): the relay core's unit
   # tests on macOS and on an iOS simulator, and an unsigned simulator build
@@ -870,7 +908,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, oci-image, kubernetes, macos-e2e-server, macos]
+    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, oci-image, kubernetes, macos-e2e-server, macos, macos-server]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
