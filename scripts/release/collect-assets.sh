@@ -22,7 +22,8 @@
 #   scripts/release/collect-assets.sh DIST OUT
 #
 # DIST: the downloaded artifacts (one directory per artifact name). OUT:
-# created; fails when a file is missing.
+# created, and must not exist or be empty: everything in it is published.
+# Fails when a file is missing.
 set -euo pipefail
 
 [ $# -eq 2 ] || { echo "usage: $0 DIST OUT" >&2; exit 2; }
@@ -37,6 +38,11 @@ one() { # PATTERN: exactly one file
     echo "${m[0]}"
 }
 
+# Everything in OUT is published, so start from nothing: a reused directory
+# (the repo's own assets/, say) would ship stray files or break SHA256SUMS.
+if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
+    die "$OUT already exists and isn't empty: give a new directory"
+fi
 mkdir -p "$OUT"
 
 # Android: never publish an APK that can't update the installed app
