@@ -119,7 +119,8 @@ class E2eReceiver : BroadcastReceiver() {
                         // a login for a test hub "e2e-laptop" (what its server's pass
                         // would give it), so the host can stand in for that laptop
                         if (key != null) {
-                            val exp = System.currentTimeMillis() / 1000 + 86_400
+                            // the same for the whole hour, so two reads agree
+                            val exp = (System.currentTimeMillis() / 1000 / 3600 + 25) * 3600
                             val pk = dev.tailbond.app.share.ShareProtocol.passKey(key.toByteArray(), "e2e-laptop", exp)
                             val (u, pw) = dev.tailbond.app.share.ProxyServer.credentials(pk, "e2e-laptop", exp)
                             put("user", u)

@@ -250,8 +250,11 @@ fi
 # (informational: the SOCKS5 round trip below is the proof it listens)
 sh_ cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ':0760 .* 0A ' && ok "listening on TCP 1888" || note "TCP 1888 not seen in /proc/net/tcp*"
 # the login of a laptop "e2e-laptop" holding its server's pass for this phone
-HUBUSER="$(app_status | jq -r '.hub.user // empty')"
-HUBPASS="$(app_status | jq -r '.hub.pass // empty')"
+# one status read: the user carries the login's expiry, the password is
+# derived from it
+HUBST="$(app_status)"
+HUBUSER="$(jq -r '.hub.user // empty' <<<"$HUBST")"
+HUBPASS="$(jq -r '.hub.pass // empty' <<<"$HUBST")"
 TIP="$(app_status | jq -r '.tunnel_ip // empty' | cut -d/ -f1)"
 adb forward tcp:18888 tcp:1888 >/dev/null
 # the token server answers only through the tunnel, so getting the token

@@ -7,11 +7,13 @@
 #
 #   ios/TailbondShare/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
 #       the iOS app icon: the icon on a full-bleed ink square (iOS rounds it)
-#   packaging/macos/icons/tailbond_<size>[@2x].png
-#       the macOS iconset (16 … 512 @1x/@2x); packaging/macos/build-bundle.sh
-#       turns it into tailbond.icns on a Mac (iconutil)
 #   assets/brand/social-preview.png
 #       1280x640 GitHub social preview: the wordmark on ink
+#
+# These two are the only brand rasters in git (docs/brand.md, Rasters):
+# Xcode's asset catalog needs the PNG, and GitHub's settings take the
+# social preview as a file. The macOS icons are rendered at build time
+# (scripts/brand/render-macos-icons.sh), not kept.
 #
 #   scripts/brand/render-icons.sh
 set -euo pipefail
@@ -43,13 +45,6 @@ EOF
   out=/repo/ios/TailbondShare/Assets.xcassets/AppIcon.appiconset
   mkdir -p "$out"
   rsvg-convert -w 1024 -h 1024 -b "#071A1D" /in/ios-icon.svg -o "$out/AppIcon-1024.png"
-  icons=/repo/packaging/macos/icons
-  mkdir -p "$icons"
-  for s in 16 32 128 256 512; do
-    rsvg-convert -w "$s" -h "$s" /repo/assets/brand/tailbond-icon.svg -o "$icons/tailbond_${s}x${s}.png"
-    d=$((s * 2))
-    rsvg-convert -w "$d" -h "$d" /repo/assets/brand/tailbond-icon.svg -o "$icons/tailbond_${s}x${s}@2x.png"
-  done
   rsvg-convert -w 1280 -h 640 /in/social.svg -o /repo/assets/brand/social-preview.png
 '
 cat >"$ROOT/ios/TailbondShare/Assets.xcassets/AppIcon.appiconset/Contents.json" <<'EOF'
@@ -76,4 +71,4 @@ cat >"$ROOT/ios/TailbondShare/Assets.xcassets/Contents.json" <<'EOF'
   }
 }
 EOF
-echo "rendered: iOS AppIcon, macOS iconset ($(ls "$ROOT/packaging/macos/icons" | wc -l) PNGs), social preview"
+echo "rendered: iOS AppIcon, social preview"
