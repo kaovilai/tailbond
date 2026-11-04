@@ -29,7 +29,9 @@ if ((${#missing[@]})); then
 fi
 
 TMP_KS=""
-cleanup() { [[ -n "$TMP_KS" ]] && rm -f "$TMP_KS"; }
+# An if, not `[[ ]] &&`: with no temp keystore the test's false would be the
+# trap's last status, and the script would exit 1 after a good build.
+cleanup() { if [[ -n "$TMP_KS" ]]; then rm -f "$TMP_KS"; fi; }
 trap cleanup EXIT
 if [[ -z "${TB_RELEASE_KEYSTORE:-}" ]]; then
     TMP_KS="$(mktemp "${TMPDIR:-/tmp}/tailbond-release-XXXXXX.p12")"
