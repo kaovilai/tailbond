@@ -21,6 +21,67 @@ phone or router behind it.
 Use one home server: a Flint 3, a Fedora box **or** a Mac, not two of them.
 A VPS can be a second, failover server.
 
+## Exit nodes: tailbond already is one
+
+By default a bonded device sends **all** its internet traffic through
+tailbond to your server, which is what a Tailscale exit node does. You don't
+need an exit node on top, and on a Mac or travel router the two would fight
+over the same routes.
+
+What you get, the same as with an exit node at home:
+
+- **Safe on hotel or café Wi-Fi.** Everything leaves the device inside one
+  encrypted tunnel (QUIC, which uses TLS 1.3) to your server. The Wi-Fi's
+  owner sees only encrypted UDP to your server's address: not the sites you
+  visit, not your DNS lookups. The device checks the server's certificate
+  (from `tailscale cert`, or the one pinned when you paired), so a fake
+  hotspot can't pretend to be your server.
+- **You appear to be at home.** Websites see your server's public IP: your
+  home's, or the VPS's while a VPS is in use. Banking, streaming and
+  region-locked sites behave as they do at home.
+- **DNS goes home too.** Lookups go to your server's DNS, not the hotel's.
+  The exception is a Mac that also runs the Tailscale app or a work VPN:
+  there tailbond only takes `ts.net` names and leaves every other lookup on
+  the Mac's existing DNS settings. If those point at the hotel's DNS server,
+  the hotel can see the names you look up (not what you send). To avoid
+  that, set the Mac's DNS yourself (for example the other VPN's DNS, or
+  an encrypted DNS profile), or turn coexistence off with
+  `"client": {"coexist": "off"}` so tailbond takes over DNS, at the cost of
+  the other VPN's names ([details](macos.md#using-tailbond-with-netbird-or-another-work-vpn)).
+- **Your tailnet still works**: tailnet machines are reached through the
+  server.
+
+What's different from an exit node:
+
+- **It's on by default.** Tailscale's exit node is off until you pick one.
+  On Android you can change this: **Settings → Internet traffic → Only
+  Tailscale machines** sends just tailnet traffic through tailbond, and
+  everything else goes out directly.
+- **You can't choose another exit.** Traffic leaves from your tailbond
+  server (or the VPS it fails over to), not from an exit node elsewhere on
+  your tailnet. To browse from another place, use that exit node in the
+  Tailscale app with tailbond off, or set up tailbond on a VPS there.
+- **If the tunnel drops:**
+  - **Travel router:** its kill switch (on by default) holds traffic back
+    rather than letting it out on the hotel Wi-Fi.
+  - **Mac:** the kill switch is off by default (`client.kill_switch`; it
+    also blocks phones' shares), so traffic can go out directly until
+    tailbond reconnects.
+  - **Android:** turn on **Always-on VPN** and **Block connections without
+    VPN** for tailbond in Android's VPN settings if you want the same.
+- **Exceptions you set:** bypass rules (a banking site, an app, a device) go
+  out directly by design.
+
+Don't turn on a Tailscale exit node while tailbond is connected:
+
+- **Android:** it can't happen. One VPN runs at a time, so turning on
+  Tailscale (and its exit node) turns tailbond off.
+- **Mac:** both would claim the Mac's default route, and which one wins
+  isn't defined. Your traffic could leave through the exit node instead of
+  the bond, or go into one tunnel and then the other. Use one at a time.
+- **Travel router:** don't set an exit node in GL's Tailscale settings while
+  tailbond is on, for the same reason.
+
 ## Home server or VPS: run both
 
 1. Turn Tailscale on first: GL.iNet **APPLICATIONS → Tailscale**; Fedora or a
@@ -109,10 +170,10 @@ against a Linux server; **it hasn't run on a real Mac yet**.
 - tailbond never adds a route that equals or covers one the Tailscale app
   owns, and uses split DNS (only `ts.net` names go to the tunnel's DNS), so
   MagicDNS keeps working through the app.
-- **Exit node:** don't use a Tailscale exit node while tailbond is
-  connected. Both want the Mac's default route, and which one wins isn't
-  defined. Pick one: tailbond (bonded, out through your server) or the exit
-  node.
+- **Exit node:** you don't need one: tailbond already sends the Mac's
+  internet traffic out through your server, encrypted
+  ([what that gives you](#exit-nodes-tailbond-already-is-one)). Don't turn
+  one on while tailbond is connected: both would claim the default route.
 
 Unit tests cover the Tailscale-app rules; the macOS CI runs without the
 Tailscale app, so **running both is untested**, and so is an exit node.
