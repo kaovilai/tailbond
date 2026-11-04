@@ -67,7 +67,9 @@ safe-outputs:
 timeout-minutes: 45
 ---
 
-# Draft a fix for issue #${{ github.event.issue.number }}
+# Issue autofix
+
+Draft a fix for issue #${{ github.event.issue.number }}.
 
 You maintain **tailbond**: WAN bonding (Wi-Fi + mobile + ethernet + phone shares) to the user's own home server or VPS over mqvpn, with Tailscale for pairing and tailnet access. Read `README.md`, `docs/architecture.md` (the contract: APIs, config, hooks) and the guide for the component named in the issue (`docs/glinet.md`, `docs/fedora-server.md`, `docs/vps.md`, `docs/macos.md`, `docs/android.md`, `docs/ios.md`, `docs/pair-and-share.md`, `docs/brand.md`).
 
