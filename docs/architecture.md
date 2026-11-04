@@ -32,7 +32,7 @@ Roles of `tailbondd` (`--role` / config `role`):
   - Optional `--advertise-exit-node`; not required, since bonded clients exit via the server's internet NAT (mqvpn-server-nat.sh).
 - DNS for clients: `tailbondd` runs a forwarder on `10.77.0.1:53`. `*.ts.net` and the tailnet's MagicDNS suffix go to `100.100.100.100`, everything else to the system resolver. mqvpn's server cannot push DNS, so the pairing payload carries `dns: ["10.77.0.1"]` and the client sets `DNS = 10.77.0.1`.
 - Hybrid TCP lane: the server's egress ACL denies private ranges by default, including CGNAT. The server config always has `EgressAllow` for `100.64.0.0/10` and `fd7a:115c:a1e0::/48` so tailnet TCP works.
-- TLS: if `tailscale cert <machine>.<tailnet>.ts.net` works, use it as mqvpn `Cert`/`Key`. Clients connect to the public address with `tls_server_name = <machine>.<tailnet>.ts.net` and verify normally. Fallback: self-signed + `insecure: true` plus the cert SHA-256 pinned in the pairing payload (enforced by the agent/app, not by mqvpn).
+- TLS: if `tailscale cert <machine>.<tailnet>.ts.net` works, use it as mqvpn `Cert`/`Key`. Clients connect to the public address with `tls_server_name = <machine>.<tailnet>.ts.net` and verify normally. Fallback: self-signed, with `insecure: true` and the certificate's SHA-256 (`cert_sha256`) pinned in the pairing payload. The pin is enforced by mqvpn itself in every TLS handshake of the tunnel, reconnects included (the paths of a multipath connection share its handshake): the client role passes it as `[Server] CertSHA256` with `Insecure = false` ([patch 0005](#mqvpn-certificate-pin-patch)), the Android app through libmqvpn's certificate verifier hook. The client role never runs mqvpn with `Insecure = true`: it rejects a pairing with `insecure: true` and no pin (on import, and again when writing `client.conf`). Before starting mqvpn, it also checks the pin with a separate handshake, only to report a mismatch clearly ("server certificate does not match the pinned SHA-256").
 
 ## Modes (user-facing → mqvpn config)
 
@@ -67,7 +67,7 @@ tailbond://pair?d=<base64url(JSON)>
   "user": "pixel",
   "key": "<psk>",
   "insecure": false,
-  "cert_sha256": "<hex, only when insecure>",
+  "cert_sha256": "<hex SHA-256 of the server certificate (DER); required when insecure>",
   "dns": ["10.77.0.1"],
   "mode": "speed",
   "tailnet_routes": ["100.64.0.0/10", "fd7a:115c:a1e0::/48"]
@@ -91,6 +91,10 @@ must accept payloads without them):
 Upstream mqvpn only serves the control API in server mode. `patches/mqvpn/0001-client-control-api.patch` adds it to client mode on Linux: `[Control] Listen` / `--control-port` in client mode serve `get_status` and `get_stats` with the **same JSON shape as server mode**, as one client object whose path entries additionally carry `"iface"` (the bound interface name). Keep the patch upstreamable (small, confined to `src/platform/linux/` + `src/platform/posix/`).
 
 `patches/mqvpn/0003-darwin-client-control-and-relay-paths.patch` (on top of 0001 and 0002) does the same on macOS: the Darwin CLI compiles the same `control_socket.c` (plain POSIX + libevent; it stays in `src/platform/linux/`, a move to `posix/` being a pure rename) and serves the client API (no RX offload counters there), and a relay path (`NAME@HOST:PORT`) is wired into `platform_darwin.c`: its socket is not `IP_BOUND_IF`-pinned and is routed normally, and the route monitor, the reactivate re-pin and the scoped server pins (`#F1`) skip it, since its name is not an interface. Interface paths are unchanged. `test_control_socket` joins mqvpn's Darwin ctest set, which already runs the relay bind tests (`test_bind_posix_socket`).
+
+## mqvpn certificate pin (patch)
+
+`patches/mqvpn/0005-cli-cert-pin.patch` adds `--cert-sha256 HEX` / `[Server] CertSHA256` (JSON `cert_sha256`) to the mqvpn CLI (Linux, macOS, Windows): 64 hex digits, any case, `:` separators allowed; malformed is a startup error. The shared CLI→library config bridge installs a verifier with `mqvpn_config_set_cert_verifier` that accepts only a chain whose leaf certificate (DER) hashes to the pin (constant-time compare; no chain or hostname check, the pin is the identity, as in the Android app's `jni_cert_verify`), and turns `insecure` off, since the library lets `insecure` override any verifier. libmqvpn calls the verifier in every handshake. Tests: mqvpn's `test_cert_pin` and `test_config_bridge`, `scripts/e2e-cert-pin.sh` (a server swapped for one with another self-signed certificate at the same address while the client is connected: no tunnel, and the impostor never sees the key), and a wrong-pin check in `scripts/e2e-macos.sh`.
 
 ## tailbondd HTTP API (served on `:8077`, UI at `/`)
 
@@ -634,7 +638,14 @@ isn't a release asset: it's built from source with a free Apple ID
 semver, leading `v` dropped), `html_url` (changelog), `assets[].name` /
 `browser_download_url`. A newer version than the running one is `available`.
 A build whose own version isn't semver (`dev`, `-dirty`, a git hash) shows
-what's available but never installs by itself.
+the latest release as available but never installs it by itself; where the
+install method updates itself (`static` or `opkg`), **Update now** (`POST
+/api/update/install`) installs it, which is how a build from source moves
+onto releases (a package whose version equals the release's isn't
+reinstalled: `update-ipk` fails it). A repository with no release yet (`404`
+from `releases/latest` while the repository itself answers) isn't a failed
+check: `error` stays empty and `no_release` is `true`. A repository that
+doesn't exist or is private is an error.
 
 **Verification**: the asset and `SHA256SUMS` are downloaded over HTTPS (http
 only when `api_url` itself is http, for tests); the asset's SHA-256 must match
