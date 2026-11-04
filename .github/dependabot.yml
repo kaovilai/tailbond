@@ -1,32 +1,54 @@
 version: 2
+
+# One PR for everything: every ecosystem's version updates land in the
+# single "all-dependencies" multi-ecosystem group, once a week. Security
+# updates are grouped per ecosystem (multi-ecosystem groups only cover
+# version updates), so an urgent fix still arrives on its own day.
+multi-ecosystem-groups:
+  all-dependencies:
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+
 updates:
   - package-ecosystem: gomod
     directory: /agent
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
     groups:
-      go:
+      go-security:
+        applies-to: security-updates
         patterns: ["*"]
 
   - package-ecosystem: gradle
     directory: /android
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
     groups:
-      android:
+      gradle-security:
+        applies-to: security-updates
         patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
     groups:
-      actions:
+      actions-security:
+        applies-to: security-updates
         patterns: ["*"]
 
   # mqvpn (data plane). A bump can break patches/mqvpn/*.patch or the
   # Android SDK fork in android/mqvpn-sdk; CI's e2e and Android jobs catch it.
   - package-ecosystem: gitsubmodule
     directory: /
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
+
+  # Add once ios/ is on main (the iPhone share app's Swift package):
+  # - package-ecosystem: swift
+  #   directory: /ios/TailbondShareKit
+  #   patterns: ["*"]
+  #   multi-ecosystem-group: all-dependencies

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup guides
+    url: https://github.com/kaovilai/tailbond#pieces
+    about: Install and pairing guides for the router, servers, Mac, Android and iPhone.
+  - name: Setup tips for best speed
+    url: https://github.com/kaovilai/tailbond/blob/main/docs/setup-tips.md
+    about: Direct Tailscale connections, port forwarding, CGNAT.
