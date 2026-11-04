@@ -38,9 +38,15 @@ What you get, the same as with an exit node at home:
 - **You appear to be at home.** Websites see your server's public IP: your
   home's, or the VPS's while a VPS is in use. Banking, streaming and
   region-locked sites behave as they do at home.
-- **DNS goes home too.** Lookups go to your server's DNS, not the hotel's,
-  except on a Mac running the Tailscale app or a work VPN, where tailbond
-  only takes `ts.net` names and leaves the rest to those VPNs ([Mac](#mac)).
+- **DNS goes home too.** Lookups go to your server's DNS, not the hotel's.
+  The exception is a Mac that also runs the Tailscale app or a work VPN:
+  there tailbond only takes `ts.net` names and leaves every other lookup on
+  the Mac's existing DNS settings. If those point at the hotel's DNS server,
+  the hotel can see the names you look up (not what you send). To avoid
+  that, set the Mac's DNS yourself (for example the other VPN's DNS, or
+  an encrypted DNS profile), or turn coexistence off with
+  `"client": {"coexist": "off"}` so tailbond takes over DNS, at the cost of
+  the other VPN's names ([details](macos.md#using-tailbond-with-netbird-or-another-work-vpn)).
 - **Your tailnet still works**: tailnet machines are reached through the
   server.
 
