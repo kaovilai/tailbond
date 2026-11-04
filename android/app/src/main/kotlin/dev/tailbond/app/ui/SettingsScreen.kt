@@ -138,7 +138,7 @@ fun SettingsScreen(
         ListItem(
             headlineContent = { Text("Share my mobile data") },
             supportingContent = { Text(dev.tailbond.app.share.ShareWords.headline(state.share)) },
-            leadingContent = { Icon(Icons.Filled.CellTower, null) },
+            leadingContent = { Icon(Icons.Filled.CellTower, null, tint = LocalBrand.current.shared) },
             trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
             modifier = Modifier.clickable(onClick = onShare),
         )

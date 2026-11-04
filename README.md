@@ -1,6 +1,9 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
-
-# tailbond
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/tailbond-wordmark-dark.svg">
+    <img src="assets/brand/tailbond-wordmark-light.svg" alt="tailbond" height="64">
+  </picture>
+</h1>
 
 Speedify-style WAN bonding to **your own** server, with your [Tailscale](https://tailscale.com) tailnet reachable through it.
 

@@ -52,15 +52,17 @@ struct PairView: View {
 /// The share screen: one big button, what's happening, and the limits.
 struct ShareView: View {
     @EnvironmentObject var model: ShareModel
+    @Environment(\.colorScheme) private var scheme
     @State private var newHub = ""
     @State private var notice = false
 
     var body: some View {
+        let p = BrandPalette.of(scheme)
         List {
             Section {
                 Label {
                     Text("**Keep tailbond Share on the screen while sharing.** iOS pauses sharing as soon as you switch apps or lock the phone, and it starts again when you come back. The screen stays on while sharing; plug the phone in for long trips.")
-                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(p.warn) }
                     .font(.callout)
             }
             Section {
@@ -72,8 +74,7 @@ struct ShareView: View {
                             .font(.title2.bold())
                             .frame(maxWidth: .infinity, minHeight: 64)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(model.sharing ? .red : .accentColor)
+                    .buttonStyle(BeamButtonStyle(stop: model.sharing))
                     Text(model.headline).font(.headline).multilineTextAlignment(.center)
                     Text("\(ShareModel.bytes(model.usedThisMonth)) shared this month").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -90,7 +91,7 @@ struct ShareView: View {
                 }
                 ForEach(model.status.hubs, id: \.endpoint) { h in
                     HStack {
-                        Image(systemName: "wifi.router")
+                        Image(systemName: "wifi.router").foregroundStyle(p.shared)
                         Text(h.hub)
                         Spacer()
                         Text(ShareModel.bytes(h.upBytes + h.downBytes)).foregroundStyle(.secondary)
@@ -130,6 +131,8 @@ struct ShareView: View {
                 Button("Forget \(model.pairing?.label ?? "home server")", role: .destructive) { model.forget() }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(p.bg)
         .navigationTitle("Share mobile data")
         .alert("Keep this app on the screen", isPresented: $notice) {
             Button("Share mobile data") {

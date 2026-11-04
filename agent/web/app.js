@@ -119,11 +119,15 @@ function drawSpark(svg, series, w, hgt, opts = {}) {
   const rx = linePath(series.rx, w, hgt, max);
   const tx = linePath(series.tx, w, hgt, max);
   const id = svg.dataset.gid || (svg.dataset.gid = 'g' + Math.random().toString(36).slice(2, 8));
+  // the area under the download line is the brand beam (teal → volt),
+  // fading toward the baseline
   svg.innerHTML =
-    `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1">` +
-    `<stop offset="0" style="stop-color:var(--down);stop-opacity:.35"/><stop offset="1" style="stop-color:var(--down);stop-opacity:0"/></linearGradient></defs>` +
+    `<defs><linearGradient id="${id}" x1="0" x2="1" y1="0" y2="0">` +
+    `<stop offset="0" style="stop-color:var(--tb-beam-a)"/><stop offset="1" style="stop-color:var(--tb-beam-b)"/></linearGradient>` +
+    `<linearGradient id="${id}f" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>` +
+    `<mask id="${id}m" maskContentUnits="userSpaceOnUse"><rect width="${w}" height="${hgt}" fill="url(#${id}f)"/></mask></defs>` +
     (opts.grid ? `<line x1="0" x2="${w}" y1="${hgt / 2}" y2="${hgt / 2}" style="stroke:var(--line)" stroke-dasharray="4 6" vector-effect="non-scaling-stroke"/>` : '') +
-    `<path d="${rx} L${w} ${hgt} L0 ${hgt}Z" fill="url(#${id})"/>` +
+    `<path d="${rx} L${w} ${hgt} L0 ${hgt}Z" fill="url(#${id})" mask="url(#${id}m)"/>` +
     `<path d="${rx}" fill="none" style="stroke:var(--down)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
     `<path d="${tx}" fill="none" style="stroke:var(--up)" stroke-width="${opts.sw || 2}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
     (opts.label ? `<text x="${w - 4}" y="12" text-anchor="end" font-size="11" style="fill:var(--muted)">${rateStr(max)}</text>` : '');

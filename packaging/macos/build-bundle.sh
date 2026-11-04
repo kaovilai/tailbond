@@ -5,7 +5,8 @@
 #
 #   out/macos/tailbond-macos-arm64.tar.gz   tailbond-macos-arm64/{bin/tailbondd,
 #       bin/mqvpn, hooks/, install.sh, uninstall.sh, the LaunchDaemon plist,
-#       README.md, VERSION, licenses}
+#       icons/ (PNG sizes, tailbond.icns when built on a Mac), README.md,
+#       VERSION, licenses}
 #   out/macos/tailbond.rb                   packaging/macos/tailbond.rb with this
 #       version and the tarball's SHA-256 (TB_FORMULA_URL: where it downloads
 #       the tarball from; default the GitHub release of that version)
@@ -45,6 +46,16 @@ install -m 0755 "$tbd" "$d/bin/tailbondd"
 install -m 0755 "$PKG/install.sh" "$PKG/uninstall.sh" "$d/"
 install -m 0755 "$PKG"/hooks/* "$d/hooks/"
 install -m 0644 "$PKG/com.tailbond.tailbondd.plist" "$d/"
+# the app icon (docs/brand.md): tailbond.icns on a Mac (iconutil), the PNG
+# sizes anywhere
+mkdir -p "$d/icons"
+install -m 0644 "$PKG"/icons/*.png "$d/icons/"
+if command -v iconutil >/dev/null; then
+    set_dir="$top/tailbond.iconset"
+    mkdir -p "$set_dir"
+    for f in "$PKG"/icons/tailbond_*.png; do cp "$f" "$set_dir/icon_${f##*/tailbond_}"; done
+    iconutil -c icns "$set_dir" -o "$d/icons/tailbond.icns"
+fi
 install -m 0644 "$ROOT/docs/macos.md" "$d/README.md"
 install -m 0644 "$ROOT/LICENSE" "$d/LICENSE"
 install -m 0644 "$ROOT/NOTICE" "$d/NOTICE"

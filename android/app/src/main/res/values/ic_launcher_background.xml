@@ -1,3 +1,4 @@
 <resources>
-    <color name="ic_launcher_background">#0D9488</color>
+    <!-- brand ink (assets/brand/tokens.json brand.ink-950) -->
+    <color name="ic_launcher_background">@color/brand_ink</color>
 </resources>

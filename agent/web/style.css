@@ -1,49 +1,46 @@
+/* Colours come from the brand tokens (tokens.css, generated from
+   assets/brand/tokens.json by scripts/brand/gen-tokens.py; docs/brand.md).
+   These names are what the rest of this file uses. Connection and status
+   colours are for icons, lines and dots; text stays in --text / --muted
+   (scripts/brand/contrast.py). */
 :root {
-  --bg: #f4f6f8;
-  --card: #ffffff;
-  --card-2: #f8fafb;
-  --text: #0f172a;
-  --muted: #64748b;
-  --line: #e2e8f0;
-  --accent: #0d9488;
-  --accent-2: #14b8a6;
-  --accent-soft: rgba(13, 148, 136, .12);
-  --down: #0ea5e9;
-  --up: #a855f7;
-  --ok: #16a34a;
-  --warn: #d97706;
-  --bad: #dc2626;
-  --idle: #94a3b8;
-  --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 16px rgba(15, 23, 42, .06);
-  --radius: 16px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color-scheme: light dark;
+  --bg: var(--tb-bg);
+  --card: var(--tb-card);
+  --card-2: color-mix(in srgb, var(--tb-card) 85%, var(--tb-bg));
+  --text: var(--tb-text);
+  --muted: var(--tb-muted);
+  --line: var(--tb-border);
+  --accent: var(--tb-primary);
+  --on-accent: var(--tb-on-primary);
+  --accent-2: var(--tb-teal-400);
+  --accent-soft: color-mix(in srgb, var(--tb-primary) 14%, transparent);
+  /* throughput: the beam's two ends (down teal, up volt) */
+  --down: var(--tb-beam-a);
+  --up: var(--tb-beam-b);
+  --down-text: var(--tb-beam-a);
+  --up-text: var(--tb-beam-b);
+  --ok: var(--tb-ok);
+  --warn: var(--tb-warn);
+  --bad: var(--tb-error);
+  --idle: var(--tb-muted);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .25);
+  --radius: var(--tb-radius-card);
+  --mono: var(--tb-font-mono);
+  color-scheme: dark light;
 }
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --bg: #0b1117;
-    --card: #121a23;
-    --card-2: #0f161e;
-    --text: #e6edf3;
-    --muted: #8b9bb0;
-    --line: #213041;
-    --accent: #2dd4bf;
-    --accent-2: #5eead4;
-    --accent-soft: rgba(45, 212, 191, .14);
-    --down: #38bdf8;
-    --up: #c084fc;
-    --ok: #22c55e;
-    --warn: #f59e0b;
-    --bad: #f87171;
-    --idle: #64748b;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .25);
+    /* the beam's light ends are icon/line colours, not text (under 4.5:1) */
+    --down-text: var(--tb-primary);
+    --up-text: var(--tb-text);
+    --shadow: 0 1px 2px rgba(6, 42, 38, .06), 0 4px 16px rgba(6, 42, 38, .07);
   }
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
-  font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 15px/1.45 var(--tb-font-sans);
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -73,6 +70,7 @@ code { font-family: var(--mono); font-size: .92em; }
 }
 .brand { display: flex; gap: 10px; align-items: center; }
 .brand img { border-radius: 8px; }
+.brand .wordmark { height: 34px; width: auto; border-radius: 0; display: block; }
 .brand-name { font-weight: 700; letter-spacing: -.01em; }
 .brand-sub { font-size: 12.5px; color: var(--muted); max-width: 52vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -169,9 +167,14 @@ code { font-family: var(--mono); font-size: .92em; }
 .path-head { display: flex; align-items: center; gap: 10px; }
 .kind-ico { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex: none;
   background: var(--accent-soft); color: var(--accent); }
-.kind-ico.cellular { background: color-mix(in srgb, var(--up) 14%, transparent); color: var(--up); }
-.kind-ico.wifi { background: color-mix(in srgb, var(--down) 14%, transparent); color: var(--down); }
-.kind-ico.usb { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+/* one colour per connection kind, on every surface (docs/brand.md) */
+.kind-ico.wifi { --k: var(--tb-wifi); }
+.kind-ico.cellular { --k: var(--tb-cellular); }
+.kind-ico.ethernet { --k: var(--tb-ethernet); }
+.kind-ico.usb { --k: var(--tb-usb); }
+.kind-ico.shared-cellular { --k: var(--tb-shared); }
+.kind-ico.tailnet { --k: var(--tb-tailnet); }
+.kind-ico[class*=" "] { background: color-mix(in srgb, var(--k, var(--accent)) 16%, transparent); color: var(--k, var(--accent)); }
 .path-title { flex: 1; min-width: 0; }
 .path-title b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .path-title small { color: var(--muted); text-transform: capitalize; }
@@ -179,12 +182,12 @@ code { font-family: var(--mono); font-size: .92em; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .stat dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .stat dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 14px; white-space: nowrap; }
-.stat dd.rx { color: var(--down); }
-.stat dd.tx { color: var(--up); }
+.stat dd.rx { color: var(--down-text); }
+.stat dd.tx { color: var(--up-text); }
 .path-foot { display: flex; align-items: center; gap: 10px; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 10px; }
 .cap { display: flex; flex-direction: column; gap: 4px; }
 .bar { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; }
-.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s; }
+.bar > i { display: block; height: 100%; background: var(--tb-beam); border-radius: 99px; transition: width .4s; }
 .bar.hot > i { background: var(--bad); }
 .cap-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); gap: 8px; }
 .cap-row button { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
@@ -212,8 +215,7 @@ select.prio { padding: 5px 8px; font-size: 13px; }
   border: 1px solid var(--line); background: var(--card); color: var(--text);
 }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-@media (prefers-color-scheme: dark) { .btn.primary { color: #042f2e; } }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.danger { color: var(--bad); }
 .btn.danger:hover { border-color: var(--bad); }
 .btn.icon { padding: 8px; }
@@ -238,8 +240,8 @@ select.prio { padding: 5px 8px; font-size: 13px; }
 .client-name b { display: block; }
 .client-name small { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .client-rates { font-variant-numeric: tabular-nums; font-size: 13px; display: flex; gap: 12px; }
-.client-rates .rx { color: var(--down); }
-.client-rates .tx { color: var(--up); }
+.client-rates .rx { color: var(--down-text); }
+.client-rates .tx { color: var(--up-text); }
 .client-paths { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .mini-path { font-size: 12px; padding: 4px 9px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .mini-path b { font-weight: 600; }
@@ -286,7 +288,7 @@ a.btn { text-decoration: none; }
 .qr.qr-small:empty { display: none; }
 .add-phone .step { display: flex; gap: 12px; align-items: flex-start; }
 .add-phone .step .grow { flex: 1; display: flex; flex-direction: column; gap: 8px; }
-.add-phone .step .num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; }
+.add-phone .step .num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 700; }
 .add-phone .step p { margin: 6px 0 0; }
 .add-phone .step .btn { margin-top: 6px; }
 .linkish { background: none; border: 0; padding: 4px 0; color: var(--accent); font: inherit; text-align: left; cursor: pointer; text-decoration: underline; }
@@ -385,8 +387,7 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
 .seg button { border: 0; border-left: 1px solid var(--line); background: none; color: var(--text); font: inherit; font-size: 14px; font-weight: 600; padding: 7px 14px; cursor: pointer; }
 .seg button:first-child { border-left: 0; }
 .ub-seg-row { align-items: center; gap: 10px; }
-.seg button.on { background: var(--accent); color: #fff; }
-@media (prefers-color-scheme: dark) { .seg button.on { color: #042f2e; } }
+.seg button.on { background: var(--accent); color: var(--on-accent); }
 .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 1s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .ub-dialog { width: min(520px, calc(100vw - 24px)); }

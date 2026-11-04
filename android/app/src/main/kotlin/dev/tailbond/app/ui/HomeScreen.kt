@@ -70,7 +70,9 @@ import dev.tailbond.app.update.Availability
 import java.time.Duration
 import java.time.Instant
 
-val OnlineGreen = Color(0xFF22C55E)
+/** Connected / healthy: the brand's status "ok" (BrandTokens). */
+val OnlineGreen: Color
+    @Composable @androidx.compose.runtime.ReadOnlyComposable get() = LocalBrand.current.ok
 
 @Composable
 fun HomeScreen(
@@ -388,13 +390,18 @@ private fun ConnectionsSummary(state: UiState, onOpen: () -> Unit) {
             fontWeight = FontWeight.Medium,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // each link's share of the bonded rate, as a beam bar
+            val rates = listOf(PathKind.WIFI, PathKind.CELLULAR).associateWith { k ->
+                Words.sampleFor(live, k)?.takeIf { it.status == dev.tailbond.app.service.PathGate.STATUS_ACTIVE }?.let { it.rxBps + it.txBps } ?: 0L
+            }
+            val ratesTotal = rates.values.sum().coerceAtLeast(1L)
             for (kind in listOf(PathKind.WIFI, PathKind.CELLULAR)) {
                 val st = Words.linkStatus(kind, live, state.settings, state.mode, state.capReached, state.wifiSignIn)
                 val sample = Words.sampleFor(live, kind)
                 Card(Modifier.weight(1f)) {
                     Column(Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(kindIcon(kind), null, Modifier.size(20.dp))
+                            Icon(kindIcon(kind), null, Modifier.size(20.dp), tint = kindColor(kind))
                             Spacer(Modifier.width(6.dp))
                             Text(kind.label, style = MaterialTheme.typography.titleSmall)
                         }
@@ -410,6 +417,8 @@ private fun ConnectionsSummary(state: UiState, onOpen: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Spacer(Modifier.height(6.dp))
+                            BeamBar((rates[kind] ?: 0L).toFloat() / ratesTotal)
                         }
                     }
                 }
@@ -498,7 +507,7 @@ private fun MachineRow(n: PeerNode, isServer: Boolean, dim: Boolean, onOpen: () 
                     )
                 }
             },
-            leadingContent = { Icon(if (isServer) Icons.Filled.Dns else osIcon(n.os), null) },
+            leadingContent = { Icon(if (isServer) Icons.Filled.Dns else osIcon(n.os), null, tint = LocalBrand.current.tailnet) },
             trailingContent = {
                 IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "Copy ${n.ipv4 ?: n.dnsName}") }
             },

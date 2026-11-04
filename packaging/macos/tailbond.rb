@@ -43,9 +43,11 @@ class Tailbond < Formula
       system "agent/build.sh", "darwin/arm64"
       bin.install "out/macos/mqvpn", "out/agent/darwin-arm64/tailbondd"
       (lib/"tailbond/hooks").install Dir["packaging/macos/hooks/*"]
+      (share/"tailbond/icons").install Dir["packaging/macos/icons/*"]
     else
       bin.install "bin/mqvpn", "bin/tailbondd"
       (lib/"tailbond/hooks").install Dir["hooks/*"]
+      (share/"tailbond/icons").install Dir["icons/*"] if Dir.exist?("icons")
     end
   end
 

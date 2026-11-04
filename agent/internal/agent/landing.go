@@ -80,9 +80,13 @@ func (a *Agent) landingHandler() http.Handler {
 		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFileFS(w, r, web.FS, "landing.js")
 	})
-	mux.HandleFunc("GET /icon.svg", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, web.FS, "icon.svg")
-	})
+	// the brand: icon, favicon, wordmarks and the colour tokens (static)
+	for _, f := range []string{"icon.svg", "favicon.svg", "wordmark-dark.svg", "wordmark-light.svg", "tokens.css"} {
+		mux.HandleFunc("GET /"+f, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeFileFS(w, r, web.FS, f)
+		})
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 	})

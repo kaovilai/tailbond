@@ -26,6 +26,8 @@ fun RateGraph(
     fill: Boolean = true,
     window: Int = LiveState.HISTORY,
 ) {
+    // the area under the first series is the brand beam (teal → volt)
+    val beam = LocalBrand.current.let { listOf(it.beamStart, it.beamEnd) }
     Canvas(modifier.fillMaxWidth().height(height)) {
         val peak = series.maxOfOrNull { s -> s.first.maxOrNull() ?: 0L }?.coerceAtLeast(1L) ?: 1L
         val step = size.width / (window - 1).coerceAtLeast(1)
@@ -34,7 +36,8 @@ fun RateGraph(
             val y = size.height * i / 4f
             drawLine(grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
         }
-        for ((values, color) in series) {
+        for ((idx, entry) in series.withIndex()) {
+            val (values, color) = entry
             if (values.size < 2) continue
             val start = window - values.size
             val line = Path()
@@ -50,7 +53,11 @@ fun RateGraph(
                     lineTo(start * step, size.height)
                     close()
                 }
-                drawPath(area, Brush.verticalGradient(listOf(color.copy(alpha = 0.30f), Color.Transparent)))
+                if (idx == 0) {
+                    drawPath(area, Brush.horizontalGradient(beam.map { it.copy(alpha = 0.30f) }))
+                } else {
+                    drawPath(area, Brush.verticalGradient(listOf(color.copy(alpha = 0.22f), Color.Transparent)))
+                }
             }
             drawPath(line, color, style = Stroke(width = 2.dp.toPx()))
         }
@@ -60,3 +67,16 @@ fun RateGraph(
 @Composable
 fun Sparkline(values: List<Long>, color: Color, modifier: Modifier = Modifier) =
     RateGraph(listOf(values to color), modifier, height = 36.dp, fill = true)
+
+/** A rate bar in the brand beam (teal → volt): [fraction] of the track. */
+@Composable
+fun BeamBar(fraction: Float, modifier: Modifier = Modifier) {
+    val beam = LocalBrand.current.let { listOf(it.beamStart, it.beamEnd) }
+    val track = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant
+    Canvas(modifier.fillMaxWidth().height(4.dp)) {
+        val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2, size.height / 2)
+        drawRoundRect(track, cornerRadius = r)
+        val w = size.width * fraction.coerceIn(0f, 1f)
+        if (w > 0f) drawRoundRect(Brush.horizontalGradient(beam, endX = size.width), size = size.copy(width = w), cornerRadius = r)
+    }
+}

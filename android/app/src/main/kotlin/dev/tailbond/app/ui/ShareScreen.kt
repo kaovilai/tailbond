@@ -84,7 +84,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
             ListItem(
                 headlineContent = { Text(h.hub) },
                 supportingContent = { Text("${formatBytes(h.upBytes + h.downBytes)} since it started") },
-                leadingContent = { Icon(Icons.Filled.Router, null) },
+                leadingContent = { Icon(Icons.Filled.Router, null, tint = LocalBrand.current.shared) },
             )
         }
 

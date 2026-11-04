@@ -5,20 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>Get tailbond · {{.Server}}</title>
-<link rel="icon" href="/icon.svg">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/tokens.css">
 <style>
-/* The dashboard's palette (agent/web/style.css); kept in variables for the
-   coming brand refresh. */
-:root{--bg:#f4f6f8;--card:#fff;--text:#0f172a;--muted:#5b6b80;--line:#e2e8f0;--accent:#0d9488;--accent-ink:#fff;--accent-soft:rgba(13,148,136,.12);--warn:#b45309;--phone:#eef1f4;--dlg:#fff;--ring:#f59e0b;--code:#0f172a;--code-bg:#eef2f6}
-@media (prefers-color-scheme:dark){:root{--bg:#0b1117;--card:#121a23;--text:#e6edf3;--muted:#93a3b8;--line:#213041;--accent:#2dd4bf;--accent-ink:#06201d;--accent-soft:rgba(45,212,191,.14);--warn:#f59e0b;--phone:#1a2430;--dlg:#243140;--ring:#fbbf24;--code:#e6edf3;--code-bg:#0d151d}}
+/* Brand tokens (tokens.css, from assets/brand/tokens.json; docs/brand.md). */
+:root{--bg:var(--tb-bg);--card:var(--tb-card);--text:var(--tb-text);--muted:var(--tb-muted);--line:var(--tb-border);--accent:var(--tb-primary);--accent-ink:var(--tb-on-primary);--accent-soft:color-mix(in srgb,var(--tb-primary) 14%,transparent);--warn:var(--tb-warn);--phone:color-mix(in srgb,var(--tb-card) 70%,var(--tb-bg));--dlg:var(--tb-card);--ring:var(--tb-warn);--code:var(--tb-text);--code-bg:color-mix(in srgb,var(--tb-bg) 70%,var(--tb-card))}
 *{box-sizing:border-box}
 html{scroll-padding-top:64px}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 var(--tb-font-sans)}
 main{max-width:680px;margin:0 auto;padding:20px 16px 40px}
 header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-header img{width:36px;height:36px}
+header .wordmark{height:36px;width:auto;display:block}
 header .who{font-size:14px;color:var(--muted)}
-header b{display:block;font-size:17px;color:var(--text)}
+header .who b{color:var(--text)}
 h1{font-size:26px;line-height:1.25;margin:14px 0 8px}
 h2{font-size:19px;margin:0 0 6px}
 h3{font-size:16px;margin:12px 0 4px}
@@ -37,7 +36,7 @@ p{margin:6px 0}
 #get-app:target{outline:3px solid var(--ring);outline-offset:4px}
 .notyet{display:none;font-weight:600;margin:4px 0 8px}
 #get-app:target .notyet{display:block}
-code{font:14px ui-monospace,Menlo,Consolas,monospace;background:var(--accent-soft);padding:1px 5px;border-radius:5px;word-break:break-all}
+code{font:14px var(--tb-font-mono);background:var(--accent-soft);padding:1px 5px;border-radius:5px;word-break:break-all}
 .cmd{display:flex;align-items:flex-start;gap:8px;background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:8px 8px 8px 12px;margin:8px 0}
 .cmd code{flex:1;background:none;padding:0;color:var(--code);white-space:pre-wrap;word-break:break-all;line-height:1.45}
 .copy{flex:none;font:600 13px system-ui,sans-serif;border:1px solid var(--accent);color:var(--accent);background:var(--card);border-radius:8px;padding:5px 10px;cursor:pointer}
@@ -86,8 +85,11 @@ a{color:var(--accent)}
 <body>
 <main data-detected="{{.Detected}}">
 <header>
-  <img src="/icon.svg" alt="">
-  <div class="who"><b>tailbond</b>on your home server, {{.Server}}</div>
+  <picture>
+    <source srcset="/wordmark-dark.svg" media="(prefers-color-scheme: dark)">
+    <img class="wordmark" src="/wordmark-light.svg" alt="tailbond" width="146" height="36">
+  </picture>
+  <div class="who">on your home server, <b>{{.Server}}</b></div>
 </header>
 
 <h1>Get tailbond</h1>

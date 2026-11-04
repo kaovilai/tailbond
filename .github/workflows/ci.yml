@@ -34,6 +34,10 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
+      - name: Brand tokens in sync, contrast (docs/brand.md)
+        run: |
+          python3 scripts/brand/gen-tokens.py --check
+          python3 scripts/brand/contrast.py
       - name: go vet
         working-directory: agent
         run: go vet ./...
@@ -357,7 +361,9 @@ jobs:
           path: out/e2e-macos/
           if-no-files-found: ignore
       - name: macOS bundle and Homebrew formula
-        run: packaging/macos/build-bundle.sh
+        run: |
+          packaging/macos/build-bundle.sh
+          tar -tzf out/macos/tailbond-macos-arm64.tar.gz | grep -qx 'tailbond-macos-arm64/icons/tailbond.icns'
       - name: Install test (install.sh, --update, uninstall.sh, Homebrew formula)
         run: scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
       - uses: actions/upload-artifact@v7
