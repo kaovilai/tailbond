@@ -260,7 +260,7 @@ func cmdRestore(args []string) {
 		fatal(err)
 	}
 	fmt.Println("restored; the previous settings are in", rollback)
-	fmt.Println("restart tailbond now: systemctl restart tailbond (OpenWrt: /etc/init.d/tailbond restart)")
+	fmt.Println("restart tailbond now: systemctl restart tailbond (OpenWrt: /etc/init.d/tailbond restart; Mac: sudo launchctl kickstart -k system/com.tailbond.tailbondd)")
 }
 
 func passphrase(file string, twice bool) string {

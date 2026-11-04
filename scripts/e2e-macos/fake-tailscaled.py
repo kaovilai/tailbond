@@ -9,6 +9,8 @@ Tailscale does. Behind it lives a pretend tailnet:
 - 100.101.0.2 (a tailnet machine) answers ICMP echo and logs the source
   address it saw: the Mac's server must NAT bonded clients' traffic to
   100.101.0.1 on its way into the tailnet.
+- 100.101.0.1 itself is routed to lo0 (Tailscale answers the machine's
+  own address locally).
 - 192.0.2.0/24 is routed here too: a source that is neither the tailnet
   nor the tunnel, to show the dashboard and the phone page refuse it.
 
@@ -79,6 +81,10 @@ subprocess.run(["ifconfig", ifname, "inet", SELF, PEER, "mtu", "1280", "up"], ch
 for net in ("100.64.0.0/10", "192.0.2.0/24"):
     subprocess.run(["route", "-q", "-n", "delete", "-net", net], stderr=subprocess.DEVNULL)
     subprocess.run(["route", "-q", "-n", "add", "-net", net, "-interface", ifname], check=True)
+# connections from this Mac to its own Tailscale address: Tailscale hands
+# them back itself; here a loopback host route does
+subprocess.run(["route", "-q", "-n", "delete", "-host", SELF], stderr=subprocess.DEVNULL)
+subprocess.run(["route", "-q", "-n", "add", "-host", SELF, "-interface", "lo0"], check=True)
 with open(IFNAME_FILE, "w") as f:
     f.write(ifname + "\n")
 log("up on %s: %s, peer %s" % (ifname, SELF, PEER))

@@ -120,6 +120,7 @@ cleanup() {
   [ -n "$QEMU_PID" ] && kill "$QEMU_PID" 2>/dev/null || true
   [ -n "$FTS_PID" ] && kill "$FTS_PID" 2>/dev/null || true
   ifconfig lo0 -alias "$ASKER" 2>/dev/null || true
+  route -q -n delete -host "$TSIP" 2>/dev/null || true
   if [ -n "$ALF_WAS" ]; then
     "$ALF" --remove "$MQVPN" >/dev/null 2>&1 || true
     "$ALF" --remove "$TAILBONDD" >/dev/null 2>&1 || true
@@ -166,7 +167,7 @@ cat >"$WORK/bin/tailscale" <<EOF
 # fake tailscale CLI (scripts/e2e-macos-server.sh)
 case "\$1" in
 status) cat "$WORK/ts-status.json" ;;
-ip) echo "$TSIP" ;;
+ip) [ "\$2" = -6 ] || echo "$TSIP" ;;
 whois)
   [ "\$3" = "$ASKER" ] || { echo "no such peer" >&2; exit 1; }
   echo '{"Node":{"ID":9,"StableID":"nE2EPIXEL","Name":"pixel.tail1234.ts.net.","ComputedName":"pixel","Hostinfo":{"Hostname":"Pixel 9","OS":"android"}},"UserProfile":{"LoginName":"alex@example.com","DisplayName":"Alex"}}' ;;
@@ -318,7 +319,7 @@ sleep 2
 start_server
 wait_for 60 "server up after the crash" server_up && ok "server up again after kill -9" || bad "server not up after kill -9"
 wait_for 10 "stale restore" grep -q 'restore record from an unclean stop' "$WORK/server.log" \
-  && ok "server-up put the crashed run's state back first: $(grep -o 'server-down: restored.*' "$WORK/server.log" | tail -n1)" || bad "no stale restore in the log"
+  && ok "server-up put the crashed run's state back first: $(grep -o 'restored (after an unclean stop).*' "$WORK/server.log" | tail -n1)" || bad "no stale restore in the log"
 wait_for 120 "client back" sh -c "[ \"\$(curl -fsS -m 3 http://$API/api/status | jq '[.clients[]? | select(.name == \"linux-vm\" and .connected)] | length')\" -ge 1 ]" \
   && ok "the VM reconnected by itself" || bad "the VM didn't reconnect"
 sapi -X POST "http://$API/api/disconnect" >/dev/null

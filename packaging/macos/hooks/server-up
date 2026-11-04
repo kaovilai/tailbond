@@ -115,9 +115,11 @@ fi
 rec ANCHOR "$ANCHOR"
 tok="$(pfctl -E 2>&1 | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -n1)"
 rec PF_TOKEN "$tok"
-if rules | pfctl -q -a "$ANCHOR" -f - 2>&1; then
+# (pfctl warns about -f flushing the main ruleset even for an anchor: noise)
+if out="$(rules | pfctl -q -a "$ANCHOR" -f - 2>&1)"; then
   log "pf: anchor $ANCHOR: nat $TB_SUBNET${TB_SUBNET6:+ $TB_SUBNET6} out ${UPLINKS:-<no uplink>}${TS_IF:+, to the tailnet out $TS_IF}; tcp $WEB on ${WEB_TO:-<none>} from loopback, $TB_TUN and the tailnet only"
 else
+  printf '%s\n' "$out" | grep -v -e 'Use of -f option' -e 'present in the main ruleset' -e 'See /etc/pf.conf' -e '^$'
   log "ERROR: pf: could not load anchor $ANCHOR: bonded clients won't reach the internet"
   fail=1
 fi
@@ -127,17 +129,18 @@ if [ -n "$TS_CLI" ] && [ -z "$TS_IF" ]; then log "tailscale: not up (no Tailscal
 # ---- application firewall --------------------------------------------------------
 if [ -x "$ALF" ] && "$ALF" --getglobalstate 2>/dev/null | grep -qi 'enabled'; then
   bins=""
+  sep=""
   me="$(ps -o comm= -p "$PPID" 2>/dev/null)"
-  case "$me" in */tailbondd) bins="$me" ;; esac
+  case "$me" in */tailbondd) bins="$me"; sep=" " ;; esac
   if [ -f "$STATE/mqvpn.pid" ]; then
     mq="$(ps -o comm= -p "$(cat "$STATE/mqvpn.pid")" 2>/dev/null)"
-    case "$mq" in */mqvpn) bins="$bins $mq" ;; esac
+    case "$mq" in */mqvpn) bins="$bins$sep$mq" ;; esac
   fi
   for b in $bins; do
     "$ALF" --add "$b" >/dev/null 2>&1
     "$ALF" --unblockapp "$b" >/dev/null 2>&1
   done
-  log "application firewall is on: allowed incoming connections for${bins:- (nothing found)}"
+  log "application firewall is on: allowed incoming connections for ${bins:-(nothing found)}"
   if "$ALF" --getblockall 2>/dev/null | grep -qi 'enabled\|state = 2'; then
     log "WARNING: the firewall blocks all incoming connections (System Settings > Network > Firewall > Options): turn that off, or phones and travel routers can't connect"
   fi
