@@ -461,8 +461,14 @@ fi
 hapi -X POST -d '{"work_vpn": "bonded"}' "http://$API/api/coexist" >/dev/null
 if wait_for 90 "Bonded: MTU raised" sh -c "curl -fsS -m 2 http://$API/api/coexist | jq -e '.work_vpn_effective == \"bonded\" and .want_mtu == 1360'" \
    && wait_for 60 "reconnected" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'"; then
-  TB="$(tbtun)"
-  ifconfig "$TB" | grep -Eq 'mtu 13(52|60)' && ok "Bonded: $TB $(ifconfig "$TB" | grep -o 'mtu [0-9]*') for $WG's 1280 + 80" || bad "Bonded: $TB $(ifconfig "$TB" | grep -o 'mtu [0-9]*')"
+  # mqvpn restarts with the new MTU: wait for its (possibly new) utun
+  if wait_for 45 "tailbond's utun at 1352/1360" sh -c "ifconfig \"\$(grep -o 'TUN utun[0-9]* configured' '$WORK/hub.log' | tail -n1 | awk '{print \$2}')\" | grep -Eq 'mtu 13(52|60)'"; then
+    TB="$(tbtun)"
+    ok "Bonded: $TB $(ifconfig "$TB" | grep -o 'mtu [0-9]*') for $WG's 1280 + 80"
+  else
+    TB="$(tbtun)"
+    bad "Bonded: $TB $(ifconfig "$TB" | grep -o 'mtu [0-9]*')"
+  fi
   wait_for 20 "no host route" sh -c "! netstat -rn -f inet | grep -q '^203.0.113.50 '" && ok "Bonded: NetBird's endpoints have no host route via $UP" || bad "host route still there"
 else
   bad "Bonded: $(cxj | jq -c '{work_vpn_effective, want_mtu, warnings}')"
