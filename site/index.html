@@ -71,6 +71,27 @@ a { color: var(--primary); }
   0% { offset-distance: 0%; opacity: 0; } 8% { opacity: 1; } 92% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; }
 }
 
+/* pair & share flow */
+.flow { width: 100%; height: auto; border-radius: var(--radius); background: var(--card); border: 1px solid var(--border); }
+.flow .lbl { font: 600 13px var(--font); fill: var(--text); }
+.flow .sub { font: 12px var(--font); fill: var(--muted); }
+.flow .node { fill: var(--bg); stroke: var(--border); stroke-width: 2; }
+.flow .lan { stroke-dasharray: 2 9; }
+.flow .pkt { offset-rotate: 0deg; opacity: 0; fill: var(--card); stroke-width: 3; }
+.flow .pkt.up { stroke: var(--shared); } .flow .pkt.down { stroke: var(--primary); } .flow .pkt.own { stroke: var(--eth); }
+@media (prefers-reduced-motion: no-preference) {
+  .flow .pkt { animation: ride 3.2s linear infinite; }
+  .flow .pkt.d1 { animation-delay: -.8s; } .flow .pkt.d2 { animation-delay: -1.6s; } .flow .pkt.d3 { animation-delay: -2.4s; }
+}
+@media (width < 600px) { .flow .lbl { font-size: 22px; } .flow .sub { font-size: 20px; } .flow .hubsub { display: none; } }
+.still .pkt { animation-play-state: paused; }
+.flowbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin: .8rem 0 1.4rem; }
+.legend { display: flex; gap: 1.2rem; flex-wrap: wrap; color: var(--muted); font-size: .9rem; margin: 0; padding: 0; list-style: none; }
+.legend span { display: inline-block; width: 1.4rem; height: 0; border-top: 4px solid; vertical-align: .25em; margin-right: .4rem; }
+.legend .lanl { border-top-style: dotted; }
+.pausebtn { font: inherit; font-size: .9rem; padding: .4rem .9rem; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .pausebtn { display: none; } }
+
 /* sections */
 section { padding: 3.5rem 0; border-top: 1px solid var(--border); }
 h2 { font-size: clamp(1.5rem, 3vw, 2rem); letter-spacing: -.02em; margin: 0 0 .5rem; }
@@ -107,6 +128,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
     </a>
     <nav aria-label="Sections">
       <a href="#how">How it works</a>
+      <a href="#share">Pair &amp; Share</a>
       <a href="#features">Features</a>
       <a href="#platforms">Platforms</a>
       <a href="#start">Get started</a>
@@ -158,6 +180,55 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
     </ol>
   </section>
 
+  <section id="share">
+    <h2>Pair &amp; Share: how the data flows</h2>
+    <p class="lead">A nearby phone lends its mobile data to your hub. The hub sends some of the tunnel's packets to the phone over the local Wi-Fi; the phone passes them to your server over its own mobile data, and the replies come back the same way. Your server just sees one more path of the same tunnel.</p>
+    <svg class="flow" viewBox="0 0 680 320" role="img" aria-labelledby="flow-t flow-d">
+      <title id="flow-t">Pair and Share data flow</title>
+      <desc id="flow-d">The hub sends tunnel packets over local Wi-Fi to two nearby phones. Each phone forwards them over its mobile data to your server, and replies return the same way. The hub also uses its own connection straight to the server.</desc>
+      <path d="M120 160 C210 160 230 72 300 72" fill="none" class="lan" style="stroke:var(--wifi)" stroke-width="5" stroke-linecap="round"/>
+      <path d="M120 160 C210 160 230 248 300 248" fill="none" class="lan" style="stroke:var(--wifi)" stroke-width="5" stroke-linecap="round"/>
+      <path d="M340 72 C450 72 470 160 556 160" fill="none" style="stroke:var(--shared)" stroke-width="6" stroke-linecap="round"/>
+      <path d="M340 248 C450 248 470 160 556 160" fill="none" style="stroke:var(--shared)" stroke-width="6" stroke-linecap="round"/>
+      <path d="M120 160 H556" fill="none" style="stroke:var(--eth)" stroke-width="6" stroke-linecap="round"/>
+      <rect class="node" x="34" y="126" width="88" height="68" rx="12"/>
+      <text class="lbl" x="78" y="157" text-anchor="middle">Hub</text>
+      <text class="sub hubsub" x="78" y="175" text-anchor="middle">router · Mac</text>
+      <rect class="node" x="300" y="40" width="40" height="64" rx="9"/>
+      <rect class="node" x="300" y="216" width="40" height="64" rx="9"/>
+      <rect class="node" x="556" y="122" width="96" height="76" rx="12"/>
+      <text class="lbl" x="604" y="156" text-anchor="middle">Your</text>
+      <text class="lbl" x="604" y="174" text-anchor="middle">server</text>
+      <text class="lbl" x="320" y="26" text-anchor="middle">Sam's phone</text>
+      <text class="sub" x="440" y="58">mobile data</text>
+      <text class="lbl" x="320" y="302" text-anchor="middle">Your 2nd phone</text>
+      <text class="sub" x="440" y="276">mobile data</text>
+      <text class="sub" x="196" y="104" text-anchor="end">local Wi-Fi</text>
+      <text class="sub" x="400" y="150" text-anchor="middle">hub's own link</text>
+      <circle class="pkt up" r="6" style="offset-path: path('M120 160 C210 160 230 72 300 72 L340 72 C450 72 470 160 556 160')"/>
+      <circle class="pkt down d2" r="6" style="offset-path: path('M556 160 C470 160 450 72 340 72 L300 72 C230 72 210 160 120 160')"/>
+      <circle class="pkt up d1" r="6" style="offset-path: path('M120 160 C210 160 230 248 300 248 L340 248 C450 248 470 160 556 160')"/>
+      <circle class="pkt down d3" r="6" style="offset-path: path('M556 160 C470 160 450 248 340 248 L300 248 C230 248 210 160 120 160')"/>
+      <circle class="pkt own d2" r="6" style="offset-path: path('M120 160 H556')"/>
+    </svg>
+    <div class="flowbar">
+      <ul class="legend">
+        <li><span class="lanl" style="border-color:var(--wifi)"></span>Hub to phone, local Wi-Fi</li>
+        <li><span style="border-color:var(--shared)"></span>Phone to server, its mobile data</li>
+        <li><span style="border-color:var(--primary)"></span>Replies</li>
+        <li><span style="border-color:var(--eth)"></span>The hub's own connection</li>
+      </ul>
+      <button type="button" class="pausebtn" aria-pressed="false">Pause animation</button>
+    </div>
+    <ol class="steps">
+      <li><b>Find</b><span>Phones with Share turned on announce themselves on the local Wi-Fi; your server also tells the hub which phones are nearby.</span></li>
+      <li><b>Trust</b><span>Your server gives the hub a pass for each phone. The phone checks it, so only your hubs can use it, and it ends when the pass expires.</span></li>
+      <li><b>Relay</b><span>The phone forwards the tunnel's packets over its mobile data only. They stay encrypted end to end; the phone can't read them.</span></li>
+      <li><b>Bond</b><span>Your server sees one more path from the phone's carrier. If the phone walks away, the path drops within seconds and the tunnel carries on.</span></li>
+    </ol>
+    <p class="note">The owner of each phone sets a monthly data limit and which hubs may use it. Details: <a href="https://github.com/kaovilai/tailbond/blob/main/docs/pair-and-share.md">Pair &amp; Share</a>.</p>
+  </section>
+
   <section id="features">
     <h2>Features</h2>
     <p class="lead">Everything a travel bonding service does, on hardware you own.</p>
@@ -165,7 +236,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
       <div class="card"><h3>Four plain modes</h3><p>Fastest, Smooth calls and video, Most reliable, Save mobile data. Per-link Always / Backup only / Off and data caps.</p></div>
       <div class="card"><h3>Tailscale-native</h3><p>Pair a new device with one tap: it asks your server over Tailscale and you approve. Machines list, MagicDNS, setup health.</p></div>
       <div class="card"><h3>Home + VPS failover</h3><p>Prefer home, switch to a VPS in about 15 s if home goes down, fail back when it's healthy.</p></div>
-      <div class="card"><h3><span class="dot" style="background:var(--shared)"></span>Pair &amp; Share</h3><p>Nearby phones lend their mobile data to your hub over Wi-Fi: no hotspot setup, counted as app data.</p></div>
+      <div class="card"><h3><span class="dot" style="background:var(--shared)"></span>Pair &amp; Share</h3><p>Nearby phones lend their mobile data to your hub over Wi-Fi: no hotspot setup, counted as app data. <a href="#share">See how the data flows</a>.</p></div>
       <div class="card"><h3>Hotel Wi-Fi friendly</h3><p>Sign-in pages are detected and kept out of the bond, and work with GL.iNet's Login Mode.</p></div>
       <div class="card"><h3>Bypass rules</h3><p>Send a banking site, a work laptop or Wi-Fi calling direct, or through one chosen connection.</p></div>
       <div class="card"><h3>Native GL.iNet panel</h3><p>Lives under VPN in GL's own admin, with GL's login. No reflashing.</p></div>
@@ -220,5 +291,12 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
     Tailscale, GL.iNet, Speedify, Peplink and SpeedFusion are trademarks of their respective owners; tailbond isn't affiliated with them.
   </div>
 </footer>
+<script>
+document.querySelector('.pausebtn')?.addEventListener('click', (e) => {
+  const still = document.documentElement.classList.toggle('still');
+  e.currentTarget.setAttribute('aria-pressed', String(still));
+  e.currentTarget.textContent = still ? 'Play animation' : 'Pause animation';
+});
+</script>
 </body>
 </html>
