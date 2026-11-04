@@ -69,7 +69,13 @@ install prompts look like (Chrome's "File might be harmful", *Install
 unknown apps → Allow from this source*, *Install*, Play Protect's scan),
 and then **Open tailbond and ask homebox**: an Android intent link to
 `tailbond://ask?server=homebox.<tailnet>.ts.net` that falls back to the
-page's install step when the app isn't installed yet. The app skips its intro
+page's install step when the app isn't installed yet. The same step offers
+[Obtainium](#updates) instead (an **Add tailbond to Obtainium** link,
+`obtainium://add/https://github.com/kaovilai/tailbond`, and its steps). The
+page is "Get tailbond" for every device, with a switcher (Android · Mac ·
+iPhone · Linux); on a phone it opens on the Android steps, and on a computer
+the Android section shows a QR code of `http://homebox/#android` to scan
+with the phone. The app skips its intro
 and asks the server right away (step 0 below), unless it's already paired.
 The admin's dashboard and the GL panel show the page's QR code under **Add
 an Android phone**. Those prompts are Android's own and can't be removed

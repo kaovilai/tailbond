@@ -173,6 +173,11 @@ function render(st) {
   }
 
   renderPairRequests(st);
+  if (st.role === 'client') {
+    if (st.join) state.askShown = true;
+    renderAsk(st.join || (state.askShown ? { state: 'idle' } : null));
+    if (state.pendingTab) { const t = state.pendingTab; state.pendingTab = null; const b = $(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
+  }
   if (st.role === 'client') renderClientPaths(st); else renderServerPaths(st);
   if (st.role === 'server' && state.tab === 'clients') renderClients(st);
   renderMaint(st);
@@ -826,7 +831,49 @@ function setupAddPhone() {
   });
 }
 
+// "Ask your home server" (POST /api/join): the phone page links here as
+// /?ask=<server>, which fills the name in and opens Setup.
+function setupAsk() {
+  const input = $('#ask-server'), btn = $('#ask-btn');
+  const label = () => { const n = input.value.trim().split('.')[0]; btn.textContent = n ? `Ask ${n}` : 'Ask'; };
+  input.addEventListener('input', label);
+  $('#ask-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const server = input.value.trim();
+    if (!server) return input.focus();
+    try {
+      await api('POST', '/api/join', { server });
+      state.askShown = true;
+      renderAsk({ state: 'asking', server_name: server.split('.')[0] });
+    } catch (err) { toast(err.message, true); }
+  });
+  const ask = new URLSearchParams(location.search).get('ask');
+  if (ask) {
+    input.value = ask;
+    label();
+    history.replaceState(null, '', location.pathname + location.hash);
+    state.pendingTab = 'setup';
+  }
+}
+
+function renderAsk(j) {
+  const box = $('#ask-status');
+  if (!box || !j || (!state.askShown && j.state === 'idle')) return;
+  const n = j.server_name || j.server || 'the server';
+  const words = {
+    asking: `Asking ${n}…`,
+    waiting: `Waiting for ${n} to say yes: whoever looks after ${n} taps Approve on its page (http://${n}:8077, the request is at the top). If that's you, open it now. This page connects by itself once approved.`,
+    approved: `${n} said yes: tailbond is connecting.`,
+    declined: `${n} declined.`,
+    expired: `Nobody approved in time. Ask again.`,
+    error: `Couldn't ask ${n}${j.error ? ': ' + j.error : ''}. Is Tailscale on, and is the name right?`,
+  };
+  box.textContent = words[j.state] || '';
+  box.className = 'small ' + (j.state === 'error' || j.state === 'declined' || j.state === 'expired' ? 'warn-text' : 'muted');
+}
+
 function setupPairing() {
+  setupAsk();
   $('#pair-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const uri = $('#pair-uri').value.trim();

@@ -229,6 +229,18 @@ check "config kept" test -f /etc/tailbond/tailbond.json
 "$B/uninstall.sh" --purge >/dev/null 2>&1
 check "--purge removes config and state" test ! -e /etc/tailbond -a ! -e /var/lib/tailbond
 
+say "client role (--client: a laptop bonding its own links)"
+"$B/install.sh" --client --no-start >"$W/client.log" 2>&1
+check "--client installs the binaries" test -x /usr/local/bin/tailbondd -a -x /usr/local/bin/mqvpn
+check "client config: role client, dashboard on 127.0.0.1" sh -c "grep -q '\"role\": \"client\"' /etc/tailbond/tailbond.json && grep -q '127.0.0.1:8077' /etc/tailbond/tailbond.json"
+check "install.env says TB_ROLE=client" grep -q '^TB_ROLE=client' /etc/tailbond/install.env
+check "no server pieces (no sysctl, no firewall service)" test ! -e /etc/sysctl.d/90-tailbond.conf -a ! -e /etc/firewalld/services/tailbond.xml
+"$B/install.sh" --client --no-start >>"$W/client.log" 2>&1
+check "a re-run keeps the client config" grep -q '(kept)' "$W/client.log"
+check "the server installer refuses a client's config" sh -c "! '$B/install.sh' --no-start >/dev/null 2>&1 && grep -q '\"role\": \"client\"' /etc/tailbond/tailbond.json"
+"$B/uninstall.sh" --purge >/dev/null 2>&1
+check "--purge removes the client" test ! -e /etc/tailbond -a ! -e /usr/local/bin/tailbondd
+
 echo
 echo "$PRETTY_NAME: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

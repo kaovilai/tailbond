@@ -75,11 +75,8 @@ type Agent struct {
 	listIfs func() ([]netif.Iface, error)
 	// lookupIf describes an interface a path setting names (tests leave it nil).
 	lookupIf func(string) (netif.Iface, bool)
-	wc      whoisCache // admin requests from the tailnet: who sent them
-	apkHash struct {   // the phone page's APK checksum
-		sync.Mutex
-		key, sum string
-	}
+	wc       whoisCache // admin requests from the tailnet: who sent them
+	dl       dlState    // the phone page's downloads: checksums, the macOS bundle fetch
 	// landingUp: the phone landing page listens on a Tailscale IP.
 	landingUp atomic.Bool
 	// glRead reads GL firmware's repeater portal state (tests stub it).

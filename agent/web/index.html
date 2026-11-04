@@ -186,8 +186,17 @@
   </section>
 
   <section class="tab hidden" id="tab-setup">
+    <div class="card" id="ask-card">
+      <h3>Ask your home server</h3>
+      <p class="muted">With Tailscale on, type your home server's Tailscale name (like <b>homebox</b>). This machine asks it to connect; whoever runs the server taps <b>Approve</b> on its page.</p>
+      <form id="ask-form" class="row">
+        <input id="ask-server" placeholder="homebox" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Home server's Tailscale name">
+        <button class="btn primary" type="submit" id="ask-btn">Ask</button>
+      </form>
+      <div id="ask-status" class="small" role="status"></div>
+    </div>
     <div class="card">
-      <h3>Pair with your home server</h3>
+      <h3>Or paste a pairing link</h3>
       <p class="muted">On the server's dashboard open <b>Clients → Add</b>, then paste the <code>tailbond://pair</code> link here or scan its QR code.</p>
       <form id="pair-form">
         <textarea id="pair-uri" rows="3" placeholder="tailbond://pair?d=…" spellcheck="false"></textarea>

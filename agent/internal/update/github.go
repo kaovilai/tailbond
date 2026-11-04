@@ -206,6 +206,19 @@ func (c Client) Latest(ctx context.Context, repo string) (*Release, error) {
 	return ParseRelease(b.Bytes())
 }
 
+// Tag asks GET /repos/<repo>/releases/tags/<tag>.
+func (c Client) Tag(ctx context.Context, repo, tag string) (*Release, error) {
+	repo, err := RepoPath(repo)
+	if err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	if err := c.get(ctx, c.api()+"/repos/"+repo+"/releases/tags/"+url.PathEscape(tag), true, &b, 4<<20); err != nil {
+		return nil, err
+	}
+	return ParseRelease(b.Bytes())
+}
+
 // Download fetches one asset into dst and checks it against the release's
 // SHA256SUMS; dst only appears when it matches.
 func (c Client) Download(ctx context.Context, r *Release, name, dst string) error {

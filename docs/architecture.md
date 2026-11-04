@@ -122,7 +122,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/pair-requests` | server, additive (admin): every live request `{"id","name","kind","device","dns_name","hostname","os","user","user_name","ip","status","created","expires","client","repair"}` |
 | POST | `/api/pair-requests/{id}/approve`, `/decline` | server, additive (admin): body `{"name"}` optional. Refused (403) from the requesting address |
 | GET | `/api/discover?refresh=1` | client, additive: tailbond servers among online tailnet peers `{"tailscale_installed","tailscale_running","self","tailnet","servers":[{"name","dns_name","ip","os","version"}],"checked","at"}` |
-| GET/POST/DELETE | `/api/join` | client, additive: ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel. Additive: `"add": true` adds the approved server to the [server list](#multiple-servers-and-failover) as a backup instead of replacing the primary; `error` may then be `subnet_in_use` or `exists`, with `conflict` (the server already in the list) and `subnet` |
+| GET/POST/DELETE | `/api/join` | client, additive (the dashboard's Setup → **Ask your home server**; `/?ask=<server>` fills it in): ask a server to pair (`{"server":"homebox"\|"homebox.tail…ts.net"\|"100.x"}`), its state `{"state":"idle\|asking\|waiting\|approved\|declined\|expired\|error","server","server_name","id","name","error"}`, cancel. Additive: `"add": true` adds the approved server to the [server list](#multiple-servers-and-failover) as a backup instead of replacing the primary; `error` may then be `subnet_in_use` or `exists`, with `conflict` (the server already in the list) and `subnet` |
 | DELETE | `/api/pair` | client, additive: forget the pairing, every server in the list (tunnel stops, LAN back on the WANs) |
 | GET | `/api/peers` | client, additive: the server's list (below), fetched through the tunnel with this client's token, cached 20 s |
 | POST/DELETE | `/api/captive/signin` | client, additive: `{"name": <network or device>}` sign-in mode on a WAN behind a portal (409 otherwise) / off ([captive portals](#captive-portals)) |
@@ -130,6 +130,7 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | GET | `/api/health` | additive: [setup health](#setup-health) |
 | GET | `/tailbond-glinet.ipk` | additive: the GL router package, from `glinet_ipk` (default `/usr/share/tailbond/tailbond-glinet.ipk`) or rebuilt from opkg's records of the installed package |
 | GET | `/get` | server, additive, **unauthenticated**: the [phone page](#phone-page) (HTML), also served on port 80 |
+| GET | `/tailbond-macos-arm64.tar.gz` | server, additive, **unauthenticated**: the macOS bundle for the phone page's Mac section (`macos_bundle`, else a copy fetched once from the GitHub release and cached; 404 when there is none), also on port 80 |
 | GET | `/api/servers` | client, additive: `{"servers":[…],"active_server","failover":{…}}`, the same objects as in `/api/status` ([multiple servers](#multiple-servers-and-failover)) |
 | POST | `/api/servers` | client, additive: `{"uri", "name"?}` adds a server at the end of the list (a backup). 409 `{"error":"subnet_in_use","conflict":"<server>","subnet"}` when its tunnel subnet overlaps another server's; 409 `{"error":"exists","conflict"}` when it's the same server |
 | DELETE | `/api/servers/{name}` | client, additive: forget one server (the next one takes over if it was active) |
@@ -149,16 +150,42 @@ phone's browser, e.g. `homebox`) and `landing_qr_svg` (QR code of
 
 #### Phone page
 
-Server role: a page for phones that run Tailscale but not tailbond yet,
-served on **port 80 of the Tailscale IPs** (config `landing_port`, default
-80, `-1` = off; `landing_public_port` is the port tailnet devices use when a
-firewall redirect sits in between: OpenWrt binds 8078 and redirects tailnet
-tcp/80 to it). Typing the server's MagicDNS short name in a phone's browser
-opens it. It serves exactly `GET /` (HTML: the APK download with what
-Android's install prompts look like, and a link that opens the app asking
-this server), `GET /tailbond.apk` and `GET /icon.svg`; every other path
-redirects to `/`, whatever `ui_password` says. Binding failures (port in
-use) are logged once and the page stays at `/get` on the dashboard port.
+Server role: "Get tailbond", a page for devices that run Tailscale but not
+tailbond yet, served on **port 80 of the Tailscale IPs** (config
+`landing_port`, default 80, `-1` = off; `landing_public_port` is the port
+tailnet devices use when a firewall redirect sits in between: OpenWrt binds
+8078 and redirects tailnet tcp/80 to it). Typing the server's MagicDNS short
+name in a browser opens it. It serves exactly `GET /` (HTML), `GET
+/tailbond.apk`, `GET /tailbond-macos-arm64.tar.gz`, `GET /landing.js` and
+`GET /icon.svg`; every other path redirects to `/`, whatever `ui_password`
+says. Binding failures (port in use) are logged once and the page stays at
+`/get` on the dashboard port.
+
+The page has a section per platform behind a switcher: **Android** (the
+APK with what Android's install prompts look like, Obtainium as the
+alternative, a link that opens the app asking this server, and on other
+devices a QR code of `<page>#android` to scan with the phone), **Mac** (a
+one-line Terminal install from this server, the download button with its
+SHA-256, Homebrew through a local tap; then `http://localhost:8077/?ask=<full
+name>`, which opens the Mac's own dashboard with **Ask your home server**
+filled in), **iPhone** (bonded with no app over the router's Wi-Fi or USB;
+tailbond Share and docs/ios.md) and **Linux** (`install.sh --client` for a
+laptop, the RPM and `install.sh` for a server). `#android`, `#mac`,
+`#iphone`, `#linux` pick a section (CSS `:target`, no script needed);
+without one, the server's guess from `User-Agent` / `Sec-CH-UA-Platform`
+shows first (Windows: a note and the Android steps), refined in the browser
+by `landing.js` (an iPad that asks for the desktop site). `landing.js` also
+runs the copy buttons (with an `execCommand` fallback: `http://homebox/`
+isn't a secure context). No external assets.
+
+The Mac download: `macos_bundle` (default
+`/usr/share/tailbond/tailbond-macos-arm64.tar.gz`) when present, else
+`<state_dir>/downloads/tailbond-macos-arm64.tar.gz`, else the asset of this
+version's GitHub release (the latest for a non-release build) downloaded
+on the first request (or in the background when a Mac opens the page),
+checked against the release's `SHA256SUMS` like an update, and cached. One
+fetch at a time; after a failure none for 10 minutes; none at all with
+`update.policy` `off`.
 
 The app link is `intent://ask?server=<full MagicDNS name>#Intent;scheme=tailbond;package=dev.tailbond.app;S.browser_fallback_url=<page>#get-app;end`,
 i.e. **`tailbond://ask?server=<name>`**: the app asks that server to pair
@@ -315,6 +342,7 @@ Additive keys (all optional):
 - `disable_tailscale`: skip every `tailscale` CLI call; `control_addr`; `log_level`;
 - `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing);
 - `glinet_ipk`: router package offered as `GET /tailbond-glinet.ipk`;
+- `macos_bundle`: the macOS bundle the phone page offers (default `/usr/share/tailbond/tailbond-macos-arm64.tar.gz`; without it, fetched from the GitHub release and cached);
 - `landing_port` (server: phone page bind port, default 80, `-1` = off), `landing_public_port` (the port tailnet devices use, default the same);
 - `server.users[].ts_node`: the Tailscale stable node ID that asked to pair (re-asking re-issues this user's key);
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;

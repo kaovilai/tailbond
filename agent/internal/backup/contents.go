@@ -255,7 +255,7 @@ func modeName(m string) string {
 func KeepOnRestore(cur, next *config.Config) *config.Config {
 	c := *next
 	c.MqvpnBin, c.StateDir, c.HooksDir, c.Listen, c.ControlAddr = cur.MqvpnBin, cur.StateDir, cur.HooksDir, cur.Listen, cur.ControlAddr
-	c.AndroidAPK, c.GLiNetIPK = cur.AndroidAPK, cur.GLiNetIPK
+	c.AndroidAPK, c.GLiNetIPK, c.MacOSBundle = cur.AndroidAPK, cur.GLiNetIPK, cur.MacOSBundle
 	if c.Role == config.RoleServer && cur.Role == config.RoleServer {
 		if cur.Server.PublicAddr != "" {
 			c.Server.PublicAddr = cur.Server.PublicAddr

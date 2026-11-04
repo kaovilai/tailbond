@@ -3,5 +3,5 @@ package web
 
 import "embed"
 
-//go:embed index.html app.js style.css icon.svg
+//go:embed index.html app.js style.css icon.svg landing.js
 var FS embed.FS

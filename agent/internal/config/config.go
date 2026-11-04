@@ -255,6 +255,10 @@ type Config struct {
 	AndroidAPK string `json:"android_apk,omitempty"`
 	// Additive: GL.iNet router package offered as GET /tailbond-glinet.ipk.
 	GLiNetIPK string `json:"glinet_ipk,omitempty"`
+	// Additive: the macOS bundle the phone page offers as GET
+	// /tailbond-macos-arm64.tar.gz (default DefaultMacOSBundle when it
+	// exists, else a copy fetched from the GitHub release and cached).
+	MacOSBundle string `json:"macos_bundle,omitempty"`
 	// Additive (server role): the phone landing page ("Get tailbond") on
 	// the Tailscale IPs. LandingPort is the port it binds (0 = 80, -1 =
 	// off); LandingPublicPort the port tailnet devices use (0 = the same;
@@ -363,6 +367,17 @@ func (c *Config) GLiNetIPKPath() string {
 		return c.GLiNetIPK
 	}
 	return DefaultGLiNetIPK
+}
+
+// DefaultMacOSBundle is where packages may put the macOS bundle for download.
+const DefaultMacOSBundle = "/usr/share/tailbond/tailbond-macos-arm64.tar.gz"
+
+// MacOSBundlePath is the macOS bundle to offer, when it exists.
+func (c *Config) MacOSBundlePath() string {
+	if c.MacOSBundle != "" {
+		return c.MacOSBundle
+	}
+	return DefaultMacOSBundle
 }
 
 // APKPath is the Android APK to offer for download.

@@ -49,6 +49,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings", a.hSettingsPost)
 	mux.HandleFunc("GET /tailbond.apk", a.hAPK)
 	mux.HandleFunc("GET /get", a.hLanding) // the phone landing page, also on :8077
+	mux.HandleFunc("GET /"+macBundleName, a.hMacBundle)
 	mux.HandleFunc("GET /tailbond-glinet.ipk", a.hIPK)
 	mux.HandleFunc("DELETE /api/pair", a.hUnpair)
 	// Pairing over Tailscale (docs/architecture.md).

@@ -7,35 +7,41 @@
 <title>Get tailbond · {{.Server}}</title>
 <link rel="icon" href="/icon.svg">
 <style>
-:root{--bg:#f4f6f8;--card:#fff;--text:#0f172a;--muted:#5b6b80;--line:#e2e8f0;--accent:#0d9488;--accent-soft:rgba(13,148,136,.12);--warn:#b45309;--phone:#eef1f4;--dlg:#fff;--ring:#f59e0b}
-@media (prefers-color-scheme:dark){:root{--bg:#0b1117;--card:#121a23;--text:#e6edf3;--muted:#93a3b8;--line:#213041;--accent:#2dd4bf;--accent-soft:rgba(45,212,191,.14);--warn:#f59e0b;--phone:#1a2430;--dlg:#243140;--ring:#fbbf24}}
+/* The dashboard's palette (agent/web/style.css); kept in variables for the
+   coming brand refresh. */
+:root{--bg:#f4f6f8;--card:#fff;--text:#0f172a;--muted:#5b6b80;--line:#e2e8f0;--accent:#0d9488;--accent-ink:#fff;--accent-soft:rgba(13,148,136,.12);--warn:#b45309;--phone:#eef1f4;--dlg:#fff;--ring:#f59e0b;--code:#0f172a;--code-bg:#eef2f6}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1117;--card:#121a23;--text:#e6edf3;--muted:#93a3b8;--line:#213041;--accent:#2dd4bf;--accent-ink:#06201d;--accent-soft:rgba(45,212,191,.14);--warn:#f59e0b;--phone:#1a2430;--dlg:#243140;--ring:#fbbf24;--code:#e6edf3;--code-bg:#0d151d}}
 *{box-sizing:border-box}
+html{scroll-padding-top:64px}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:640px;margin:0 auto;padding:20px 16px 40px}
+main{max-width:680px;margin:0 auto;padding:20px 16px 40px}
 header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 header img{width:36px;height:36px}
 header .who{font-size:14px;color:var(--muted)}
 header b{display:block;font-size:17px;color:var(--text)}
 h1{font-size:26px;line-height:1.25;margin:14px 0 8px}
 h2{font-size:19px;margin:0 0 6px}
+h3{font-size:16px;margin:12px 0 4px}
 p{margin:6px 0}
 .lead{color:var(--muted)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0}
 .step{display:flex;gap:12px}
-.num{flex:none;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:grid;place-items:center}
-@media (prefers-color-scheme:dark){.num{color:#06201d}}
+.num{flex:none;width:30px;height:30px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-weight:700;display:grid;place-items:center}
 .grow{flex:1;min-width:0}
 .btn{display:block;text-align:center;text-decoration:none;font-weight:600;border-radius:12px;padding:14px 16px;margin:10px 0;border:2px solid var(--accent);color:var(--accent)}
-.btn.primary{background:var(--accent);color:#fff}
-@media (prefers-color-scheme:dark){.btn.primary{color:#06201d}}
+.btn.primary{background:var(--accent);color:var(--accent-ink)}
 .small{font-size:14px}
 .muted{color:var(--muted)}
 .note{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 12px;border-radius:8px;margin:10px 0}
-.warnbox{border-left:4px solid var(--warn);padding:10px 12px;background:var(--accent-soft);border-radius:8px}
+.warnbox{border-left:4px solid var(--warn);padding:10px 12px;background:var(--accent-soft);border-radius:8px;margin:10px 0}
 #get-app:target{outline:3px solid var(--ring);outline-offset:4px}
 .notyet{display:none;font-weight:600;margin:4px 0 8px}
 #get-app:target .notyet{display:block}
 code{font:14px ui-monospace,Menlo,Consolas,monospace;background:var(--accent-soft);padding:1px 5px;border-radius:5px;word-break:break-all}
+.cmd{display:flex;align-items:flex-start;gap:8px;background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:8px 8px 8px 12px;margin:8px 0}
+.cmd code{flex:1;background:none;padding:0;color:var(--code);white-space:pre-wrap;word-break:break-all;line-height:1.45}
+.copy{flex:none;font:600 13px system-ui,sans-serif;border:1px solid var(--accent);color:var(--accent);background:var(--card);border-radius:8px;padding:5px 10px;cursor:pointer}
+.copy.done{background:var(--accent);color:var(--accent-ink)}
 .qr{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .qr svg{width:180px;height:180px;flex:none;border-radius:8px}
 .shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:12px 0}
@@ -50,38 +56,73 @@ code{font:14px ui-monospace,Menlo,Consolas,monospace;background:var(--accent-sof
 .set{background:var(--dlg);border-radius:14px;padding:12px 14px;font-size:14px}
 .set .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px}
 .tog{width:40px;height:24px;border-radius:12px;background:var(--accent);position:relative;outline:2px dashed var(--ring);outline-offset:2px;flex:none}
-.quick{font-weight:600;background:var(--card);border:1px dashed var(--line);border-radius:10px;padding:8px 10px;margin:8px 0}
 .tog::after{content:"";position:absolute;right:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff}
-ol.plain{padding-left:20px;margin:6px 0}
+.quick{font-weight:600;background:var(--card);border:1px dashed var(--line);border-radius:10px;padding:8px 10px;margin:8px 0}
+ol.plain,ul.plain{padding-left:20px;margin:6px 0}
+details{margin:10px 0}
+details.onphone>summary{padding:4px 0}
+summary{cursor:pointer;font-weight:600;color:var(--accent)}
+.opt{border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0}
+.opt h3{margin-top:0}
+.tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:2px}
+/* the platform switcher */
+nav.plats{position:sticky;top:0;z-index:2;background:var(--bg);padding:8px 0;margin:6px 0 4px}
+nav.plats .seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px}
+nav.plats a{display:block;text-align:center;text-decoration:none;color:var(--muted);font-weight:600;font-size:15px;padding:9px 4px;border-radius:9px}
+nav.plats a.on{background:var(--accent);color:var(--accent-ink)}
+/* One section shows: the one the address names (#mac), else the detected
+   platform's (class "first"). Works without JavaScript. */
+.plat{display:none}
+.plat.first{display:block}
+main:has(.plat:target) .plat.first{display:none}
+main:has(.plat:target) .plat:target{display:block}
+main:has(.plat:target) nav.plats a.on{background:none;color:var(--muted)}
+main:has(#android:target) nav.plats a[href="#android"],main:has(#mac:target) nav.plats a[href="#mac"],
+main:has(#iphone:target) nav.plats a[href="#iphone"],main:has(#linux:target) nav.plats a[href="#linux"]{background:var(--accent);color:var(--accent-ink)}
 footer{margin-top:26px;font-size:14px;color:var(--muted)}
 a{color:var(--accent)}
 </style>
 </head>
 <body>
-<main>
+<main data-detected="{{.Detected}}">
 <header>
   <img src="/icon.svg" alt="">
   <div class="who"><b>tailbond</b>on your home server, {{.Server}}</div>
 </header>
 
-{{if and .Phone (not .Android)}}
-<h1>tailbond is for Android phones</h1>
-<p class="lead">This phone isn't an Android phone, so keep using the Tailscale app here. To set up an Android phone, type <b>{{.TypeName}}</b> into its browser while Tailscale is on.</p>
-{{else}}
-<h1>Get tailbond on {{if .Phone}}this phone{{else}}an Android phone{{end}}</h1>
-<p class="lead">tailbond joins your phone's Wi-Fi and mobile data into one faster, steadier connection to {{.Server}}, your home server. Your Tailscale machines (like the NAS) stay reachable through it.</p>
+<h1>Get tailbond</h1>
+<p class="lead">tailbond joins a device's connections (Wi-Fi, mobile data, Ethernet, a phone over USB) into one faster, steadier connection to {{.Server}}, your home server. Your Tailscale machines (like the NAS) stay reachable through it.</p>
+{{if .Windows}}<p class="warnbox">tailbond doesn't run on Windows (yet). Pick the device you want to set up below: an Android phone (scan the code with it), a Mac or a Linux laptop.</p>{{end}}
 
-{{if not .Phone}}
+<nav class="plats" aria-label="Choose your device">
+  <div class="seg">
+    <a href="#android"{{if eq .Section "android"}} class="on"{{end}}>Android</a>
+    <a href="#mac"{{if eq .Section "mac"}} class="on"{{end}}>Mac</a>
+    <a href="#iphone"{{if eq .Section "iphone"}} class="on"{{end}}>iPhone</a>
+    <a href="#linux"{{if eq .Section "linux"}} class="on"{{end}}>Linux</a>
+  </div>
+</nav>
+
+<!-- ============================== Android ============================== -->
+<section class="plat{{if eq .Section "android"}} first{{end}}" id="android" aria-label="Android">
+<h2>{{if .OnAndroid}}On this phone{{else}}On an Android phone{{end}}</h2>
+<p class="muted small">The app bonds the phone's Wi-Fi and mobile data. It can also lend the phone's mobile data to a travel router or a Mac.</p>
+<p class="note small">Good to know before you install: while tailbond is on, it takes over from Tailscale on the phone (Android runs one VPN app at a time). Your Tailscale machines keep working, through {{.Server}}, and the phone's internet goes out from {{.Server}} until you turn tailbond off. The app tells you when there's a new version.</p>
+
+{{if not .OnAndroid}}
 <section class="card">
   <h2>Install it on your phone</h2>
   <div class="qr">
-    {{.QR}}
+    {{.QRAndroid}}
     <div class="grow">
-      <p>With Tailscale on, point the phone's camera at this code. Or type <b>{{.TypeName}}</b> into the phone's browser (with the slash at the end, so it opens this page instead of searching).</p>
-      <p class="small muted">The page that opens on the phone has the app and the steps below. Anyone on your Tailscale network (or with {{.Server}} shared to them) can open it; nothing here changes {{.Server}}'s settings.</p>
+      <p>With Tailscale on, point the phone's camera at this code: it opens these Android steps on the phone. Or type <b>{{.TypeName}}</b> into the phone's browser (with the slash at the end, so it opens this page instead of searching).</p>
+      <p class="small muted">Anyone on your Tailscale network (or with {{.Server}} shared to them) can open this page; nothing here changes {{.Server}}'s settings.</p>
     </div>
   </div>
+  <p class="small"><b>The rest happens on the phone</b>: the page that opens there walks you through it. Nothing to download on this computer.</p>
 </section>
+<details class="onphone">
+<summary>The steps on the phone (to read along)</summary>
 {{end}}
 
 <section class="card" id="get-app">
@@ -89,6 +130,7 @@ a{color:var(--accent)}
     <h2>Install the app</h2>
     <p class="notyet warnbox">tailbond isn't on this phone yet, so step 2 brought you back here. Install it first, then tap step 2 again.</p>
     {{if .APK}}
+    {{if .OnAndroid}}<p class="small"><a href="#dl">Skip to the download button ↓</a></p>{{end}}
     <p class="note"><b>Look at these five pictures first</b> (or take a screenshot): once you open the file, Android's own screens cover this page. The download button is below them. They're drawings: the dashed ring marks what to tap on the real screen.</p>
     <p class="quick">In short: Download anyway → Open → Settings → Allow from this source → back → Install (→ Scan app, if asked)</p>
     <p>Then open the downloaded file. tailbond isn't in the Play Store: it comes from {{.Server}}, your own home server, so Android asks you to confirm a few times. That's Android's normal check for every app from outside the Play Store, and you only go through it once. Here's what you'll see (the words differ a little between phones; the pictures below are drawings, not buttons):</p>
@@ -119,24 +161,35 @@ a{color:var(--accent)}
           <div class="acts"><span>Don't scan</span><span class="tap">Scan app</span></div></div>
       </div>
     </div>
-    <a class="btn primary" href="/tailbond.apk" download>Download tailbond ({{.APKSize}})</a>
+    <a class="btn primary" id="dl" href="/tailbond.apk" download>Download tailbond ({{.APKSize}})</a>
     <p class="small">When it says <b>App installed</b>, tap <b>Done</b> and come back to this page (Chrome, this tab) for step 2. You can turn <b>Allow from this source</b> off again afterwards; tailbond stays installed.</p>
     <p class="small">Chrome's <b>Open</b> message gone before you tapped it? The file is in your downloads: Chrome's menu <b>⋮ → Downloads</b>, or the <b>Files</b> app → <b>Downloads</b>. Tap <b>tailbond.apk</b>.</p>
     <p class="small muted">Stuck, or not comfortable with this? Ask whoever runs {{.Server}} to install it for you.</p>
     <p class="small muted">Is this safe? This page starts with http://, but your phone reached it through Tailscale, which encrypts it and makes sure it really comes from {{.Server}}: nobody on the Wi-Fi or mobile network can change the file. (For the curious: SHA-256 <code>{{.APKSHA256}}</code>, the same as <code>sha256sum /usr/share/tailbond/tailbond.apk</code> on {{.Server}}.)</p>
     {{else}}
-    <p class="warnbox">{{.Server}} doesn't have the app file yet. Ask whoever runs {{.Server}} to add it (they put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code>), then reload this page.</p>
+    <p class="warnbox">{{.Server}} doesn't have the app file yet. Ask whoever runs {{.Server}} to add it (they put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code>), or install it with Obtainium (below), then reload this page.</p>
     {{end}}
+    <details id="obtainium">
+      <summary>Or install it with Obtainium (updates by itself)</summary>
+      <p class="small"><a href="https://obtainium.imranr.dev/">Obtainium</a> installs apps from their GitHub releases and keeps them up to date: no Play Store, no file to find. Install Obtainium first (its page has the APK), then:</p>
+      {{if .OnAndroid}}<a class="btn" href="{{.ObtainiumLink}}">Add tailbond to Obtainium</a>{{end}}
+      <ol class="plain small">
+        <li>In Obtainium tap <b>Add App</b> and paste <code>https://github.com/{{.Repo}}</code>{{if .OnAndroid}} (the button above fills it in){{end}}.</li>
+        <li>Keep the source <b>GitHub</b>; set the APK filter to <code>^tailbond-[0-9.]+\.apk$</code>, then <b>Add</b> and <b>Install</b>.</li>
+        <li>Come back here for step 2.</li>
+      </ol>
+      <p class="small muted">Obtainium installs tailbond's release build. If tailbond is already on the phone from this page and Obtainium says it can't update it (a different build), uninstall tailbond first, then install it from Obtainium.</p>
+    </details>
   </div></div>
 </section>
 
 <section class="card">
   <div class="step"><span class="num">2</span><div class="grow">
-    <h2>Add this phone to {{.Server}}</h2>
-    {{if .Android}}<a class="btn primary" href="{{.Intent}}">Open tailbond and ask {{.Server}}</a>
-    {{else}}<p>On the phone, tap <b>Open tailbond and ask {{.Server}}</b> here. (Or open tailbond and type <b>{{.Server}}</b>.)</p>{{end}}
-    <p>tailbond opens and asks {{.Server}} to add this phone. Keep Tailscale on until then. Whoever runs {{.Server}} taps <b>Approve</b> on {{.Server}}'s page; you'll see it in the app right away.</p>
-    <p class="small muted">Is {{.Server}} yours (it belongs to your Tailscale account)? Then you approve it yourself at <a href="{{.Dashboard}}">{{.Dashboard}}</a>: the request is at the top, and that page works on this phone too. Nobody else on your Tailscale network can approve from there unless you named them.</p>
+    <h2>Add {{if .OnAndroid}}this phone{{else}}the phone{{end}} to {{.Server}}</h2>
+    {{if .OnAndroid}}<a class="btn primary" href="{{.Intent}}">Open tailbond and ask {{.Server}}</a>
+    {{else}}<p>On the phone, tap <b>Open tailbond and ask {{.Server}}</b> on this page. (Or open tailbond and type <b>{{.Server}}</b>.)</p>{{end}}
+    <p>tailbond opens and asks {{.Server}} to add the phone. Keep Tailscale on until then. Whoever runs {{.Server}} taps <b>Approve</b> on {{.Server}}'s page; you'll see it in the app right away.</p>
+    <p class="small muted">If you look after {{.Server}} yourself (nobody else set it up), approve it at <a href="{{.Dashboard}}">{{.Dashboard}}</a>: the request is at the top, and that page works on a phone too. Otherwise tell whoever does that you asked. Nobody else on your Tailscale network can approve from there unless they were named.</p>
   </div></div>
 </section>
 
@@ -144,13 +197,104 @@ a{color:var(--accent)}
   <div class="step"><span class="num">3</span><div class="grow">
     <h2>Turn tailbond on</h2>
     <p>Once approved, tailbond shows what it will do: tap <b>Add phone</b>. Then tap the big switch at the top of tailbond. tailbond explains that it takes over from Tailscale, and Android asks once to allow its connection: tap <b>OK</b>.</p>
-    <p>Android runs one VPN at a time, so while tailbond is on, Tailscale's VPN is off on this phone. Your Tailscale machines stay reachable through {{.Server}}. They see this phone as {{.Server}} (it has no 100.x address of its own meanwhile), so they allow it whatever they allow {{.Server}}.</p>
-    <p class="small muted">tailbond connects straight to {{.Server}} over the internet (not through Tailscale), and by default this phone's internet traffic goes out from {{.Server}}, like using it as an exit node. tailbond's Settings change that. To go back, tap <b>Switch back to Tailscale</b> in tailbond.</p>
+    <p>Your Tailscale machines keep working: tailbond reaches them through {{.Server}}. Android runs one VPN app at a time, so Tailscale's own switch is off while tailbond is on; nothing is broken. The machines see the phone as {{.Server}}, so they allow it whatever they allow {{.Server}}.</p>
+    <p class="small muted">The phone's internet goes out from {{.Server}} while tailbond is on (tailbond's Settings change that). To go back to Tailscale, tap <b>Switch back to Tailscale</b> in tailbond.</p>
   </div></div>
 </section>
-{{end}}
+{{if not .OnAndroid}}</details>{{end}}
+</section>
+
+<!-- ============================== Mac ============================== -->
+<section class="plat{{if eq .Section "mac"}} first{{end}}" id="mac" aria-label="Mac">
+<h2>On a Mac</h2>
+<p>tailbond on a Mac bonds its <b>Wi-Fi</b>, an <b>Ethernet or USB-C adapter</b>, an <b>iPhone plugged in by USB</b> (Personal Hotspot on) and <b>nearby phones' shared mobile data</b> into one tunnel to {{.Server}}. Tailscale stays on next to it, as before.</p>
+<p class="small muted">For Macs with Apple silicon: Apple menu → <b>About This Mac</b> → <b>Chip</b> says "Apple M…". A Mac with an Intel processor can't run tailbond yet.</p>
+{{if not .OnMac}}<p class="note small">You're not on a Mac now. On the Mac, open <b>{{.TypeName}}</b> in Safari (Tailscale on) and choose <b>Mac</b>, or go straight to <b>{{.URL}}#mac</b>.</p>{{end}}
+
+<section class="card">
+  <div class="step"><span class="num">1</span><div class="grow">
+    <h2>Install it</h2>
+    <p class="small">Open <b>Terminal</b> (Applications → Utilities), paste this line and press <b>Return</b>:</p>
+    <div class="cmd"><code>{{.MacOneLiner}}</code><button type="button" class="copy" data-copy="{{.MacOneLiner}}">Copy</button></div>
+    <p class="small">Terminal asks for your <b>Mac's login password</b>: type it and press Return. <b>Nothing shows while you type</b>; that's normal. tailbond needs it once, to run in the background like any VPN.</p>
+    <p class="small">When Terminal says <b>tailbond … is installed</b>, go to step 2.</p>
+    <p class="small muted">Is this safe? The line downloads tailbond from {{.Server}}, your own home server, over Tailscale, which encrypts it and makes sure it really comes from {{.Server}}. macOS normally asks before running programs that aren't from the App Store; the installer tells it this one is yours, so you won't see that warning. {{if .MacSHA256}}(For the curious: SHA-256 <code>{{.MacSHA256}}</code>, {{.MacSize}}.){{else}}({{.Server}} gets the Mac file from tailbond's GitHub releases the first time someone asks, a few seconds, and checks it against the release's checksums.){{end}}</p>
+    <details>
+      <summary>Other ways: a download button, Homebrew</summary>
+      <p class="small"><a href="/{{.MacBundle}}" download>Download {{.MacBundle}}</a> from {{.Server}}, then in Terminal:</p>
+      <div class="cmd"><code>{{.MacInstall}}</code><button type="button" class="copy" data-copy="{{.MacInstall}}">Copy</button></div>
+      <p class="small">To check the download first:</p>
+      <div class="cmd"><code>shasum -a 256 ~/Downloads/{{.MacBundle}}</code><button type="button" class="copy" data-copy="shasum -a 256 ~/Downloads/{{.MacBundle}}">Copy</button></div>
+      <p class="small">With <a href="https://brew.sh">Homebrew</a> (these download tailbond from its GitHub releases, not from {{.Server}}; the same files): Homebrew installs from a "tap", here a local one, and runs system services with <code>sudo brew services</code>.</p>
+      {{range .BrewCmds}}<div class="cmd"><code>{{.}}</code><button type="button" class="copy" data-copy="{{.}}">Copy</button></div>
+      {{end}}
+      <p class="small muted">Gatekeeper, in detail: the installer clears the download's quarantine flag (<code>xattr -dr com.apple.quarantine</code>); tailbond has no Apple Developer ID, and needs none for software you install yourself.</p>
+    </details>
+  </div></div>
+</section>
+
+<section class="card">
+  <div class="step"><span class="num">2</span><div class="grow">
+    <h2>Add the Mac to {{.Server}}</h2>
+    {{if .OnMac}}<a class="btn primary" href="{{.AskURL}}">Open tailbond and ask {{.Server}}</a>
+    <p>This opens tailbond's page on this Mac (<b>localhost:8077</b>) with {{.Server}} filled in: tap <b>Ask {{.Server}}</b>. Leave the switch at the top alone.</p>
+    {{else}}<p>On the Mac, open <b>http://localhost:8077</b> in a browser, go to <b>Setup</b>, type <b>{{.Server}}</b> under <b>Ask your home server</b> and tap <b>Ask {{.Server}}</b>.</p>{{end}}
+    <p>{{.Server}} then has to say yes: whoever looks after {{.Server}} taps <b>Approve</b> on its page. If that's you (nobody else set it up), open <a href="{{.Dashboard}}">{{.Dashboard}}</a> and tap <b>Approve</b> at the top. Otherwise tell them you asked.</p>
+    <p>Once approved, the Mac connects by itself: the switch turns on and tailbond's page shows <b>Connected</b>.</p>
+  </div></div>
+</section>
+
+<section class="card">
+  <div class="step"><span class="num">3</span><div class="grow">
+    <h2>What you'll see</h2>
+    <p>tailbond's page on the Mac lists each connection by name: <b>Wi-Fi</b>, <b>Ethernet</b> or your adapter, <b>iPhone (USB)</b> when one is plugged in, and phones that share their mobile data under <b>Shared by nearby phones</b>. Each can be <b>Use it</b>, <b>Backup only</b> or <b>Off</b>.</p>
+    <p class="small muted">Hotel Wi-Fi that keeps devices apart stops phones from sharing over it; an iPhone over USB still works. More: <a href="https://github.com/{{.Repo}}/blob/main/docs/macos.md">tailbond on a Mac</a> (GitHub). To remove it: <code>sudo /usr/local/lib/tailbond/uninstall.sh</code>.</p>
+  </div></div>
+</section>
+</section>
+
+<!-- ============================== iPhone ============================== -->
+<section class="plat{{if eq .Section "iphone"}} first{{end}}" id="iphone" aria-label="iPhone">
+<h2>On an iPhone</h2>
+<section class="card">
+  <h2>Bonded with no app</h2>
+  <p>An iPhone doesn't need anything installed to be part of the bond:</p>
+  <ul class="plain">
+    <li><b>Join the travel router's Wi-Fi</b>: everything on the router goes through tailbond.</li>
+    <li><b>Plug it into the travel router or a Mac running tailbond</b> with a cable and turn on <b>Personal Hotspot</b>: its mobile data is bonded as <b>iPhone (USB)</b>, and it charges meanwhile.</li>
+  </ul>
+  <p class="small muted">Keep using the Tailscale app on the iPhone itself: tailbond doesn't bond an iPhone's own connections.</p>
+</section>
+<section class="card">
+  <h2>tailbond Share: lend its mobile data over Wi-Fi</h2>
+  <p>The tailbond app for iPhone is <b>tailbond Share</b>. It lends the iPhone's 5G/LTE to a travel router or a Mac on the same Wi-Fi, which bond it with their own connections (like Speedify's Pair &amp; Share).</p>
+  <p>It isn't on the App Store. You build it once with <b>Xcode on a Mac</b> and a <b>free Apple ID</b>; a free signature lasts <b>7 days</b>, so you rebuild it (or let <b>SideStore</b> or <b>AltStore</b> re-sign it) each week. While sharing, keep the app open on the screen.</p>
+  <a class="btn" href="https://github.com/{{.Repo}}/blob/main/docs/ios.md">How to install tailbond Share (GitHub)</a>
+</section>
+</section>
+
+<!-- ============================== Linux ============================== -->
+<section class="plat{{if eq .Section "linux"}} first{{end}}" id="linux" aria-label="Linux">
+<h2>On Linux</h2>
+<section class="card">
+  <h2>A laptop that bonds its connections</h2>
+  <p>tailbond bonds the laptop's Wi-Fi, Ethernet and a tethered phone into one tunnel to {{.Server}}. In a terminal (x86_64 or arm64; it asks for your password):</p>
+  <div class="cmd"><code>{{.LinuxClient}}</code><button type="button" class="copy" data-copy="{{.LinuxClient}}">Copy</button></div>
+  <p>Then open <a href="{{.AskURL}}">localhost:8077</a> on the laptop, go to <b>Setup</b> and tap <b>Ask {{.Server}}</b> (Tailscale on). Whoever runs {{.Server}} approves it on its page.</p>
+  <p class="small muted">It downloads tailbond's release from GitHub over https (the same files {{.Server}} offers the Mac and the phone) and installs a systemd service; its page is on this machine only. Remove it with <code>sudo /usr/local/lib/tailbond/install.sh --uninstall</code>.</p>
+</section>
+<section class="card">
+  <h2>Another home server or a VPS</h2>
+  <p class="small">Fedora (the package, from COPR):</p>
+  <div class="cmd"><code>sudo dnf copr enable {{.Repo}} &amp;&amp; sudo dnf install tailbond-server</code><button type="button" class="copy" data-copy="sudo dnf copr enable {{.Repo}} &amp;&amp; sudo dnf install tailbond-server">Copy</button></div>
+  <p class="small">Any other Linux server (Debian, Ubuntu, AlmaLinux, a VPS):</p>
+  <div class="cmd"><code>{{.LinuxServer}}</code><button type="button" class="copy" data-copy="{{.LinuxServer}}">Copy</button></div>
+  <p class="small muted">Guides: <a href="https://github.com/{{.Repo}}/blob/main/docs/fedora-server.md">Fedora</a>, <a href="https://github.com/{{.Repo}}/blob/main/docs/vps.md">VPS</a> (GitHub).</p>
+</section>
+</section>
 
 <footer>tailbond {{.Version}} on {{.Server}}</footer>
 </main>
+<script src="/landing.js"></script>
 </body>
 </html>

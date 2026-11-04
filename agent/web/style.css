@@ -431,3 +431,4 @@ input.num { width: 5.5em; flex: none !important; min-width: 0 !important; }
 .local-head p { margin: 6px 0 0; }
 .shares h3 { margin: 0 0 8px; font-size: 15px; }
 .share-row { padding: 6px 0; border-top: 1px solid var(--line); }
+#tab-setup .card + .card { margin-top: 12px; }

@@ -17,10 +17,32 @@ Linux laptop: the same dashboard, the same settings, the same tunnel.
 
 ## Install
 
-You need a tailbond home server and a pairing link from it (its dashboard →
-**Devices** → **Add a device**).
+### From your home server's page (easiest)
+
+With Tailscale on, open **homebox/** (your server's Tailscale name, with the
+slash) in Safari on the Mac. The **Get tailbond** page opens on its **Mac**
+tab (or go to `http://homebox/#mac`):
+
+1. Copy the Terminal line under **From homebox** and run it: it downloads
+   the bundle from the server (SHA-256 shown on the page), unpacks it in
+   Downloads and runs `install.sh`. The server serves the bundle when its
+   admin put one at `/usr/share/tailbond/tailbond-macos-arm64.tar.gz`, else
+   it fetches it once from the GitHub release (checked against
+   `SHA256SUMS`) and keeps it. The page also has a download button and the
+   Homebrew commands below.
+2. Tap **Open tailbond and ask homebox**: tailbond's page on this Mac opens
+   (`http://localhost:8077/?ask=homebox…`) with **Ask your home server**
+   filled in. Tap **Ask homebox**; whoever runs homebox taps **Approve** on
+   its page.
+
+On another device (a phone, the PC you're reading this on), the page's Mac
+tab shows the same steps to do on the Mac.
 
 ### The release bundle
+
+You need a tailbond home server and either Tailscale on the Mac (to ask the
+server from the dashboard's **Setup** tab) or a pairing link (the server's
+dashboard → **Devices** → **Add a device**).
 
 1. Download `tailbond-macos-arm64.tar.gz` from the
    [latest release](https://github.com/kaovilai/tailbond/releases/latest).
@@ -31,7 +53,8 @@ You need a tailbond home server and a pairing link from it (its dashboard →
    sudo tailbond-macos-arm64/install.sh --pair 'tailbond://pair?d=…'
    ```
 
-   (Leave out `--pair` to pair later in the dashboard's **Setup** tab.)
+   (Leave out `--pair` to pair later in the dashboard's **Setup** tab:
+   **Ask your home server**, or paste the link.)
 3. Open **http://127.0.0.1:8077**. The dashboard is on this Mac only.
 
 `install.sh` puts `tailbondd` and `mqvpn` in `/usr/local/bin`, the hooks in

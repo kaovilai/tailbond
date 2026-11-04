@@ -57,6 +57,24 @@ The installer prints every decision. Override any of them:
 | `--update [--version vX.Y.Z]` | update the binaries only (below) |
 | `--no-firewall`, `--no-start`, `--mqvpn`, `--tailbondd`, `--bundle-dir`, `--config` | |
 
+### A Linux laptop instead (client role)
+
+The same bundle installs the **client** on a laptop that bonds its own
+Wi-Fi, Ethernet and a tethered phone to your home server (the home
+server's "Get tailbond" page, **Linux** tab, has this line to copy):
+
+```sh
+curl -fsSL https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-$(uname -m).tar.gz | tar -xz
+sudo ./tailbond-linux-$(uname -m)/install.sh --client     # --pair 'tailbond://pair?d=…' to pair at once
+```
+
+It installs the binaries, a client config (`/etc/tailbond/tailbond.json`,
+dashboard on `127.0.0.1:8077` only) and a plain systemd unit; no firewall,
+NAT, sysctl or phone page. mqvpn sets the routes and DNS itself. Then open
+`http://localhost:8077` → **Setup** → **Ask your home server** (Tailscale
+on). `install.sh --update` and `--uninstall` work the same; the server
+installer refuses to run over a client's config and the other way round.
+
 ## 2. Ports on a box that already runs a web server
 
 Nothing that's already listening is touched; the installer looks at
