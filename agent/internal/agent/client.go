@@ -58,6 +58,8 @@ type clientState struct {
 	bypass bypassState
 	// Pair & Share (shares.go)
 	share *shareState
+	// Use phone hub (phonehub.go)
+	hub *phoneHubState
 }
 
 type usageFile struct {
@@ -68,7 +70,7 @@ type usageFile struct {
 func newClientState() *clientState {
 	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState(),
 		probing: map[string]bool{}, lastProbe: map[string]time.Time{}, probeOK: map[string]bool{},
-		silence: failover.Silence{After: 5 * time.Second}, share: newShareState()}
+		silence: failover.Silence{After: 5 * time.Second}, share: newShareState(), hub: &phoneHubState{}}
 }
 
 func (a *Agent) usagePath() string { return filepath.Join(a.store.Get().StateDir, "usage.json") }
@@ -90,6 +92,8 @@ func (a *Agent) startClient(ctx context.Context) {
 	go a.serverWatcher(ctx)
 	go a.bypassWatcher(ctx)
 	go a.shareWatcher(ctx)
+	a.initSysProxy()
+	go a.phoneHubWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
 	} else if !a.paired() {
@@ -557,6 +561,7 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	}
 	a.serversView(st, a.workingFrom(st, now))
 	a.shareStatus(st)
+	st.PhoneHub = a.phoneHubStatus()
 	return st
 }
 

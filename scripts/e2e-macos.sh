@@ -26,6 +26,15 @@
 # phone; a sharer the server lists but the hub can't reach shows the client
 # isolation note.
 #
+# Use phone hub (docs/phone-hub.md): a stand-in phone hub (tb-sharesim
+# -proxy: internal/proxy, the reference SOCKS5 server, on 192.168.77.4,
+# upstream over this Mac's tunnel) is found; "Use" sets the system SOCKS
+# proxy of the default route's network service to tailbondd's forwarder;
+# curl through the system proxy's values reaches the tunnel-only token and
+# the hub logs the traffic; PAC mode sets the auto-proxy URL; turning it off
+# and killing tailbondd (-9, then starting it as launchd would) put back the
+# original settings.
+#
 #   MQVPN=out/macos/mqvpn TAILBONDD=out/agent/darwin-arm64/tailbondd \
 #   SHARESIM=out/agent/darwin-arm64/tb-sharesim VM=out/e2e-vm scripts/e2e-macos.sh
 #
@@ -53,7 +62,7 @@ for c in qemu-system-aarch64 curl jq nc; do command -v "$c" >/dev/null || { echo
 WORK="$(mktemp -d /tmp/tailbond-e2e-macos.XXXXXX)"
 chmod 755 "$WORK"
 PASS=0 FAIL=0
-QEMU_PID="" HUB_PID="" PIXEL_PID="" IPHONE_PID=""
+QEMU_PID="" HUB_PID="" PIXEL_PID="" IPHONE_PID="" PHUB_PID="" SVC=""
 say()  { printf '\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS + 1)); }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=$((FAIL + 1)); }
@@ -74,15 +83,20 @@ wait_for() { # wait_for <seconds> <description> <command...>
 cleanup() {
   local rc=$?
   if [ -n "${KEEP:-}" ]; then echo "KEEP set: VM, agents and feth0/feth1 left running; work dir $WORK"; return; fi
-  for p in "$HUB_PID" "$PIXEL_PID" "$IPHONE_PID"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  for p in "$HUB_PID" "$PIXEL_PID" "$IPHONE_PID" "$PHUB_PID"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
   sleep 2
+  # never leave the runner's proxy pointing at a dead forwarder
+  if [ -n "$SVC" ]; then
+    networksetup -setsocksfirewallproxystate "$SVC" off 2>/dev/null || true
+    networksetup -setautoproxystate "$SVC" off 2>/dev/null || true
+  fi
   pkill -f "$WORK/hub" 2>/dev/null || true
   [ -n "$QEMU_PID" ] && kill "$QEMU_PID" 2>/dev/null || true
   ifconfig feth0 destroy 2>/dev/null || true
   ifconfig feth1 destroy 2>/dev/null || true
   if [ "$rc" -ne 0 ] || [ "$FAIL" -ne 0 ] || [ -n "${VERBOSE:-}" ]; then
     echo "--- hub agent log (tail) ---"; tail -n 80 "$WORK/hub.log" 2>/dev/null || true
-    for s in pixel iphone; do echo "--- $s sharer log (tail) ---"; tail -n 20 "$WORK/$s.log" 2>/dev/null || true; done
+    for s in pixel iphone phonehub; do echo "--- $s sharer log (tail) ---"; tail -n 20 "$WORK/$s.log" 2>/dev/null || true; done
     echo "--- server VM console (tail) ---"; grep -av '^\[ *[0-9.]*\] ' "$WORK/vm.console" | tail -n 80 2>/dev/null || true
   fi
   mkdir -p "$ROOT/out/e2e-macos" && cp "$WORK"/*.log "$WORK/vm.console" "$ROOT/out/e2e-macos/" 2>/dev/null || true
@@ -248,6 +262,78 @@ else
   bad "no isolation note: $(hapi "http://$API/api/status" | jq -c '{shares, share_note}')"
 fi
 hapi "http://$API/api/status" | jq -e '.state == "connected"' >/dev/null && ok "hub still connected" || bad "hub not connected"
+
+say "use phone hub: a stand-in hub (SOCKS5, internal/proxy) at 192.168.77.4, upstream through this Mac's tunnel"
+ifconfig feth1 inet 192.168.77.4 netmask 255.255.255.255 alias
+"$SHARESIM" -pairing "$PIXEL_URI" -proxy 192.168.77.4:1888 -label "Pixel" -id sim-pixel-hub \
+  -mdns feth1 -register "http://$SAPI" >"$WORK/phonehub.log" 2>&1 &
+PHUB_PID=$!
+DEV="$(netstat -rn -f inet | awk '$1 == "default" && $NF !~ /^(utun|ipsec|ppp|gif|stf|lo)/ {print $NF; exit}')"
+SVC="$(networksetup -listnetworkserviceorder | awk -v d="$DEV" '/^\([0-9*]+\) / {sub(/^\([0-9*]+\) /, ""); n = $0} index($0, "Device: " d ")") {print n; exit}')"
+[ -n "$SVC" ] && ok "default route: $DEV, network service \"$SVC\"" || { bad "no network service for the default route ($DEV)"; exit 1; }
+# a recognisable original: a SOCKS server that's set but off; restoring
+# must bring back exactly this
+networksetup -setsocksfirewallproxy "$SVC" 10.9.9.9 1080 off
+networksetup -setsocksfirewallproxystate "$SVC" off
+socks() { networksetup -getsocksfirewallproxy "$SVC" | awk -F': ' '/^(Enabled|Server|Port):/ {printf "%s=%s ", $1, $2}'; }
+ORIG="$(socks)"
+info "original SOCKS setting of \"$SVC\": $ORIG"
+found() { hapi -X POST -d '{"refresh": true}' "http://$API/api/phone-hub" | jq -e '.found[] | select(.id == "sim-pixel-hub")'; }
+if wait_for 60 "hub finds the phone hub" found; then
+  ok "found: $(hapi "http://$API/api/phone-hub" | jq -c '[.found[] | {id, label, addr, via}]')"
+else
+  bad "phone hub not found: $(hapi "http://$API/api/phone-hub" | jq -c .)"
+fi
+use_hub() { hapi -X POST -d "{\"use\": \"sim-pixel-hub\", \"pac\": ${1:-false}}" "http://$API/api/phone-hub"; }
+PH="$(use_hub false || true)"
+jq -e --arg s "$SVC" '.using.mode == "socks" and .using.service == $s and .using.local == "127.0.0.1:1889"' <<<"$PH" >/dev/null \
+  && ok "using it: $(jq -c '.using | {label, addr, mode, service, local}' <<<"$PH")" || bad "use: $PH"
+hapi "http://$API/api/status" | jq -e '.phone_hub.using.label == "Pixel"' >/dev/null \
+  && ok "dashboard status: Using Pixel's bonded connection (proxy)" || bad "status: $(hapi "http://$API/api/status" | jq -c .phone_hub)"
+info "networksetup: $(socks)"
+SP="$(scutil --proxy)"
+SH="$(awk '/SOCKSProxy :/ {print $3}' <<<"$SP")"; SPORT="$(awk '/SOCKSPort :/ {print $3}' <<<"$SP")"
+awk '/SOCKSEnable :/ {print $3}' <<<"$SP" | grep -qx 1 && [ "$SH" = 127.0.0.1 ] && [ "$SPORT" = 1889 ] \
+  && ok "system proxy (scutil --proxy): SOCKS $SH:$SPORT, on" || bad "scutil --proxy: $(tr '\n' ' ' <<<"$SP")"
+GOT="$(curl -fsS -m 15 --socks5-hostname "$SH:$SPORT" http://10.77.0.1:8080/token || true)"
+[ "$GOT" = "$TOKEN" ] && ok "curl through the system proxy's values ($SH:$SPORT) reached the tunnel-only token" || bad "token through the proxy: got '$GOT'"
+if wait_for 10 "the hub logs the Mac's traffic" grep -Eq 'client 192\.168\.77\.1 conns [0-9]+ up [1-9][0-9]* down [1-9]' "$WORK/phonehub.log"; then
+  ok "the phone hub carried it: $(grep -E 'client 192\.168\.77\.1' "$WORK/phonehub.log" | tail -n1 | sed 's/.*proxy: //')"
+else
+  bad "no traffic at the phone hub: $(tail -n 5 "$WORK/phonehub.log" | tr '\n' ' ')"
+fi
+[ -f "$WORK/hub/phone-hub-proxy.json" ] && ok "restore record written: $(jq -c '{service, mode, previous}' "$WORK/hub/phone-hub-proxy.json")" || bad "no restore record"
+
+say "phone hub off: the original SOCKS setting is back"
+hapi -X POST -d '{"use": ""}' "http://$API/api/phone-hub" >/dev/null
+[ "$(socks)" = "$ORIG" ] && ok "restored: $(socks)" || bad "after off: $(socks), want $ORIG"
+[ ! -f "$WORK/hub/phone-hub-proxy.json" ] && ok "restore record removed" || bad "restore record left behind"
+
+say "phone hub, PAC mode: the auto-proxy URL, local and tailnet direct"
+networksetup -setautoproxystate "$SVC" off
+PACORIG="$(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')"
+PH="$(use_hub true || true)"
+PACNOW="$(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')"
+jq -e '.using.mode == "pac"' <<<"$PH" >/dev/null && grep -q "URL: http://127.0.0.1:8077/proxy.pac Enabled: Yes" <<<"$PACNOW" \
+  && ok "auto-proxy URL set: $PACNOW" || bad "PAC: $(jq -c .using <<<"$PH") / $PACNOW"
+curl -fsS -m 5 "http://$API/proxy.pac" | grep -q 'SOCKS5 127.0.0.1:1889' && ok "proxy.pac sends the rest to 127.0.0.1:1889" || bad "proxy.pac: $(curl -sS -m 5 "http://$API/proxy.pac" | head -c 300)"
+hapi -X POST -d '{"use": ""}' "http://$API/api/phone-hub" >/dev/null
+[ "$(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')" = "$PACORIG" ] && ok "auto-proxy setting restored" || bad "auto-proxy after off: $(networksetup -getautoproxyurl "$SVC" | tr '\n' ' '), want $PACORIG"
+
+say "phone hub, tailbondd killed (-9) while in use: started again (as launchd does), the original comes back"
+use_hub false >/dev/null || true
+socks | grep -q 'Server=127.0.0.1' && ok "in use again: $(socks)" || bad "not in use: $(socks)"
+kill -9 "$HUB_PID"; wait "$HUB_PID" 2>/dev/null || true
+info "after kill -9 (nobody to restore it yet): $(socks)"
+"$TAILBONDD" -config "$WORK/hub/tailbond.json" >>"$WORK/hub.log" 2>&1 &
+HUB_PID=$!
+if wait_for 30 "restored at start" grep -q "put back the proxy settings of \"$SVC\"" "$WORK/hub.log"; then
+  [ "$(socks)" = "$ORIG" ] && ok "restored at start: $(socks)" || bad "after restart: $(socks), want $ORIG"
+else
+  bad "no restore at start: $(socks)"
+fi
+wait_for 90 "hub connected again" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
+  && ok "hub connected again after the restart" || bad "hub not connected after the restart"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

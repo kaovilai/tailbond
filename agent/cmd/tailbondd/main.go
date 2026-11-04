@@ -16,12 +16,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/kaovilai/tailbond/agent/internal/agent"
 	"github.com/kaovilai/tailbond/agent/internal/backup"
 	"github.com/kaovilai/tailbond/agent/internal/config"
+	"github.com/kaovilai/tailbond/agent/internal/sysproxy"
 )
 
 var version = "dev"
@@ -34,6 +36,9 @@ func main() {
 			return
 		case "restore":
 			cmdRestore(os.Args[2:])
+			return
+		case "restore-proxy":
+			cmdRestoreProxy(os.Args[2:])
 			return
 		}
 	}
@@ -90,6 +95,28 @@ func main() {
 		}
 		fatal(err)
 	}
+}
+
+// cmdRestoreProxy puts back the system proxy a phone hub left set
+// (docs/phone-hub.md), for uninstall.sh: tailbondd does it itself at start
+// and on the way out.
+func cmdRestoreProxy(args []string) {
+	fs := flag.NewFlagSet("restore-proxy", flag.ExitOnError)
+	cfgPath := fs.String("config", config.DefaultPath, "path to tailbond.json")
+	_ = fs.Parse(args)
+	store, err := config.Load(*cfgPath)
+	if err != nil {
+		fatal(err)
+	}
+	m := &sysproxy.Mac{RecordPath: filepath.Join(store.Get().StateDir, "phone-hub-proxy.json")}
+	r, ok := m.Active()
+	if !ok {
+		return
+	}
+	if err := m.Restore(context.Background()); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("put back the proxy settings of %q\n", r.Service)
 }
 
 func cmdBackup(args []string) {

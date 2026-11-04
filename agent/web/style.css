@@ -433,3 +433,8 @@ input.num { width: 5.5em; flex: none !important; min-width: 0 !important; }
 .shares h3 { margin: 0 0 8px; font-size: 15px; }
 .share-row { padding: 6px 0; border-top: 1px solid var(--line); }
 #tab-setup .card + .card { margin-top: 12px; }
+/* Use phone hub (docs/phone-hub.md) */
+.banner.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
+.banner.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--text); border-left: 3px solid var(--ok); }
+#phone-hub .btn.small { padding: 4px 10px; font-size: 13px; }
+#phone-hub .share-row { align-items: center; }

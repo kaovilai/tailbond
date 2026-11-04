@@ -127,6 +127,22 @@ server's list. A phone that stops answering for 3.5 s is dropped from the
 bond at once and comes back when it does. The switch next to **Shared by
 nearby phones** turns them all off.
 
+### Using a phone's bonded connection (phone hub)
+
+The other way round: a phone already bonding its 5G with the hotel Wi-Fi
+can let the Mac use that whole bonded connection as a proxy
+([phone-hub.md](phone-hub.md)). Join the phone's hotspot or plug it in
+over USB, then **Connections → Use a phone's bonded connection → Use**.
+The card says *Using Pixel's bonded connection (proxy)*. tailbondd points
+the Mac's SOCKS proxy at its own forwarder (127.0.0.1:1889), which relays
+to the phone with a password derived from your home server's share key.
+
+- **Stop using it** puts your previous proxy setting back exactly. So does
+  quitting tailbondd. After a crash or a restart, tailbondd puts it back
+  when it starts.
+- Only apps that follow the system proxy go through the phone, and only
+  TCP traffic does: browsers yes, video calls and games no.
+
 ## Hotel Wi-Fi that keeps devices apart
 
 Many hotel and café networks block devices from talking to each other

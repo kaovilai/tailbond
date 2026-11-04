@@ -182,6 +182,8 @@ type shareState struct {
 	sharerID     string
 	sharerLabel  string
 	lastReg      time.Time
+	// the server's list from the last round (phone hubs use it too)
+	reg *sharesView
 }
 
 func newShareState() *shareState { return &shareState{links: map[string]*hubLink{}} }
@@ -289,6 +291,9 @@ func (a *Agent) shareRound(ctx context.Context) {
 			}
 		}
 	}
+	a.mu.Lock()
+	a.client.share.reg = reg
+	a.mu.Unlock()
 	key := a.clientShareKey(p)
 	a.runSharer(ctx, cfg, p, key, ready)
 	changed := a.runHub(ctx, cfg, p, key, reg)
@@ -333,8 +338,8 @@ func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Paylo
 	fromServer := map[string]bool{}
 	if reg != nil {
 		for _, r := range reg.Sharers {
-			if r.Client == p.User || r.KeyID != kid {
-				continue
+			if r.Client == p.User || r.KeyID != kid || r.Kind == "proxy" {
+				continue // phone hubs' proxies aren't relays (phonehub.go)
 			}
 			for _, ip := range r.LAN {
 				if a, err := netip.ParseAddr(ip); err == nil && inAny(subnets, a) {

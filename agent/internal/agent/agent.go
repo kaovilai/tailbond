@@ -76,7 +76,13 @@ type Agent struct {
 	// lookupIf describes an interface a path setting names (tests leave it nil).
 	lookupIf func(string) (netif.Iface, bool)
 	wc       whoisCache // admin requests from the tailnet: who sent them
-	dl       dlState    // the phone page's downloads: checksums, the macOS bundle fetch
+	// phone hub (phonehub.go): the OS proxy setting (nil: not set for
+	// you), and test hooks for discovery and the forwarder's address
+	sysProxy   systemProxy
+	hubBrowse  func(context.Context) []hubCand
+	hubRouters func(context.Context) []hubCand
+	hubLocal   string
+	dl         dlState // the phone page's downloads: checksums, the macOS bundle fetch
 	// landingUp: the phone landing page listens on a Tailscale IP.
 	landingUp atomic.Bool
 	// glRead reads GL firmware's repeater portal state (tests stub it).
@@ -234,6 +240,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.drainHooks()
 			if a.client != nil {
 				a.clearBypass()
+				a.stopHub("")
 			}
 			return nil
 		case err := <-srvErr:
@@ -246,6 +253,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.drainHooks()
 			if a.client != nil {
 				a.clearBypass()
+				a.stopHub("")
 			}
 			return ErrRestart
 		case <-t.C:

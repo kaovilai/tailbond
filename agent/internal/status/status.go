@@ -129,6 +129,41 @@ type Status struct {
 	// ("linux", "darwin"), for the dashboard's wording.
 	UseLocal *bool  `json:"use_local,omitempty"`
 	Platform string `json:"platform,omitempty"`
+	// Client role: phone hubs nearby and the one in use (docs/phone-hub.md).
+	PhoneHub *PhoneHub `json:"phone_hub,omitempty"`
+}
+
+// PhoneHub is "Use phone hub": phones sharing their bonded connection as a
+// proxy, and the one this machine's system proxy points at.
+type PhoneHub struct {
+	Found []PhoneHubFound `json:"found"`
+	Using *PhoneHubUse    `json:"using,omitempty"`
+	// Note says why the hub in use was dropped (it went away).
+	Note string `json:"note,omitempty"`
+	// Manual: this OS's proxy setting isn't set for you (not macOS).
+	Manual bool `json:"manual,omitempty"`
+}
+
+// PhoneHubFound is a phone hub that took this machine's password.
+type PhoneHubFound struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Addr  string `json:"addr"`
+	Via   string `json:"via"` // mdns, server, router
+}
+
+// PhoneHubUse is the hub in use.
+type PhoneHubUse struct {
+	ID      string    `json:"id"`
+	Label   string    `json:"label"`
+	Addr    string    `json:"addr"`
+	Mode    string    `json:"mode"`              // socks, pac, manual
+	Service string    `json:"service,omitempty"` // the macOS network service
+	Local   string    `json:"local"`             // the forwarder, 127.0.0.1:1889
+	Since   time.Time `json:"since"`
+	UpBytes uint64    `json:"up_bytes"`
+	DnBytes uint64    `json:"down_bytes"`
+	Conns   int       `json:"conns"`
 }
 
 // Share is a nearby device's shared mobile data, as the hub sees it.

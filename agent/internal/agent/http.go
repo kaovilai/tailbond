@@ -77,6 +77,9 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/shares", a.hShares)
 	mux.HandleFunc("POST /api/shares", a.hShareRegister)
 	mux.HandleFunc("POST /api/share", a.hShareSettings)
+	mux.HandleFunc("GET /api/phone-hub", a.hPhoneHub)
+	mux.HandleFunc("POST /api/phone-hub", a.hPhoneHub)
+	mux.HandleFunc("GET /proxy.pac", a.hProxyPAC)
 	// Updates, the update mirror, backups (docs/architecture.md)
 	mux.HandleFunc("GET /api/update", a.hUpdateGet)
 	mux.HandleFunc("POST /api/update/check", a.hUpdateCheck)
@@ -247,6 +250,7 @@ func (a *Agent) hLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Agent) hStatus(w http.ResponseWriter, r *http.Request) {
+	a.hubAsked()
 	writeJSON(w, http.StatusOK, a.Snapshot())
 }
 
@@ -263,6 +267,7 @@ func (a *Agent) hEvents(w http.ResponseWriter, r *http.Request) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
+		a.hubAsked()
 		b, _ := json.Marshal(a.Snapshot())
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
 			return

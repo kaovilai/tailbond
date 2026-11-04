@@ -27,6 +27,11 @@ esac
 if [ -z "${TB_NO_LAUNCHD:-}" ]; then
     launchctl bootout "system/$LABEL" 2>/dev/null || true
 fi
+# a system proxy a phone hub left set (tailbondd puts it back when it
+# stops; this covers one that was killed): docs/phone-hub.md
+if [ -x "$PREFIX/bin/tailbondd" ] && [ -f "$ETC/tailbond.json" ]; then
+    "$PREFIX/bin/tailbondd" restore-proxy -config "$ETC/tailbond.json" || true
+fi
 # an mqvpn left behind (it restores routes and DNS on SIGTERM)
 if [ -f "$STATE/mqvpn.pid" ]; then kill "$(cat "$STATE/mqvpn.pid")" 2>/dev/null || true; fi
 rm -f "$PLIST"

@@ -1,0 +1,19 @@
+{
+  "credentials": [
+    {
+      "share_key": "0123456789abcdef0123456789abcdef",
+      "user": "tailbond",
+      "pass": "z6zllvux22jji6ic"
+    },
+    {
+      "share_key": "k",
+      "user": "tailbond",
+      "pass": "qrktnhi5lqpjxbe2"
+    },
+    {
+      "share_key": "a much longer share key, 64 bytes or so, as the server makes it.",
+      "user": "tailbond",
+      "pass": "j7djk3kezn2skct4"
+    }
+  ]
+}
