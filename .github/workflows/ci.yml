@@ -881,18 +881,9 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist/
-      # stable names (releases/latest/download/<name>) plus the versioned
-      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
-      - name: Collect assets and SHA256SUMS
-        run: scripts/release/collect-assets.sh dist assets
-      # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
-      # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
-      - uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: assets/*
       # The images job oci-image built and tested (amd64 + arm64), as one
       # multi-arch tag vX.Y.Z before the release exists; X.Y and latest
-      # move only after it does (below), so `latest` is always a release.
+      # move only after it does (job image-tags), so `latest` is always a release.
       - name: Push the server image (vX.Y.Z)
         id: image
         env:
@@ -917,6 +908,15 @@ jobs:
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
+      # stable names (releases/latest/download/<name>) plus the versioned
+      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
+      - name: Collect assets and SHA256SUMS
+        run: scripts/release/collect-assets.sh dist assets
+      # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
+      # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: assets/*
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -936,17 +936,6 @@ jobs:
             echo "security release (a Security: yes trailer since ${prev:-the start})"
           fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "${notes[@]}" --verify-tag "${pre[@]}" assets/*
-      # The release exists: X.Y and latest point at it (not for pre-releases).
-      - name: Tag the server image X.Y and latest
-        if: ${{ !contains(github.ref_name, '-') }}
-        env:
-          TAG: ${{ github.ref_name }}
-          REPO: ${{ steps.image.outputs.name }}
-        run: |
-          minor="$(sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/' <<<"$TAG")"
-          for t in "$minor" latest; do
-            podman manifest push --all --format v2s2 localhost/tailbond:release "docker://$REPO:$t"
-          done
 
   copr:
     name: COPR build (Fedora)
@@ -973,3 +962,25 @@ jobs:
           (umask 077; printf '%s\n' "$COPR_CONFIG" >~/.config/copr)
           copr-cli buildscm --clone-url "https://github.com/$GITHUB_REPOSITORY" --commit "$TAG" \
             --method make_srpm --nowait "$COPR_PROJECT"
+
+  # The release exists: the server image's X.Y and latest tags point at the
+  # vX.Y.Z that job release pushed (not for pre-releases).
+  image-tags:
+    name: Server image tags (X.Y, latest)
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Tag ghcr.io/<owner>/tailbond X.Y and latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          minor="$(sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/' <<<"$TAG")"
+          printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in "$minor" latest; do
+            skopeo copy --all --preserve-digests "docker://$repo:$TAG" "docker://$repo:$t"
+          done
