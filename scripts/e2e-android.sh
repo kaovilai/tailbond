@@ -247,7 +247,8 @@ else
   bad "hub not ready: $(app_status | jq -c '.hub | del(.pass)')"
 fi
 # 1888 = 0x0760 in /proc/net/tcp6 (listening on "::")
-sh_ cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ':0760 .* 0A ' && ok "listening on TCP 1888" || bad "nothing listens on TCP 1888"
+# (informational: the SOCKS5 round trip below is the proof it listens)
+sh_ cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ':0760 .* 0A ' && ok "listening on TCP 1888" || note "TCP 1888 not seen in /proc/net/tcp*"
 HUBPASS="$(app_status | jq -r '.hub.pass // empty')"
 TIP="$(app_status | jq -r '.tunnel_ip // empty' | cut -d/ -f1)"
 adb forward tcp:18888 tcp:1888 >/dev/null

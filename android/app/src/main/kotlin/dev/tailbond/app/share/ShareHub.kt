@@ -137,7 +137,11 @@ class ShareHub(
                 openLan = {
                     DatagramSocket(null).also { d ->
                         protect(d) // never into our own tunnel
-                        wifi()?.bindSocket(d)
+                        // on the Wi-Fi's subnet: that network; elsewhere (a
+                        // tethering interface, a hand-added address) the
+                        // routing table picks
+                        val w = wifi()
+                        if (w != null && onSubnetOf(w, f.addr.address)) w.bindSocket(d)
                         d.bind(null)
                     }
                 },
@@ -182,6 +186,14 @@ class ShareHub(
         } catch (e: Exception) {
             Log.i(TAG, "share hub: server list: ${e.message}")
             emptyList()
+        }
+    }
+
+    private fun onSubnetOf(n: Network, a: InetAddress?): Boolean {
+        if (a !is Inet4Address) return false
+        return cm.getLinkProperties(n)?.linkAddresses.orEmpty().any { la ->
+            val x = la.address
+            x is Inet4Address && sameSubnet(a, x, la.prefixLength)
         }
     }
 
