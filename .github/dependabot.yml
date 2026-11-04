@@ -40,6 +40,16 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
 
+  # The server image's base (deploy/docker/Dockerfile, pinned by digest)
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
+    groups:
+      docker-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
   # mqvpn (data plane). A bump can break patches/mqvpn/*.patch or the
   # Android SDK fork in android/mqvpn-sdk; CI's e2e and Android jobs catch it.
   - package-ecosystem: gitsubmodule

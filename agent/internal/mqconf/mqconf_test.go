@@ -236,3 +236,66 @@ func TestClientKillSwitch(t *testing.T) {
 	}
 	one(t, parse(t, ini), "Interface", "KillSwitch", "true")
 }
+
+// A self-signed server's pin goes to mqvpn, which checks it on every
+// handshake; Insecure is never on (it would turn every check off).
+func TestClientCertPin(t *testing.T) {
+	const pin = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+	for _, in := range []string{
+		pin,
+		strings.ToUpper(pin),
+		"BA:78:16:BF:8F:01:CF:EA:41:41:40:DE:5D:AE:22:23:B0:03:61:A3:96:17:7A:9C:B4:10:FF:61:F2:00:15:AD",
+	} {
+		p := clientParams("speed")
+		p.Insecure, p.CertSHA256 = true, in
+		ini, err := Client(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kvs := parse(t, ini)
+		one(t, kvs, "Server", "CertSHA256", pin)
+		one(t, kvs, "Server", "Insecure", "false")
+	}
+
+	// a pin on a CA-signed server is enforced too
+	p := clientParams("speed")
+	p.CertSHA256 = pin
+	ini, err := Client(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one(t, parse(t, ini), "Server", "CertSHA256", pin)
+	one(t, parse(t, ini), "Server", "Insecure", "false")
+
+	// no pin: none emitted
+	ini, err = Client(clientParams("speed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	one(t, parse(t, ini), "Server", "CertSHA256", "")
+	if strings.Contains(ini, "Insecure = true") {
+		t.Fatalf("Insecure on:\n%s", ini)
+	}
+}
+
+func TestClientInsecureNeedsPin(t *testing.T) {
+	p := clientParams("speed")
+	p.Insecure = true
+	if ini, err := Client(p); err == nil {
+		t.Fatalf("self-signed server without a pin accepted:\n%s", ini)
+	}
+}
+
+func TestClientRejectsBadPin(t *testing.T) {
+	for _, bad := range []string{
+		"ba7816bf",
+		"zz7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+		"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\nInsecure = true",
+	} {
+		p := clientParams("speed")
+		p.Insecure, p.CertSHA256 = true, bad
+		if ini, err := Client(p); err == nil {
+			t.Errorf("pin %q accepted:\n%s", bad, ini)
+		}
+	}
+}

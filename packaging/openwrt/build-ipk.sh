@@ -140,6 +140,24 @@ if [ -f "$apk" ]; then
 else
     echo "note: no Android APK at $apk; the package won't offer the app (set TAILBOND_APK)" >&2
 fi
+# The opkg feed's public key (docs/glinet.md, "Install and update from GL's
+# Plug-ins page"): /etc/opkg/keys/<fingerprint>, so a router that installed
+# the package trusts the signed feed of later releases. A conffile: a key
+# added by hand first (opkg-key add) is the same file, not a clash.
+# scripts/release/gen-opkg-key.sh writes it; none until then.
+: >"$stage/key-conffiles"
+for k in "$PKG"/files/etc/opkg/keys/*; do
+    [ -f "$k" ] || continue
+    name="${k##*/}"
+    # a usign public key: base64 of "Ed" + 8-byte fingerprint + 32-byte key,
+    # in a file named by that fingerprint (16 hex digits)
+    kfp="$(sed -n 2p "$k" | base64 -d 2>/dev/null | od -An -tx1 -j2 -N8 2>/dev/null | tr -d ' \n' || true)"
+    sed -n 1p "$k" | grep -q '^untrusted comment: ' && [ "${#kfp}" = 16 ] && [ "$kfp" = "$name" ] ||
+        die "$k isn't the usign public key with fingerprint $name (scripts/release/gen-opkg-key.sh writes it)"
+    install -d -m 0755 "$data/etc/opkg/keys"
+    install -m 0644 "$k" "$data/etc/opkg/keys/$name"
+    echo "/etc/opkg/keys/$name" >>"$stage/key-conffiles"
+done
 # sysupgrade keeps the agent config and state (server users, pairing)
 echo /etc/tailbond/ >"$data/lib/upgrade/keep.d/tailbond"
 chmod 0644 "$data/lib/upgrade/keep.d/tailbond"
@@ -175,6 +193,7 @@ for arch in $ARCHS; do
     sed -e "s/@VERSION@/$CTL_VERSION/" -e "s/@ARCH@/$arch/" -e "s/@SIZE@/$((size * 1024))/" \
         "$PKG/control/control.in" >"$ctl/control"
     install -m 0644 "$PKG/control/conffiles" "$ctl/conffiles"
+    cat "$stage/key-conffiles" >>"$ctl/conffiles"
     install -m 0755 "$PKG/control/postinst" "$ctl/postinst"
     install -m 0755 "$PKG/control/prerm" "$ctl/prerm"
     install -m 0755 "$PKG/control/postrm" "$ctl/postrm"

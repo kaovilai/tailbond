@@ -249,7 +249,7 @@ type SharingHub struct {
 // Update is the status of auto-updates on this machine.
 type Update struct {
 	Current   string `json:"current"`
-	Available string `json:"available,omitempty"`
+	Available string `json:"available"`           // always sent: the UIs merge snapshots
 	NotesURL  string `json:"notes_url,omitempty"` // the release page (changelog)
 	Policy    string `json:"policy"`              // immediate | auto | notify | off
 	Repo      string `json:"repo,omitempty"`
@@ -265,6 +265,9 @@ type Update struct {
 	LastResultAt      string `json:"last_result_at,omitempty"`
 	Detail            string `json:"detail,omitempty"`
 	Error             string `json:"error,omitempty"`
+	// NoRelease: the check worked but the repository has no release yet
+	// no omitempty: the UIs merge snapshots, so false must clear a cached true
+	NoRelease bool `json:"no_release"`
 	// AutoWindow: when policy auto installs (local time, "03:00-05:00")
 	AutoWindow string `json:"auto_window,omitempty"`
 	// Waiting: why a release that will install by itself hasn't yet
