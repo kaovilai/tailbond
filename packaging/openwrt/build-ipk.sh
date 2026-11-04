@@ -104,7 +104,7 @@ install -d -m 0755 "$data"/usr/bin "$data"/usr/lib/tailbond/hooks \
     "$data"/etc/init.d "$data"/etc/config "$data"/etc/uci-defaults \
     "$data"/lib/upgrade/keep.d \
     "$data"/usr/share/oui/menu.d "$data"/www/views "$data"/etc/hotplug.d/iface \
-    "$data"/usr/lib/oui-httpd/rpc "$data"/usr/share/gl-validator.d "$data"/etc/nginx/gl-conf.d \
+    "$data"/usr/lib/oui-httpd/rpc "$data"/usr/share/gl-validator.d \
     "$data"/usr/share/luci/menu.d "$data"/usr/share/rpcd/acl.d \
     "$data"/www/luci-static/resources/view
 install -m 0755 "$MQVPN_BIN" "$data/usr/bin/mqvpn"
@@ -145,11 +145,13 @@ echo /etc/tailbond/ >"$data/lib/upgrade/keep.d/tailbond"
 chmod 0644 "$data/lib/upgrade/keep.d/tailbond"
 # GL.iNet 4.x admin panel (VPN -> tailbond): menu entry, the view,
 # its /rpc backend object "tailbond" + argument validator, and a same-origin
-# nginx fallback (docs/glinet.md, "Admin panel")
+# nginx fallback (docs/glinet.md, "Admin panel"), staged: postinst only
+# enables it if this nginx can load it
 install -m 0644 "$PKG/gl-ui/usr/share/oui/menu.d/tailbond.json" "$data/usr/share/oui/menu.d/"
 install -m 0644 "$PKG/gl-ui/usr/lib/oui-httpd/rpc/tailbond" "$data/usr/lib/oui-httpd/rpc/tailbond"
 install -m 0644 "$PKG/gl-ui/usr/share/gl-validator.d/tailbond.lua" "$data/usr/share/gl-validator.d/"
-install -m 0644 "$PKG/gl-ui/etc/nginx/gl-conf.d/tailbond.conf" "$data/etc/nginx/gl-conf.d/"
+install -d -m 0755 "$data/usr/share/tailbond"
+install -m 0644 "$PKG/gl-ui/etc/nginx/gl-conf.d/tailbond.conf" "$data/usr/share/tailbond/nginx-tailbond.conf"
 gzip -9n -c "$PKG/gl-ui/www/views/gl-sdk4-ui-tailbond.common.js" \
     >"$data/www/views/gl-sdk4-ui-tailbond.common.js.gz"
 chmod 0644 "$data/www/views/gl-sdk4-ui-tailbond.common.js.gz"

@@ -64,6 +64,7 @@ type ClientParams struct {
 	DNS          []string
 	Paths        []string
 	TunName      string
+	MTU          int
 	Mode         string
 	ControlAddr  string
 	ManageRoutes bool
@@ -102,6 +103,10 @@ func (w *iniWriter) multipath(m ModeSettings) {
 		w.kv("Reinjection", m.Reinjection)
 	}
 }
+
+// ReorderHeader is the bytes mqvpn's reorder stamp takes from each
+// datagram (MQVPN_REORDER_HDR_LEN), in modes that reorder.
+const ReorderHeader = 8
 
 func (w *iniWriter) reorder(m ModeSettings) {
 	if !m.Reorder {
@@ -201,6 +206,15 @@ func Client(p ClientParams) (string, error) {
 
 	w.section("Interface")
 	w.kv("TunName", orDefault(p.TunName, "tb0"))
+	if p.MTU > 0 {
+		mtu := p.MTU
+		if m.Reorder {
+			// mqvpn caps first, then takes the reorder header off: ask for
+			// the header on top, so the TUN gets p.MTU (IPv6 needs 1280)
+			mtu += ReorderHeader
+		}
+		w.kv("MTU", mtu)
+	}
 	if len(p.DNS) > 0 {
 		w.kv("DNS", strings.Join(p.DNS, ", "))
 	}

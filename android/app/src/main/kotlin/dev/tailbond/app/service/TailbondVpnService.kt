@@ -117,6 +117,7 @@ class TailbondVpnService : MqvpnVpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         repo = Repository.get(this)
         prober = ServerProber(this) { s -> protect(s) }
         createChannel()
@@ -611,6 +612,7 @@ class TailbondVpnService : MqvpnVpnService() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         main.cancel()
         if (LiveState.live.value.state != ConnState.ERROR) LiveState.reset()
         super.onDestroy()
@@ -666,6 +668,14 @@ class TailbondVpnService : MqvpnVpnService() {
         const val ACTION_USE_SERVER = "dev.tailbond.app.USE_SERVER"
         const val ACTION_RESUME_AUTO = "dev.tailbond.app.RESUME_AUTO"
         const val EXTRA_SERVER = "server"
+
+        @Volatile private var instance: TailbondVpnService? = null
+
+        /**
+         * Keeps [s] out of our own tunnel while tailbond's VPN runs (Pair &
+         * Share's relay sockets); true when there's no VPN to stay out of.
+         */
+        fun protectSocket(s: java.net.DatagramSocket): Boolean = instance?.protect(s) ?: true
 
         /** VPN permission must already be granted (VpnService.prepare == null). */
         fun connect(ctx: Context) {

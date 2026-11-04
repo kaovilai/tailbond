@@ -15,6 +15,8 @@ const (
 	KindEthernet = "ethernet"
 	KindUSB      = "usb"
 	KindUnknown  = "unknown"
+	// KindShared is a nearby device's mobile data, shared over the LAN (Pair & Share).
+	KindShared = "shared-cellular"
 )
 
 // SysfsRoot is /sys/class/net, overridable in tests.
@@ -197,7 +199,17 @@ func describe(ni net.Interface) Iface {
 			}
 		}
 	}
+	it.Label = TetherLabel(f.Driver)
 	return it
+}
+
+// TetherLabel names a USB-tethered phone by its driver: Apple's ipheth is
+// always an iPhone (or iPad); "" when the driver says nothing.
+func TetherLabel(driver string) string {
+	if driver == "ipheth" {
+		return "iPhone (USB)"
+	}
+	return ""
 }
 
 // Usable reports whether a path can carry traffic right now.

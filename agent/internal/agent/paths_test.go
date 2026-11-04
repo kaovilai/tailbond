@@ -58,3 +58,22 @@ func TestDesiredPathsOpenWrtKeys(t *testing.T) {
 		t.Fatalf("wwan off: %v", got)
 	}
 }
+
+// Sharing turned off (or the sharer gone): the share's link and its
+// interface are gone before the next check, yet mqvpn still has the relay
+// path and must be restarted without it.
+func TestPathSetChangedDropsGoneRelayPaths(t *testing.T) {
+	active := []string{"eth0", "sh3fa2c1"}
+	want := []string{"eth0"}
+	present := map[string]bool{"eth0": true} // the share is no longer listed
+	if !pathSetChanged(active, want, present, map[string]bool{"sh3fa2c1": true}) {
+		t.Fatal("a removed relay path left in mqvpn")
+	}
+	// a plain interface that vanished is left to mqvpn's own path handling
+	if pathSetChanged([]string{"eth0", "wwan0"}, want, present, nil) {
+		t.Fatal("restart for a vanished interface")
+	}
+	if !pathSetChanged(want, active, map[string]bool{"eth0": true, "sh3fa2c1": true}, nil) {
+		t.Fatal("a new path not added")
+	}
+}

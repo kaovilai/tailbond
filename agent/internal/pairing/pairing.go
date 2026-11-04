@@ -33,6 +33,9 @@ type Payload struct {
 	// can keep several servers apart (docs/architecture.md).
 	ServerName string `json:"server_name,omitempty"`
 	Subnet     string `json:"subnet,omitempty"`
+	// Additive: the server's share key (Pair & Share): devices paired with
+	// the same server use each other's shared mobile data with it.
+	ShareKey string `json:"share_key,omitempty"`
 }
 
 // DefaultSubnet is what a server without the subnet key uses.

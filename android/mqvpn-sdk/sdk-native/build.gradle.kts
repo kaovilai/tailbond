@@ -7,6 +7,11 @@ plugins {
 
 val mqvpnRoot = rootProject.file("../third_party/mqvpn").canonicalFile
 
+// tailbond: same ABI list as :app (-Ptailbond.abis / TB_ANDROID_ABIS, default arm64-v8a)
+val abis: List<String> = ((findProperty("tailbond.abis") as String?)?.takeIf { it.isNotBlank() }
+    ?: System.getenv("TB_ANDROID_ABIS")?.takeIf { it.isNotBlank() } ?: "arm64-v8a")
+    .split(',', ' ').map { it.trim() }.filter { it.isNotEmpty() }
+
 android {
     namespace = "com.mqvpn.sdk.native_"
     compileSdk = 37
@@ -28,7 +33,7 @@ android {
 
         ndk {
             // Only ABIs with prebuilt .a files (scripts/build-native.sh output).
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += abis
         }
     }
 

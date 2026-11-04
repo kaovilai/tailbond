@@ -47,8 +47,9 @@ type Agent struct {
 	rater *status.Rater
 	role  string
 
-	hookq  chan func()
-	pollMu sync.Mutex // serializes poll (the rater is not concurrency-safe)
+	hookq    chan func()
+	pollMu   sync.Mutex // serializes poll (the rater is not concurrency-safe)
+	secretMu sync.Mutex // stateSecret: each secret is created once
 
 	mu       sync.Mutex
 	snap     *status.Status
@@ -56,9 +57,10 @@ type Agent struct {
 	tlsInfo  tlsInfo
 	sessions map[string]time.Time
 	client   *clientState
-	pairReqs *pairRequests // server role
-	join     *joinState    // client role: asking a server to pair
-	userStop bool          // client: the user turned tailbond off or unpaired
+	pairReqs *pairRequests  // server role
+	shareReg *shareRegistry // server role: Pair & Share sharers
+	join     *joinState     // client role: asking a server to pair
+	userStop bool           // client: the user turned tailbond off or unpaired
 
 	// whois identifies tailnet peers (tests stub it).
 	whois func(ctx context.Context, ip string) (*tailscale.Whois, error)
@@ -138,6 +140,7 @@ func New(store *config.Store, opts Options) *Agent {
 		hookq:       make(chan func(), 32),
 		sessions:    map[string]time.Time{},
 		pairReqs:    newPairRequests(),
+		shareReg:    &shareRegistry{m: map[string]regSharer{}},
 		join:        &joinState{State: joinIdle},
 		apiPort:     "8077",
 		rescan:      make(chan struct{}, 1),
@@ -528,12 +531,28 @@ func genKey() (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
+// writeFileAtomic replaces path with data through a temp file of its own,
+// so concurrent writers never share (or rename away) each other's.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 var errClientOnly = errors.New("client role only")

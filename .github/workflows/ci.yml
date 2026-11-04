@@ -53,21 +53,23 @@ jobs:
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-24.04
+    env:
+      # shell=busybox (the OpenWrt scripts) needs 0.10+; Ubuntu 24.04 ships 0.9
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
     steps:
       - uses: actions/checkout@v7
-      - name: Scripts and Fedora hooks
+      - name: Install ShellCheck ${{ env.SHELLCHECK_VERSION }}
         run: |
-          mapfile -t files < <(git ls-files 'scripts/*.sh' 'scripts/**/*.sh' 'agent/*.sh' \
-            'android/scripts/*.sh' 'packaging/fedora/*.sh' 'packaging/fedora/hooks/*' \
-            'packaging/openwrt/*.sh' 'packaging/linux/*.sh' 'packaging/linux/hooks/*')
-          shellcheck -S warning "${files[@]}"
-      - name: OpenWrt hooks and init (busybox sh)
-        run: |
-          mapfile -t files < <(git ls-files 'packaging/openwrt/hooks/*' 'packaging/openwrt/control/postinst' \
-            'packaging/openwrt/control/prerm' 'packaging/openwrt/control/postrm' 'packaging/openwrt/files/etc/init.d/*' \
-            'packaging/openwrt/files/etc/uci-defaults/*' 'packaging/openwrt/files/usr/lib/tailbond/*' \
-            'packaging/openwrt/files/lib/upgrade/*')
-          shellcheck -S warning --shell=busybox -x "${files[@]}"
+          f="shellcheck-$SHELLCHECK_VERSION.linux.x86_64.tar.xz"
+          curl -fsSLo "$RUNNER_TEMP/$f" "https://github.com/koalaman/shellcheck/releases/download/$SHELLCHECK_VERSION/$f"
+          echo "$SHELLCHECK_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -C "$RUNNER_TEMP" -xJf "$RUNNER_TEMP/$f"
+          echo "SHELLCHECK=$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" >>"$GITHUB_ENV"
+      - name: ShellCheck (scripts, hooks; OpenWrt files as busybox sh)
+        run: scripts/shellcheck.sh
+      - name: Release gate covers every job
+        run: python3 scripts/ci/check-release-needs.py
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -103,6 +105,8 @@ jobs:
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-netns.sh
       - name: e2e-backup (backup, wipe, restore, the client reconnects)
         run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-backup.sh
+      - name: e2e-share (Pair & Share - a sharer's relay path bonded by a hub)
+        run: MQVPN="$PWD/out/native/mqvpn" scripts/e2e-share.sh
       - name: Server memory and CPU under load (informational)
         continue-on-error: true
         run: MB=100 MQVPN="$PWD/out/native/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/measure-server-mem.sh
@@ -110,6 +114,9 @@ jobs:
   android:
     name: Android APK
     runs-on: ubuntu-24.04
+    outputs:
+      # "true" when the signed release APK was built (artifact android-release-apk)
+      release-apk: ${{ steps.release-apk.outputs.built }}
     env:
       # Release signing (docs/updates.md, "Android signing key"): secrets
       # from scripts/release/gen-android-keystore.sh. Without them only the
@@ -133,6 +140,7 @@ jobs:
         uses: actions/cache@v6
         with:
           # build-native.sh skips the NDK build when these prebuilt libs exist
+          # (arm64-v8a for phones, x86_64 for the emulator)
           path: third_party/mqvpn/android/sdk-native/prebuilt
           key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-${{ github.sha }}
           restore-keys: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh') }}-
@@ -143,7 +151,16 @@ jobs:
           name: android-apk
           path: out/android/tailbond-debug.apk
           if-no-files-found: error
+      # x86_64-only debug APK for the emulator (job android-e2e); phones get arm64 only
+      - name: x86_64 debug APK (emulator e2e)
+        run: android/scripts/build-e2e-apk.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk-x86_64
+          path: out/android/tailbond-debug-x86_64.apk
+          if-no-files-found: error
       - name: Release APK (signed with the release key)
+        id: release-apk
         if: env.TB_HAS_RELEASE_KEY == 'true' && hashFiles('android/scripts/build-release-apk.sh') != ''
         env:
           TB_RELEASE_KEYSTORE_B64: ${{ secrets.TB_RELEASE_KEYSTORE_B64 }}
@@ -155,6 +172,7 @@ jobs:
           trap 'rm -f "$TB_RELEASE_KEYSTORE"' EXIT
           (umask 077; printf '%s' "$TB_RELEASE_KEYSTORE_B64" | base64 -d >"$TB_RELEASE_KEYSTORE")
           android/scripts/build-release-apk.sh
+          echo "built=true" >>"$GITHUB_OUTPUT"
       # The key never changes by accident: a phone refuses an update signed
       # with another key (variable from gen-android-keystore.sh).
       - name: Release APK is signed with the known key
@@ -187,6 +205,89 @@ jobs:
           name: android-reports
           path: android/app/build/reports/
 
+  # The phone path end to end: the x86_64 debug APK on an Android emulator
+  # (KVM), paired through the tailbond://pair deep link with a tailbond
+  # server on the runner (10.0.2.2 from the emulator), checked over adb
+  # (scripts/e2e-android.sh).
+  android-e2e:
+    name: Android emulator end-to-end
+    runs-on: ubuntu-24.04
+    needs: [agent, android, mqvpn-x86_64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: tailbondd
+          path: out/agent/
+      - uses: actions/download-artifact@v8
+        with:
+          name: mqvpn-x86_64
+          path: out/x86_64/
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-apk-x86_64
+          path: out/android/
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: tailbond server on the runner (static mqvpn, Tailscale off)
+        run: |
+          chmod +x out/x86_64/mqvpn out/agent/linux-amd64/tailbondd
+          MQVPN="$PWD/out/x86_64/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/e2e-android-server.sh
+      - name: Emulator (API 34, x86_64) and the checks
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          # one line: the action runs each script line as its own shell
+          script: scripts/e2e-android.sh
+      - name: Server log
+        if: always()
+        run: |
+          sudo cat /tmp/tailbond-e2e-android/server.log | tail -n 80 || true
+          scripts/e2e-android-server.sh stop || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-e2e
+          path: out/e2e-android/
+          if-no-files-found: warn
+
+  # tailbond Share for iPhone (ios/, docs/ios.md): the relay core's unit
+  # tests on macOS and on an iOS simulator, and an unsigned simulator build
+  # of the app. No signing, no App Store.
+  ios:
+    name: iOS tailbond Share (simulator)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests (relay framing, auth, pairing; macOS)
+        working-directory: ios/TailbondShareKit
+        run: swift test
+      - name: Generate the Xcode project (XcodeGen)
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen
+      - name: Unit tests on an iOS simulator
+        shell: bash
+        run: |
+          set -o pipefail
+          udid="$(xcrun simctl list devices available -j | jq -r '[.devices | to_entries[] | select(.key | test("iOS")) | .value[] | select(.name | test("^iPhone"))][0].udid')"
+          echo "simulator $udid"
+          cd ios && xcodebuild test -project TailbondShare.xcodeproj -scheme TailbondShare -destination "id=$udid" CODE_SIGNING_ALLOWED=NO | tail -n 60
+      - name: Build the app (iOS simulator, unsigned)
+        shell: bash
+        run: |
+          set -o pipefail
+          cd ios && xcodebuild build -project TailbondShare.xcodeproj -scheme TailbondShare -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO | tail -n 30
+
   openwrt:
     name: GL.iNet / OpenWrt ipk
     # Native arm64 runner: static musl mqvpn builds in an arm64 Alpine
@@ -211,7 +312,7 @@ jobs:
       # must be the one phones update to (debug and release can't update
       # each other).
       - uses: actions/download-artifact@v8
-        continue-on-error: true
+        if: needs.android.outputs.release-apk == 'true'
         with:
           name: android-release-apk
           path: out/android-release/
@@ -237,6 +338,9 @@ jobs:
           TB_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}-r1', github.ref_name) || '' }}
         run: packaging/openwrt/build-ipk.sh
       - name: Install test in OpenWrt 23.05 arm64
+        env:
+          # rootful: the container needs the OpenWrt feed (lua, uhttpd)
+          PODMAN: sudo podman
         run: scripts/test-openwrt-ipk.sh
       - uses: actions/upload-artifact@v7
         with:
@@ -380,7 +484,7 @@ jobs:
           name: android-apk
           path: out/android/
       - uses: actions/download-artifact@v8
-        continue-on-error: true
+        if: needs.android.outputs.release-apk == 'true'
         with:
           name: android-release-apk
           path: out/android-release/
@@ -396,7 +500,13 @@ jobs:
           dnf install -y -q out/rpm/tailbond-server-*.rpm
           test -x /usr/bin/mqvpn && test -x /usr/bin/tailbondd
           test -f /usr/share/tailbond/tailbond.apk
-          dnf remove -y -q tailbond-server
+          rpm -q --scripts tailbond-server
+          # rpm -e, not dnf remove: dnf also removes the dependencies it
+          # pulled in, and ipset's own %preun fails in a container. Our
+          # %preun/%postun must run clean: any scriptlet message fails.
+          out="$(rpm -e tailbond-server 2>&1)" || { echo "$out"; exit 1; }
+          echo "$out"
+          if grep -Ei 'scriptlet|warning|error' <<<"$out"; then exit 1; fi
           test ! -e /usr/bin/tailbondd
       - uses: actions/upload-artifact@v7
         with:
@@ -407,7 +517,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, openwrt, rpm, linux-bundle, vps-install]
+    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, mqvpn-x86_64, openwrt, rpm, linux-bundle, vps-install]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

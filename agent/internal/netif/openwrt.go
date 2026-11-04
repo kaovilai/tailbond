@@ -186,7 +186,11 @@ func annotate(ifs []Iface, wans []WAN) []Iface {
 	}
 	for i := range ifs {
 		if w, ok := byDev[ifs[i].Name]; ok {
-			ifs[i].Network, ifs[i].Label, ifs[i].Kind, ifs[i].WAN, ifs[i].DNS = w.Network, w.Label, w.Kind, true, w.DNS
+			label := w.Label
+			if t := TetherLabel(ifs[i].Driver); t != "" {
+				label = t // the tethering WAN is an iPhone
+			}
+			ifs[i].Network, ifs[i].Label, ifs[i].Kind, ifs[i].WAN, ifs[i].DNS = w.Network, label, w.Kind, true, w.DNS
 		}
 	}
 	return ifs

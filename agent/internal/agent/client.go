@@ -29,8 +29,9 @@ import (
 type clientState struct {
 	payload  *pairing.Payload
 	serverIP string
-	active   []string // Path interfaces in the running config
-	pending  []string // desired set awaiting debounce
+	active   []string        // Path interfaces in the running config
+	relayed  map[string]bool // those of them that are share relay paths
+	pending  []string        // desired set awaiting debounce
 	pendingN int
 	usage    usageFile
 	lastCtr  map[string][2]uint64
@@ -56,6 +57,8 @@ type clientState struct {
 	history           []status.Switch // switches, newest first
 	// bypass rules (bypass.go)
 	bypass bypassState
+	// Pair & Share (shares.go)
+	share *shareState
 }
 
 type usageFile struct {
@@ -66,7 +69,7 @@ type usageFile struct {
 func newClientState() *clientState {
 	return &clientState{usage: usageFile{Bytes: map[string]uint64{}}, lastCtr: map[string][2]uint64{}, ifs: map[string]netif.Iface{}, cap: newCaptiveState(),
 		probing: map[string]bool{}, lastProbe: map[string]time.Time{}, probeOK: map[string]bool{},
-		silence: failover.Silence{After: 5 * time.Second}}
+		silence: failover.Silence{After: 5 * time.Second}, share: newShareState()}
 }
 
 func (a *Agent) usagePath() string { return filepath.Join(a.store.Get().StateDir, "usage.json") }
@@ -87,6 +90,7 @@ func (a *Agent) startClient(ctx context.Context) {
 	go a.captiveWatcher(ctx)
 	go a.serverWatcher(ctx)
 	go a.bypassWatcher(ctx)
+	go a.shareWatcher(ctx)
 	if a.paired() && !cfg.Client.Disconnected {
 		a.sup.Start()
 	} else if !a.paired() {
@@ -137,7 +141,7 @@ func effectiveSetting(cfg *config.Config, i netif.Iface) (config.PathSetting, bo
 	}
 	if i.WAN {
 		prio := config.PriorityPrimary
-		if i.Kind == netif.KindCellular || i.Kind == netif.KindUSB {
+		if i.Kind == netif.KindCellular || i.Kind == netif.KindUSB || i.Kind == netif.KindShared {
 			prio = config.PrioritySecondary
 		}
 		return config.PathSetting{Iface: i.Key(), Enabled: true, Priority: prio}, true
@@ -158,6 +162,11 @@ func desiredPaths(cfg *config.Config, ifs []netif.Iface, capReached func(config.
 	for _, it := range ifs {
 		p, ok := effectiveSetting(cfg, it)
 		if !ok || !p.Enabled || capReached(p) || (blocked != nil && blocked(it)) {
+			continue
+		}
+		// a share is a path only while its session is open: mqvpn can't
+		// tell a dead relay from a live one
+		if it.Kind == netif.KindShared && !it.Usable() {
 			continue
 		}
 		r := priorityRank(p.Priority)
@@ -242,7 +251,7 @@ func (a *Agent) accountUsage() {
 	}
 	tunUp := a.rt.ready
 	for _, iface := range cs.active {
-		tx, rx, ok := netif.Counters(iface)
+		tx, rx, ok := a.pathCountersLocked(iface)
 		if !ok {
 			delete(cs.lastCtr, iface)
 			continue
@@ -273,7 +282,7 @@ func (a *Agent) saveUsage() {
 // or loses one by policy (failover tier change, data cap). Interfaces that
 // vanish are left to mqvpn's own path handling. immediate skips the debounce.
 func (a *Agent) reconcilePaths(immediate bool) {
-	ifs, err := a.listIfs()
+	ifs, err := a.allIfs()
 	if err != nil {
 		return
 	}
@@ -293,18 +302,7 @@ func (a *Agent) reconcilePaths(immediate bool) {
 	cs.remember(ifs)
 	want := desiredPaths(cfg, ifs, cs.capReached, cs.captiveBlocked)
 	active := cs.active
-	change := false
-	for _, w := range want {
-		if !slices.Contains(active, w) {
-			change = true
-		}
-	}
-	for _, x := range active {
-		if present[x] && !slices.Contains(want, x) {
-			change = true
-		}
-	}
-	if !change {
+	if !pathSetChanged(active, want, present, cs.relayed) {
 		cs.pending, cs.pendingN = nil, 0
 		a.mu.Unlock()
 		return
@@ -326,6 +324,24 @@ func (a *Agent) reconcilePaths(immediate bool) {
 	a.sup.Restart()
 }
 
+// pathSetChanged: mqvpn's running paths (active) must change to give want.
+// A vanished interface is left to mqvpn, but a share's relay path is not an
+// interface: once its link is gone (sharing off, the sharer left) mqvpn
+// would keep sending to a closed relay port, so it is reconciled too.
+func pathSetChanged(active, want []string, present, relayed map[string]bool) bool {
+	for _, w := range want {
+		if !slices.Contains(active, w) {
+			return true
+		}
+	}
+	for _, x := range active {
+		if (present[x] || relayed[x]) && !slices.Contains(want, x) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Agent) clientPreStart(ctx context.Context) error {
 	cfg := a.store.Get()
 	a.mu.Lock()
@@ -337,7 +353,7 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	a.mu.Lock()
 	a.client.silence.Reset()
 	a.mu.Unlock()
-	ifs, _ := a.listIfs()
+	ifs, _ := a.allIfs()
 	a.mu.Lock()
 	a.client.remember(ifs)
 	paths := desiredPaths(cfg, ifs, a.client.capReached, a.client.captiveBlocked)
@@ -361,9 +377,16 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 	if cfg.Client.NoDNS {
 		dns = nil
 	}
+	specs := a.pathSpecs(paths)
+	relayed := map[string]bool{}
+	for i, sp := range specs {
+		if sp != paths[i] { // NAME@127.0.0.1:PORT
+			relayed[paths[i]] = true
+		}
+	}
 	ini, err := mqconf.Client(mqconf.ClientParams{
 		Server: p.Server, ServerName: p.SNI, Insecure: p.Insecure, Key: p.Key, DNS: dns,
-		Paths: paths, TunName: config.DefaultTunName, Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
+		Paths: specs, TunName: config.DefaultTunName, MTU: clientMTU(cfg), Mode: cfg.Mode, ControlAddr: cfg.ControlAddr,
 		ManageRoutes: cfg.Client.RoutesManaged(), LogLevel: cfg.LogLevel,
 	})
 	if err != nil {
@@ -373,7 +396,7 @@ func (a *Agent) clientPreStart(ctx context.Context) error {
 		return err
 	}
 	a.mu.Lock()
-	a.client.active = paths
+	a.client.active, a.client.relayed = paths, relayed
 	a.client.serverIP = serverIP
 	a.mu.Unlock()
 	return nil
@@ -437,6 +460,10 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 			var connected bool
 			var up uint64
 			st.Paths, st.Totals, up, connected = status.ClientFromControl(a.rater, now, mst, meta)
+			// The control API's path states lag a tunnel mqvpn just closed
+			// (still "active" until its reconnect attempt): once its log
+			// named a state, only ESTABLISHED counts.
+			connected = connected && (rt.lastState == "" || rt.lastState == "ESTABLISHED")
 			ready = ready || connected
 			if connected {
 				st.UptimeSec = up
@@ -459,7 +486,7 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 			if lp, ok := logPaths[iface]; ok && time.Since(lp.updated) < 90*time.Second {
 				p.ID, p.SrttMs, p.State = lp.id, lp.srttMs, status.MapPathState(lp.state)
 			}
-			if tx, rx, ok := netif.Counters(iface); ok {
+			if tx, rx, ok := a.pathCounters(iface); ok {
 				p.TxBytes, p.RxBytes = tx, rx
 				p.TxBps, p.RxBps, _ = a.rater.Rate("if/"+iface, now, tx, rx, 0, 0)
 			}
@@ -537,6 +564,7 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 		st.Join = j
 	}
 	a.serversView(st, a.workingFrom(st, now))
+	a.shareStatus(st)
 	return st
 }
 
@@ -590,7 +618,7 @@ func (a *Agent) importPairing(uri string) (*pairing.Payload, error) {
 	if err != nil {
 		return nil, err
 	}
-	ifs, _ := a.listIfs()
+	ifs, _ := a.allIfs()
 	if _, err := a.store.Update(func(c *config.Config) error {
 		primary := ""
 		if len(c.Client.Servers) > 0 {
@@ -674,7 +702,7 @@ type pathView struct {
 
 func (a *Agent) listPaths() ([]pathView, error) {
 	cfg := a.store.Get()
-	ifs, err := a.listIfs()
+	ifs, err := a.allIfs()
 	if err != nil {
 		return nil, err
 	}
@@ -820,4 +848,13 @@ func (a *Agent) hUnpair(w http.ResponseWriter, r *http.Request) {
 	a.sup.Stop()
 	a.Logf("pairing removed")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// clientMTU is the tunnel MTU for the client role (config.DefaultClientMTU
+// unless client.mtu is set).
+func clientMTU(cfg *config.Config) int {
+	if cfg.Client.MTU > 0 {
+		return cfg.Client.MTU
+	}
+	return config.DefaultClientMTU
 }

@@ -91,6 +91,9 @@ object NativeBridge {
     /** mqvpn_config_set_path_mtu(cfg, mtu): 0 or 1280-9000 */
     external fun configSetPathMtu(cfg: Long, mtu: Int): Int
 
+    /** tailbond: mqvpn_config_set_tun_mtu(cfg, mtu): 0 (auto) or 1280-9000 */
+    external fun configSetTunMtu(cfg: Long, mtu: Int): Int
+
     /** mqvpn_config_set_pmtud(cfg, enable) */
     external fun configSetPmtud(cfg: Long, enable: Boolean): Int
 

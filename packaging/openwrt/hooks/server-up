@@ -22,7 +22,9 @@ wan="$(zone_of_network wan)" || wan=wan
 lan="$(zone_of_network lan)" || lan=lan
 
 ensure_network
-commit_reload network network && log "network: added interface tailbond ($TB_TUN)"
+commit_reload network network && log "network: removed legacy interface tailbond"
+# Tearing that interface down also set the device down.
+ip link set dev "$TB_TUN" up 2>/dev/null || true
 
 # Clients may query the agent's DNS forwarder and ping the server; nothing else.
 ensure_zone REJECT
@@ -37,6 +39,15 @@ uset firewall.tailbond_icmp.name tailbond-icmp
 uset firewall.tailbond_icmp.src tailbond
 uset firewall.tailbond_icmp.proto icmp
 uset firewall.tailbond_icmp.target ACCEPT
+# Bonded routers/phones fetch the tailnet machines list (GET /api/peers,
+# client token) from the agent on the tunnel IP; the agent answers nothing
+# else on tunnel addresses.
+uset firewall.tailbond_peers rule
+uset firewall.tailbond_peers.name tailbond-peers
+uset firewall.tailbond_peers.src tailbond
+uset firewall.tailbond_peers.proto tcp
+uset firewall.tailbond_peers.dest_port "$(tbcfg_or main.api_port 8077)"
+uset firewall.tailbond_peers.target ACCEPT
 
 uset firewall.tailbond_wan_in rule
 uset firewall.tailbond_wan_in.name tailbond-mqvpn
@@ -73,11 +84,20 @@ uset firewall.tailbond_api.target ACCEPT
 # The phone page: http://<this router's Tailscale name>/ from the tailnet
 # lands on the agent's landing port (GL's nginx keeps port 80 elsewhere).
 landing="$(tbcfg_or main.landing_port 8078)"
+# Only traffic to this router's own Tailscale address: LAN addresses reached
+# over the tailnet (the 192.168.8.0/24 subnet route) must keep GL's admin UI.
+ts4="$(tailscale ip -4 2>/dev/null | head -n1)"
+[ -n "$ts4" ] || landing=0
+if [ "$landing" = 0 ]; then
+	udel firewall.tailbond_landing
+	udel firewall.tailbond_landing_in
+fi
 if [ "$landing" != 0 ]; then
 	uset firewall.tailbond_landing redirect
 	uset firewall.tailbond_landing.name tailbond-phone-page
 	uset firewall.tailbond_landing.src "$ts"
 	uset firewall.tailbond_landing.proto tcp
+	uset firewall.tailbond_landing.src_dip "$ts4"
 	uset firewall.tailbond_landing.src_dport 80
 	uset firewall.tailbond_landing.dest_port "$landing"
 	uset firewall.tailbond_landing.target DNAT
@@ -103,8 +123,9 @@ uset firewall.tailbond_ts_nat.proto all
 commit_reload firewall firewall && log "firewall: udp/$port open on $wan, zone tailbond -> $wan${lan:+/$lan}/$ts"
 
 # The agent's DNS forwarder owns $TB_DNS_IP:53.
-ulist 'dhcp.@dnsmasq[0].notinterface' tailbond
-commit_reload dhcp dnsmasq && log "dnsmasq: no longer listening on tailbond"
+udel_list 'dhcp.@dnsmasq[0].notinterface' tailbond
+ulist 'dhcp.@dnsmasq[0].notinterface' "$TB_TUN"
+commit_reload dhcp dnsmasq && log "dnsmasq: no longer listening on $TB_TUN"
 
 # Advertise the tunnel subnet, keeping routes advertised by others (GL UI).
 if command -v tailscale >/dev/null && is_true "$(tbcfg_or server.advertise_routes 1)"; then
@@ -120,6 +141,28 @@ if command -v tailscale >/dev/null && is_true "$(tbcfg_or server.advertise_route
 		fi
 		;;
 	esac
+fi
+
+# Tailscale may have no address yet (at boot it can start after us): the
+# phone page redirect above needs it, and nothing else runs this hook when
+# Tailscale comes up. Wait for it in the background, then run again.
+if [ -z "$ts4" ] && [ -z "$TB_TS_WAITED" ] && [ "$(tbcfg_or main.landing_port 8078)" != 0 ] &&
+	command -v tailscale >/dev/null; then
+	hook="$0"
+	(
+		i=0
+		while [ "$i" -lt 90 ]; do
+			sleep 10
+			i=$((i + 1))
+			# the server stopped meanwhile (server-down cleaned up)
+			ip link show dev "$TB_TUN" >/dev/null 2>&1 || exit 0
+			[ -n "$(tailscale ip -4 2>/dev/null | head -n1)" ] || continue
+			log "tailscale is up: applying server-up again"
+			TB_TS_WAITED=1 "$hook"
+			exit 0
+		done
+	) </dev/null >/dev/null 2>&1 &
+	log "tailscale has no address yet: the phone page waits for it"
 fi
 
 log "server-up: mqvpn on udp/$port, subnet $subnet via $TB_TUN"

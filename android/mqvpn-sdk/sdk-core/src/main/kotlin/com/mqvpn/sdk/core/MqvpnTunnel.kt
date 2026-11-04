@@ -194,6 +194,10 @@ class MqvpnTunnel internal constructor(
             require(config.pathMtu == 0 || config.pathMtu in 1280..9000) {
                 "pathMtu must be 0 or 1280-9000, not ${config.pathMtu}"
             }
+            // tailbond: same range as mqvpn_config_set_tun_mtu
+            require(config.tunMtu == 0 || config.tunMtu in 1280..9000) {
+                "tunMtu must be 0 or 1280-9000, not ${config.tunMtu}"
+            }
             config.certPinBytes() // tailbond: a malformed pin fails before any native allocation
             val cfg = NativeBridge.configNew()
             NativeBridge.configSetServer(cfg, config.serverAddress, config.serverPort)
@@ -213,6 +217,7 @@ class MqvpnTunnel internal constructor(
             NativeBridge.configSetReconnect(cfg, config.reconnect, config.reconnectIntervalSec)
             NativeBridge.configSetKillswitchHint(cfg, config.killSwitch)
             NativeBridge.configSetPathMtu(cfg, config.pathMtu)
+            NativeBridge.configSetTunMtu(cfg, config.tunMtu) // tailbond
             NativeBridge.configSetPmtud(cfg, config.pmtud)
             NativeBridge.configSetHybridEnabled(cfg, config.hybridEnabled)
             NativeBridge.configSetHybridTcpMode(cfg, config.hybridTcpMode.native)
