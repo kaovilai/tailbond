@@ -23,7 +23,7 @@
 [![Linux bundle](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20aarch64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-arm64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz)
 [![All releases](https://img.shields.io/badge/all-releases-071A1D)](https://github.com/kaovilai/tailbond/releases)  
-Built files live only on [GitHub Releases](https://github.com/kaovilai/tailbond/releases) (checksums in `SHA256SUMS`); each guide below starts with its download. Each merge to `main` that passes CI publishes a release automatically; to try unreleased changes, [build from source](#build-from-source). The iPhone's tailbond Share app is build-from-source only (free Apple ID signing, [iOS](docs/ios.md)).
+Built files live only on [GitHub Releases](https://github.com/kaovilai/tailbond/releases) (checksums in `SHA256SUMS`); each guide below starts with its download. Each merge to `main` that passes CI is tagged automatically, and the release is published once that tag's own CI run passes; to try unreleased changes, [build from source](#build-from-source). The iPhone's tailbond Share app is build-from-source only (free Apple ID signing, [iOS](docs/ios.md)).
 
 **Deploy a server:**
 [![Any VPS (cloud-init)](https://img.shields.io/badge/deploy-cloud--init-0D9488)](docs/deploy.md#any-vps-cloud-init)
