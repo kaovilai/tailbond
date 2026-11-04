@@ -1,0 +1,32 @@
+#cloud-config
+# tailbond server on any VPS (DigitalOcean, Hetzner, Vultr, Linode/Akamai,
+# Oracle Cloud, AWS, GCP...). UNTESTED TEMPLATE (see docs/deploy.md).
+#
+# Paste this as the server's "User data" / "cloud-init" when you create it
+# (Debian 12, Ubuntu 24.04, AlmaLinux/Rocky 9-10 or Fedora). Optional: fill in
+# TAILSCALE_AUTHKEY below to join your tailnet, so phones and routers reach
+# your Tailscale machines through this server and can pair over Tailscale.
+write_files:
+  - path: /root/tailbond-setup.sh
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      TAILSCALE_AUTHKEY=""        # tskey-auth-... (optional; reusable/ephemeral off)
+      TAILBOND_REPO="kaovilai/tailbond"
+      case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) echo "unsupported arch"; exit 1 ;; esac
+      base="https://github.com/$TAILBOND_REPO/releases/latest/download"
+      cd /root
+      curl -fsSLO "$base/tailbond-linux-$arch.tar.gz"
+      curl -fsSLO "$base/SHA256SUMS"
+      grep " tailbond-linux-$arch.tar.gz\$" SHA256SUMS | sha256sum -c -
+      tar -xzf "tailbond-linux-$arch.tar.gz"
+      if [ -n "$TAILSCALE_AUTHKEY" ]; then
+        curl -fsSL https://tailscale.com/install.sh | sh
+        tailscale up --authkey "$TAILSCALE_AUTHKEY"
+        "./tailbond-linux-$arch/install.sh" --update-policy auto
+      else
+        "./tailbond-linux-$arch/install.sh" --no-tailscale --update-policy auto
+      fi
+runcmd:
+  - [bash, /root/tailbond-setup.sh]
