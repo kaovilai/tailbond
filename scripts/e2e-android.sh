@@ -78,6 +78,24 @@ fetch_token() {
   sh_ "printf 'GET $TOKEN_URL_PATH HTTP/1.0\\r\\nHost: 10.77.0.1\\r\\n\\r\\n' | nc -w 5 10.77.0.1 8099" 2>/dev/null
 }
 token_ok() { fetch_token | grep "$TOKEN" >/dev/null; }
+# The emulator's Wi-Fi as dumpsys connectivity lists it (one NetworkAgentInfo
+# line per network). Validated = Android's own DNS + HTTP probes went through
+# it, i.e. wlan0 carries traffic; connected alone doesn't say that.
+wifi_nai() { sh_ dumpsys connectivity | grep -E '^ *NetworkAgentInfo\{.*ni\{WIFI '; }
+wifi_connected() { wifi_nai | grep -q 'ni{WIFI CONNECTED'; }
+wifi_validated() { wifi_nai | grep -Eq 'Capabilities: ([A-Z_]+&)*VALIDATED[& ]'; }
+wifi_gone() { ! wifi_nai >/dev/null; }
+# why not: its state, its first DNS config and last validation (logcat)
+wifi_diag() {
+  local nai id
+  nai="$(wifi_nai | head -n 1)"
+  [ -n "$nai" ] || { echo "no Wi-Fi network"; return; }
+  id="$(grep -oE 'network\{[0-9]+\}' <<<"$nai" | tr -dc 0-9)"
+  printf '%s, network %s; first DNS config %s; last %s\n' \
+    "$(grep -oE 'ni\{WIFI [A-Z_]+' <<<"$nai" | cut -c4-)" "$id" \
+    "$(grep -E "ResolverParamsParcel\{netId: $id," "$OUT/logcat.txt" | head -n 1 | grep -oE 'servers: \[[^]]*\]' || echo '?')" \
+    "$(grep -oE "\[$id WIFI\] validation [a-z]+" "$OUT/logcat.txt" | tail -n 1 | cut -d' ' -f3- || echo 'validation ?')"
+}
 shot() { adb exec-out screencap -p >"$OUT/$1.png" 2>/dev/null && echo "  screenshot $OUT/$1.png"; }
 # Tap the first view whose text is $1 (uiautomator dump; Compose exposes its texts).
 tap_text() {
@@ -120,8 +138,26 @@ trap finish EXIT
 
 say "emulator: Android $(sh_ getprop ro.build.version.release) (API $(sh_ getprop ro.build.version.sdk)), $(sh_ getprop ro.product.cpu.abi)"
 sh_ svc wifi enable; sh_ svc data enable
-# Wi-Fi (wlan0) and cellular both up before the app starts
-wait_for 60 sh -c "adb shell dumpsys connectivity | grep -q 'ni{WIFI CONNECTED'" && ok "Wi-Fi connected" || note "Wi-Fi not connected after 60 s"
+# Wi-Fi (wlan0) and cellular both up before the app starts, and Wi-Fi
+# validated, not just connected: the Wi-Fi path, the Pair & Share hub's link
+# (10.0.2.2 is on wlan0's subnet, so its socket is bound to Wi-Fi) and the
+# failover all need wlan0 to carry traffic. Now and then the emulator brings
+# Wi-Fi up with its address before DHCP and no DNS server
+# (setResolverConfiguration(netId, servers: [])); that network never carries
+# traffic (every probe fails for as long as it lives), so it's brought down
+# and up again until a bring-up validates. A good one validates within ~2 s.
+WIFI_OK=false
+for try in 1 2 3; do
+  if wait_for 60 wifi_connected && wait_for 20 wifi_validated; then WIFI_OK=true; break; fi
+  dump_net "wifi-$try"
+  note "Wi-Fi bring-up $try doesn't carry traffic: $(wifi_diag)"
+  [ "$try" -lt 3 ] || break
+  sh_ svc wifi disable
+  wait_for 20 wifi_gone || note "Wi-Fi still listed 20 s after svc wifi disable"
+  sh_ svc wifi enable
+done
+if $WIFI_OK; then ok "Wi-Fi connected and validated (bring-up $try)"
+else note "Wi-Fi not validated after 3 bring-ups: no Wi-Fi path or failover; the Pair & Share hub fails below"; fi
 dump_net before
 grep -E '^ *NetworkAgentInfo\{' "$OUT/connectivity-before.txt" | sed -E 's/^ *(NetworkAgentInfo\{[^ ]+ +[^ ]+ +ni\{[^}]*\}).*/  \1/' | head -n 5
 
@@ -287,7 +323,11 @@ sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.HU
 wait_for 10 app_is '.hub.status == "OFF"' && ok "hub stops" || bad "hub didn't stop: $(app_status | jq -c '.hub | del(.pass)')"
 
 say "Pair & Share hub: a nearby phone's shared data (tb-sharesim on the host) as a relay path of the app's tunnel"
-if [ -s "$WORK/sharer.pid" ]; then
+# the link's socket is bound to Wi-Fi (10.0.2.2 is on wlan0's subnet): with
+# a Wi-Fi that carries nothing it can only end up "unreachable"
+if [ -s "$WORK/sharer.pid" ] && ! wifi_validated; then
+  bad "Pair & Share hub not tested: the emulator's Wi-Fi, the link's network to 10.0.2.2, carries no traffic: $(wifi_diag)"
+elif [ -s "$WORK/sharer.pid" ]; then
   # its key id: the app links it with the pass the server gave it for that
   SKID="$(grep -o 'key id [0-9a-f]*' "$WORK/sharer.log" | head -n1 | awk '{print $3}')"
   sh_ am broadcast -f 32 -n "$PKG/.debug.E2eReceiver" -a dev.tailbond.app.debug.SHARE_HUB_ADD --es addr 10.0.2.2:47077 --es keyid "$SKID" >/dev/null
