@@ -44,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           # the Android build includes modules from third_party/mqvpn
           submodules: ${{ matrix.language == 'java-kotlin' && 'recursive' || 'false' }}
       - if: matrix.language == 'java-kotlin'
@@ -85,6 +86,8 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # the iOS app's Xcode project is generated (ios/project.yml) and not in
       # git, so autobuild can't find the app: build what CI's ios and macos
       # jobs build
