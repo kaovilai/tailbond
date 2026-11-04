@@ -3,10 +3,11 @@
 #
 # The tailbond server for scripts/e2e-macos.sh: a tiny aarch64 Linux VM
 # (kernel + initramfs) that runs tailbondd in the server role with the
-# static mqvpn, plus a token web server only the tunnel reaches. mqvpn's
-# server mode isn't built on macOS, and a server in the Mac's own network
-# stack would answer the tunnel's traffic locally, so the macOS runner boots
-# this under QEMU instead.
+# static mqvpn, plus a token web server only the tunnel reaches. A server in
+# the Mac's own network stack would answer the hub's tunnel traffic locally,
+# so the macOS runner boots this under QEMU instead. The same image boots as
+# a bonding Linux client (kernel argument tb.role=client, vm-init.sh) for
+# scripts/e2e-macos-server.sh, where the Mac is the server.
 #
 #   MQVPN=out/aarch64/mqvpn TAILBONDD=out/agent/linux-arm64/tailbondd \
 #       scripts/e2e-macos/build-server-vm.sh        # -> out/e2e-vm/{vmlinuz,initramfs.gz}

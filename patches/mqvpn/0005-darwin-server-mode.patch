@@ -1,0 +1,558 @@
+From: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+Subject: [PATCH] feat(darwin): server mode on macOS
+
+Server mode on Darwin, so a Mac can be the home server:
+
+- src/platform/darwin/server_darwin.c: darwin_platform_run_server, a
+  trimmed twin of linux_platform_run_server. Same libmqvpn calls, the
+  bundled POSIX transport over one UDP socket, the control API
+  (control_socket.c, already built on Darwin), and the same log lines
+  ("TUN <name> configured: <ip> (mtu=N)", "mqvpn server ready") that
+  supervisors parse.
+- The tunnel is a utun: the kernel picks the unit (logged). utun is
+  point-to-point, so the client subnets (IPv4 and, when set, IPv6) are
+  routed to it with route(8) -interface; the routes go with the utun.
+- No TUN offloads, UDP GSO/GRO or hybrid TCP egress lane (Linux-only);
+  the egress fd callbacks stay unset, which the core treats as no lane.
+- Forwarding, NAT and the firewall stay with the caller, as on Linux
+  (tailbond's server-up hook: net.inet.ip.forwarding and a pf anchor).
+- main.c dispatches --mode server to it on __APPLE__ instead of failing.
+
+Signed-off-by: Tiger Kaovilai <passawit.kaovilai@gmail.com>
+---
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -596,7 +596,7 @@
+ # ---------- mqvpn CLI binary (Darwin) ----------
+ # Darwin platform layer: client mode is fully wired (drop+reactivate path
+ # lifecycle, routing, killswitch, DNS, the client-mode control API). Server
+-# mode is intentionally not ported here (not built on macOS in v1); the
++# mode is server_darwin.c (utun; no offloads, no hybrid TCP egress lane); the
+ # control API is the Linux control_socket.c, which is plain POSIX + libevent.
+ # This branch exists so CMake picks up APPLE instead of falling into the
+ # Linux else() below (which would pull in netlink_mon.c and Linux
+@@ -605,6 +605,7 @@
+     src/main.c
+     src/platform/client_config_bridge.c
+     src/platform/darwin/platform_darwin.c
++    src/platform/darwin/server_darwin.c
+     src/platform/darwin/route_mon.c
+     src/platform/posix/netmon_common.c
+     src/platform/posix/path_table.c
+@@ -645,6 +646,7 @@
+ add_library(mqvpn_darwin_platform OBJECT
+     src/platform/client_config_bridge.c
+     src/platform/darwin/platform_darwin.c
++    src/platform/darwin/server_darwin.c
+     src/platform/darwin/route_mon.c
+     src/platform/posix/netmon_common.c
+     src/platform/posix/path_table.c
+--- a/src/main.c
++++ b/src/main.c
+@@ -698,8 +698,7 @@
+ #ifdef _WIN32
+         return win_platform_run_server(&cfg);
+ #elif defined(__APPLE__)
+-        fprintf(stderr, "error: server mode is not supported on macOS yet\n");
+-        return 1;
++        return darwin_platform_run_server(&cfg);
+ #else
+         return linux_platform_run_server(&cfg);
+ #endif
+--- a/src/platform/darwin/platform_darwin.h
++++ b/src/platform/darwin/platform_darwin.h
+@@ -6,13 +6,14 @@
+  *
+  * Provides libevent-based tick() driver and utun TUN management.
+  * This is the glue between the sans-I/O libmqvpn and the macOS CLI binary.
+- * Server mode is not ported to Darwin (client-only platform layer).
++ * Server mode: server_darwin.c (utun; forwarding/NAT are left to the caller).
+  */
+ 
+ #ifndef MQVPN_PLATFORM_DARWIN_H
+ #define MQVPN_PLATFORM_DARWIN_H
+ 
+ #include "vpn_client.h"
++#include "vpn_server.h"
+ 
+ /*
+  * Run the VPN client using the libmqvpn API + Darwin platform layer.
+@@ -20,4 +21,10 @@
+  */
+ int darwin_platform_run_client(const mqvpn_client_cfg_t *cfg);
+ 
++/*
++ * Run the VPN server (server_darwin.c). Blocks until SIGINT/SIGTERM.
++ * Returns 0 on clean exit.
++ */
++int darwin_platform_run_server(const mqvpn_server_cfg_t *cfg);
++
+ #endif /* MQVPN_PLATFORM_DARWIN_H */
+--- a/src/platform/darwin/server_darwin.c
++++ b/src/platform/darwin/server_darwin.c
+@@ -0,0 +1,465 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright (c) 2026 mp0rta and mqvpn contributors
++
++/*
++ * server_darwin.c — server mode on Darwin (macOS), for a Mac that is the
++ * home server.
++ *
++ * A trimmed twin of linux_platform_run_server() (platform_linux.c): the
++ * same libmqvpn calls, the same POSIX transport over one UDP socket, the
++ * same control API (control_socket.c is POSIX + libevent), the same log
++ * lines ("TUN <name> configured: <ip> (mtu=N)", "mqvpn server ready").
++ * What differs on Darwin:
++ *
++ *   - The tunnel is a utun (tun_utun.c). The kernel picks the unit; the
++ *     name is logged. utun is point-to-point, so the client subnet is
++ *     routed to it explicitly (route(8) -interface), IPv4 and IPv6.
++ *   - No TUN offloads, no UDP GSO/GRO, no hybrid TCP egress lane (all
++ *     Linux-only); the egress fd callbacks stay unset, which the core
++ *     treats as "no egress lane".
++ *   - Forwarding, NAT and the firewall are the caller's job (tailbond's
++ *     server-up hook: sysctl net.inet.ip.forwarding and a pf anchor), as
++ *     on Linux where the server never touches iptables/nftables itself.
++ */
++
++#ifdef __APPLE__
++
++#  include "platform_internal.h"
++#  include "platform_darwin.h"
++#  include "vpn_server.h"
++#  include "log.h"
++#  include "compat/socket_compat.h"
++#  include "mqvpn_internal.h" /* mqvpn_config_apply_reorder (INI reorder bridge) */
++#  include "platform/linux/control_socket.h" /* POSIX + libevent, shared */
++
++#  include <stdio.h>
++#  include <stdlib.h>
++#  include <string.h>
++#  include <unistd.h>
++#  include <errno.h>
++#  include <signal.h>
++#  include <fcntl.h>
++#  include <sys/socket.h>
++#  include <sys/wait.h>
++#  include <netinet/in.h>
++#  include <arpa/inet.h>
++
++#  define SVR_BULK_READ_COUNT 64
++#  define SVR_TUN_BUF_SIZE    65536
++
++typedef struct {
++    mqvpn_server_t *server;
++    struct event_base *eb;
++    struct event *ev_tick;
++    struct event *ev_tun;
++    struct event *ev_socket;
++    struct event *ev_sigint;
++    struct event *ev_sigterm;
++    mqvpn_tun_t tun;
++    int tun_up;
++    int udp_fd;
++    void *bind_ctx; /* library-owned after set_transport */
++    ctrl_socket_t *ctrl;
++    char subnet[64];  /* routed to the utun once it is up */
++    char subnet6[64];
++} darwin_server_ctx_t;
++
++/* route(8), quietly; 0 on success. Same fork/exec shape as routing.c. */
++static int
++svr_route(const char *const argv[])
++{
++    pid_t pid = fork();
++    if (pid < 0) return -1;
++    if (pid == 0) {
++        int devnull = open("/dev/null", O_WRONLY);
++        if (devnull >= 0) {
++            dup2(devnull, STDOUT_FILENO);
++            dup2(devnull, STDERR_FILENO);
++        }
++        execvp("route", (char *const *)argv);
++        _exit(127);
++    }
++    int status = 0;
++    while (waitpid(pid, &status, 0) < 0)
++        if (errno != EINTR) return -1;
++    return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : -1;
++}
++
++/* Route a client subnet to the utun. A stale route left by a previous
++ * instance (a different, now-gone utun) is replaced. */
++static void
++svr_route_subnet(const char *ifname, const char *subnet, int v6)
++{
++    if (!subnet[0]) return;
++    const char *fam = v6 ? "-inet6" : "-inet";
++    const char *const del[] = {"route", "-q", "-n", "delete", fam, "-net", subnet, NULL};
++    const char *const add[] = {"route",  "-q",  "-n",       "add", fam,
++                               "-net",   subnet, "-interface", ifname, NULL};
++    (void)svr_route(del);
++    if (svr_route(add) < 0)
++        LOG_WRN("route add %s -interface %s failed", subnet, ifname);
++    else
++        LOG_INF("route %s -> %s", subnet, ifname);
++}
++
++static void
++svr_schedule_next_tick(darwin_server_ctx_t *sp)
++{
++    mqvpn_interest_t interest;
++    mqvpn_server_get_interest(sp->server, &interest);
++
++    int ms = interest.next_timer_ms;
++    struct timeval tv = {
++        .tv_sec = ms / 1000,
++        .tv_usec = (ms % 1000) * 1000,
++    };
++    event_add(sp->ev_tick, &tv);
++
++    if (sp->tun_up && sp->tun.fd >= 0 && sp->ev_tun) {
++        if (interest.tun_readable && !event_pending(sp->ev_tun, EV_READ, NULL))
++            event_add(sp->ev_tun, NULL);
++        else if (!interest.tun_readable && event_pending(sp->ev_tun, EV_READ, NULL))
++            event_del(sp->ev_tun);
++    }
++}
++
++static void
++svr_on_tick(evutil_socket_t fd, short what, void *arg)
++{
++    (void)fd;
++    (void)what;
++    darwin_server_ctx_t *sp = (darwin_server_ctx_t *)arg;
++    mqvpn_server_tick(sp->server);
++    svr_schedule_next_tick(sp);
++}
++
++static void
++svr_cb_tun_output(const uint8_t *pkt, size_t len, void *user_ctx)
++{
++    darwin_server_ctx_t *sp = (darwin_server_ctx_t *)user_ctx;
++    if (sp->tun_up && sp->tun.fd >= 0) mqvpn_tun_write(&sp->tun, pkt, len);
++}
++
++static void
++svr_on_tun_read(evutil_socket_t fd, short what, void *arg)
++{
++    (void)fd;
++    (void)what;
++    darwin_server_ctx_t *sp = (darwin_server_ctx_t *)arg;
++    static uint8_t buf[SVR_TUN_BUF_SIZE];
++
++    for (int i = 0; i < SVR_BULK_READ_COUNT; i++) {
++        int n = mqvpn_tun_read(&sp->tun, buf, sizeof(buf));
++        if (n <= 0) break;
++        if (mqvpn_server_on_tun_packet(sp->server, buf, (size_t)n) == MQVPN_ERR_AGAIN) {
++            event_del(sp->ev_tun); /* backpressure: stop reading the TUN */
++            break;
++        }
++    }
++    mqvpn_server_tick(sp->server);
++    svr_schedule_next_tick(sp);
++}
++
++static void
++svr_cb_tunnel_config_ready(const mqvpn_tunnel_info_t *info, void *user_ctx)
++{
++    darwin_server_ctx_t *sp = (darwin_server_ctx_t *)user_ctx;
++
++    /* "utun" or a name utun can't take: the kernel picks the unit */
++    if (mqvpn_tun_create(&sp->tun, sp->tun.name[0] ? sp->tun.name : NULL) < 0) {
++        LOG_ERR("TUN create failed");
++        return;
++    }
++
++    /* The server takes assigned_ip (the .1); the point-to-point peer is the
++     * subnet's base address, as on Linux. The subnet itself is routed below. */
++    char srv_ip[INET_ADDRSTRLEN], base_ip[INET_ADDRSTRLEN];
++    snprintf(srv_ip, sizeof(srv_ip), "%d.%d.%d.%d", info->assigned_ip[0],
++             info->assigned_ip[1], info->assigned_ip[2], info->assigned_ip[3]);
++    snprintf(base_ip, sizeof(base_ip), "%d.%d.%d.%d", info->server_ip[0],
++             info->server_ip[1], info->server_ip[2], info->server_ip[3]);
++
++    if (mqvpn_tun_set_addr(&sp->tun, srv_ip, base_ip, info->assigned_prefix) < 0) return;
++    if (mqvpn_tun_set_mtu(&sp->tun, info->mtu) < 0) return;
++    if (mqvpn_tun_up(&sp->tun) < 0) return;
++
++    if (info->has_v6) {
++        char v6str[INET6_ADDRSTRLEN];
++        inet_ntop(AF_INET6, info->assigned_ip6, v6str, sizeof(v6str));
++        if (mqvpn_tun_set_addr6(&sp->tun, v6str, info->assigned_prefix6) < 0)
++            LOG_WRN("failed to set IPv6 on TUN (continuing IPv4-only)");
++        else
++            svr_route_subnet(sp->tun.name, sp->subnet6, 1);
++    }
++    svr_route_subnet(sp->tun.name, sp->subnet, 0);
++
++    LOG_INF("TUN %s configured: %s (mtu=%d)", sp->tun.name, srv_ip, info->mtu);
++
++    sp->ev_tun = event_new(sp->eb, sp->tun.fd, EV_READ | EV_PERSIST, svr_on_tun_read, sp);
++    if (sp->ev_tun) {
++        event_add(sp->ev_tun, NULL);
++        sp->tun_up = 1;
++    }
++}
++
++static void
++svr_cb_log(mqvpn_log_level_t level, const char *msg, void *user_ctx)
++{
++    (void)user_ctx;
++    switch (level) {
++    case MQVPN_LOG_DEBUG: LOG_DBG("[svr] %s", msg); break;
++    case MQVPN_LOG_INFO: LOG_INF("[svr] %s", msg); break;
++    case MQVPN_LOG_WARN: LOG_WRN("[svr] %s", msg); break;
++    case MQVPN_LOG_ERROR: LOG_ERR("[svr] %s", msg); break;
++    }
++}
++
++static void
++svr_on_socket_read(evutil_socket_t fd, short what, void *arg)
++{
++    (void)fd; /* the transport ctx owns the fd */
++    (void)what;
++    darwin_server_ctx_t *sp = (darwin_server_ctx_t *)arg;
++    (void)mqvpn_bind_posix_server_drain(sp->bind_ctx, sp->server, SVR_BULK_READ_COUNT);
++    mqvpn_server_tick(sp->server);
++    svr_schedule_next_tick(sp);
++}
++
++static void
++svr_on_signal(evutil_socket_t sig, short what, void *arg)
++{
++    (void)sig;
++    (void)what;
++    darwin_server_ctx_t *sp = (darwin_server_ctx_t *)arg;
++    LOG_INF("received signal, shutting down server...");
++    event_base_loopbreak(sp->eb);
++}
++
++static int
++svr_udp_socket(const char *addr, int port, struct sockaddr_storage *out,
++               socklen_t *outlen)
++{
++    int af = AF_INET;
++    struct in_addr a4;
++    struct in6_addr a6;
++    if (addr && addr[0]) {
++        if (inet_pton(AF_INET6, addr, &a6) == 1)
++            af = AF_INET6;
++        else if (inet_pton(AF_INET, addr, &a4) != 1) {
++            LOG_ERR("invalid listen address: %s", addr);
++            return -1;
++        }
++    }
++    int fd = socket(af, SOCK_DGRAM, 0);
++    if (fd < 0) {
++        LOG_ERR("socket: %s", strerror(errno));
++        return -1;
++    }
++    int fl = fcntl(fd, F_GETFL, 0);
++    if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) {
++        LOG_ERR("fcntl: %s", strerror(errno));
++        close(fd);
++        return -1;
++    }
++    int one = 1;
++    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
++
++    memset(out, 0, sizeof(*out));
++    if (af == AF_INET6) {
++        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof(one));
++        struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)out;
++        s6->sin6_len = sizeof(*s6);
++        s6->sin6_family = AF_INET6;
++        s6->sin6_port = htons((uint16_t)port);
++        s6->sin6_addr = (addr && addr[0]) ? a6 : in6addr_any;
++        *outlen = sizeof(*s6);
++    } else {
++        struct sockaddr_in *s4 = (struct sockaddr_in *)out;
++        s4->sin_len = sizeof(*s4);
++        s4->sin_family = AF_INET;
++        s4->sin_port = htons((uint16_t)port);
++        if (addr && addr[0])
++            s4->sin_addr = a4;
++        else
++            s4->sin_addr.s_addr = htonl(INADDR_ANY);
++        *outlen = sizeof(*s4);
++    }
++    if (bind(fd, (struct sockaddr *)out, *outlen) < 0) {
++        LOG_ERR("bind %s:%d: %s", (addr && addr[0]) ? addr : "*", port, strerror(errno));
++        close(fd);
++        return -1;
++    }
++    LOG_INF("UDP socket bound to %s:%d", (addr && addr[0]) ? addr : "0.0.0.0", port);
++    return fd;
++}
++
++int
++darwin_platform_run_server(const mqvpn_server_cfg_t *cfg)
++{
++    /* see darwin_platform_run_client: log writes to a dead pipe must not
++     * kill the process before cleanup */
++    signal(SIGPIPE, SIG_IGN);
++
++    int rc = 1;
++    darwin_server_ctx_t sp;
++    memset(&sp, 0, sizeof(sp));
++    sp.tun.fd = -1;
++    sp.udp_fd = -1;
++    if (cfg->tun_name) snprintf(sp.tun.name, sizeof(sp.tun.name), "%s", cfg->tun_name);
++    snprintf(sp.subnet, sizeof(sp.subnet), "%s", cfg->subnet ? cfg->subnet : "");
++    snprintf(sp.subnet6, sizeof(sp.subnet6), "%s", cfg->subnet6 ? cfg->subnet6 : "");
++
++    mqvpn_config_t *lib_cfg = mqvpn_config_new();
++    if (!lib_cfg) {
++        LOG_ERR("failed to allocate config");
++        return 1;
++    }
++    mqvpn_config_set_listen(lib_cfg, cfg->listen_addr, cfg->listen_port);
++    mqvpn_config_set_subnet(lib_cfg, cfg->subnet);
++    if (cfg->subnet6) mqvpn_config_set_subnet6(lib_cfg, cfg->subnet6);
++    if (cfg->cert_file && cfg->key_file)
++        mqvpn_config_set_tls_cert(lib_cfg, cfg->cert_file, cfg->key_file);
++    if (cfg->auth_key) mqvpn_config_set_auth_key(lib_cfg, cfg->auth_key);
++    for (int i = 0; i < cfg->n_users; i++) {
++        if (cfg->user_names[i] && cfg->user_keys[i])
++            mqvpn_config_add_user(lib_cfg, cfg->user_names[i], cfg->user_keys[i]);
++    }
++    mqvpn_config_set_max_clients(lib_cfg, cfg->max_clients);
++    mqvpn_scheduler_t lib_sched;
++    switch (cfg->scheduler) {
++    case 1: lib_sched = MQVPN_SCHED_WLB; break;
++    case 2: lib_sched = MQVPN_SCHED_BACKUP_FEC; break;
++    case 3: lib_sched = MQVPN_SCHED_WLB_UDP_PIN; break;
++    default: lib_sched = MQVPN_SCHED_MINRTT; break;
++    }
++    mqvpn_config_set_scheduler(lib_cfg, lib_sched);
++    mqvpn_config_set_allow_client_scheduler(lib_cfg, cfg->allow_client_scheduler);
++    mqvpn_config_set_cc(lib_cfg, (mqvpn_cc_t)cfg->cc);
++    mqvpn_config_set_reinjection(lib_cfg, (mqvpn_reinjection_t)cfg->reinjection);
++    mqvpn_config_set_reinjection_deadline_params(lib_cfg, cfg->reinj_srtt_factor_pct,
++                                                 cfg->reinj_hard_deadline_ms,
++                                                 cfg->reinj_deadline_lower_bound_ms);
++    mqvpn_config_set_init_max_path_id(lib_cfg, cfg->init_max_path_id);
++    mqvpn_config_set_tun_mtu(lib_cfg, cfg->tun_mtu);
++    mqvpn_config_set_path_mtu(lib_cfg, cfg->path_mtu);
++    mqvpn_config_set_pmtud(lib_cfg, cfg->pmtud);
++    mqvpn_config_apply_reorder(lib_cfg, &cfg->reorder);
++    mqvpn_config_apply_hybrid(lib_cfg, &cfg->hybrid);
++    mqvpn_config_set_udp_gso(lib_cfg, 0); /* Linux-only */
++    mqvpn_config_set_log_level(lib_cfg, (mqvpn_log_level_t)cfg->log_level);
++
++    mqvpn_server_callbacks_t cbs = MQVPN_SERVER_CALLBACKS_INIT;
++    cbs.tun_output = svr_cb_tun_output;
++    cbs.tunnel_config_ready = svr_cb_tunnel_config_ready;
++    cbs.log = svr_cb_log;
++
++    sp.server = mqvpn_server_new(lib_cfg, &cbs, &sp);
++    mqvpn_config_free(lib_cfg);
++    if (!sp.server) {
++        LOG_ERR("failed to create mqvpn server");
++        return 1;
++    }
++
++    struct sockaddr_storage local_addr;
++    socklen_t local_addrlen = 0;
++    sp.udp_fd = svr_udp_socket(cfg->listen_addr, cfg->listen_port, &local_addr,
++                               &local_addrlen);
++    if (sp.udp_fd < 0) goto cleanup;
++    if (cfg->pmtud && mqvpn_socket_set_dontfrag(sp.udp_fd, local_addr.ss_family) < 0) {
++        LOG_ERR("cannot set DF on the UDP socket, which PMTUD needs: %s",
++                strerror(errno));
++        goto cleanup;
++    }
++
++    mqvpn_bind_posix_opts_t bopts = {0};
++    bopts.struct_size = sizeof(bopts);
++    bopts.socket_buf_bytes = 0; /* the bind's default (7 MiB) */
++    snprintf(bopts.tag, sizeof(bopts.tag), "server");
++    if (mqvpn_bind_posix_server_new(sp.udp_fd, &bopts, &sp.bind_ctx) != MQVPN_OK) {
++        LOG_ERR("server transport setup failed");
++        goto cleanup;
++    }
++    if (mqvpn_server_set_transport(sp.server, mqvpn_bind_posix_server_ops(), sp.bind_ctx,
++                                   (struct sockaddr *)&local_addr,
++                                   local_addrlen) != MQVPN_OK) {
++        LOG_ERR("server transport install failed");
++        mqvpn_bind_posix_server_free(sp.bind_ctx); /* refused: still ours */
++        sp.bind_ctx = NULL;
++        goto cleanup;
++    }
++
++    sp.eb = event_base_new();
++    if (!sp.eb) {
++        LOG_ERR("event_base_new failed");
++        goto cleanup;
++    }
++
++    /* triggers tunnel_config_ready: the utun is created there */
++    if (mqvpn_server_start(sp.server) != MQVPN_OK) {
++        LOG_ERR("server start failed");
++        goto cleanup;
++    }
++    if (!sp.tun_up) {
++        LOG_ERR("tunnel device setup failed");
++        goto cleanup;
++    }
++
++    sp.ev_socket =
++        event_new(sp.eb, sp.udp_fd, EV_READ | EV_PERSIST, svr_on_socket_read, &sp);
++    event_add(sp.ev_socket, NULL);
++    sp.ev_sigint = evsignal_new(sp.eb, SIGINT, svr_on_signal, &sp);
++    sp.ev_sigterm = evsignal_new(sp.eb, SIGTERM, svr_on_signal, &sp);
++    event_add(sp.ev_sigint, NULL);
++    event_add(sp.ev_sigterm, NULL);
++    sp.ev_tick = event_new(sp.eb, -1, 0, svr_on_tick, &sp);
++    svr_schedule_next_tick(&sp);
++
++    if (cfg->control_port > 0) {
++        sp.ctrl = ctrl_socket_create(sp.eb, cfg->control_addr, cfg->control_port,
++                                     sp.server, NULL, NULL);
++        if (!sp.ctrl) LOG_WRN("control API setup failed — continuing without it");
++    }
++
++    LOG_INF("mqvpn server ready — listening on %s:%d, subnet %s",
++            cfg->listen_addr ? cfg->listen_addr : "0.0.0.0", cfg->listen_port,
++            cfg->subnet);
++
++    event_base_dispatch(sp.eb);
++    rc = 0;
++
++cleanup:
++    /* Same teardown order as Linux: control API, then the library (its
++     * final flush still writes to the TUN and sends on the socket), then
++     * the fd, the TUN (which takes its routes with it) and the events. */
++    LOG_INF("server shutting down");
++    ctrl_socket_destroy(sp.ctrl);
++    if (sp.server) mqvpn_server_destroy(sp.server);
++    sp.server = NULL;
++    sp.bind_ctx = NULL; /* finalised by destroy */
++    if (sp.udp_fd >= 0) close(sp.udp_fd);
++    if (sp.ev_tun) {
++        event_del(sp.ev_tun);
++        event_free(sp.ev_tun);
++    }
++    if (sp.tun.fd >= 0) mqvpn_tun_destroy(&sp.tun);
++    if (sp.ev_socket) {
++        event_del(sp.ev_socket);
++        event_free(sp.ev_socket);
++    }
++    if (sp.ev_tick) {
++        event_del(sp.ev_tick);
++        event_free(sp.ev_tick);
++    }
++    if (sp.ev_sigint) {
++        event_del(sp.ev_sigint);
++        event_free(sp.ev_sigint);
++    }
++    if (sp.ev_sigterm) {
++        event_del(sp.ev_sigterm);
++        event_free(sp.ev_sigterm);
++    }
++    if (sp.eb) event_base_free(sp.eb);
++    return rc;
++}
++
++#endif /* __APPLE__ */

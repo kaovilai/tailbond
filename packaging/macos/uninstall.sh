@@ -7,8 +7,9 @@
 #   sudo /usr/local/lib/tailbond/uninstall.sh --purge    # removes them too
 #
 # Stopping tailbondd stops mqvpn, which puts the routes and DNS servers back
-# and removes its kill-switch rules. Env as install.sh (TB_PREFIX,
-# TB_LAUNCHD_DIR, TB_NO_LAUNCHD).
+# and removes its kill-switch rules; a server's hook puts forwarding, NAT and
+# its pf rules back. Env as install.sh (TB_PREFIX, TB_LAUNCHD_DIR,
+# TB_NO_LAUNCHD).
 set -euo pipefail
 
 LABEL=com.tailbond.tailbondd
@@ -34,12 +35,27 @@ if [ -x "$PREFIX/bin/tailbondd" ] && [ -f "$ETC/tailbond.json" ]; then
 fi
 # an mqvpn left behind (it restores routes and DNS on SIGTERM)
 if [ -f "$STATE/mqvpn.pid" ]; then kill "$(cat "$STATE/mqvpn.pid")" 2>/dev/null || true; fi
+# a server's forwarding, NAT and firewall rules, if tailbondd couldn't put
+# them back itself (it was killed): from the hook's restore record
+if [ -f "$STATE/server-net.state" ] && [ -x "$PREFIX/lib/tailbond/hooks/server-down" ]; then
+    TB_STATE_DIR="$STATE" "$PREFIX/lib/tailbond/hooks/server-down" || true
+fi
+# the application firewall entries a server's hook added
+ALF=/usr/libexec/ApplicationFirewall/socketfilterfw
+if [ -x "$ALF" ]; then
+    for b in "$PREFIX/bin/tailbondd" "$PREFIX/bin/mqvpn"; do
+        "$ALF" --listapps 2>/dev/null | grep -qF "$b" && "$ALF" --remove "$b" >/dev/null 2>&1 || true
+    done
+fi
 rm -f "$PLIST"
 # the menu bar app
 pkill -x tailbond 2>/dev/null || true
 rm -rf "${TB_APP_DIR:-/Applications}/tailbond.app"
 rm -f "$PREFIX/bin/tailbondd" "$PREFIX/bin/mqvpn" "$PREFIX/bin/tailbondd.prev" "$PREFIX/bin/mqvpn.prev"
 rm -rf "$PREFIX/lib/tailbond"
+if grep -q '^TB_ROLE=server' "$ETC/install.env" 2>/dev/null; then
+    echo "==> The tunnel subnet may still be advertised in Tailscale: tailscale set --advertise-routes=<your other routes> (empty withdraws all)."
+fi
 rm -f "$ETC/install.env"
 if [ "$PURGE" = 1 ]; then
     rm -rf "$ETC" "$STATE" "$PREFIX/var/log/tailbond.log"

@@ -1,0 +1,155 @@
+#!/bin/bash
+# tailbond macOS server-up hook (docs/macos.md "Mac as home server"). Run by
+# tailbondd after mqvpn's server starts on a utun.
+# Env: TB_TUN (utunN) TB_SUBNET TB_SUBNET6 TB_PORT TB_WEB_PORTS
+#      TB_ADVERTISE_ROUTE TB_STATE_DIR.
+#
+# The Mac twin of packaging/linux/hooks/server-up:
+# - IP forwarding on (net.inet.ip.forwarding, net.inet6.ip6.forwarding).
+# - pf anchor com.apple/251.tailbond.server (the stock /etc/pf.conf
+#   evaluates com.apple/* for nat and filter rules), pf enabled with a
+#   reference token: NAT of the tunnel subnets out the default-route
+#   interface and, toward 100.64.0.0/10 / fd7a:115c:a1e0::/48, out
+#   Tailscale's interface; the dashboard and phone page (TB_WEB_PORTS) only
+#   from loopback, bonded clients on the tunnel and tailnet ranges.
+# - The application firewall, when on: mqvpn and tailbondd allowed in.
+# - A power assertion (caffeinate) so the Mac doesn't sleep while serving.
+# - Tailscale: advertise TB_SUBNET as a subnet route, as on Linux.
+#
+# Everything it changes is written first to $TB_STATE_DIR/server-net.state,
+# the restore record: server-down puts it all back from there, and a record
+# left by a crash (kill -9, power loss of tailbondd) is restored here before
+# anything is applied again. Runs with macOS's own bash 3.2.
+set -u
+
+TB_TUN="${TB_TUN:-utun}"
+TB_PORT="${TB_PORT:-443}"
+TB_SUBNET6="${TB_SUBNET6:-}"
+STATE="${TB_STATE_DIR:-/usr/local/var/lib/tailbond}"
+REC="$STATE/server-net.state"
+ANCHOR=com.apple/251.tailbond.server
+TAILNET4=100.64.0.0/10
+TAILNET6=fd7a:115c:a1e0::/48
+ALF=/usr/libexec/ApplicationFirewall/socketfilterfw
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+log() { echo "$*"; }
+rec() { printf '%s=%s\n' "$1" "$2" >>"$REC"; }
+
+# a record still here: the last server didn't stop cleanly
+if [ -f "$REC" ]; then
+  log "restore record from an unclean stop found: putting that state back first"
+  TB_STALE=1 "$HERE/server-down"
+fi
+mkdir -p "$STATE"
+: >"$REC.tmp" && mv -f "$REC.tmp" "$REC"
+chmod 0600 "$REC"
+
+# ---- forwarding ------------------------------------------------------------------
+rec FWD4 "$(sysctl -n net.inet.ip.forwarding 2>/dev/null || echo 0)"
+rec FWD6 "$(sysctl -n net.inet6.ip6.forwarding 2>/dev/null || echo 0)"
+fail=0
+sysctl -w net.inet.ip.forwarding=1 >/dev/null || { log "ERROR: can't set net.inet.ip.forwarding=1: bonded clients reach only this Mac"; fail=1; }
+if [ -n "$TB_SUBNET6" ]; then sysctl -w net.inet6.ip6.forwarding=1 >/dev/null || log "WARNING: can't set net.inet6.ip6.forwarding=1"; fi
+
+# ---- interfaces ------------------------------------------------------------------
+WAN="$(route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}')"
+TS_CLI=""
+# on PATH (tailscaled, or the app's CLI integration), else inside the app
+if command -v tailscale >/dev/null 2>&1; then TS_CLI=tailscale
+elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then TS_CLI=/Applications/Tailscale.app/Contents/MacOS/Tailscale; fi
+TS_IF=""
+if [ -n "$TS_CLI" ]; then
+  TS_IP="$("$TS_CLI" ip -4 2>/dev/null | head -n1)"
+  if [ -n "$TS_IP" ]; then
+    # the utun holding the Tailscale address
+    TS_IF="$(ifconfig 2>/dev/null | awk -v ip="$TS_IP" '/^[a-z0-9]+:/ {i = $1; sub(":", "", i)} $1 == "inet" && $2 == ip {print i; exit}')"
+  fi
+fi
+
+# ---- pf ------------------------------------------------------------------------------
+WEB="${TB_WEB_PORTS:-8077 80}"
+rules() {
+  echo "# tailbond server (packaging/macos/hooks/server-up)"
+  if [ -n "$WAN" ]; then
+    echo "nat on $WAN inet from $TB_SUBNET to any -> ($WAN)"
+    [ -n "$TB_SUBNET6" ] && echo "nat on $WAN inet6 from $TB_SUBNET6 to any -> ($WAN)"
+  fi
+  if [ -n "$TS_IF" ]; then
+    echo "nat on $TS_IF inet from $TB_SUBNET to $TAILNET4 -> ($TS_IF)"
+    [ -n "$TB_SUBNET6" ] && echo "nat on $TS_IF inet6 from $TB_SUBNET6 to $TAILNET6 -> ($TS_IF)"
+  fi
+  # tailnet peers reaching bonded clients (the advertised route): keep
+  # state, so the clients' replies aren't NATed on their way back
+  echo "pass in quick inet from $TAILNET4 to $TB_SUBNET"
+  [ -n "$TB_SUBNET6" ] && echo "pass in quick inet6 from $TAILNET6 to $TB_SUBNET6"
+  echo "pass in quick proto udp to port $TB_PORT"
+  echo "pass in quick on lo0 proto tcp to port { $WEB }"
+  echo "pass in quick on $TB_TUN proto tcp to port { $WEB }"
+  echo "pass in quick proto tcp from { $TAILNET4 $TAILNET6 } to port { $WEB }"
+  echo "block drop in quick proto tcp to port { $WEB }"
+}
+# the stock /etc/pf.conf (loaded at boot) hooks com.apple/* in; without it
+# the anchor would never be evaluated
+if ! pfctl -s nat 2>/dev/null | grep -q 'nat-anchor "com.apple/\*"'; then
+  log "pf: main ruleset has no com.apple anchors: loading /etc/pf.conf"
+  pfctl -q -f /etc/pf.conf 2>/dev/null || log "WARNING: pfctl -f /etc/pf.conf failed"
+fi
+rec ANCHOR "$ANCHOR"
+tok="$(pfctl -E 2>&1 | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -n1)"
+rec PF_TOKEN "$tok"
+if rules | pfctl -q -a "$ANCHOR" -f - 2>&1; then
+  log "pf: anchor $ANCHOR: nat $TB_SUBNET${TB_SUBNET6:+ $TB_SUBNET6} out ${WAN:-<no default route>}${TS_IF:+, to the tailnet out $TS_IF}; tcp $WEB from loopback, $TB_TUN and the tailnet only"
+else
+  log "ERROR: pf: could not load anchor $ANCHOR: bonded clients won't reach the internet"
+  fail=1
+fi
+[ -n "$WAN" ] || log "WARNING: no default route: no NAT to the internet until there is one (restart tailbond then)"
+if [ -n "$TS_CLI" ] && [ -z "$TS_IF" ]; then log "tailscale: not up (no Tailscale address): bonded clients reach the internet, not the tailnet"; fi
+
+# ---- application firewall --------------------------------------------------------
+if [ -x "$ALF" ] && "$ALF" --getglobalstate 2>/dev/null | grep -qi 'enabled'; then
+  bins=""
+  me="$(ps -o comm= -p "$PPID" 2>/dev/null)"
+  case "$me" in */tailbondd) bins="$me" ;; esac
+  if [ -f "$STATE/mqvpn.pid" ]; then
+    mq="$(ps -o comm= -p "$(cat "$STATE/mqvpn.pid")" 2>/dev/null)"
+    case "$mq" in */mqvpn) bins="$bins $mq" ;; esac
+  fi
+  for b in $bins; do
+    "$ALF" --add "$b" >/dev/null 2>&1
+    "$ALF" --unblockapp "$b" >/dev/null 2>&1
+  done
+  log "application firewall is on: allowed incoming connections for${bins:- (nothing found)}"
+  if "$ALF" --getblockall 2>/dev/null | grep -qi 'enabled\|state = 2'; then
+    log "WARNING: the firewall blocks all incoming connections (System Settings > Network > Firewall > Options): turn that off, or phones and travel routers can't connect"
+  fi
+fi
+
+# ---- sleep ------------------------------------------------------------------------
+# held until server-down or until tailbondd ($PPID) exits; -s keeps the
+# system awake on AC power, -i also on battery (a closed lid still sleeps)
+if command -v caffeinate >/dev/null 2>&1; then
+  caffeinate -i -s -w "$PPID" </dev/null >/dev/null 2>&1 &
+  rec CAFF_PID "$!"
+  log "power: holding a sleep assertion while the server runs (caffeinate pid $!)"
+fi
+
+# ---- Tailscale: advertise the tunnel subnet ---------------------------------------
+if [ "${TB_ADVERTISE_ROUTE:-1}" = 0 ]; then
+  log "tailscale: not advertising $TB_SUBNET (no_advertise_route)"
+elif [ -n "$TS_CLI" ] && "$TS_CLI" status >/dev/null 2>&1; then
+  cur="$("$TS_CLI" debug prefs 2>/dev/null | tr -d ' \n\t' | sed -n 's/.*"AdvertiseRoutes":\[\([^]]*\)\].*/\1/p' | tr -d '"')"
+  case ",$cur," in
+    *",$TB_SUBNET,"*) log "tailscale: $TB_SUBNET already advertised" ;;
+    *)
+      routes="${cur:+$cur,}$TB_SUBNET"
+      if "$TS_CLI" set --advertise-routes="$routes"; then
+        log "tailscale: advertising $routes (approve $TB_SUBNET in the admin console if needed)"
+      else
+        log "tailscale: could not advertise $TB_SUBNET"
+      fi
+      ;;
+  esac
+fi
+exit "$fail"

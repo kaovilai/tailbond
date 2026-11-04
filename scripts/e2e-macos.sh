@@ -4,9 +4,9 @@
 # on this Mac) bonds an interface path and two phones' shared mobile data:
 #
 #   server   tailbondd server role + mqvpn in a small aarch64 Linux VM under
-#            QEMU (scripts/e2e-macos/build-server-vm.sh): mqvpn's server
-#            isn't built for macOS, and a server in this Mac's own network
-#            stack would answer the tunnel's traffic locally. QEMU's user
+#            QEMU (scripts/e2e-macos/build-server-vm.sh): a server in this
+#            Mac's own network stack would answer the hub's tunnel traffic
+#            locally (the Mac as server: scripts/e2e-macos-server.sh). QEMU's user
 #            network forwards 127.0.0.1:4443/udp (mqvpn) and :18077/tcp (the
 #            server's API) to it; its token web server (:8080) is reachable
 #            only through the tunnel.

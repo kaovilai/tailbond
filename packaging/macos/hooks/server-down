@@ -1,0 +1,51 @@
+#!/bin/bash
+# tailbond macOS server-down hook (docs/macos.md "Mac as home server"). Run
+# by tailbondd after mqvpn's server stops; also by server-up when a crash
+# left a restore record, and by uninstall.sh.
+#
+# Puts back exactly what server-up recorded in $TB_STATE_DIR/server-net.state:
+# the pf anchor flushed and pf's enable reference released (pf goes back to
+# off if nothing else holds it), net.inet.ip.forwarding and
+# net.inet6.ip6.forwarding to their earlier values, the power assertion
+# dropped. The Tailscale route advertisement and the application firewall
+# entries stay (as Linux keeps firewalld's permanent config), so a restart
+# needs no new route approval; uninstall.sh removes the firewall entries.
+set -u
+
+STATE="${TB_STATE_DIR:-/usr/local/var/lib/tailbond}"
+REC="$STATE/server-net.state"
+
+if [ ! -f "$REC" ]; then
+  echo "nothing to restore (no $REC)"
+  exit 0
+fi
+FWD4="" FWD6="" ANCHOR="" PF_TOKEN="" CAFF_PID=""
+while IFS='=' read -r k v; do
+  case "$k" in
+    FWD4) case "$v" in 0|1) FWD4="$v" ;; esac ;;
+    FWD6) case "$v" in 0|1) FWD6="$v" ;; esac ;;
+    ANCHOR) case "$v" in com.apple/*) ANCHOR="$v" ;; esac ;;
+    PF_TOKEN) case "$v" in *[!0-9]*) ;; *) PF_TOKEN="$v" ;; esac ;;
+    CAFF_PID) case "$v" in *[!0-9]*) ;; *) CAFF_PID="$v" ;; esac ;;
+  esac
+done <"$REC"
+
+done_=""
+if [ -n "$ANCHOR" ]; then
+  pfctl -q -a "$ANCHOR" -F all 2>/dev/null
+  done_="$done_ pf anchor $ANCHOR flushed;"
+fi
+if [ -n "$PF_TOKEN" ]; then
+  pfctl -q -X "$PF_TOKEN" 2>/dev/null
+  done_="$done_ pf reference released;"
+fi
+if [ -n "$FWD4" ]; then sysctl -w net.inet.ip.forwarding="$FWD4" >/dev/null && done_="$done_ ip.forwarding=$FWD4;"; fi
+if [ -n "$FWD6" ]; then sysctl -w net.inet6.ip6.forwarding="$FWD6" >/dev/null && done_="$done_ ip6.forwarding=$FWD6;"; fi
+if [ -n "$CAFF_PID" ] && [ "$(ps -o comm= -p "$CAFF_PID" 2>/dev/null)" != "" ]; then
+  case "$(ps -o comm= -p "$CAFF_PID")" in
+    *caffeinate) kill "$CAFF_PID" 2>/dev/null && done_="$done_ sleep allowed again;" ;;
+  esac
+fi
+rm -f "$REC"
+echo "restored${TB_STALE:+ (after an unclean stop)}:${done_:- nothing}"
+exit 0
