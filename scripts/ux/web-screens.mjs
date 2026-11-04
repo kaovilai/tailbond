@@ -147,16 +147,23 @@ if (client) {
   const base = await (await fetch(client + 'api/status')).json();
   const wifi = { id: 1001, iface: 'en0', kind: 'wifi', label: 'Wi-Fi', priority: 'primary', enabled: true, state: 'active',
     tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0, srtt_ms: 31 };
-  const pixel = { id: 'and-7f3c2a-hub', label: 'Pixel 9', addr: '192.168.43.1:1888', via: 'mdns' };
+  const pixel = { id: 'and-7f3c2a-hub', label: 'pixel-8', addr: '192.168.43.1:1888', via: 'mdns', bonded: true, iface: 'en0' };
+  const iphone = { id: 'ios-3b1d-hub', label: 'dana-iphone', addr: '172.20.10.1:1888', via: 'mdns', bonded: false, iface: 'en0' };
+  const usb = { id: 1002, iface: 'en7', kind: 'usb', label: 'iPhone (USB)', priority: 'secondary', enabled: true, state: 'active',
+    tx_bps: 0, rx_bps: 0, tx_bytes: 18400000, rx_bytes: 210000000, srtt_ms: 48 };
   const states = {
     'found': { found: [pixel] },
     'none': { found: [] },
     'using': { found: [pixel], using: { ...pixel, mode: 'socks', service: 'Wi-Fi', local: '127.0.0.1:1889',
       since: new Date().toISOString(), up_bytes: 48200000, down_bytes: 912000000, conns: 6 } },
     'lost': { found: [], note: "Lost the phone hub, so the proxy is off again and this Mac uses its own connection." },
+    'iphone-found': { found: [iphone] },
+    'iphone-usb': { found: [] },
   };
   for (const [name, hub] of Object.entries(states)) {
-    const st = { ...base, paired: true, platform: 'darwin', state: 'disconnected', paths: name === 'using' ? [] : [wifi],
+    const connected = name === 'iphone-usb';
+    const st = { ...base, paired: true, platform: 'darwin', state: connected ? 'connected' : 'disconnected', server: 'homebox.tail1234.ts.net',
+      tunnel_ip: connected ? '10.77.0.4' : '', paths: name === 'using' ? [] : connected ? [wifi, usb] : [wifi],
       use_local: true, use_shares: true, shares: [], phone_hub: hub };
     const ctx = await browser.newContext({ ...desktop, userAgent: uas.mac });
     const page = await ctx.newPage();
@@ -165,8 +172,6 @@ if (client) {
     await page.goto(client);
     await page.waitForSelector('#phone-hub:not(.hidden)');
     await page.waitForTimeout(500);
-    const card = await page.$('#phone-hub');
-    await card.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${out}/web-08-mac-phone-hub-${name}.png`, fullPage: true });
     await ctx.close();
   }

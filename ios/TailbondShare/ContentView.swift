@@ -99,14 +99,14 @@ struct ShareView: View {
                 }
             }
             Section {
-                Toggle("Share as a proxy", isOn: Binding(get: { model.proxyOn }, set: { $0 ? model.startProxy() : model.stopProxy() }))
+                Toggle("Share mobile data with a Mac", isOn: Binding(get: { model.proxyOn }, set: { $0 ? model.startProxy() : model.stopProxy() }))
                 if model.proxyOn {
-                    Text(model.proxyStatus.clients.isEmpty ? "Ready on port \(ProxyCore.defaultPort). On the Mac: tailbond → Use a phone's bonded connection."
+                    Text(model.proxyStatus.clients.isEmpty ? "Ready. On the Mac: tailbond → Use a phone's connection → Use."
                          : "\(model.proxyStatus.clients.count) device(s): \(ShareModel.bytes(model.proxyStatus.up + model.proxyStatus.down))")
                 }
                 if let e = model.proxyStatus.error { Text(e).foregroundStyle(.red) }
-            } header: { Text("Phone hub (experimental)") } footer: {
-                Text("A Mac paired with your home server uses this iPhone's mobile data through a proxy. Not bonded yet: for bonding, plug the iPhone into the Mac over USB (Personal Hotspot on) and tailbond on the Mac bonds it with the Wi-Fi.")
+            } header: { Text("For a Mac (experimental)") } footer: {
+                Text("Better: plug the iPhone into the Mac with a cable and turn on Personal Hotspot. tailbond on the Mac then bonds it with the Wi-Fi, and you don't need this. This switch only lends mobile data, not bonded, and it stops when you leave this screen or lock the iPhone.")
             }
             Section {
                 Picker("Stop below", selection: $model.minBattery) {

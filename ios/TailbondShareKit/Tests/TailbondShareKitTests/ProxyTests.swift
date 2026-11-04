@@ -79,26 +79,26 @@ final class ProxyTests: XCTestCase {
     #if os(macOS) && canImport(Network)
     /// A one-shot HTTP server on 127.0.0.1 (POSIX), answering "hello".
     private func httpServer() -> UInt16 {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         var on: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
+        Darwin.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
         var sa = sockaddr_in()
         sa.sin_family = sa_family_t(AF_INET)
         sa.sin_addr.s_addr = inet_addr("127.0.0.1")
         sa.sin_port = 0
-        _ = withUnsafePointer(to: &sa) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        listen(fd, 8)
+        _ = withUnsafePointer(to: &sa) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        Darwin.listen(fd, 8)
         var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-        _ = withUnsafeMutablePointer(to: &sa) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+        _ = withUnsafeMutablePointer(to: &sa) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(fd, $0, &len) } }
         Thread.detachNewThread {
             while true {
-                let c = accept(fd, nil, nil)
+                let c = Darwin.accept(fd, nil, nil)
                 if c < 0 { return }
                 var buf = [UInt8](repeating: 0, count: 4096)
-                _ = read(c, &buf, buf.count)
+                _ = Darwin.read(c, &buf, buf.count)
                 let r = Array("HTTP/1.0 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".utf8)
-                _ = write(c, r, r.count)
-                close(c)
+                _ = Darwin.write(c, r, r.count)
+                Darwin.close(c)
             }
         }
         return UInt16(bigEndian: sa.sin_port)

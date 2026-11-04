@@ -201,12 +201,12 @@ phones' shares: hubs are the travel router and Linux.
 
 ## Share bonded connection (phone hub) and nearby phones' data
 
-- **Share → Share bonded connection:** a laptop on this phone's hotspot or
+- **Settings → Sharing → Share bonded connection:** a laptop on this phone's hotspot or
   USB tethering uses the phone's whole bonded tunnel through a SOCKS5 /
   HTTP CONNECT proxy on port 1888. The password comes from your home
-  server's share key. On a Mac: **Use a phone's bonded connection**. The
+  server's share key. On a Mac: **Use a phone's connection**. The
   notification shows devices and bytes and has **Stop sharing**.
-- **Share → Use nearby phones' shared data** (on by default): while
+- **Settings → Sharing → Use nearby phones' shared data** (on by default): while
   tailbond is on, phones on the same Wi-Fi that share their mobile data are
   bonded into this phone's tunnel as extra paths (relay paths, patch
   0004).

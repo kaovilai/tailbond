@@ -30,6 +30,10 @@ type Found struct {
 	Addr  *net.UDPAddr `json:"-"`
 	// How the hub learned of it: "mdns" or "server" (the home server's list).
 	Via string `json:"via"`
+	// Bonded (phone hubs' "b" TXT key): "1" the proxy's upstream is a
+	// bonded tunnel (Android), "0" not (the iPhone's, mobile data only),
+	// "" unknown.
+	Bonded string `json:"bonded,omitempty"`
 }
 
 // Advert is what a sharer announces over mDNS.
@@ -42,10 +46,16 @@ type Advert struct {
 	// Service (optional) is the service type; "" = Pair & Share's
 	// (_tailbond-share._udp). The phone hub's proxy is _tailbond-proxy._tcp.
 	Service string
+	// Bonded (optional): the phone hub's "b" TXT key, "1" or "0".
+	Bonded string
 }
 
 func txt(a Advert) []string {
-	return []string{"v=1", "id=" + a.ID, "k=" + a.KeyID, "n=" + a.Label}
+	t := []string{"v=1", "id=" + a.ID, "k=" + a.KeyID, "n=" + a.Label}
+	if a.Bonded != "" {
+		t = append(t, "b="+a.Bonded)
+	}
+	return t
 }
 
 func instanceName(a Advert) string {
@@ -178,7 +188,7 @@ func parseAnswerFor(svc string, b []byte, from *net.UDPAddr) []Found {
 		if ip == nil {
 			continue
 		}
-		out = append(out, Found{ID: in.kv["id"], Label: in.kv["n"], KeyID: in.kv["k"], Addr: &net.UDPAddr{IP: ip, Port: in.port}, Via: "mdns"})
+		out = append(out, Found{ID: in.kv["id"], Label: in.kv["n"], KeyID: in.kv["k"], Addr: &net.UDPAddr{IP: ip, Port: in.port}, Via: "mdns", Bonded: in.kv["b"]})
 	}
 	return out
 }

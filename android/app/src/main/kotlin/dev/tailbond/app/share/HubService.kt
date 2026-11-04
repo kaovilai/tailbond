@@ -234,6 +234,7 @@ class HubService : Service() {
             setAttribute("id", hubId())
             setAttribute("k", P.keyId(key.toByteArray(Charsets.UTF_8)))
             setAttribute("n", label())
+            setAttribute("b", "1") // the upstream is tailbond's bonded tunnel
         }
         val l = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(si: NsdServiceInfo) = Unit

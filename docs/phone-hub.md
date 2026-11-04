@@ -66,7 +66,7 @@ no tunnel of its own, or whose own connections are poor.
 
 ## Android: Share bonded connection
 
-**tailbond → Share → Share bonded connection** turns it on. A foreground
+**tailbond → Settings → Sharing → Share bonded connection** turns it on. A foreground
 service keeps running with a notification. The notification shows the
 devices and bytes (*Sharing bonded connection with 1 device: 42 MB*) and
 has **Stop sharing**.
@@ -110,7 +110,7 @@ phone's 5G, and then share that whole bond with the laptop.
 
 ## Mac: Use phone hub
 
-**Dashboard → Connections → "Use a phone's bonded connection"** lists the
+**Dashboard → Connections → "Use a phone's connection"** lists the
 hubs found. **Use** turns it on; the card then says *"Using Pixel's bonded
 connection (proxy)"* with the traffic so far. **Stop using it** turns it
 off.
@@ -199,10 +199,12 @@ iPhone into the Mac. tailbond on the Mac bonds **iPhone (USB)** with the
 hotel Wi-Fi itself ([macos.md](macos.md)). This needs no app on the iPhone
 and is tested.
 
-**tailbond Share → Phone hub → Share as a proxy** runs the same proxy on
+**tailbond Share → For a Mac → Share mobile data with a Mac** runs the same proxy on
 the iPhone (`TailbondShareKit`: `ProxyCore` and `ProxyServer`, with the
 same password from the share key). It advertises `_tailbond-proxy._tcp`,
-so a Mac finds it like an Android hub.
+so a Mac finds it like an Android hub. Its advert says `b=0`: the Mac
+labels it *mobile data only, not bonded*, and says how to bond an iPhone
+over USB instead.
 
 **It is not bonded yet.** The upstream is the iPhone's **mobile data
 only** (`DirectDialer(.cellular)`). The bonded tunnel inside the app is

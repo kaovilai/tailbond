@@ -134,10 +134,21 @@ fun SettingsScreen(
             }
         }
 
-        SectionHeader("Lend your mobile data")
+        SectionHeader("Sharing")
         ListItem(
-            headlineContent = { Text("Share my mobile data") },
-            supportingContent = { Text(dev.tailbond.app.share.ShareWords.headline(state.share)) },
+            headlineContent = { Text("Sharing") },
+            supportingContent = {
+                val hubOn = state.hub.status != dev.tailbond.app.share.HubStatus.OFF
+                val shareOn = state.share.status != dev.tailbond.app.share.ShareStatus.OFF
+                Text(
+                    when {
+                        hubOn && shareOn -> "Bonded connection: ${dev.tailbond.app.share.HubWords.headline(state.hub)}. Mobile data: ${dev.tailbond.app.share.ShareWords.headline(state.share)}"
+                        hubOn -> "Bonded connection: " + dev.tailbond.app.share.HubWords.headline(state.hub)
+                        shareOn -> "Mobile data: " + dev.tailbond.app.share.ShareWords.headline(state.share)
+                        else -> "Share this phone's bonded connection with your laptop, or lend its mobile data"
+                    },
+                )
+            },
             leadingContent = { Icon(Icons.Filled.CellTower, null, tint = LocalBrand.current.shared) },
             trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
             modifier = Modifier.clickable(onClick = onShare),

@@ -152,6 +152,13 @@ function render(st) {
   const chip = $('#state-chip');
   chip.textContent = st.state;
   chip.className = 'state-chip s-' + st.state;
+  // a phone hub in use while this machine's own tunnel is off: say what
+  // actually carries the traffic, not just "disconnected"
+  const hubUse = st.role === 'client' && st.phone_hub && st.phone_hub.using;
+  if (hubUse && st.state !== 'connected') {
+    chip.textContent = `via ${hubUse.label} (proxy)`;
+    chip.className = 'state-chip s-connected';
+  }
   drawSpark($('#spark-total'), push('total', st.totals.rx_bps, st.totals.tx_bps), 600, 120, { grid: true, sw: 2.2 });
 
   const sub = st.role === 'server'
@@ -169,7 +176,7 @@ function render(st) {
     const p = $('#power');
     p.setAttribute('aria-pressed', String(on));
     p.classList.toggle('busy', st.state === 'connecting');
-    $('#power-label').textContent = { connected: 'Connected', connecting: 'Connecting…', error: 'Retrying…', disconnected: st.role === 'server' ? 'Stopped' : 'Disconnected' }[st.state] || st.state;
+    $('#power-label').textContent = { connected: 'Connected', connecting: 'Connecting…', error: 'Retrying…', disconnected: st.role === 'server' ? 'Stopped' : (hubUse ? 'Own tunnel off' : 'Disconnected') }[st.state] || st.state;
   }
 
   if (!state.modeBusy) {
@@ -327,9 +334,13 @@ function renderClientPaths(st) {
   renderPhoneHub(st);
   const empty = $('#paths-empty');
   if (!els.length) {
-    empty.innerHTML = st.paired
-      ? '<b>No connections yet</b>Waiting for mqvpn to bring up its paths.'
-      : '<b>Not paired</b>Open the Setup tab and paste the pairing link from your home server.';
+    const hub = st.phone_hub && st.phone_hub.using;
+    const escHTML = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    empty.innerHTML = hub && st.state !== 'connected'
+      ? `<b>This machine's own tunnel is off</b>That's fine: browsing goes through ${escHTML(possessive(hub.label))} connection (below). The switch at the top would bond this machine's own connections instead.`
+      : st.paired
+        ? '<b>No connections yet</b>Waiting for tailbond to bring up its connections.'
+        : '<b>Not paired</b>Open the Setup tab and paste the pairing link from your home server.';
     empty.classList.remove('hidden');
   } else empty.classList.add('hidden');
 }
@@ -389,7 +400,7 @@ function renderShares(st) {
     bits.push(s.via === 'server' ? 'listed by the home server' : 'found on this network');
     kids.push(h('div', { class: 'share-row' }, h('b', { text: s.label }), h('span', { class: 'muted small', text: ' · ' + bits.join(' · ') })));
   }
-  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Share my mobile data. On iPhone: tailbond Share → Share mobile data.' }));
+  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Sharing → Share my mobile data. On iPhone: tailbond Share → Share mobile data.' }));
   box.replaceChildren(...kids);
   box.classList.toggle('hidden', st.role !== 'client');
 }
@@ -405,6 +416,7 @@ function renderPhoneHub(st) {
   box.classList.toggle('hidden', st.role !== 'client' || !ph);
   if (!ph || box.contains(document.activeElement)) return;
   const mac = st.platform === 'darwin';
+  const self = mac ? 'this Mac' : 'this computer';
   const post = async (body, okMsg) => {
     try {
       await api('POST', '/api/phone-hub', body);
@@ -412,34 +424,41 @@ function renderPhoneHub(st) {
       pollOnce();
     } catch (e) { toast(e.message, true); }
   };
-  const kids = [h('h3', { text: "Use a phone's bonded connection" })];
+  const what = (x) => x.bonded ? 'bonded connection' : 'mobile data';
+  const where = (x) => x.iface ? ` · reached over ${x.iface}` : '';
+  const kids = [h('h3', { text: "Use a phone's connection" })];
   if (ph.note) kids.push(h('div', { class: 'banner warn', text: ph.note }));
   const u = ph.using;
   if (u) {
     const stop = h('button', { class: 'btn small', text: 'Stop using it' });
-    stop.addEventListener('click', () => post({ use: '' }, 'Back to this Mac\'s own connection'));
+    stop.addEventListener('click', () => post({ use: '' }, `Back to ${self}'s own connection`));
     const how = u.mode === 'manual'
       ? `Set your apps' SOCKS5 proxy to ${u.local}.`
-      : `${mac ? 'The Mac' : 'This machine'}'s proxy setting${u.service ? ` (${u.service})` : ''} points at it${u.mode === 'pac' ? '; local and tailnet addresses stay direct' : ''}.`;
+      : `Browsers and most apps on ${self} now go through the phone${u.mode === 'pac' ? ` (home, local and Tailscale addresses stay on ${self}'s own network)` : ''}.`;
     kids.push(h('div', { class: 'banner ok' },
-      h('b', { text: `Using ${possessive(u.label)} bonded connection (proxy)` }),
+      h('b', { text: `Using ${possessive(u.label)} ${what(u)} (proxy)` }),
       h('div', { class: 'small', text: `${how} ${fmtBytes(u.up_bytes)} up, ${fmtBytes(u.down_bytes)} down.` })));
-    kids.push(h('p', { class: 'muted small', text: "Apps that follow the system proxy (browsers, most apps) go through the phone. Others, and anything that isn't TCP (video calls, games, some VPNs), still use this Mac's own connection. Turned off when tailbond stops or the phone goes away." }));
+    if (!u.bonded) kids.push(h('div', { class: 'banner warn', text: `${u.label} shares its mobile data only: this isn't bonded. For bonding with an iPhone, stop using it here and plug the iPhone in over USB with Personal Hotspot on.` }));
+    kids.push(h('p', { class: 'muted small', text: `Video calls, games and other non-web traffic don't go through the phone: they go out directly over the network ${self} is on (the phone's hotspot, not bonded). To undo: Stop using it here, then turn off "Share bonded connection" on the phone. If the phone goes away, ${self} goes back to its own connection by itself.` }));
     kids.push(stop);
   } else {
     const pac = h('input', { type: 'checkbox' });
     for (const f of ph.found) {
       const use = h('button', { class: 'btn small primary', text: 'Use' });
-      use.addEventListener('click', () => post({ use: f.id, pac: pac.checked }, `Using ${possessive(f.label)} bonded connection`));
-      const via = { mdns: 'found on this network', server: 'listed by the home server', router: 'the hotspot you are on' }[f.via] || f.via;
-      kids.push(h('div', { class: 'share-row row between' }, h('span', {}, h('b', { text: f.label }), h('span', { class: 'muted small', text: ' · ' + via })), use));
+      use.addEventListener('click', () => post({ use: f.id, pac: pac.checked }, `Using ${possessive(f.label)} ${what(f)}`));
+      const via = { mdns: 'found nearby', server: 'listed by your home server', router: 'the hotspot you are on' }[f.via] || f.via;
+      kids.push(h('div', { class: 'share-row row between' },
+        h('span', {}, h('b', { text: f.label }), h('span', { class: 'muted small', text: ` · ${f.bonded ? 'bonded connection' : 'mobile data only, not bonded'} · ${via}${where(f)}` })), use));
     }
     if (ph.found.length) {
-      kids.push(h('label', { class: 'small muted' }, pac, document.createTextNode(' Keep local and tailnet addresses direct (proxy auto-config)')));
+      kids.push(h('label', { class: 'small muted' }, pac, document.createTextNode(` Keep home, local and Tailscale addresses on ${self}'s own network. Off: everything a browser opens goes through the phone.`)));
+      kids.push(h('p', { class: 'muted small', text: 'Only phones paired with your home server show up here, and only devices paired with it can use them.' }));
     } else {
       const again = h('button', { class: 'btn small', text: 'Look again' });
       again.addEventListener('click', () => post({ refresh: true }));
-      kids.push(h('p', { class: 'muted small', text: "No phone hub found. On the phone: tailbond → Share bonded connection. Then join its hotspot, or plug it in over USB (iPhone: Personal Hotspot on). A VPN with a kill switch can block this; allow local network access in it." }), again);
+      kids.push(h('p', { class: 'muted small', text: `Android phone: in tailbond, Settings → Sharing → Share bonded connection. Then turn on its hotspot (or USB tethering) and join it from ${self}.` }));
+      if (mac) kids.push(h('p', { class: 'muted small', text: 'iPhone: no hub needed. Plug it in over USB with Personal Hotspot on: this Mac bonds it itself, as iPhone (USB) with the connections above.' }));
+      kids.push(h('p', { class: 'muted small', text: 'Not found? A VPN with a kill switch can block local devices: allow local network access in it.' }), again);
     }
   }
   box.replaceChildren(...kids);

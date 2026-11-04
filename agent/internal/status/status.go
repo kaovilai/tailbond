@@ -150,6 +150,10 @@ type PhoneHubFound struct {
 	Label string `json:"label"`
 	Addr  string `json:"addr"`
 	Via   string `json:"via"` // mdns, server, router
+	// Bonded: its upstream is the phone's bonded tunnel (false: an iPhone,
+	// mobile data only)
+	Bonded bool   `json:"bonded"`
+	Iface  string `json:"iface,omitempty"` // the Mac's interface it's reached on (en0)
 }
 
 // PhoneHubUse is the hub in use.
@@ -157,7 +161,9 @@ type PhoneHubUse struct {
 	ID      string    `json:"id"`
 	Label   string    `json:"label"`
 	Addr    string    `json:"addr"`
-	Mode    string    `json:"mode"`              // socks, pac, manual
+	Mode    string    `json:"mode"` // socks, pac, manual
+	Bonded  bool      `json:"bonded"`
+	Iface   string    `json:"iface,omitempty"`
 	Service string    `json:"service,omitempty"` // the macOS network service
 	Local   string    `json:"local"`             // the forwarder, 127.0.0.1:1889
 	Since   time.Time `json:"since"`

@@ -68,10 +68,14 @@ public final class ProxyServer {
         public var name: String
         public var id: String
         public var keyID: String
-        public init(name: String, id: String, keyID: String) {
+        /// Whether the upstream is a bonded tunnel ("b" TXT key); the
+        /// iPhone's isn't (mobile data only), and the Mac says so.
+        public var bonded: Bool
+        public init(name: String, id: String, keyID: String, bonded: Bool = false) {
             self.name = name
             self.id = id
             self.keyID = keyID
+            self.bonded = bonded
         }
     }
 
@@ -105,7 +109,7 @@ public final class ProxyServer {
         let l = try NWListener(using: params, on: port)
         if let a = advert {
             l.service = NWListener.Service(name: a.name, type: ProxyCore.serviceType, domain: nil,
-                                           txtRecord: NWTXTRecord(["v": "1", "id": a.id, "k": a.keyID, "n": a.name]))
+                                           txtRecord: NWTXTRecord(["v": "1", "id": a.id, "k": a.keyID, "n": a.name, "b": a.bonded ? "1" : "0"]))
         }
         l.stateUpdateHandler = { [weak self] st in
             guard let self else { return }

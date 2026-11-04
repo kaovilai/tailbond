@@ -145,7 +145,7 @@ fun TailbondApp(
                                     page == Routes.WEBSITES -> "Websites that skip tailbond"
                                     page == Routes.UPDATES -> "Updates"
                                     page == Routes.BACKUP -> "Back up and restore"
-                                    page == Routes.SHARE -> "Share my mobile data"
+                                    page == Routes.SHARE -> "Sharing"
                                     page == Routes.PAIR && state.pairTarget == PairTarget.Add -> "Add another server"
                                     page == Routes.PAIR && state.pairTarget is PairTarget.Replace -> "Pair again"
                                     page == Routes.PAIR -> "Add this phone"

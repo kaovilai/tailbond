@@ -53,15 +53,17 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
     val server = state.serverName
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+        HubCard(state, actions)
+        SectionHeader("Lend your mobile data to a travel router")
         Card(
-            Modifier.fillMaxWidth().padding(16.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (l.status == ShareStatus.SHARING) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
             ),
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Share my mobile data", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Text("Share my mobile data", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                     Switch(checked = on, onCheckedChange = { if (it) actions.startShare() else actions.stopShare() })
                 }
                 Text(ShareWords.headline(l), style = MaterialTheme.typography.titleMedium)
@@ -76,10 +78,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
-        HubCard(state, actions)
-        NearbySharesSection(state, actions)
-
-        SectionHeader("Who's using it")
+        SectionHeader("Who's using your mobile data")
         if (l.hubs.isEmpty()) {
             Text(
                 if (on) "Nobody yet." else "Turn sharing on to see who uses it.",
@@ -94,7 +93,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
             )
         }
 
-        SectionHeader("Stop when the battery is low")
+        SectionHeader("Mobile data: stop when the battery is low")
         Text(
             "Unless the phone is charging.", style = MaterialTheme.typography.bodySmall, color = muted,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -109,7 +108,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
             }
         }
 
-        SectionHeader("Monthly limit")
+        SectionHeader("Mobile data: monthly limit")
         Text(
             "${formatBytes(l.usedBytes)} shared this month." + if (s.shareCapMb > 0) " Sharing stops at ${formatBytes(s.shareCapMb * 1_000_000)}." else "",
             style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.padding(horizontal = 16.dp),
@@ -124,7 +123,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
             }
         }
 
-        SectionHeader("Who can use it")
+        SectionHeader("Who can use your mobile data")
         Text(
             if (s.shareAllowedHubs.isEmpty()) "Any device paired with $server." else "Only these devices (their names on $server):",
             style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp),
@@ -152,6 +151,8 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
                 enabled = name.isNotBlank(),
             ) { Text("Add") }
         }
+        SectionHeader("Use other phones' data")
+        NearbySharesSection(state, actions)
     }
 }
 
@@ -180,9 +181,16 @@ private fun HubCard(state: UiState, actions: UiActions) {
             for (c in l.clients) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.Laptop, null, tint = MaterialTheme.colorScheme.primary)
-                    Text("${c.addr}: ${formatBytes(c.up + c.down)}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Device at ${c.addr}: ${formatBytes(c.up + c.down)}", style = MaterialTheme.typography.bodyMedium)
                 }
             }
+            if (l.status == HubStatus.NO_TUNNEL) {
+                TextButton(onClick = { actions.setOn(true) }) { Text("Turn tailbond on") }
+            }
+            Text(
+                "Only devices paired with ${state.serverName} can use it: they get its password from ${state.serverName}. The battery and monthly limits below are for lending mobile data, not for this.",
+                style = MaterialTheme.typography.bodySmall, color = muted,
+            )
             if (on) {
                 Text(
                     "Only apps that follow the laptop's proxy setting, and only TCP (web, most apps; not video calls or games).",

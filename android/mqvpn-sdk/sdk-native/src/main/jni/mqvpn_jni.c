@@ -1268,14 +1268,35 @@ JNI_FN(reactorAddRelayPath)(JNIEnv *env, jobject thiz, jlong reactor, jlong clie
         snprintf(name, sizeof(name), "%s", n);
         (*env)->ReleaseStringUTFChars(env, iface, n);
     }
-    struct sockaddr_in relay;
+    /* 127.0.0.1:relayPort in the socket's own family: Java's sockets on
+     * Android are dual-stack AF_INET6, and what arrives from the relay then
+     * comes from ::ffff:127.0.0.1, which an AF_INET relay address wouldn't
+     * match (the bind drops everything but the relay's datagrams). */
+    struct sockaddr_storage local;
+    socklen_t local_len = sizeof(local);
+    struct sockaddr_storage relay;
+    socklen_t relay_len;
     memset(&relay, 0, sizeof(relay));
-    relay.sin_family = AF_INET;
-    relay.sin_port = htons((uint16_t)relayPort);
-    relay.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (getsockname((int)fd, (struct sockaddr *)&local, &local_len) == 0 &&
+        local.ss_family == AF_INET6) {
+        struct sockaddr_in6 *r6 = (struct sockaddr_in6 *)&relay;
+        r6->sin6_family = AF_INET6;
+        r6->sin6_port = htons((uint16_t)relayPort);
+        r6->sin6_addr.s6_addr[10] = 0xff;
+        r6->sin6_addr.s6_addr[11] = 0xff;
+        r6->sin6_addr.s6_addr[12] = 127;
+        r6->sin6_addr.s6_addr[15] = 1;
+        relay_len = sizeof(*r6);
+    } else {
+        struct sockaddr_in *r4 = (struct sockaddr_in *)&relay;
+        r4->sin_family = AF_INET;
+        r4->sin_port = htons((uint16_t)relayPort);
+        r4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        relay_len = sizeof(*r4);
+    }
     return (jlong)mqvpn_android_reactor_add_relay_path(
         (mqvpn_android_reactor_t *)(intptr_t)reactor, (mqvpn_client_t *)(intptr_t)client,
-        (int)fd, name, (const struct sockaddr *)&relay, (unsigned)sizeof(relay), 0,
+        (int)fd, name, (const struct sockaddr *)&relay, (unsigned)relay_len, 0,
         ANDROID_UDP_GRO);
 }
 

@@ -87,7 +87,10 @@ type hubCand struct {
 	Label string `json:"label"`
 	Addr  string `json:"addr"` // host:port that took the password
 	Via   string `json:"via"`  // mdns, server, router
-	addrs []string
+	// Bonded: "1" the phone's upstream is its bonded tunnel, "0" not (an
+	// iPhone: mobile data only), "" unknown
+	Bonded string `json:"bonded,omitempty"`
+	addrs  []string
 }
 
 type hubUse struct {
@@ -289,7 +292,7 @@ func (a *Agent) findHubs(ctx context.Context, user, pass string) []hubCand {
 			if f, err := share.BrowseService(ctx, proxy.Service, ifaces, 1500*time.Millisecond); err == nil {
 				for _, x := range f {
 					if x.Addr != nil {
-						cands = append(cands, hubCand{ID: x.ID, Label: x.Label, Via: "mdns", addrs: []string{x.Addr.String()}})
+						cands = append(cands, hubCand{ID: x.ID, Label: x.Label, Via: "mdns", Bonded: x.Bonded, addrs: []string{x.Addr.String()}})
 					}
 				}
 			}
@@ -560,7 +563,7 @@ func (a *Agent) phoneHubStatus() *status.PhoneHub {
 	defer a.mu.Unlock()
 	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil}
 	for _, c := range hs.found {
-		out.Found = append(out.Found, status.PhoneHubFound{ID: c.ID, Label: c.Label, Addr: c.Addr, Via: c.Via})
+		out.Found = append(out.Found, status.PhoneHubFound{ID: c.ID, Label: c.Label, Addr: c.Addr, Via: c.Via, Bonded: c.Bonded != "0", Iface: ifaceFor(c.Addr)})
 	}
 	if u := hs.use; u != nil {
 		up, down, clients := u.srv.Stats()
@@ -568,7 +571,7 @@ func (a *Agent) phoneHubStatus() *status.PhoneHub {
 		for _, c := range clients {
 			conns += c.Conns
 		}
-		out.Using = &status.PhoneHubUse{ID: u.cand.ID, Label: u.cand.Label, Addr: u.cand.Addr, Mode: u.mode,
+		out.Using = &status.PhoneHubUse{ID: u.cand.ID, Label: u.cand.Label, Addr: u.cand.Addr, Mode: u.mode, Bonded: u.cand.Bonded != "0", Iface: ifaceFor(u.cand.Addr),
 			Service: u.service, Local: u.ln.Addr().String(), Since: u.since, UpBytes: up, DnBytes: down, Conns: conns}
 	}
 	return out
@@ -639,6 +642,34 @@ function FindProxyForURL(url, host) {
   return "SOCKS5 ` + local + `; SOCKS ` + local + `";
 }
 `
+}
+
+// ifaceFor is the local interface a hub address is reached on: its zone,
+// or the interface whose IPv4 subnet holds it ("" unknown).
+func ifaceFor(hostport string) string {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return ""
+	}
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		return host[i+1:]
+	}
+	ad, err := netip.ParseAddr(host)
+	if err != nil {
+		return ""
+	}
+	ifs, _ := net.Interfaces()
+	for _, ifi := range ifs {
+		addrs, _ := ifi.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok {
+				if pf, err := netip.ParsePrefix(n.String()); err == nil && pf.Masked().Contains(ad) && !ad.IsLoopback() {
+					return ifi.Name
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // Possessive is "Pixel's" / "James'", for "Using Pixel's bonded connection".

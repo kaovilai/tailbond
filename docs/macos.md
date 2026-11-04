@@ -108,8 +108,15 @@ tailbond connects over the Mac's default route).
 2. Plug it into the Mac with a cable; tap **Trust** if it asks.
 3. **iPhone (USB)** appears under Connections within a few seconds and is
    bonded with the Wi-Fi. It's charged meanwhile, and it works where the
-   hotel Wi-Fi keeps devices apart. Set **Backup only** to save its data
-   for when the Wi-Fi fails.
+   hotel Wi-Fi keeps devices apart. To save its data for when the Wi-Fi
+   fails, set the **iPhone (USB)** card's dropdown to **Backup only**.
+4. To stop: unplug it, or turn Personal Hotspot off. The Wi-Fi carries on
+   alone.
+
+This is the best way to use an iPhone with the Mac: the Mac bonds it
+itself, so the iPhone needs no app. Your hotspot's Wi-Fi password still
+protects it while "Allow Others to Join" is on; change it if you've shared
+it.
 
 ### Phones sharing their mobile data
 
@@ -132,8 +139,9 @@ nearby phones** turns them all off.
 The other way round: a phone already bonding its 5G with the hotel Wi-Fi
 can let the Mac use that whole bonded connection as a proxy
 ([phone-hub.md](phone-hub.md)). Join the phone's hotspot or plug it in
-over USB, then **Connections → Use a phone's bonded connection → Use**.
-The card says *Using Pixel's bonded connection (proxy)*. tailbondd points
+over USB, then **Connections → Use a phone's connection → Use**. The
+card says *Using Pixel's bonded connection (proxy)*, and the top of the
+page says *via Pixel (proxy)*. The Mac's own tunnel can stay off. tailbondd points
 the Mac's SOCKS proxy at its own forwarder (127.0.0.1:1889), which relays
 to the phone with a password derived from your home server's share key.
 

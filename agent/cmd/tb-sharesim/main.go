@@ -117,6 +117,7 @@ func main() {
 			adv := share.Advert{ID: *id, Label: *label, KeyID: share.KeyID(key), Port: la.Port, IP: la.IP}
 			if *proxyAddr != "" {
 				adv.Service = proxy.Service
+				adv.Bonded = "1" // a stand-in for an Android phone's bonded tunnel
 			}
 			for ctx.Err() == nil {
 				if err := share.Advertise(ctx, ifaces(*mdns), adv); err != nil {

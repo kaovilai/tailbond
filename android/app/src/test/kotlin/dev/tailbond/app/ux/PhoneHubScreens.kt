@@ -41,9 +41,9 @@ class PhoneHubScreens : UxRender() {
     private val sam = HubShare("and-sam", "Mobile data from sam-pixel", "192.168.1.37:47077", "mdns", "ready", "sh3a91c0",
         310_000_000, 1_450_000_000, "", 71)
 
-    @Test fun off() = app("hub-01-off", state(HubLive(label = "pixel-9")))
-    @Test fun ready() = app("hub-02-ready", state(HubLive(HubStatus.READY, label = "pixel-9")))
-    @Test fun sharing() = app("hub-03-sharing", state(HubLive(HubStatus.SHARING, listOf(mac), 48_200_000, 912_000_000, "pixel-9"), listOf(sam)))
-    @Test fun sharingDark() = app("hub-04-sharing-dark", state(HubLive(HubStatus.SHARING, listOf(mac), 48_200_000, 912_000_000, "pixel-9"), listOf(sam)), dark = true)
-    @Test fun noTunnel() = app("hub-05-no-tunnel", state(HubLive(HubStatus.NO_TUNNEL, label = "pixel-9")))
+    @Test fun off() = app("hub-01-off", state(HubLive(label = "pixel-8")))
+    @Test fun ready() = app("hub-02-ready", state(HubLive(HubStatus.READY, label = "pixel-8")))
+    @Test fun sharing() = app("hub-03-sharing", state(HubLive(HubStatus.SHARING, listOf(mac), 48_200_000, 912_000_000, "pixel-8"), listOf(sam)))
+    @Test fun sharingDark() = app("hub-04-sharing-dark", state(HubLive(HubStatus.SHARING, listOf(mac), 48_200_000, 912_000_000, "pixel-8"), listOf(sam)), dark = true)
+    @Test fun noTunnel() = app("hub-05-no-tunnel", state(HubLive(HubStatus.NO_TUNNEL, label = "pixel-8")))
 }

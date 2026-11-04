@@ -41,9 +41,9 @@ in for long sessions, or use USB tethering into the travel router instead
 The first time you share, iOS asks to allow **Local Network** access: allow
 it, or hubs can't find the phone.
 
-### Phone hub (experimental)
+### For a Mac (experimental)
 
-**Share as a proxy** lets a Mac paired with the same home server use this
+**Share mobile data with a Mac** lets a Mac paired with the same home server use this
 iPhone's mobile data through a proxy (SOCKS5 / HTTP CONNECT, port 1888,
 Bonjour `_tailbond-proxy._tcp`). It is **not bonded**: the bonded tunnel
 inside a free-signed app isn't built yet. For bonding, plug the iPhone
