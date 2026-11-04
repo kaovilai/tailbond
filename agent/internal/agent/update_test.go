@@ -671,4 +671,30 @@ func TestUpdateDevBuildAndNoRelease(t *testing.T) {
 	if len(*calls) != 1 {
 		t.Fatalf("Update now on a dev build didn't install: %v", *calls)
 	}
+
+	// the release disappears (404 again): the cached one is forgotten, so a
+	// policy that installs by itself has nothing left to install
+	a.opts.Version = "0.1.0"
+	req(t, a, "POST", "/api/update/policy", "127.0.0.1:1", "", map[string]any{"policy": "immediate"})
+	g.mu.Lock()
+	g.version = ""
+	g.mu.Unlock()
+	a.updateTick(ctx, true, false)
+	a.upd.mu.Lock()
+	cached := a.upd.rel
+	a.upd.mu.Unlock()
+	if cached != nil {
+		t.Fatalf("release still cached after a 404: %+v", cached)
+	}
+	if _, install := a.updateDue(); install {
+		t.Fatal("would install a release that's gone")
+	}
+
+	// no_release is always in the JSON, so false clears a cached true
+	g.publish(t, "0.2.0")
+	a.updateTick(ctx, true, false)
+	b, _ := json.Marshal(a.updateView())
+	if !strings.Contains(string(b), `"no_release":false`) {
+		t.Fatalf("no_release:false missing: %s", b)
+	}
 }

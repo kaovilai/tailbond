@@ -552,6 +552,10 @@ func (a *Agent) check(ctx context.Context) *update.Release {
 	a.upd.lastCheck, a.upd.nextCheck = now, next
 	if err == nil {
 		a.upd.rel, a.upd.etag = rel, newETag
+	} else if errors.Is(err, update.ErrNoRelease) {
+		// the release went away (deleted, or the repo changed): forget it,
+		// so nothing installs from the stale copy
+		a.upd.rel, a.upd.etag = nil, ""
 	}
 	a.upd.mu.Unlock()
 	dnfAuto := ""

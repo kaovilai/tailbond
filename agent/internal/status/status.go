@@ -266,7 +266,8 @@ type Update struct {
 	Detail            string `json:"detail,omitempty"`
 	Error             string `json:"error,omitempty"`
 	// NoRelease: the check worked but the repository has no release yet
-	NoRelease bool `json:"no_release,omitempty"`
+	// no omitempty: the UIs merge snapshots, so false must clear a cached true
+	NoRelease bool `json:"no_release"`
 	// AutoWindow: when policy auto installs (local time, "03:00-05:00")
 	AutoWindow string `json:"auto_window,omitempty"`
 	// Waiting: why a release that will install by itself hasn't yet
