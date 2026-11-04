@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        If you're a maintainer, an AI agent drafts an implementation PR as soon as this is opened; anyone else, a maintainer adds the `autofix` label after reading it. Small, well-scoped requests work best.
+        If you're a maintainer and tick the box at the bottom, an AI agent looks at this as soon as it's opened: a draft PR if it's small and clear enough, otherwise a comment with questions or a proposed split. Anyone else: a maintainer may add the `autofix` label after reading it. Small, well-scoped requests work best.
   - type: dropdown
     id: component
     attributes:

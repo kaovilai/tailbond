@@ -38,9 +38,11 @@ jobs:
       contents: write
       actions: write
     steps:
-      - uses: actions/checkout@v7
+      # Tag the exact commit CI passed on (a later push to main gets its own
+      # run); a dispatch tags main's current head.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || 'main' }}
           fetch-depth: 0
       - name: Next version
         id: v
@@ -54,7 +56,7 @@ jobs:
             next=v0.1.0
           else
             if [ -z "$(git rev-list "$last"..HEAD)" ]; then
-              # Nothing new on main. Recover a tag whose release build never
+              # Nothing new since the last tag. Recover a tag whose release build never
               # started (tag pushed, CI dispatch failed): dispatch it if the tag
               # has no release and no build queued or running.
               if gh release view "$last" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

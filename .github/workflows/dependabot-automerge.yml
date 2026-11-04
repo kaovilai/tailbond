@@ -5,10 +5,10 @@ name: Dependabot auto-merge
 # the PR (grouped PRs: none of the updates is a major). Majors wait for a human.
 #
 # Stage 1 (pull_request_target, Dependabot PRs only): read Dependabot's
-# metadata and label the PR "automerge" if it qualifies. Nothing from the PR
-# is checked out or run here.
+# commit metadata and label the PR "automerge" if it qualifies. Only the
+# default branch's .github/scripts is checked out; nothing from the PR runs.
 # Stage 2 (workflow_run of CI): when CI succeeds on a labelled Dependabot PR,
-# merge it and dispatch the auto-release workflow. Merges made with
+# re-check eligibility (the label alone isn't trusted), merge, and dispatch the auto-release workflow. Merges made with
 # GITHUB_TOKEN don't trigger push workflows, so the release is dispatched
 # explicitly (workflow_dispatch is allowed from GITHUB_TOKEN).
 
@@ -27,49 +27,32 @@ jobs:
     if: github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
+      issues: write
       pull-requests: write
     steps:
+      # Default branch, not the PR: the eligibility check is trusted code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
       - name: Label simple updates
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-        # Check every commit, not just the first: each one must be Dependabot's,
-        # and every dependency it lists must be a semver patch or minor update.
-        # A major, an unclassified entry (git submodule SHA bumps carry no
-        # update-type) or any other author keeps the PR for a human.
         run: |
-          gh api --paginate "repos/$REPO/pulls/$PR/commits" > commits.json
-          if python3 - commits.json <<'EOF'
-          import json, re, sys
-          commits = json.load(open(sys.argv[1]))
-          ok, why = True, []
-          for c in commits:
-              author = (c.get("author") or {}).get("login", "")
-              if author != "dependabot[bot]":
-                  ok = False; why.append("commit %s by %s" % (c["sha"][:7], author or "unknown"))
-                  continue
-              msg = c["commit"]["message"]
-              block = msg.split("updated-dependencies:", 1)
-              if len(block) < 2:
-                  ok = False; why.append("commit %s has no dependency metadata" % c["sha"][:7]); continue
-              entries = re.split(r"^- dependency-name:", block[1].split("\n...", 1)[0], flags=re.M)[1:]
-              if not entries:
-                  ok = False; why.append("commit %s lists no dependencies" % c["sha"][:7])
-              for e in entries:
-                  name = e.splitlines()[0].strip()
-                  m = re.search(r"update-type:\s*(\S+)", e)
-                  kind = m.group(1) if m else "unknown"
-                  print("%s: %s" % (name, kind))
-                  if kind not in ("version-update:semver-patch", "version-update:semver-minor"):
-                      ok = False; why.append("%s is %s" % (name, kind))
-          print("\n".join(why))
-          sys.exit(0 if ok and commits else 1)
-          EOF
-          then
+          gh api --paginate "repos/$REPO/pulls/$PR/commits" | jq -s add > "$RUNNER_TEMP/commits.json"
+          if python3 .github/scripts/dependabot_eligible.py "$RUNNER_TEMP/commits.json"; then
+            gh label create automerge -R "$REPO" --color C6F432 \
+              --description "Dependabot patch/minor update; merges itself when CI passes" --force
             gh pr edit "$PR" -R "$REPO" --add-label automerge
           else
-            gh pr edit "$PR" -R "$REPO" --remove-label automerge 2>/dev/null || true
+            # Only remove a label that's there, so a failure to remove it fails the job.
+            if gh pr view "$PR" -R "$REPO" --json labels --jq '.labels[].name' | grep -qx automerge; then
+              gh pr edit "$PR" -R "$REPO" --remove-label automerge
+            fi
             echo "Not auto-merging (see above)"
           fi
 
@@ -85,7 +68,12 @@ jobs:
       pull-requests: write
       actions: write
     steps:
-      - name: Merge the PR if it is labelled and still at the tested commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Merge the PR if it is labelled, still eligible and at the tested commit
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -100,5 +88,9 @@ jobs:
           labelled=$(jq -r '[.labels[].name] | index("automerge") != null' <<<"$pr")
           if [ "$labelled" != true ]; then echo "PR #$num isn't labelled automerge"; exit 0; fi
           if [ "$head" != "$SHA" ]; then echo "PR #$num moved on since CI ran ($SHA -> $head)"; exit 0; fi
+          gh api --paginate "repos/$REPO/pulls/$num/commits" | jq -s add > "$RUNNER_TEMP/commits.json"
+          if ! python3 .github/scripts/dependabot_eligible.py "$RUNNER_TEMP/commits.json"; then
+            echo "PR #$num is labelled but no longer eligible; leaving it for a human"; exit 0
+          fi
           gh pr merge "$num" -R "$REPO" --squash --delete-branch --match-head-commit "$SHA"
           gh workflow run auto-release.yml -R "$REPO" --ref main -f reason="Dependabot PR #$num"

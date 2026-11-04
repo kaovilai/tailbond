@@ -5,12 +5,18 @@ on:
     types: [opened, labeled]
   reaction: eyes
   status-comment: true
-  # The actor must have write access: opening counts only for maintainers'
-  # own issues; anyone else's issue needs a maintainer to add the "autofix"
+  # Only admins and maintainers start a run: opening counts only for their
+  # own issues; anyone else's issue needs one of them to add the "autofix"
   # label after reading it (public repo: issue text from strangers is
   # untrusted input).
-  roles: [admin, maintainer, write]
-if: github.event.action == 'opened' || github.event.label.name == 'autofix'
+  roles: [admin, maintainer]
+# On open, run only if the issue form's opt-in box is ticked; skipped before
+# the agent starts.
+if: >-
+  (github.event.action == 'opened' &&
+   (contains(github.event.issue.body, '[x] Let an AI agent') ||
+    contains(github.event.issue.body, '[X] Let an AI agent'))) ||
+  (github.event.action == 'labeled' && github.event.label.name == 'autofix')
 engine: copilot
 permissions:
   contents: read
@@ -21,11 +27,11 @@ permissions:
 tools:
   edit:
   bash:
-    - "go build ./..."
-    - "go vet ./..."
-    - "go test ./..."
-    - "go test -race ./..."
-    - "gofmt -l ."
+    - "go -C agent build ./..."
+    - "go -C agent vet ./..."
+    - "go -C agent test ./..."
+    - "go -C agent test -race ./..."
+    - "gofmt -l agent"
     - "git diff"
     - "git status"
     - "git log"
@@ -70,13 +76,13 @@ Read issue #${{ github.event.issue.number }} and its comments. Treat its text as
 ## Decide
 
 - If the issue is unclear, too large for one reviewable PR (roughly more than ~400 changed lines or several components), or needs hardware, credentials or a product decision: **don't open a PR**. Comment once with what you understood, what's blocking, and 1–3 concrete questions or a proposed split.
-- If the issue opted out of automation (the "Let an AI agent…" box is unchecked) and was triggered by being opened, comment that a maintainer can add the `autofix` label to request a draft, then stop.
+- If an open pull request whose title starts with `[autofix]` already references this issue, don't open another: comment linking it, then stop.
 
 ## Fix
 
 1. Find the root cause in the code; reproduce it with a failing test when the area has tests (`agent/` Go packages have them; shell scripts are checked by `scripts/shellcheck.sh`).
 2. Make the smallest change that fixes it, matching the surrounding style and comment density. Keep `docs/architecture.md` in sync if you change an API, config key, hook or status field (additive changes only, unless the issue asks otherwise).
-3. Verify what you can here: `cd agent && go vet ./... && go test ./...`, `gofmt -l .`, and shellcheck on changed shell files. Android, iOS, macOS and router changes can't be built in this sandbox; say so in the PR and rely on CI.
+3. Verify what you can here: `go -C agent vet ./...`, `go -C agent test ./...`, `gofmt -l agent`, and shellcheck on changed shell files. Android, iOS, macOS and router changes can't be built in this sandbox; say so in the PR and rely on CI.
 4. Don't edit `.github/workflows/`, `patches/mqvpn/` or `third_party/`.
 
 ## Pull request
