@@ -1,0 +1,82 @@
+name: Dependabot auto-merge
+
+# Simple dependency updates merge themselves once CI is green, then a release
+# is cut so every install picks them up. "Simple" = no major-version bump in
+# the PR (grouped PRs: none of the updates is a major). Majors wait for a human.
+#
+# Stage 1 (pull_request_target, Dependabot PRs only): read Dependabot's
+# metadata and label the PR "automerge" if it qualifies. Nothing from the PR
+# is checked out or run here.
+# Stage 2 (workflow_run of CI): when CI succeeds on a labelled Dependabot PR,
+# merge it and dispatch the auto-release workflow. Merges made with
+# GITHUB_TOKEN don't trigger push workflows, so the release is dispatched
+# explicitly (workflow_dispatch is allowed from GITHUB_TOKEN).
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ github.token }}
+      - name: Label simple updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEPS: ${{ steps.meta.outputs.dependency-names }}
+        run: |
+          echo "update-type=${UPDATE_TYPE:-unknown} deps=$DEPS"
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor)
+              gh pr edit "$PR" --add-label automerge ;;
+            *)
+              # Majors, or anything Dependabot can't classify (e.g. a git
+              # submodule SHA bump): leave for a human.
+              gh pr edit "$PR" --remove-label automerge 2>/dev/null || true
+              echo "Not auto-merging: $UPDATE_TYPE" ;;
+          esac
+
+  merge:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Merge the PR if it is labelled and still at the tested commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pr=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number,headRefOid,labels,author \
+                 --jq '.[] | select(.author.login == "app/dependabot" or .author.login == "dependabot[bot]")')
+          [ -n "$pr" ] || { echo "No open Dependabot PR for $BRANCH"; exit 0; }
+          num=$(jq -r .number <<<"$pr")
+          head=$(jq -r .headRefOid <<<"$pr")
+          labelled=$(jq -r '[.labels[].name] | index("automerge") != null' <<<"$pr")
+          if [ "$labelled" != true ]; then echo "PR #$num isn't labelled automerge"; exit 0; fi
+          if [ "$head" != "$SHA" ]; then echo "PR #$num moved on since CI ran ($SHA -> $head)"; exit 0; fi
+          gh pr merge "$num" -R "$REPO" --squash --delete-branch --match-head-commit "$SHA"
+          gh workflow run auto-release.yml -R "$REPO" --ref main -f reason="Dependabot PR #$num"

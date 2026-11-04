@@ -5,6 +5,15 @@ tailbond is released like most open-source projects: each version is a
 file and a `SHA256SUMS` list (plus GitHub build-provenance attestations, so
 anyone can check a file with `gh attestation verify FILE -R kaovilai/tailbond`).
 
+## How releases happen
+
+Releases are automatic; nobody has to cut one by hand:
+
+1. **Dependency updates** arrive as one grouped weekly Dependabot PR (security fixes as soon as they're published). If none of the updates is a major version, the PR is labelled `automerge` and merges itself once CI is green on it (`.github/workflows/dependabot-automerge.yml`). Majors, and updates Dependabot can't classify (such as the mqvpn submodule), wait for a human.
+2. **Every change on `main`**, whether an auto-merged update or a human merge with green CI, gets the next patch tag (`v0.1.0`, `v0.1.1`, …) from `.github/workflows/auto-release.yml`.
+3. **The tag's CI run** builds and tests everything again and publishes the GitHub release only if every job passes. A failing build never reaches devices.
+4. **Installs** see the new release on their next check and update per their policy (below).
+
 Every tailbond install looks at the latest release about once a day and
 shows **Update available: vX.Y (What's new)** in its dashboard, the GL panel
 or the app. Each platform then updates the way it normally does:
