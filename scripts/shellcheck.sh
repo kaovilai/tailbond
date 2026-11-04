@@ -24,7 +24,7 @@ rc=0
 mapfile -t files < <(git ls-files 'scripts/*.sh' 'scripts/**/*.sh' 'agent/*.sh' \
     'android/scripts/*.sh' 'packaging/fedora/*.sh' 'packaging/fedora/hooks/*' \
     'packaging/openwrt/*.sh' 'packaging/linux/*.sh' 'packaging/linux/hooks/*' \
-    'packaging/macos/*.sh' 'packaging/macos/hooks/*')
+    'packaging/macos/*.sh' 'packaging/macos/hooks/*' 'deploy/*.sh' 'deploy/**/*.sh')
 "$SC" -S warning "${files[@]}" || rc=1
 
 # OpenWrt hooks and init scripts (no .sh suffix): busybox ash
