@@ -209,7 +209,7 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
     <details><summary>Is this a Tailscale product?</summary><p>No. tailbond is an independent open-source project. It uses Tailscale (if you have it) for pairing, identity and reaching your tailnet; the bonded tunnel itself is mqvpn.</p></details>
     <details><summary>Can I keep using the Tailscale app?</summary><p>On a phone, tailbond replaces the Tailscale VPN while it's on (Android allows one VPN at a time), and your tailnet stays reachable through your server. Servers and travel routers run both. A Mac is built to run both too (tailbond leaves the Tailscale app's routes alone), but that isn't tested yet; don't use a Tailscale exit node while tailbond is connected. Step by step for each device: <a href="https://github.com/kaovilai/tailbond/blob/main/docs/coming-from-tailscale.md">coming from Tailscale</a>.</p></details>
     <details><summary>Why my own server?</summary><p>Your traffic goes to hardware you control, and it exits with your home IP. Speed is capped by your server's upload, so a VPS helps if home upload is slow.</p></details>
-    <details><summary>Does it work on Heroku or Vercel?</summary><p>No. A server needs inbound UDP and a TUN device. There are untested <a href="https://github.com/kaovilai/tailbond/blob/main/docs/deploy.md">templates</a> for any VPS, Docker and Fly.io.</p></details>
+    <details><summary>Does it work on Heroku or Vercel?</summary><p>No. A server needs inbound UDP and a TUN device. Run it on any VPS, or in Docker, Podman or Kubernetes from the server image <code>ghcr.io/kaovilai/tailbond</code> (<a href="https://github.com/kaovilai/tailbond/blob/main/docs/deploy.md">deploy</a>).</p></details>
   </section>
 </main>
 

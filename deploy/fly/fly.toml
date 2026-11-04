@@ -1,11 +1,11 @@
 # tailbond server on Fly.io. UNTESTED TEMPLATE (see docs/deploy.md).
 #
-#   cd deploy/docker            # build context: the Dockerfile COPYs entrypoint.sh
-#   fly launch --copy-config --no-deploy -c ../fly/fly.toml
+#   cd deploy/fly
+#   fly launch --copy-config --no-deploy
 #   fly ips allocate-v4            # dedicated IPv4: needed for UDP services
 #   fly volumes create tailbond_data --size 1
 #   fly secrets set TAILBOND_PUBLIC_ADDR=<the dedicated IPv4> TAILBOND_UI_PASSWORD=<pw>
-#   fly deploy -c ../fly/fly.toml
+#   fly deploy
 #
 # Known open question: Fly delivers UDP to the address "fly-global-services",
 # not 0.0.0.0. mqvpn listens on 0.0.0.0, so this may need a listen-address
@@ -14,7 +14,8 @@ app = "tailbond-server"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile"
+  # the published server image (deploy/docker); pin a release: :vX.Y.Z
+  image = "ghcr.io/kaovilai/tailbond:latest"
 
 [env]
   TAILBOND_PORT = "443"
