@@ -17,7 +17,7 @@ That rules out **Heroku, Vercel, Cloudflare Workers/Pages and Railway**: they ro
 | [Docker / Podman](#docker--podman) | Any Linux host with Docker or Podman | `deploy/docker/` (Dockerfile, entrypoint, `compose.yaml`) |
 | [Fly.io](#flyio) | Fly Machines (Firecracker VMs, UDP on a dedicated IPv4) | `deploy/fly/fly.toml` + `deploy/docker/` |
 
-All three use the same release bundle (`tailbond-linux-<arch>.tar.gz`, checked against `SHA256SUMS`) as the [VPS installer](vps.md), so they need a published [release](https://github.com/kaovilai/tailbond/releases).
+All three download the same release bundle as the [VPS installer](vps.md) (`releases/latest/download/tailbond-linux-<arch>.tar.gz`, checked against the release's `SHA256SUMS`), so they need a published [release](https://github.com/kaovilai/tailbond/releases).
 
 ## Any VPS (cloud-init)
 

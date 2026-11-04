@@ -74,6 +74,26 @@ func TestLandingPageOnPhone(t *testing.T) {
 	}
 }
 
+// A server without the APK sends phones to the release's stable download
+// and Obtainium's filter for the same name.
+func TestLandingWithoutAPKLinksTheRelease(t *testing.T) {
+	a := landingServer(t, func(c *config.Config) { c.AndroidAPK = filepath.Join(t.TempDir(), "none.apk") })
+	a.landingUp.Store(true)
+	body := landingGet(a, a.landingHandler(), "/", pixelUA).Body.String()
+	for _, want := range []string{
+		"doesn't have the app file yet",
+		`href="https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk"`,
+		`^tailbond-android\.apk$`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("landing page without the APK lacks %q", want)
+		}
+	}
+	if strings.Contains(body, `href="/tailbond.apk"`) {
+		t.Error("offers /tailbond.apk without the file")
+	}
+}
+
 func TestLandingPageOnComputerShowsQR(t *testing.T) {
 	a := landingServer(t, nil)
 	a.landingUp.Store(true)
@@ -206,6 +226,7 @@ func TestLandingSectionsPerPlatform(t *testing.T) {
 		"curl -fLO http://homebox.tail1234.ts.net/tailbond-macos-arm64.tar.gz",
 		"sudo ./tailbond-macos-arm64/install.sh", "brew install local/tailbond/tailbond",
 		"releases/latest/download/tailbond.rb", "xattr -dr com.apple.quarantine",
+		`href="https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz"`,
 		"iPhone (USB)", "Shared by nearby phones",
 		"install.sh --client", "dnf copr enable kaovilai/tailbond",
 		"tailbond Share", "7 days", "SideStore", "docs/ios.md",

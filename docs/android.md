@@ -14,9 +14,37 @@ It is built on mqvpn v0.19.0's Android SDK (`third_party/mqvpn/android`):
 | `sdk-native`, `sdk-core` | forked into `android/mqvpn-sdk/` with small marked patches, see [android/mqvpn-sdk/README.md](../android/mqvpn-sdk/README.md) |
 | `app` | tailbond's own UI and VPN service (`android/app`) |
 
-## Build
+## Install
 
-On Fedora (tested on Fedora 44 under WSL2):
+**Download:** [tailbond-android.apk](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk)
+(the latest release, signed with tailbond's release key;
+[all versions](https://github.com/kaovilai/tailbond/releases)).
+
+- **Easiest:** with Tailscale on, open your home server's page
+  (`homebox/`, its Tailscale name with the slash) in the phone's browser.
+  The "Get tailbond" page offers the same APK and walks you through it.
+- **From the release:** open the download link above on the phone, open
+  the file, and let the browser install apps when Android asks.
+- **[Obtainium](https://obtainium.imranr.dev/)** installs it and keeps it
+  up to date from the [releases](https://github.com/kaovilai/tailbond/releases): **Add App**, paste
+  `https://github.com/kaovilai/tailbond`, APK filter
+  `^tailbond-android\.apk$` ([Updates](#updates)).
+
+To check a download on a computer, against the release's `SHA256SUMS`:
+
+```sh
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # tailbond-android.apk: OK
+```
+
+Releases appear once the first release is published (after the first
+green `main` with the Android signing secrets set); until then, build it
+yourself (below).
+
+## Build from source
+
+For contributors. On Fedora (tested on Fedora 44 under WSL2):
 
 ```sh
 android/scripts/setup-sdk.sh           # JDK 21, SDK 37, build-tools 37, NDK 28.2.13676358, CMake 3.22.1 → ~/Android/Sdk
@@ -45,7 +73,7 @@ android/scripts/gradle.sh :app:lintDebug
 android/scripts/gradle.sh :app:assembleDebug
 ```
 
-## Install
+### Install your build
 
 ```sh
 adb install -r out/android/tailbond-debug.apk
@@ -260,15 +288,15 @@ tests that used them are in [ux/summary.md](ux/summary.md) and
 ## Updates
 
 Like a typical open-source app: each release is a GitHub release with a
-release-signed `tailbond-<version>.apk` (and `SHA256SUMS`;
+release-signed `tailbond-android.apk` (and `SHA256SUMS`;
 [architecture.md](architecture.md#updates), [updates.md](updates.md)).
 Two ways to stay current:
 
 - **Recommended: [Obtainium](https://obtainium.imranr.dev/).** It tracks
   GitHub releases and installs updates for you. In Obtainium tap **Add App**,
   paste `https://github.com/kaovilai/tailbond`, keep the source "GitHub", and
-  set the APK filter to `^tailbond-[0-9.]+\.apk$` (leaves out `-debug` and
-  pre-release APKs). Then set Obtainium to check often: **Obtainium →
+  set the APK filter to `^tailbond-android\.apk$` (the release APK's name
+  in every release; Obtainium takes the version from the release). Then set Obtainium to check often: **Obtainium →
   Settings → Background update checking interval → 1 hour**, so a release
   reaches the phone within the hour. It works only with the release APK
   (same key as the one installed), not a debug build.

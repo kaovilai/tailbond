@@ -29,7 +29,7 @@ no tunnel of its own, or whose own connections are poor.
 | A Mac with tailbond, and a phone with mobile data | Pair & Share: the Mac bonds the phone's data with its own Wi-Fi |
 | A Mac at a hotel, and an Android phone already bonding 5G + the hotel Wi-Fi | **Phone hub**: Mac → phone's hotspot, "Use phone hub" |
 | An iPhone over USB, Personal Hotspot on | **Phone hub** (experimental) or the plain USB path in [macos.md](macos.md) |
-| A device without tailbond (a TV, a games console) | Neither: a [GL.iNet travel router](openwrt.md) |
+| A device without tailbond (a TV, a games console) | Neither: a [GL.iNet travel router](glinet.md) |
 
 ## The protocol
 

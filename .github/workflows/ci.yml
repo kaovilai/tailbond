@@ -83,6 +83,11 @@ jobs:
         run: scripts/shellcheck.sh
       - name: Release gate covers every job
         run: python3 scripts/ci/check-release-needs.py
+      # release files live on GitHub Releases only, never in git
+      - name: No build outputs or files over 1 MB in git
+        run: scripts/ci/check-tracked-files.sh
+      - name: Release asset names (stable latest/download names, SHA256SUMS)
+        run: scripts/release/test-collect-assets.sh
 
   e2e:
     name: End-to-end (netns, patched mqvpn)
@@ -334,8 +339,8 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
-      - name: Homebrew deps (libevent, GNU patch)
-        run: brew install libevent gpatch
+      - name: Homebrew deps (libevent, GNU patch, rsvg-convert for the app icon)
+        run: brew install libevent gpatch librsvg
       - name: mqvpn submodule revision
         id: mq
         run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
@@ -507,10 +512,38 @@ jobs:
           path: out/x86_64/mqvpn
           if-no-files-found: error
 
+  # The aarch64 Linux bundle's mqvpn (a VPS or Linux laptop on arm64);
+  # native arm64 runner, same cache as job "openwrt".
+  mqvpn-aarch64:
+    name: Static aarch64 mqvpn (musl)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install podman
+        run: command -v podman || { sudo apt-get update -q && sudo apt-get install -y -q podman; }
+      - name: mqvpn submodule revision
+        id: mq
+        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+      - name: Cache aarch64 mqvpn build tree
+        uses: actions/cache/restore@v6
+        with:
+          path: out/build/mqvpn-aarch64
+          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
+          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+      - name: Build (native arm64 Alpine, podman)
+        run: scripts/build-mqvpn-aarch64-musl.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mqvpn-aarch64
+          path: out/aarch64/mqvpn
+          if-no-files-found: error
+
   linux-bundle:
     name: Generic Linux bundle (VPS)
     runs-on: ubuntu-24.04
-    needs: [agent, mqvpn-x86_64]
+    needs: [agent, mqvpn-x86_64, mqvpn-aarch64]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -523,10 +556,17 @@ jobs:
         with:
           name: mqvpn-x86_64
           path: out/x86_64/
-      - name: Build bundle
+      - uses: actions/download-artifact@v8
+        with:
+          name: mqvpn-aarch64
+          path: out/aarch64/
+      # release assets tailbond-linux-x86_64.tar.gz and -aarch64.tar.gz
+      - name: Build bundles
         run: |
-          chmod +x out/x86_64/mqvpn out/agent/linux-*/tailbondd
-          TB_ARCHS=x86_64 packaging/linux/build-bundle.sh
+          chmod +x out/x86_64/mqvpn out/aarch64/mqvpn out/agent/linux-*/tailbondd
+          TB_ARCHS="x86_64 aarch64" packaging/linux/build-bundle.sh
+          test -s out/linux/tailbond-linux-x86_64.tar.gz
+          tar -tzf out/linux/tailbond-linux-aarch64.tar.gz | grep -qx 'tailbond-linux-aarch64/bin/mqvpn'
       - uses: actions/upload-artifact@v7
         with:
           name: linux-bundle
@@ -652,7 +692,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, mqvpn-x86_64, openwrt, rpm, linux-bundle, vps-install, macos]
+    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, macos-e2e-server, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -668,25 +708,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist/
+      # stable names (releases/latest/download/<name>) plus the versioned
+      # ipk/rpm, and SHA256SUMS: scripts/release/collect-assets.sh
       - name: Collect assets and SHA256SUMS
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          mkdir -p assets
-          cp dist/glinet-ipk/*.ipk dist/fedora-rpm/*.rpm dist/linux-bundle/*.tar.gz assets/
-          # macOS: the bundle (install.sh, one-click updates) and the
-          # Homebrew formula with this version's checksum (docs/macos.md)
-          cp dist/macos-bundle/tailbond-macos-arm64.tar.gz dist/macos-bundle/tailbond.rb assets/
-          if ! compgen -G 'dist/android-release-apk/tailbond-*.apk' >/dev/null; then
-            # never publish an APK that can't update the installed app
-            echo "::error::no release APK: the Android signing secrets are missing (TB_RELEASE_KEYSTORE_B64 ...). Run scripts/release/gen-android-keystore.sh once (or --restore the key from its backup), then re-run this tag. docs/android.md, Release key."
-            exit 1
-          fi
-          cp dist/android-release-apk/tailbond-*.apk assets/
-          for d in dist/tailbondd/linux-*; do
-            tar -czf "assets/tailbondd-$TAG-$(basename "$d").tar.gz" -C "$d" tailbondd
-          done
-          (cd assets && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
+        run: scripts/release/collect-assets.sh dist assets
       # Anyone can check a file: gh attestation verify FILE -R OWNER/REPO.
       # tailbond itself checks SHA256SUMS over HTTPS (docs/updates.md).
       - uses: actions/attest-build-provenance@v4

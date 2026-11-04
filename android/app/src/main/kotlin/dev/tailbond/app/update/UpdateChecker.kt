@@ -19,7 +19,7 @@ data class UpdateStatus(
     val latest: String? = null,
     /** Its release page (the changelog). */
     val notesUrl: String? = null,
-    /** Its `tailbond-<version>.apk` (null = the release has no APK). */
+    /** Its APK, tailbond-android.apk (null = the release has no APK). */
     val apkUrl: String? = null,
     /** Last good check, ms since epoch (0 = never). */
     val lastCheckMs: Long = 0,

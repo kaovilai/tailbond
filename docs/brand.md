@@ -55,12 +55,28 @@ Type: Inter where available, otherwise the platform UI font (SF Pro, Segoe UI, R
 | `ios/TailbondShare/BrandTokens.swift`, `Assets.xcassets/AccentColor` | tailbond Share on iPhone |
 | the `brand-tokens:begin … end` blocks in the GL panel view and the LuCI view | the GL.iNet admin panel (Element-UI look, brand primary and connection colours) and LuCI |
 
-`scripts/brand/render-icons.sh` renders the PNGs from the SVGs (rsvg-convert
-with Inter, in a container): the iOS AppIcon (1024 px), the macOS iconset
-(`packaging/macos/icons/`, made into `tailbond.icns` by
-`packaging/macos/build-bundle.sh` on a Mac) and the social preview. The
-Android launcher, monochrome (themed) icon and notification/tile glyph are
-vector drawables traced from the same SVGs.
+**Rasters.** The SVGs are the source; generated rasters stay out of git
+and are made at build time:
+
+- The macOS icon (the iconset PNGs and `tailbond.icns`):
+  `scripts/brand/render-macos-icons.sh`, run by
+  `packaging/macos/build-bundle.sh` and the Homebrew formula's `--HEAD`
+  build (rsvg-convert; iconutil on a Mac). CI renders it on the macOS
+  runner for every bundle.
+- Android: the launcher, monochrome (themed) icon and notification/tile
+  glyph are vector drawables traced from the same SVGs; no PNGs.
+
+Two rasters are kept in git, because the platform needs the file itself
+and can't make it from an SVG:
+
+| File | Why it's in git | Size |
+|---|---|---|
+| `ios/TailbondShare/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` | Xcode's asset catalog takes a PNG app icon, and tailbond Share is built on the user's own Mac ([ios.md](ios.md)), which shouldn't need rsvg-convert | 29 KB |
+| `assets/brand/social-preview.png` | GitHub's **Social preview** setting is a file upload | 35 KB |
+
+`scripts/brand/render-icons.sh` re-renders both after an SVG change
+(rsvg-convert with Inter, in a container). CI fails on any build output or
+file over 1 MB in git (`scripts/ci/check-tracked-files.sh`).
 
 **GitHub social preview:** upload `assets/brand/social-preview.png` in the
 repository's **Settings → General → Social preview** (GitHub has no API for

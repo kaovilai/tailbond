@@ -69,6 +69,17 @@ class ReleaseParserTest {
         assertNull(ReleaseParser.apkAsset(listOf("tailbond-0.2.0.apk" to null), v))
     }
 
+    @Test fun theStableNameWins() {
+        val v = SemVer.parse("0.2.0")!!
+        val pick = { names: List<String> -> ReleaseParser.apkAsset(names.map { it to "https://h/$it" }, v) }
+        // releases publish tailbond-android.apk (releases/latest/download/tailbond-android.apk)
+        assertEquals("https://h/tailbond-android.apk", pick(listOf("tailbond-0.2.0.apk", "tailbond-android.apk")))
+        assertEquals("https://h/tailbond-android.apk", pick(listOf("tailbond-android.apk", "tailbond-0.2.0-debug.apk")))
+        assertNull(ReleaseParser.apkAsset(listOf("tailbond-android.apk" to "http://h/tailbond-android.apk"), v))
+        val r = ReleaseParser.parse(release(assets = listOf("tailbond-android.apk", "tailbond-linux-x86_64.tar.gz", "SHA256SUMS")))
+        assertEquals("https://github.com/kaovilai/tailbond/releases/download/v0.2.0/tailbond-android.apk", r.apkUrl)
+    }
+
     @Test fun oddTagsAndReleasesAreRefused() {
         assertThrows(ReleaseException::class.java) { ReleaseParser.parse(release(tag = "nightly")) }
         assertThrows(ReleaseException::class.java) { ReleaseParser.parse(release(tag = "v1.2")) }

@@ -52,7 +52,9 @@ it with the Wi-Fi. See [phone-hub.md](phone-hub.md).
 
 ## Build and run on your iPhone (free Apple ID)
 
-Needs a Mac with Xcode 16 or newer and the iPhone's USB cable.
+There's no download: GitHub Releases carry no iPhone app, because an app
+signed with a free Apple ID runs only on its owner's own devices. Build it
+yourself; it takes a few minutes. Needs a Mac with Xcode 16 or newer and the iPhone's USB cable.
 
 ```sh
 brew install xcodegen

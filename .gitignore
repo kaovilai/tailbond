@@ -4,3 +4,11 @@ out/
 *.rpm
 .gradle/
 local.properties
+
+# Release artifacts live on GitHub Releases only (scripts/ci/check-tracked-files.sh)
+*.tar.gz
+*.dmg
+*.pkg
+*.icns
+*.so
+*.a

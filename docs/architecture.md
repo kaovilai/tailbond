@@ -594,15 +594,34 @@ Users' guide: [updates.md](updates.md).
 
 ### Release assets (CI job `release`, on `v*` tags)
 
-`tailbond-linux-x86_64.tar.gz`, `tailbond-linux-aarch64.tar.gz` (static
-bundle with `install.sh`), `tailbond_<v>-r1_aarch64_cortex-a53.ipk`,
-`tailbond_<v>-r1_aarch64_cortex-a53_neon-vfpv4.ipk`,
-`tailbond-server-<v>-1.fc44.x86_64.rpm`, `tailbond-<v>.apk` (release-signed),
-`tailbond-macos-arm64.tar.gz` (Mac bundle with `install.sh`), `tailbond.rb`
-(Homebrew formula with that tarball's checksum),
-`tailbondd-<tag>-linux-<arch>.tar.gz`, and `SHA256SUMS` (`sha256sum` format
-over all of them). A `-pre` tag (`v1.2.3-beta.1`) is a GitHub pre-release,
-which the "latest release" API never returns.
+Built files live only on GitHub Releases, never in git
+(`scripts/ci/check-tracked-files.sh`). The names stay the same in every
+release, so `https://github.com/<repo>/releases/latest/download/<name>`
+always works (`scripts/release/collect-assets.sh`, tested by
+`scripts/release/test-collect-assets.sh`):
+
+| Asset | What |
+|---|---|
+| `tailbond-android.apk` | Android, release-signed |
+| `tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk` | GL.iNet stock firmware |
+| `tailbond-openwrt-aarch64_cortex-a53.ipk` | OpenWrt 23.05/24.10 aarch64 |
+| `tailbond-server.x86_64.rpm` | Fedora |
+| `tailbond-linux-x86_64.tar.gz`, `tailbond-linux-aarch64.tar.gz` | static bundle with `install.sh` (VPS, Linux client) |
+| `tailbond-macos-arm64.tar.gz`, `tailbond.rb` | Mac bundle with `install.sh`; Homebrew formula with that tarball's checksum |
+| `tailbondd-linux-amd64.tar.gz`, `tailbondd-linux-arm64.tar.gz` | the agent alone |
+| `SHA256SUMS` | `sha256sum` format, over all of them |
+
+Plus the same packages under versioned names, which package tools read the
+version from: `tailbond_<v>-r1_<arch>.ipk` (the router's package cache and
+its reinstall after a firmware upgrade; older routers' updaters look for
+it) and `tailbond-server-<v>-1.fc44.x86_64.rpm`. The updaters download the
+stable names: the bundle by `tailbond-linux-<arch>` / `tailbond-macos-<arch>`,
+the router `tailbond-glinet-<arch>.ipk` / `tailbond-openwrt-<arch>.ipk`
+(kept in the cache under the versioned name), the Android app
+`tailbond-android.apk`. A `-pre` tag (`v1.2.3-beta.1`) is a GitHub
+pre-release, which the "latest release" API never returns. The iPhone app
+isn't a release asset: it's built from source with a free Apple ID
+([ios.md](ios.md)).
 
 ### The check
 
@@ -623,7 +642,7 @@ its line in `SHA256SUMS`, else nothing is installed.
 | method | detected by | one-click / automatic install |
 |---|---|---|
 | `static` | `/etc/tailbond/install.env` (written by `install.sh`) | yes: download `tailbond-linux-<arch>.tar.gz` + check, unpack under `<state_dir>/update/`, run the new bundle's `install.sh --update --bundle-dir <dir>` detached (`systemd-run --unit tailbond-update`): it keeps `<bin>.prev`, replaces the binaries and hooks, restarts the service, and if the service isn't up on the new version within 60 s puts `.prev` back and restarts again |
-| `opkg` | OpenWrt (`/etc/openwrt_release` + `opkg`) | yes: download the ipk whose arch `opkg print-architecture` lists + check, keep it in `/etc/tailbond/pkg/`, run `/usr/lib/tailbond/update-ipk` detached (`opkg install`, health check, previous ipk back on failure) |
+| `opkg` | OpenWrt (`/etc/openwrt_release` + `opkg`) | yes: download the ipk whose arch `opkg print-architecture` lists (`tailbond-glinet-<arch>.ipk` / `tailbond-openwrt-<arch>.ipk`, else the versioned name) + check, keep it in `/etc/tailbond/pkg/` as `tailbond_<v>-r1_<arch>.ipk`, run `/usr/lib/tailbond/update-ipk` detached (`opkg install`, health check, previous ipk back on failure) |
 | `dnf` | `tailbondd` owned by an RPM | no: the status says so and the UI shows `sudo dnf upgrade tailbond-server` (COPR, `dnf-automatic`) |
 | `static` (macOS) | `/usr/local/etc/tailbond/install.env` (written by `packaging/macos/install.sh`) | yes: `tailbond-macos-<arch>.tar.gz`, its `install.sh --update` run in a new session (it restarts the LaunchDaemon), same `.prev` rollback |
 | `brew` | macOS, `tailbondd` resolves into Homebrew's Cellar | no: the UI shows the commands (the release's `tailbond.rb` into a local tap, `brew reinstall`, `sudo brew services start tailbond`) |

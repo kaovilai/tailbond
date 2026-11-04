@@ -753,16 +753,39 @@ func opkgArchs() []string {
 	return names
 }
 
-// ipkFor picks the release's ipk for one of the archs (best first).
-func ipkFor(rel *update.Release, archs []string) (update.Asset, bool) {
+// stableIPK is the release asset name of the ipk for an opkg architecture
+// that stays the same in every release (docs/glinet.md, Download):
+// tailbond-glinet-<arch>.ipk for GL.iNet's stock firmware (neon-vfpv4),
+// tailbond-openwrt-<arch>.ipk otherwise.
+func stableIPK(arch string) string {
+	if strings.HasSuffix(arch, "_neon-vfpv4") {
+		return "tailbond-glinet-" + arch + ".ipk"
+	}
+	return "tailbond-openwrt-" + arch + ".ipk"
+}
+
+// ipkFor picks the release's ipk for one of the archs (best first): the
+// stable name, else the versioned tailbond_<version>-r<N>_<arch>.ipk.
+// local is the package cache's file name, always versioned: update-ipk
+// keeps the previous package beside it and reinstall reads the version
+// from it (the release has the same file under that name too).
+func ipkFor(rel *update.Release, archs []string) (art update.Asset, local string, ok bool) {
 	for _, arch := range archs {
-		if a, ok := rel.FindAsset(func(n string) bool {
+		versioned, vok := rel.FindAsset(func(n string) bool {
 			return strings.HasPrefix(n, "tailbond_") && strings.HasSuffix(n, "_"+arch+".ipk")
-		}); ok {
-			return a, true
+		})
+		local = "tailbond_" + rel.Version + "-r1_" + arch + ".ipk"
+		if vok {
+			local = versioned.Name
+		}
+		if a, sok := rel.FindAsset(func(n string) bool { return n == stableIPK(arch) }); sok {
+			return a, local, true
+		}
+		if vok {
+			return versioned, local, true
 		}
 	}
-	return update.Asset{}, false
+	return update.Asset{}, "", false
 }
 
 // installIPK: download the ipk (checked against SHA256SUMS) into the
@@ -773,7 +796,7 @@ func (a *Agent) installIPK(ctx context.Context, rel *update.Release) error {
 	if len(archs) == 0 && a.upd.method == methodOpkg { // tests: no opkg here
 		archs = []string{"aarch64_cortex-a53"}
 	}
-	art, ok := ipkFor(rel, archs)
+	art, local, ok := ipkFor(rel, archs)
 	if !ok {
 		return errors.New("the release has no package for this router's architecture")
 	}
@@ -785,13 +808,13 @@ func (a *Agent) installIPK(ctx context.Context, rel *update.Release) error {
 	// (update-ipk saves the running one itself when there's none)
 	prev := ""
 	if b, err := os.ReadFile(filepath.Join(dir, "current")); err == nil {
-		if cur := strings.TrimSpace(string(b)); cur != "" && cur != art.Name && !strings.ContainsAny(cur, "/\\") {
+		if cur := strings.TrimSpace(string(b)); cur != "" && cur != local && !strings.ContainsAny(cur, "/\\") {
 			if _, err := os.Stat(filepath.Join(dir, cur)); err == nil {
 				prev = filepath.Join(dir, cur)
 			}
 		}
 	}
-	dst := filepath.Join(dir, art.Name)
+	dst := filepath.Join(dir, local)
 	if err := a.updateClient().Download(ctx, rel, art.Name, dst); err != nil {
 		return err
 	}

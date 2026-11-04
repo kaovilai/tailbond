@@ -17,6 +17,12 @@ Linux laptop: the same dashboard, the same settings, the same tunnel.
 
 ## Install
 
+**Download:** [tailbond-macos-arm64.tar.gz](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz)
+(the bundle) or the Homebrew formula
+[tailbond.rb](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond.rb), from the latest release
+([all versions](https://github.com/kaovilai/tailbond/releases)). Releases appear once the first release is
+published; until then, [build it from source](#build-from-source).
+
 ### From your home server's page (easiest)
 
 With Tailscale on, open **homebox/** (your server's Tailscale name, with the
@@ -44,12 +50,20 @@ You need a tailbond home server and either Tailscale on the Mac (to ask the
 server from the dashboard's **Setup** tab) or a pairing link (the server's
 dashboard → **Devices** → **Add a device**).
 
-1. Download `tailbond-macos-arm64.tar.gz` from the
-   [latest release](https://github.com/kaovilai/tailbond/releases/latest).
-2. In Terminal:
+1. In Terminal, download the bundle and check it against the release's
+   `SHA256SUMS`:
 
    ```sh
-   cd ~/Downloads && tar -xzf tailbond-macos-arm64.tar.gz
+   cd ~/Downloads
+   curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz
+   curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/SHA256SUMS
+   grep ' tailbond-macos-arm64.tar.gz$' SHA256SUMS | shasum -a 256 -c   # tailbond-macos-arm64.tar.gz: OK
+   ```
+
+2. Unpack it and install:
+
+   ```sh
+   tar -xzf tailbond-macos-arm64.tar.gz
    sudo tailbond-macos-arm64/install.sh --pair 'tailbond://pair?d=…'
    ```
 
@@ -78,12 +92,30 @@ brew install local/tailbond/tailbond
 sudo brew services start tailbond
 ```
 
-The copy in this repository (`packaging/macos/tailbond.rb`) builds from
-source instead: copy it into the tap the same way and
-`brew install --HEAD local/tailbond/tailbond` (Xcode command line tools, a
-few minutes). Settings live in
+The formula's `sha256` pins that release's tarball. Settings live in
 `$(brew --prefix)/etc/tailbond/tailbond.json`, the log in
 `$(brew --prefix)/var/log/tailbond.log`.
+
+### Build from source
+
+For contributors, on an Apple silicon Mac with the Xcode command line tools
+and Homebrew:
+
+```sh
+brew install libevent gpatch librsvg go
+git clone --recurse-submodules https://github.com/kaovilai/tailbond
+cd tailbond
+scripts/build-mqvpn-macos.sh && agent/build.sh darwin/arm64 && packaging/macos/build-bundle.sh
+tar -C out/macos -xzf out/macos/tailbond-macos-arm64.tar.gz
+sudo out/macos/tailbond-macos-arm64/install.sh
+```
+
+`build-bundle.sh` makes `out/macos/tailbond-macos-arm64.tar.gz` and the
+formula `out/macos/tailbond.rb`; the app icon is rendered from
+`assets/brand/tailbond-icon.svg` during the build (rsvg-convert, iconutil),
+not kept in git. Or let Homebrew build it: copy
+`packaging/macos/tailbond.rb` into the tap as above and
+`brew install --HEAD local/tailbond/tailbond` (a few minutes).
 
 ## Bond your connections
 

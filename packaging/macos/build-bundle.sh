@@ -5,7 +5,8 @@
 #
 #   out/macos/tailbond-macos-arm64.tar.gz   tailbond-macos-arm64/{bin/tailbondd,
 #       bin/mqvpn, hooks/, install.sh, uninstall.sh, the LaunchDaemon plist,
-#       icons/ (PNG sizes, tailbond.icns when built on a Mac), README.md,
+#       icons/ (PNG sizes, tailbond.icns when built on a Mac; rendered from
+#       assets/brand/tailbond-icon.svg, needs rsvg-convert), README.md,
 #       VERSION, licenses}
 #   out/macos/tailbond.rb                   packaging/macos/tailbond.rb with this
 #       version and the tarball's SHA-256 (TB_FORMULA_URL: where it downloads
@@ -46,16 +47,9 @@ install -m 0755 "$tbd" "$d/bin/tailbondd"
 install -m 0755 "$PKG/install.sh" "$PKG/uninstall.sh" "$d/"
 install -m 0755 "$PKG"/hooks/* "$d/hooks/"
 install -m 0644 "$PKG/com.tailbond.tailbondd.plist" "$d/"
-# the app icon (docs/brand.md): tailbond.icns on a Mac (iconutil), the PNG
-# sizes anywhere
-mkdir -p "$d/icons"
-install -m 0644 "$PKG"/icons/*.png "$d/icons/"
-if command -v iconutil >/dev/null; then
-    set_dir="$top/tailbond.iconset"
-    mkdir -p "$set_dir"
-    for f in "$PKG"/icons/tailbond_*.png; do cp "$f" "$set_dir/icon_${f##*/tailbond_}"; done
-    iconutil -c icns "$set_dir" -o "$d/icons/tailbond.icns"
-fi
+# the app icon (docs/brand.md), rendered from the SVG here (rsvg-convert):
+# the PNG sizes, and tailbond.icns on a Mac (iconutil)
+"$ROOT/scripts/brand/render-macos-icons.sh" "$d/icons"
 install -m 0644 "$ROOT/docs/macos.md" "$d/README.md"
 install -m 0644 "$ROOT/LICENSE" "$d/LICENSE"
 install -m 0644 "$ROOT/NOTICE" "$d/NOTICE"

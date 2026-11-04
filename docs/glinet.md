@@ -19,31 +19,42 @@ Setup tips for best speed (direct Tailscale, ports, the route):
 | opkg arch | `aarch64_cortex-a53_neon-vfpv4` | same |
 | Firewall | fw3 (iptables) or fw4 (nftables) depending on build; the hooks handle both through `/etc/config/firewall` | same |
 
-Stock GL firmware only accepts the `aarch64_cortex-a53_neon-vfpv4` package.
-Plain OpenWrt 23.05/24.10 aarch64_cortex-a53 builds take
-`tailbond_<ver>_aarch64_cortex-a53.ipk`. Both contain the same static
-binaries. The ipk is a gzipped ustar tar (GL's opkg reportedly crashes on
-ar-format ipks: [Wattline notes][wl]).
-
-## Build
-
-```sh
-scripts/build-mqvpn-aarch64-musl.sh      # static mqvpn → out/aarch64/mqvpn
-packaging/openwrt/build-ipk.sh           # tailbondd (arm64) + both .ipk files → out/ipk/
-                                         # (carries out/android/tailbond-debug.apk or TAILBOND_APK when present)
-scripts/test-openwrt-ipk.sh              # emulated OpenWrt 23.05 arm64 install test (podman)
-```
+Stock GL firmware only accepts the `aarch64_cortex-a53_neon-vfpv4` package;
+plain OpenWrt 23.05/24.10 aarch64_cortex-a53 builds take the
+`aarch64_cortex-a53` one. Both contain the same static binaries. The ipk is
+a gzipped ustar tar (GL's opkg reportedly crashes on ar-format ipks:
+[Wattline notes][wl]).
 
 ## Install without SSH
+
+**Download** (latest release; [all versions](https://github.com/kaovilai/tailbond/releases)):
+
+- GL.iNet stock firmware (Flint 3, Slate 7):
+  [tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk)
+- Plain OpenWrt 23.05/24.10 aarch64:
+  [tailbond-openwrt-aarch64_cortex-a53.ipk](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-openwrt-aarch64_cortex-a53.ipk)
+
+To check a download against the release's `SHA256SUMS` (on a computer):
+
+```sh
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+Releases appear once the first release is published; until then,
+[build it from source](#build-from-source).
+
 
 GL's **APPLICATIONS → Plug-ins** page installs from GL's repository only; it
 has no upload ([GL docs: Plug-ins][gl-plugins]). A local package goes
 through LuCI, which GL 4.x ships ([GL docs: Advanced Settings][gl-adv]):
 
-1. Get the package (the file ending in `_neon-vfpv4.ipk`). A home server
-   offers it: the Fedora page's **Devices → Add a GL.iNet travel router**
-   (`/tailbond-glinet.ipk`, from `/usr/share/tailbond/tailbond-glinet.ipk`),
-   or a Flint 3's panel, which rebuilds the package it runs (below).
+1. Get the package: the GL.iNet download above (the file ending in
+   `_neon-vfpv4.ipk`). A home server offers it too: the Fedora page's
+   **Devices → Add a GL.iNet travel router** (`/tailbond-glinet.ipk`, from
+   `/usr/share/tailbond/tailbond-glinet.ipk`), or a Flint 3's panel, which
+   rebuilds the package it runs (below).
 2. On the travel router: **SYSTEM → Advanced Settings → Go To LuCI** (same
    admin password), then **System → Software → Upload Package…**, pick the
    file, **Install**. Leave "Allow overwriting" unticked.
@@ -54,7 +65,8 @@ through LuCI, which GL 4.x ships ([GL docs: Advanced Settings][gl-adv]):
 The package installs **enabled**: the agent starts right away (the panel
 needs it) and the tunnel connects once paired. The LAN keeps its internet
 until then (the kill switch arms only when paired and on). One command, if
-you do have SSH: `opkg install /tmp/tailbond_*_neon-vfpv4.ipk`.
+you do have SSH: copy the file to `/tmp/` and
+`opkg install /tmp/tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk`.
 
 Updates (tailbond panel → Updates):
 
@@ -80,6 +92,23 @@ A Flint 3 serves the package without having the file: `GET
 (`/usr/lib/opkg/info/tailbond.{control,list,postinst,…}`), using pristine
 copies of the files that change after install
 (`/usr/share/tailbond/pristine/…`) and never including `/etc/tailbond/`.
+
+## Build from source
+
+For contributors (podman; the router needs no SDK):
+
+```sh
+scripts/build-mqvpn-aarch64-musl.sh      # static mqvpn → out/aarch64/mqvpn
+packaging/openwrt/build-ipk.sh           # tailbondd (arm64) + both .ipk files → out/ipk/
+                                         # (carries out/android/tailbond-debug.apk or TAILBOND_APK when present)
+scripts/test-openwrt-ipk.sh              # emulated OpenWrt 23.05 arm64 install test (podman)
+```
+
+`out/ipk/` gets `tailbond_<version>_aarch64_cortex-a53_neon-vfpv4.ipk` (GL
+stock firmware) and `tailbond_<version>_aarch64_cortex-a53.ipk`; install
+one the same way (LuCI upload). A release has both under these versioned
+names too: the router's package cache and its reinstall after a firmware
+upgrade read the version from the name.
 
 ## Admin panel (VPN → tailbond)
 

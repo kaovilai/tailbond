@@ -68,6 +68,9 @@ type landingView struct {
 	AskURL      string // the Mac's / laptop's own dashboard, the server filled in
 	LinuxClient string
 	LinuxServer string
+	// GitHub's release downloads (releases/latest/download/, or this
+	// version's): where the page falls back to GitHub
+	ReleaseBase string
 }
 
 // landingHandler serves the landing page on its own port.
@@ -199,6 +202,7 @@ func (a *Agent) hLanding(w http.ResponseWriter, r *http.Request) {
 	if isRelease(a.opts.Version) {
 		rel = "https://github.com/" + repo + "/releases/download/v" + a.opts.Version + "/"
 	}
+	v.ReleaseBase = rel
 	v.BrewCmds = []string{
 		"brew tap-new --no-git local/tailbond",
 		`curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" ` + rel + "tailbond.rb",

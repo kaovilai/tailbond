@@ -171,7 +171,7 @@ a{color:var(--accent)}
     <p class="small muted">Stuck, or not comfortable with this? Ask whoever runs {{.Server}} to install it for you.</p>
     <p class="small muted">Is this safe? This page starts with http://, but your phone reached it through Tailscale, which encrypts it and makes sure it really comes from {{.Server}}: nobody on the Wi-Fi or mobile network can change the file. (For the curious: SHA-256 <code>{{.APKSHA256}}</code>, the same as <code>sha256sum /usr/share/tailbond/tailbond.apk</code> on {{.Server}}.)</p>
     {{else}}
-    <p class="warnbox">{{.Server}} doesn't have the app file yet. Ask whoever runs {{.Server}} to add it (they put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code>), or install it with Obtainium (below), then reload this page.</p>
+    <p class="warnbox">{{.Server}} doesn't have the app file yet. Download it from tailbond's GitHub releases instead: <a href="{{.ReleaseBase}}tailbond-android.apk">tailbond-android.apk</a> (open it once it's downloaded, then the same steps). Or install it with Obtainium (below), or ask whoever runs {{.Server}} to add it (they put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code>) and reload this page.</p>
     {{end}}
     <details id="obtainium">
       <summary>Or install it with Obtainium (updates by itself)</summary>
@@ -179,7 +179,7 @@ a{color:var(--accent)}
       {{if .OnAndroid}}<a class="btn" href="{{.ObtainiumLink}}">Add tailbond to Obtainium</a>{{end}}
       <ol class="plain small">
         <li>In Obtainium tap <b>Add App</b> and paste <code>https://github.com/{{.Repo}}</code>{{if .OnAndroid}} (the button above fills it in){{end}}.</li>
-        <li>Keep the source <b>GitHub</b>; set the APK filter to <code>^tailbond-[0-9.]+\.apk$</code>, then <b>Add</b> and <b>Install</b>.</li>
+        <li>Keep the source <b>GitHub</b>; set the APK filter to <code>^tailbond-android\.apk$</code>, then <b>Add</b> and <b>Install</b>.</li>
         <li>Come back here for step 2.</li>
       </ol>
       <p class="small muted">Obtainium installs tailbond's release build. If tailbond is already on the phone from this page and Obtainium says it can't update it (a different build), uninstall tailbond first, then install it from Obtainium.</p>
@@ -231,6 +231,7 @@ a{color:var(--accent)}
       <p class="small">To check the download first:</p>
       <div class="cmd"><code>shasum -a 256 ~/Downloads/{{.MacBundle}}</code><button type="button" class="copy" data-copy="shasum -a 256 ~/Downloads/{{.MacBundle}}">Copy</button></div>
       <p class="small muted">{{if .MacSHA256}}It should print <code>{{.MacSHA256}}</code> ({{.MacSize}}).{{else}}{{.Server}} gets the Mac file from tailbond's GitHub releases the first time someone asks (a few seconds) and checks it against the release's checksums.{{end}}</p>
+      <p class="small">Or straight from tailbond's GitHub releases: <a href="{{.ReleaseBase}}tailbond-macos-arm64.tar.gz">tailbond-macos-arm64.tar.gz</a>, checked against the release's <a href="{{.ReleaseBase}}SHA256SUMS">SHA256SUMS</a>; then the same Terminal line.</p>
       <p class="small">With <a href="https://brew.sh">Homebrew</a> (these download tailbond from its GitHub releases, not from {{.Server}}; the same files): Homebrew installs from a "tap", here a local one, and runs system services with <code>sudo brew services</code>.</p>
       {{range .BrewCmds}}<div class="cmd"><code>{{.}}</code><button type="button" class="copy" data-copy="{{.}}">Copy</button></div>
       {{end}}

@@ -109,4 +109,4 @@ Push a `v*` tag. CI builds everything, writes `SHA256SUMS`, attests the files
 (`actions/attest-build-provenance`), creates the GitHub release, and starts a
 COPR build when the `COPR_CONFIG` secret is set
 ([fedora-server.md](fedora-server.md#copr)). The release fails if the Android
-signing secrets are missing ([android.md](android.md#release-key)).
+signing secrets are missing ([android.md](android.md#updates), "The release key").

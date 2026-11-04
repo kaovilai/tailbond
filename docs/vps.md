@@ -14,15 +14,23 @@ than from home.
 
 ## 1. Install
 
+**Download:** [tailbond-linux-x86_64.tar.gz](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-x86_64.tar.gz)
+or [tailbond-linux-aarch64.tar.gz](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-aarch64.tar.gz)
+(the latest release; [all versions](https://github.com/kaovilai/tailbond/releases)). Both are static: any distribution
+with systemd.
+
 ```sh
-tar xzf tailbond-linux-x86_64.tar.gz
-cd tailbond-linux-x86_64
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-linux-$(uname -m).tar.gz
+curl -fLO https://github.com/kaovilai/tailbond/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # tailbond-linux-<arch>.tar.gz: OK
+tar xzf tailbond-linux-$(uname -m).tar.gz
+cd tailbond-linux-$(uname -m)
 sudo ./install.sh --dry-run     # shows what it would do, changes nothing
 sudo ./install.sh
 ```
 
-The bundle comes from `packaging/linux/build-bundle.sh` (CI artifact
-`linux-bundle`). It installs:
+Releases appear once the first release is published; until then,
+[build the bundle from source](#build-from-source). It installs:
 
 | Path | What |
 |---|---|
@@ -308,6 +316,19 @@ pinning and set `notify`:
         tailbond_version: "0.2.0"
         tailbond_update_policy: notify   # the playbook decides the version
 ```
+
+## Build from source
+
+For contributors (podman for the static mqvpn):
+
+```sh
+git clone --recurse-submodules https://github.com/kaovilai/tailbond
+cd tailbond
+scripts/build-mqvpn-musl.sh x86_64            # static mqvpn → out/x86_64/mqvpn (aarch64: scripts/build-mqvpn-aarch64-musl.sh)
+packaging/linux/build-bundle.sh               # → out/linux/tailbond-linux-<arch>.tar.gz (builds tailbondd when missing)
+```
+
+Then install from `out/linux/` as above.
 
 ## Troubleshooting
 

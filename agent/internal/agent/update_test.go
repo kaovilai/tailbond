@@ -118,6 +118,38 @@ func (g *fakeGitHub) publish(t *testing.T, version string) {
 		}),
 		"tailbond_" + version + "-r1_aarch64_cortex-a53.ipk":            []byte("ipk a53"),
 		"tailbond_" + version + "-r1_aarch64_cortex-a53_neon-vfpv4.ipk": []byte("ipk neon"),
+		"tailbond-openwrt-aarch64_cortex-a53.ipk":                       []byte("ipk a53 stable"),
+		"tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk":             []byte("ipk neon stable"),
+	}
+}
+
+// The router updater downloads the stable asset name and caches it under
+// the versioned one (update-ipk and reinstall read the version from it).
+func TestIPKForStableNames(t *testing.T) {
+	as := func(names ...string) *update.Release {
+		r := &update.Release{Version: "1.2.0"}
+		for _, n := range names {
+			r.Assets = append(r.Assets, update.Asset{Name: n, URL: "https://x/" + n})
+		}
+		return r
+	}
+	for _, c := range []struct {
+		rel               *update.Release
+		archs             []string
+		wantName, wantLoc string
+	}{
+		{as("tailbond_1.2.0-r1_aarch64_cortex-a53.ipk", "tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53"},
+			"tailbond-openwrt-aarch64_cortex-a53.ipk", "tailbond_1.2.0-r1_aarch64_cortex-a53.ipk"},
+		{as("tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk", "tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53_neon-vfpv4", "aarch64_cortex-a53"},
+			"tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk", "tailbond_1.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk"},
+		{as("tailbond_1.2.0-r2_aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53"},
+			"tailbond_1.2.0-r2_aarch64_cortex-a53.ipk", "tailbond_1.2.0-r2_aarch64_cortex-a53.ipk"},
+		{as("tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_generic"}, "", ""},
+	} {
+		a, loc, ok := ipkFor(c.rel, c.archs)
+		if a.Name != c.wantName || loc != c.wantLoc || ok != (c.wantName != "") {
+			t.Errorf("%v %v: got %q %q %v, want %q %q", c.rel.Assets, c.archs, a.Name, loc, ok, c.wantName, c.wantLoc)
+		}
 	}
 }
 
@@ -283,7 +315,7 @@ func TestUpdateIPKAndResult(t *testing.T) {
 	if c.name != a.upd.ipkCmd || strings.Join(c.args, " ") != strings.Join(want, " ") || !strings.Contains(strings.Join(c.env, " "), "TB_ROLE=server") {
 		t.Fatalf("ran %+v", c)
 	}
-	if b, _ := os.ReadFile(want[0]); string(b) != "ipk a53" {
+	if b, _ := os.ReadFile(want[0]); string(b) != "ipk a53 stable" {
 		t.Fatal("ipk content")
 	}
 	// the installers' result file

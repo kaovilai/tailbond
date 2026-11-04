@@ -6,10 +6,19 @@
 </h1>
 
 [![CI](https://github.com/kaovilai/tailbond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kaovilai/tailbond/actions/workflows/ci.yml?query=branch%3Amain)
-[![Latest release](https://img.shields.io/github/v/release/kaovilai/tailbond?include_prereleases&sort=semver&color=0D9488)](https://github.com/kaovilai/tailbond/releases)
+[![Latest release](https://img.shields.io/github/v/release/kaovilai/tailbond?include_prereleases&sort=semver&color=0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
 [![License](https://img.shields.io/github/license/kaovilai/tailbond?color=0D9488)](LICENSE)
 [![Go version](https://img.shields.io/github/go-mod/go-version/kaovilai/tailbond?filename=agent%2Fgo.mod&color=0D9488)](agent/go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-GL.iNet%20%C2%B7%20OpenWrt%20%C2%B7%20Fedora%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20(Share)-C6F432?labelColor=071A1D)](#platforms)
+
+**Download:**
+[![Android APK](https://img.shields.io/badge/Android-APK-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk)
+[![GL.iNet ipk](https://img.shields.io/badge/GL.iNet-ipk-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk)
+[![Fedora RPM](https://img.shields.io/badge/Fedora-RPM-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-server.x86_64.rpm)
+[![Linux bundle](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20aarch64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-arm64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz)
+[![All releases](https://img.shields.io/badge/all-releases-071A1D)](https://github.com/kaovilai/tailbond/releases)  
+Built files live only on [GitHub Releases](https://github.com/kaovilai/tailbond/releases) (checksums in `SHA256SUMS`); each guide below starts with its download. Releases appear after the first green `main` with the Android signing secrets set; until then, [build from source](#build-from-source). The iPhone's tailbond Share app is build-from-source only (free Apple ID signing, [iOS](docs/ios.md)).
 
 **Deploy a server:**
 [![Any VPS (cloud-init)](https://img.shields.io/badge/deploy-cloud--init-0D9488)](docs/deploy.md#any-vps-cloud-init)
@@ -91,7 +100,11 @@ More: [setup tips for best speed](docs/setup-tips.md) · [comparison with OpenMP
 2. **Each device:** with Tailscale on, open **`homebox/`** (your server's Tailscale name, with the slash) in its browser. The "Get tailbond" page has the app or installer and the steps for that device.
 3. **Approve** it on the server's page (`http://homebox:8077`). It connects and bonds whatever links it has.
 
-## Building
+## Build from source
+
+For contributors; to install, use the downloads above. Build outputs go to
+`out/` (ignored by git; CI fails if a built file or anything over 1 MB is
+committed).
 
 ```sh
 git clone --recurse-submodules https://github.com/kaovilai/tailbond
@@ -108,7 +121,7 @@ scripts/e2e-share.sh                    # Pair & Share end-to-end (needs sudo)
 scripts/e2e-macos.sh                    # Mac hub end-to-end (on a Mac, sudo, QEMU; docs/macos.md)
 ```
 
-[CI](.github/workflows/ci.yml) builds and tests all of it and publishes releases on `v*` tags.
+[CI](.github/workflows/ci.yml) builds and tests all of it and publishes releases on `v*` tags, with the same file names in every release (`releases/latest/download/<name>`: [scripts/release/collect-assets.sh](scripts/release/collect-assets.sh)).
 
 ## Contributing
 

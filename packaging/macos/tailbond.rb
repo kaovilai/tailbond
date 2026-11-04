@@ -31,6 +31,7 @@ class Tailbond < Formula
     depends_on "go" => :build
     depends_on "gpatch" => :build
     depends_on "libevent" => :build
+    depends_on "librsvg" => :build
   end
 
   depends_on arch: :arm64
@@ -43,7 +44,8 @@ class Tailbond < Formula
       system "agent/build.sh", "darwin/arm64"
       bin.install "out/macos/mqvpn", "out/agent/darwin-arm64/tailbondd"
       (lib/"tailbond/hooks").install Dir["packaging/macos/hooks/*"]
-      (share/"tailbond/icons").install Dir["packaging/macos/icons/*"]
+      system "scripts/brand/render-macos-icons.sh", "out/macos/icons"
+      (share/"tailbond/icons").install Dir["out/macos/icons/*"]
     else
       bin.install "bin/mqvpn", "bin/tailbondd"
       (lib/"tailbond/hooks").install Dir["hooks/*"]
