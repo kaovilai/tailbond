@@ -5,7 +5,11 @@
 # name the docs link to (releases/latest/download/<name>) is published and
 # in SHA256SUMS, plus the versioned ipk/rpm; a missing file fails it.
 # The opkg feed: scripts/release/gen-opkg-key.sh (--no-upload) makes a key,
-# its backup restores it; with TB_OPKG_SIGNING_KEY the release gets a
+# its backup restores it; with a fake gh, a secret listing that fails or
+# names the secret stops it before anything changes; a rotation (--next,
+# then --restore --force) in a scratch git repository, committed with the
+# commands the script prints, ends with only the new key tracked, and the
+# feeds on the way verify for routers with the old key, then both; with TB_OPKG_SIGNING_KEY the release gets a
 # Packages index of the versioned ipks (ipkg-make-index fields), its .gz
 # and a usign signature that verifies against the key the packages ship;
 # without the key no feed and a warning; a key the packages don't ship
@@ -54,8 +58,9 @@ else
 fi
 "$USIGN" -G -s "$T/other.sec" -p "$T/other.pub"
 
-# mkipk OUT ARCH [PUBKEY]: an ipk like build-ipk.sh's (gzipped tar of
-# debian-binary, data.tar.gz, control.tar.gz), shipping PUBKEY as a conffile
+# mkipk OUT ARCH [PUBKEY...]: an ipk like build-ipk.sh's (gzipped tar of
+# debian-binary, data.tar.gz, control.tar.gz), shipping each PUBKEY as a
+# conffile
 mkipk() {
     local w
     w="$(mktemp -d "$T/ipk.XXXXXX")"
@@ -63,17 +68,109 @@ mkipk() {
     printf 'Package: tailbond\nVersion: 1.2.3-r1\nDepends: kmod-tun, ip-full\nLicense: Apache-2.0\nSection: net\nArchitecture: %s\nInstalled-Size: 4096\nDescription: Test package.\n Second line.\n' "$2" >"$w/c/control"
     echo /etc/config/tailbond >"$w/c/conffiles"
     echo "$2" >"$w/d/usr/bin/tailbondd"
-    if [ -n "${3:-}" ]; then
+    local k
+    for k in "${@:3}"; do
         mkdir -p "$w/d/etc/opkg/keys"
-        cp "$3" "$w/d/etc/opkg/keys/$("$USIGN" -F -p "$3")"
-        echo "/etc/opkg/keys/$("$USIGN" -F -p "$3")" >>"$w/c/conffiles"
-    fi
+        cp "$k" "$w/d/etc/opkg/keys/$("$USIGN" -F -p "$k")"
+        echo "/etc/opkg/keys/$("$USIGN" -F -p "$k")" >>"$w/c/conffiles"
+    done
     echo 2.0 >"$w/x/debian-binary"
     tar -C "$w/c" -czf "$w/x/control.tar.gz" .
     tar -C "$w/d" -czf "$w/x/data.tar.gz" .
     tar -C "$w/x" -czf "$1" ./debian-binary ./data.tar.gz ./control.tar.gz
 }
 arch_of() { tar -xzOf "$1" ./control.tar.gz | tar -xzOf - ./control | sed -n 's/^Architecture: //p'; }
+
+echo "== gen-opkg-key.sh and the repository secret (fake gh)"
+# FAKE_GH_LIST: fail (gh can't list: auth, network), has (the secret
+# exists), else an empty list. secret set writes $T/gh-set.<NAME>.
+mkdir -p "$T/bin"
+cat >"$T/bin/gh" <<'GH'
+#!/bin/sh
+case "$1 $2" in
+"secret list")
+    case "${FAKE_GH_LIST:-}" in
+    fail) echo "HTTP 401: Bad credentials (https://api.github.com/repos/o/r/actions/secrets)" >&2; exit 1 ;;
+    has) printf 'OTHER_SECRET\nTB_OPKG_SIGNING_KEY\n' ;;
+    *) echo OTHER_SECRET ;;
+    esac ;;
+"secret set") cat >"$FAKE_GH_DIR/gh-set.$3" ;;
+*) echo "fake gh: $*" >&2; exit 2 ;;
+esac
+GH
+chmod +x "$T/bin/gh"
+export FAKE_GH_DIR="$T"
+ghgen() { # FAKE_GH_LIST KEYS-DIR [ARGS...]: gen-opkg-key.sh with the fake gh
+    local list="$1" keys="$2"
+    shift 2
+    FAKE_GH_LIST="$list" GH="$T/bin/gh" "$ROOT/scripts/release/gen-opkg-key.sh" --repo o/r --backup "$T/ghbk-$list" --keys-dir "$keys" "$@" >"$T/log" 2>&1
+}
+if ghgen fail "$T/gk1"; then
+    bad "gh secret list failed, but it went on"
+else
+    grep -q "can't list the secrets" "$T/log" && [ ! -e "$T/gh-set.TB_OPKG_SIGNING_KEY" ] && [ -z "$(ls -A "$T/gk1" 2>/dev/null)" ] \
+        && [ -z "$(ls -A "$T/ghbk-fail" 2>/dev/null)" ] && ok "gh can't list the secrets: stops, no secret set, no key or backup written" || bad "failed listing: $(cat "$T/log")"
+fi
+if ghgen has "$T/gk2"; then
+    bad "the secret exists, but it was replaced without --force"
+else
+    grep -q 'already has an opkg feed key' "$T/log" && [ ! -e "$T/gh-set.TB_OPKG_SIGNING_KEY" ] && [ -z "$(ls -A "$T/gk2" 2>/dev/null)" ] \
+        && ok "the secret exists (empty key directory): refused without --force" || bad "existing secret: $(cat "$T/log")"
+fi
+ghgen none "$T/gk3" && [ -s "$T/gh-set.TB_OPKG_SIGNING_KEY" ] \
+    && [ "$("$USIGN" -F -s "$T/gh-set.TB_OPKG_SIGNING_KEY")" = "$(ls "$T/gk3")" ] \
+    && ok "no such secret: sets it to the secret key of the public key written" || { cat "$T/log"; bad "first upload"; }
+rm -f "$T/gh-set.TB_OPKG_SIGNING_KEY"
+ghgen fail "$T/gk4" --force && [ -s "$T/gh-set.TB_OPKG_SIGNING_KEY" ] \
+    && ok "--force replaces without listing" || { cat "$T/log"; bad "--force upload"; }
+
+echo "== rotating the key (--next, then --restore --force), committed as printed"
+R="$T/repo"
+git init -q "$R"
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
+RK="$R/packaging/openwrt/files/etc/opkg/keys"
+echo readme >"$R/README" && git -C "$R" add README && git -C "$R" commit -q -m init
+committed() { # run the "commit it:" command the script printed
+    local c
+    c="$(sed -n 's/^commit it: //p' "$T/log")"
+    [ -n "$c" ] && eval "$c" >/dev/null
+}
+tracked() { git -C "$R" ls-files -- packaging/openwrt/files/etc/opkg/keys | sed 's|.*/||' | sort | tr '\n' ' '; }
+"$ROOT/scripts/release/gen-opkg-key.sh" --no-upload --backup "$T/rbk1" --keys-dir "$RK" >"$T/log" 2>&1 && committed || { cat "$T/log"; bad "first key in the repo"; }
+OLD="$(ls "$RK")"
+BK_OLD="$(ls "$T"/rbk1/*.gpg)"
+[ "$(tracked)" = "$OLD " ] && [ -z "$(git -C "$R" status --porcelain)" ] && ok "first key: the printed command commits it" || bad "first commit: $(tracked) / $(git -C "$R" status --porcelain)"
+"$ROOT/scripts/release/gen-opkg-key.sh" --no-upload --backup "$T/rbk2" --keys-dir "$RK" >"$T/log" 2>&1 && bad "a second key without --next or --force" \
+    || { grep -q -- '--next' "$T/log" && ok "a second key needs --next or --force (the refusal names --next)" || bad "refusal: $(cat "$T/log")"; }
+"$ROOT/scripts/release/gen-opkg-key.sh" --next --backup "$T/rbk2" --keys-dir "$RK" >"$T/log" 2>&1 && committed || { cat "$T/log"; bad "--next"; }
+NEW=""
+for k in "$RK"/*; do [ "${k##*/}" = "$OLD" ] || NEW="${k##*/}"; done
+BK_NEW="$(ls "$T"/rbk2/*.gpg)"
+[ -n "$NEW" ] && [ "$(tracked)" = "$(printf '%s\n' "$OLD" "$NEW" | sort | tr '\n' ' ')" ] && [ -z "$(git -C "$R" status --porcelain)" ] \
+    && ok "--next: both public keys tracked, the current one kept" || bad "--next tracked: $(tracked)"
+# the transition release: signed with the old key, shipping both
+mkdir -p "$T/sec-old" "$T/sec-new" "$T/router-old" "$T/router-both" "$T/rot1" "$T/rot2"
+gpg --quiet --batch --pinentry-mode loopback --passphrase-file "$T/pass" --decrypt "$BK_OLD" | tar -xf - -C "$T/sec-old"
+gpg --quiet --batch --pinentry-mode loopback --passphrase-file "$T/pass" --decrypt "$BK_NEW" | tar -xf - -C "$T/sec-new"
+cp "$RK/$OLD" "$T/router-old/"
+cp "$RK/$OLD" "$RK/$NEW" "$T/router-both/"
+mkipk "$T/rot1/tailbond_1.2.4-r1_aarch64_cortex-a53.ipk" aarch64_cortex-a53 "$RK/$OLD" "$RK/$NEW"
+"$ROOT/scripts/release/opkg-feed.sh" "$T/rot1" "$T/sec-old/opkg.sec" >"$T/log" 2>&1 \
+    && "$USIGN" -V -q -m "$T/rot1/Packages" -x "$T/rot1/Packages.sig" -P "$T/router-old" \
+    && ok "transition release (both keys, signed with the old): a router with only the old key accepts it" || { cat "$T/log"; bad "transition feed"; }
+# the switch: the secret becomes the new key, the old public key goes
+"$ROOT/scripts/release/gen-opkg-key.sh" --no-upload --restore "$BK_NEW" --keys-dir "$RK" >"$T/log" 2>&1 && bad "the switch without --force" \
+    || ok "the switch (--restore of the next key) needs --force"
+"$ROOT/scripts/release/gen-opkg-key.sh" --no-upload --restore "$BK_NEW" --force --keys-dir "$RK" >"$T/log" 2>&1 && committed || { cat "$T/log"; bad "switch"; }
+[ "$(tracked)" = "$NEW " ] && [ ! -e "$RK/$OLD" ] && [ -z "$(git -C "$R" status --porcelain)" ] \
+    && ok "--restore --force: the printed command commits the old key's removal too (only the new key tracked)" || bad "after the switch: tracked $(tracked), status $(git -C "$R" status --porcelain)"
+grep -q "removed public key(s): $OLD" "$T/log" && ok "it says which key it removed" || bad "removal not reported: $(cat "$T/log")"
+mkipk "$T/rot2/tailbond_1.2.5-r1_aarch64_cortex-a53.ipk" aarch64_cortex-a53 "$RK/$NEW"
+"$ROOT/scripts/release/opkg-feed.sh" "$T/rot2" "$T/sec-new/opkg.sec" >"$T/log" 2>&1 \
+    && "$USIGN" -V -q -m "$T/rot2/Packages" -x "$T/rot2/Packages.sig" -P "$T/router-both" \
+    && ok "after the switch: a router that took the transition release accepts the new feed" || { cat "$T/log"; bad "post-switch feed"; }
+! "$USIGN" -V -q -m "$T/rot2/Packages" -x "$T/rot2/Packages.sig" -P "$T/router-old" 2>/dev/null \
+    && ok "... one that only has the old key refuses it (it needs the key by hand)" || bad "old-key router accepted the new feed"
 
 D="$T/dist"
 mkdir -p "$D"/{android-release-apk,glinet-ipk,fedora-rpm,linux-bundle,macos-bundle,tailbondd/linux-amd64,tailbondd/linux-arm64}

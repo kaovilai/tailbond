@@ -149,7 +149,10 @@ work side by side: after either one installs a version, the other sees it
 as current. A firmware upgrade still reinstalls a version the Plug-ins page
 installed ([Firmware upgrades](#firmware-upgrades)).
 
-Removing tailbond also removes its key. The source stays until you delete
+If the feed key ever changes, releases ship the old and the new key
+together for a while first, so a router that keeps updating never notices.
+A router that missed those releases gets "signature check failed" for the
+source: add the key again (step 1). Removing tailbond also removes its key. The source stays until you delete
 it under **Manage Sources**. Until then, GL's list update reports a
 failed signature check for it.
 

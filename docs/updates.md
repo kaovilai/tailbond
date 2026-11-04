@@ -122,3 +122,26 @@ release publishes `Packages`, `Packages.gz`, `Packages.sig` and
 `tailbond-opkg.pub` ([glinet.md](glinet.md#install-and-update-from-gls-plug-ins-page)).
 Without it, the release goes out with no feed and a warning. If the
 secret's public key isn't in the package, the release fails.
+
+**Rotating the feed key.** A feed carries one signature. A router that
+only has the old public key refuses a feed signed by a new key, so it
+can't fetch the release that would bring that new key. While the current
+secret key still works, rotate in two steps:
+
+1. `scripts/release/gen-opkg-key.sh --next --backup DIR` makes the new key
+   and backs it up. It adds the new public key next to the current one and
+   leaves the secret alone. Commit with the command it prints. Releases
+   keep being signed with the current key but now ship both public keys,
+   so every router that updates also gets the new one.
+2. Some releases later: `scripts/release/gen-opkg-key.sh --restore
+   NEW.gpg --force`. The secret becomes the new key, and the old public
+   key is removed. Commit with the printed command, which also stages the
+   removal.
+
+A router that hasn't updated since before step 1 needs the new key by
+hand once ([glinet.md](glinet.md#install-and-update-from-gls-plug-ins-page),
+step 1). So does every router if the key is lost or leaked, because then
+step 1 is impossible (or unsafe): `--force` replaces the key at once.
+
+The script stops if it can't list the repository's secrets (`gh` not
+logged in, network), because it can't tell whether a key already exists.
