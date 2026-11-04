@@ -1243,7 +1243,7 @@ function renderUpdates(st) {
   } else if (noCheck) {
     now.push(h('p', { class: 'ub-big', text: "Couldn't check for updates" }),
       h('p', { class: 'small warn-text', text: `Couldn't reach GitHub (${u.error}). tailbond tries again later by itself; Check now tries again now.` }));
-  } else if (!retry) now.push(h('p', { class: 'ub-big', text: 'Up to date' }));
+  } else if (!retry) now.push(h('p', { class: 'ub-big', text: u.no_release ? 'No release published yet' : 'Up to date' }));
 
   const meta = [];
   if (u.last_check && !off) meta.push(`Checked ${fmtAgo(u.last_check)}`);

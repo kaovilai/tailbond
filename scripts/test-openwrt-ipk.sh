@@ -252,6 +252,9 @@ uclient-fetch -q -O - http://127.0.0.1:8077/api/status | jsonfilter -e '@.role' 
 [ "$(nipk)" = 2 ] && [ "$(cat /etc/tailbond/pkg/current)" = tailbond_99.0.0-r1_aarch64_cortex-a53.ipk ] \
 	&& [ "$(/usr/lib/tailbond/pkg-cache ipk-version "/etc/tailbond/pkg/$(cat /etc/tailbond/pkg/previous)")" = "$NEWV" ] \
 	&& ok "cache: the new package + the running one saved as the rollback copy" || { bad "cache after update"; ls -la /etc/tailbond/pkg; }
+/usr/lib/tailbond/update-ipk $V99 "" || true
+[ "$(res result)" = failed ] && res detail | grep -q 'already the installed' && [ "$(ver)" = 99.0.0-r1 ] \
+	&& ok "the same version again is refused, not reported as done: $(res detail)" || { bad "same-version update"; cat $R /tmp/tailbond-update.log; }
 TB_WAIT=20 /usr/lib/tailbond/update-ipk $BROKEN /etc/tailbond/pkg/tailbond_99.0.0-r1_aarch64_cortex-a53.ipk
 [ "$(res result)" = rolled_back ] && [ "$(res version)" = 99.1.0-r1 ] && [ "$(ver)" = 99.0.0-r1 ] \
 	&& ok "an agent that never answers is rolled back: $(res detail)" || { bad "rollback"; cat $R /tmp/tailbond-update.log; }
