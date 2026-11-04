@@ -28,7 +28,8 @@ check() { # check ENGINE: compose is up
   local eng=$1 id
   id="$(sudo "$eng" ps -q --filter label=com.docker.compose.service=tailbond | head -n1)"
   if wait_for 60 hello; then echo "  PASS $eng compose: dashboard answers on 127.0.0.1:8077"; else echo "  FAIL $eng compose: no dashboard"; rc=1; fi
-  if sudo "$eng" exec "$id" nft list table inet tailbond | grep -q masquerade; then
+  # the server-up hook loads it once mqvpn is up, after the agent answers
+  if wait_for 30 sh -c "sudo $eng exec $id nft list table inet tailbond | grep -q masquerade"; then
     echo "  PASS $eng compose: NAT table loaded (cap_drop ALL + NET_ADMIN, NET_BIND_SERVICE)"
   else
     echo "  FAIL $eng compose: no NAT table"; rc=1

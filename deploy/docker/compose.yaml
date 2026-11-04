@@ -12,9 +12,10 @@ services:
     cap_drop: [ALL]
     cap_add: [NET_ADMIN, NET_BIND_SERVICE]
     devices: ["/dev/net/tun:/dev/net/tun"]
+    # list form: podman-compose 1.0.x drops the values of the map form
     sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv6.conf.all.forwarding: "1"
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
     environment:
       TAILBOND_PUBLIC_ADDR: ${TAILBOND_PUBLIC_ADDR:?set TAILBOND_PUBLIC_ADDR}
       TAILBOND_PORT: ${TAILBOND_PORT:-443}
