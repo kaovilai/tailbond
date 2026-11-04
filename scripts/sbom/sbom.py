@@ -147,7 +147,11 @@ def extract(path, dest):
         with zipfile.ZipFile(path) as z:
             z.extractall(dest)
     elif head.startswith(b"\x1f\x8b") or tarfile.is_tarfile(path):
-        with tarfile.open(path) as t:
+        try:
+            t = tarfile.open(path)
+        except tarfile.ReadError:  # gzip but not a tar: the opkg feed's Packages.gz
+            return False
+        with t:
             t.extractall(dest, filter="data")
     elif head.startswith(b"\xed\xab\xee\xdb"):  # rpm
         if shutil.which("bsdtar"):

@@ -14,6 +14,7 @@ syft, then checks:
 Needs the mqvpn submodules (sbom.py components), not syft.
 """
 import atexit
+import gzip
 import hashlib
 import io
 import json
@@ -103,6 +104,12 @@ def main():
                "./data.tar.gz": data})
     open(os.path.join(assets, "tailbond-openwrt-aarch64_cortex-a53.ipk"), "wb").write(ipk)
     open(os.path.join(assets, "tailbond_1.0.0-r1_aarch64_cortex-a53.ipk"), "wb").write(ipk)
+    # the signed opkg feed (scripts/release/opkg-feed.sh): Packages.gz is a gzip, not a tar
+    feed = b"Package: tailbond\nVersion: 1.0.0-r1\n\n"
+    for n, b in (("Packages", feed), ("Packages.gz", gzip.compress(feed)),
+                 ("Packages.sig", b"untrusted comment: signed by key 0\nsig\n"),
+                 ("tailbond-opkg.pub", b"untrusted comment: public key 0\nkey\n")):
+        open(os.path.join(assets, n), "wb").write(b)
     write_sums(assets)
     graph = os.path.join(w, "graph.json")
     json.dump({"manifests": {"project :app": {"resolved": {
