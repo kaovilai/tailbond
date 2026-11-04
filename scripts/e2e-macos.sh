@@ -83,7 +83,7 @@ cleanup() {
   if [ "$rc" -ne 0 ] || [ "$FAIL" -ne 0 ] || [ -n "${VERBOSE:-}" ]; then
     echo "--- hub agent log (tail) ---"; tail -n 80 "$WORK/hub.log" 2>/dev/null || true
     for s in pixel iphone; do echo "--- $s sharer log (tail) ---"; tail -n 20 "$WORK/$s.log" 2>/dev/null || true; done
-    echo "--- server VM console (tail) ---"; tail -n 60 "$WORK/vm.console" 2>/dev/null || true
+    echo "--- server VM console (tail) ---"; grep -av '^\[ *[0-9.]*\] ' "$WORK/vm.console" | tail -n 80 2>/dev/null || true
   fi
   mkdir -p "$ROOT/out/e2e-macos" && cp "$WORK"/*.log "$WORK/vm.console" "$ROOT/out/e2e-macos/" 2>/dev/null || true
   rm -rf "$WORK"
@@ -107,7 +107,7 @@ T0=$(date +%s)
 if wait_for 300 "server up in the VM" sh -c "curl -fsS -m 3 http://$SAPI/api/status | jq -e '.state == \"connected\"'"; then
   ok "server up in $(( $(date +%s) - T0 )) s: $(grep -m1 '^vm: up' "$WORK/vm.console" || true)"
 else
-  bad "server did not come up"; exit 1
+  bad "server did not come up: $(curl -sS -m 3 "http://$SAPI/api/status" 2>&1 | head -c 600)"; exit 1
 fi
 pair() { sapi -X POST -d "{\"name\":\"$1\"}" "http://$SAPI/api/clients" | jq -r .uri; }
 HUB_URI="$(pair mac)"; PIXEL_URI="$(pair pixel)"; IPHONE_URI="$(pair iphone)"; ISO_URI="$(pair isolated)"

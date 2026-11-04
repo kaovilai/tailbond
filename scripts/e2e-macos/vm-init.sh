@@ -39,9 +39,9 @@ cat >/etc/tailbond/tailbond.json <<JSON
  "listen": ":8077", "mode": "speed", "disable_tailscale": true,
  "server": {"port": $PORT, "public_addr": "$PUBLIC", "subnet": "10.77.0.0/24", "use_tailscale_cert": false}}
 JSON
-tailbondd -config /etc/tailbond/tailbond.json -quiet >/tmp/server.log 2>&1 &
+tailbondd -config /etc/tailbond/tailbond.json >/tmp/server.log 2>&1 &
 /bin/busybox-extras httpd -p 8080 -h /www || echo "vm: httpd failed"
-echo "vm: up ($(uname -r)), public $PUBLIC:$PORT"
+echo "vm: up ($(uname -r)), public $PUBLIC:$PORT; $(ip -4 addr show eth0 | grep -o 'inet [0-9./]*')"
 # the server's log on the console (the e2e prints it on failure)
 tail -F /tmp/server.log &
 while :; do sleep 3600; done
