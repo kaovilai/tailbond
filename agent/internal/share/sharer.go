@@ -177,9 +177,13 @@ func (s *Sharer) handle(ctx context.Context, b []byte, from net.Addr) {
 			return
 		}
 		p := b[DataHeader:]
-		if _, err := x.up.Write(p); err == nil {
-			x.upBytes.Add(uint64(len(p)))
-			s.used.Add(uint64(len(p)))
+		// counted before it leaves, so the counters and the cap are current
+		// by the time anyone sees the datagram's effect; undone on failure
+		x.upBytes.Add(uint64(len(p)))
+		s.used.Add(uint64(len(p)))
+		if _, err := x.up.Write(p); err != nil {
+			x.upBytes.Add(^uint64(len(p) - 1))
+			s.used.Add(^uint64(len(p) - 1))
 		}
 		x.lastSeen.Store(time.Now().UnixNano())
 	case TypeKeepalive:
@@ -322,9 +326,13 @@ func (s *Sharer) pumpDown(x *session) {
 			return
 		}
 		out = Data(out, x.id, buf[DataHeader:DataHeader+n])
-		if _, err := s.conn.WriteTo(out, x.hubAddr); err == nil {
-			x.dnBytes.Add(uint64(n))
-			s.used.Add(uint64(n))
+		// counted first, as upstream: the hub may ask for the counters
+		// (KEEPALIVE) the moment this frame reaches it
+		x.dnBytes.Add(uint64(n))
+		s.used.Add(uint64(n))
+		if _, err := s.conn.WriteTo(out, x.hubAddr); err != nil {
+			x.dnBytes.Add(^uint64(n - 1))
+			s.used.Add(^uint64(n - 1))
 		}
 	}
 }

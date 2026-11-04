@@ -123,11 +123,15 @@ class ShareRelay(private val cfg: Config) {
                     return
                 }
                 val len = n - P.DATA_HEADER
+                // counted before it leaves, so the counters and the cap are
+                // current by the time anyone sees the datagram's effect
+                s.upBytes.addAndGet(len.toLong())
+                used.addAndGet(len.toLong())
                 try {
                     s.up.send(DatagramPacket(b, P.DATA_HEADER, len))
-                    s.upBytes.addAndGet(len.toLong())
-                    used.addAndGet(len.toLong())
                 } catch (_: Exception) {
+                    s.upBytes.addAndGet(-len.toLong())
+                    used.addAndGet(-len.toLong())
                 }
                 s.lastSeenMs = System.currentTimeMillis()
             }
@@ -214,9 +218,11 @@ class ShareRelay(private val cfg: Config) {
                 pkt.setLength(buf.size)
                 s.up.receive(pkt)
                 val len = P.data(out, s.id, buf, 0, pkt.length)
-                lan?.send(DatagramPacket(out, len, s.hubAddr))
+                // counted first, as upstream: the hub may ask for the
+                // counters (KEEPALIVE) the moment this frame reaches it
                 s.downBytes.addAndGet(pkt.length.toLong())
                 used.addAndGet(pkt.length.toLong())
+                lan?.send(DatagramPacket(out, len, s.hubAddr))
             } catch (_: SocketTimeoutException) {
             } catch (_: Exception) {
                 if (!s.closed) end(s, P.R_NO_CELLULAR, true)
