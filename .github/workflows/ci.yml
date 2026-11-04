@@ -86,6 +86,8 @@ jobs:
       # release files live on GitHub Releases only, never in git
       - name: No build outputs or files over 1 MB in git
         run: scripts/ci/check-tracked-files.sh
+      - name: Brand SVGs draw (beam gradient in user space, web copies match)
+        run: scripts/brand/check-svgs.sh
       - name: Release asset names (stable latest/download names, SHA256SUMS)
         run: scripts/release/test-collect-assets.sh
 
