@@ -32,8 +32,11 @@ const (
 type LinkConfig struct {
 	// Sharer is the sharer's LAN address.
 	Sharer *net.UDPAddr
-	// Key is the home server's share key; HubID names this hub to sharers.
+	// Key is this hub's pass for the sharer (PassKey, from the home
+	// server), valid until Exp (unix seconds); HubID is the name it was
+	// issued to. SetPass replaces them.
 	Key   []byte
+	Exp   uint64
 	HubID string
 	// LocalPort (optional) keeps mqvpn's relay address when a link is
 	// replaced (the sharer moved): 0 = any port.
@@ -70,6 +73,8 @@ type Link struct {
 	lan   *net.UDPConn
 
 	mu        sync.Mutex
+	key       []byte
+	exp       uint64
 	st        LinkStatus
 	hubNonce  [NonceLen]byte
 	sharerNon [NonceLen]byte
@@ -101,7 +106,7 @@ func NewLink(cfg LinkConfig) (*Link, error) {
 		local.Close()
 		return nil, err
 	}
-	return &Link{cfg: cfg, local: local, lan: lan, st: LinkStatus{State: StateConnecting, Addr: cfg.Sharer.String(), CapLeft: NoCap, Battery: -1}}, nil
+	return &Link{cfg: cfg, key: cfg.Key, exp: cfg.Exp, local: local, lan: lan, st: LinkStatus{State: StateConnecting, Addr: cfg.Sharer.String(), CapLeft: NoCap, Battery: -1}}, nil
 }
 
 // Local is the address mqvpn's relay path sends to.
@@ -112,6 +117,22 @@ func (l *Link) Status() LinkStatus {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.st
+}
+
+// SetPass replaces the pass for the next handshakes (a running session
+// keeps its own until the sharer ends it). A link refused for its old pass
+// tries again at once.
+func (l *Link) SetPass(key []byte, exp uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if string(key) == string(l.key) && exp == l.exp {
+		return
+	}
+	l.key, l.exp = key, exp
+	l.authTries = 0
+	if l.st.State == StateRefused {
+		l.retryAt = time.Time{}
+	}
 }
 
 // Ready reports an open session.
@@ -184,7 +205,7 @@ func (l *Link) hello(now time.Time) {
 	if l.st.Unanswered >= 3 && l.st.State != StateLost && l.st.State != StateRefused {
 		l.st.State = StateUnreachable
 	}
-	h := Hello{HubNonce: l.hubNonce, HubID: l.cfg.HubID}
+	h := Hello{HubNonce: l.hubNonce, Exp: l.exp, HubID: l.cfg.HubID}
 	_, _ = l.lan.WriteToUDP(h.Marshal(), l.cfg.Sharer)
 }
 
@@ -243,12 +264,12 @@ func (l *Link) control(b []byte, now time.Time) {
 		l.st.Unanswered = 0
 		l.authTries++
 		l.st.SharerID, l.st.Label = c.SharerID, c.Label
-		a := Auth{HubNonce: c.HubNonce, SharerNonce: c.SharerNonce, MAC: AuthMAC(l.cfg.Key, c.HubNonce, c.SharerNonce, l.cfg.HubID)}
+		a := Auth{HubNonce: c.HubNonce, SharerNonce: c.SharerNonce, MAC: AuthMAC(l.key, c.HubNonce, c.SharerNonce, l.cfg.HubID)}
 		_, _ = l.lan.WriteToUDP(a.Marshal(), l.cfg.Sharer)
 	case TypeWelcome:
 		var w Welcome
 		if w.Unmarshal(b) != nil || w.HubNonce != l.hubNonce || l.st.State == StateReady ||
-			!Equal(w.MAC, WelcomeMAC(l.cfg.Key, w.HubNonce, l.sharerNon, w.Session, w.CapLeft)) {
+			!Equal(w.MAC, WelcomeMAC(l.key, w.HubNonce, l.sharerNon, w.Session, w.CapLeft)) {
 			return
 		}
 		l.session = w.Session
@@ -260,7 +281,7 @@ func (l *Link) control(b []byte, now time.Time) {
 	case TypeRefuse:
 		var r Refuse
 		if r.Unmarshal(b) != nil || r.HubNonce != l.hubNonce ||
-			!Equal(r.MAC, RefuseMAC(l.cfg.Key, r.HubNonce, l.sharerNon, r.Reason)) {
+			!Equal(r.MAC, RefuseMAC(l.key, r.HubNonce, l.sharerNon, r.Reason)) {
 			return
 		}
 		l.st.State, l.st.Reason, l.st.Unanswered = StateRefused, ReasonText(r.Reason), 0
@@ -285,8 +306,8 @@ func (l *Link) control(b []byte, now time.Time) {
 		reason := b[1+SessionLen]
 		l.st.State, l.st.Reason = StateRefused, ReasonText(reason)
 		l.retryAt = now.Add(refusedRetry)
-		if reason == ReasonReplaced || reason == ReasonIdle {
-			l.retryAt = now
+		if reason == ReasonReplaced || reason == ReasonIdle || reason == ReasonExpired {
+			l.retryAt = now // with a fresh pass, if the server gave one
 		}
 		l.cfg.Logf("share: %s (%s) ended: %s", l.st.Label, l.cfg.Sharer, l.st.Reason)
 	}

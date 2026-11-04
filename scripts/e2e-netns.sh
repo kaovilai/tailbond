@@ -436,6 +436,11 @@ else
 fi
 grep -q '^Path = eth0' "$WORK/cli/state/client.conf" && grep -q '^Path = wlan0' "$WORK/cli/state/client.conf" \
   && ok "client.conf binds both paths" || bad "client.conf paths: $(grep Path "$WORK/cli/state/client.conf")"
+# Speed reorders: mqvpn takes its 8-byte header off after the cap, so the
+# cap is 1288 and the TUN still gets IPv6's minimum
+TBMTU="$(ip -n "$NS_C" -o link show tb0 2>/dev/null | sed -n 's/.* mtu \([0-9]*\) .*/\1/p')"
+[ "$TBMTU" = 1280 ] && ok "tb0 MTU 1280 in Speed (cap $(sed -n 's/^MTU = //p' "$WORK/cli/state/client.conf"))" \
+  || bad "tb0 MTU is ${TBMTU:-unknown}, not 1280 (client.conf: $(grep '^MTU' "$WORK/cli/state/client.conf"))"
 
 say "traffic through the tunnel"
 if ip netns exec "$NS_C" ping -c 5 -i 0.3 -W 2 10.77.0.1 >"$WORK/ping1" 2>&1; then

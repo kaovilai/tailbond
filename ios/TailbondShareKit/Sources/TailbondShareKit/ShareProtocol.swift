@@ -5,7 +5,13 @@ import Foundation
 /// agent/internal/share/proto.go; agent/internal/share/testdata/vectors.json
 /// pins Go, Android and this file to the same bytes.
 ///
-///     HELLO      01 ver hub_nonce[16] idlen id
+/// The sharer holds its own share key (from its pairing). A hub proves it
+/// holds a pass the home server gave it for this sharer, `passKey` of that
+/// key, the hub's name and the pass's expiry (exp in HELLO): MACs use the
+/// pass, so a hub can't claim another hub's name, and a removed one's access
+/// ends when its last pass expires.
+///
+///     HELLO      01 ver hub_nonce[16] exp[8] idlen id
 ///     CHALLENGE  02 ver hub_nonce[16] sharer_nonce[16] idlen id lablen label
 ///     AUTH       03 ver hub_nonce[16] sharer_nonce[16] mac[32]
 ///     WELCOME    04 ver hub_nonce[16] session[8] cap_left[8] mac[32]
@@ -37,7 +43,7 @@ public enum ShareProtocol {
     public static let noCap = UInt64.max
 
     public enum Reason: UInt8 {
-        case none = 0, notAllowed = 1, cap = 2, battery = 3, paused = 4, noCellular = 5, replaced = 6, idle = 7
+        case none = 0, notAllowed = 1, cap = 2, battery = 3, paused = 4, noCellular = 5, replaced = 6, idle = 7, expired = 8
     }
 
     public static let flagCharging: UInt8 = 1
@@ -68,15 +74,17 @@ public enum ShareProtocol {
         return v
     }
 
-    public struct Hello: Equatable { public var hubNonce: [UInt8]; public var hubID: String }
+    /// `exp`: the hub's pass expiry, unix seconds.
+    public struct Hello: Equatable { public var hubNonce: [UInt8]; public var exp: UInt64; public var hubID: String }
     public struct Auth: Equatable { public var hubNonce: [UInt8]; public var sharerNonce: [UInt8]; public var mac: [UInt8] }
 
     public static func parseHello(_ b: [UInt8]) -> Hello? {
-        guard b.count >= 3 + nonceLen, b[0] == hello, b[1] == version else { return nil }
-        let n = Int(b[2 + nonceLen])
-        guard b.count >= 3 + nonceLen + n else { return nil }
-        return Hello(hubNonce: Array(b[2..<2 + nonceLen]),
-                     hubID: String(decoding: b[3 + nonceLen..<3 + nonceLen + n], as: UTF8.self))
+        let at = 2 + nonceLen + 8 // the id's length byte
+        guard b.count >= at + 1, b[0] == hello, b[1] == version else { return nil }
+        let n = Int(b[at])
+        guard b.count >= at + 1 + n else { return nil }
+        return Hello(hubNonce: Array(b[2..<2 + nonceLen]), exp: read64(b, 2 + nonceLen),
+                     hubID: String(decoding: b[at + 1..<at + 1 + n], as: UTF8.self))
     }
 
     public static func parseAuth(_ b: [UInt8]) -> Auth? {
@@ -92,9 +100,9 @@ public enum ShareProtocol {
         return out
     }
 
-    public static func helloFrame(hubNonce: [UInt8], hubID: String) -> [UInt8] {
+    public static func helloFrame(hubNonce: [UInt8], exp: UInt64, hubID: String) -> [UInt8] {
         let id = idBytes(hubID)
-        return frame([hello, version], hubNonce, [UInt8(id.count)], id)
+        return frame([hello, version], hubNonce, be64(exp), [UInt8(id.count)], id)
     }
 
     public static func challengeFrame(hubNonce: [UInt8], sharerNonce: [UInt8], sharerID: String, label: String) -> [UInt8] {
@@ -136,6 +144,11 @@ public enum ShareProtocol {
         return Array(code)
     }
 
+    /// Hub `hubID`'s pass for the sharer holding `sharerKey`, until `exp` (unix seconds): the key of the MACs below.
+    public static func passKey(sharerKey: [UInt8], hubID: String, exp: UInt64) -> [UInt8] {
+        mac(sharerKey, "tbs1-pass", Array(hubID.utf8), be64(exp))
+    }
+
     public static func authMAC(key: [UInt8], hubNonce: [UInt8], sharerNonce: [UInt8], hubID: String) -> [UInt8] {
         mac(key, "tbs1-auth", hubNonce, sharerNonce, Array(hubID.utf8))
     }
@@ -148,7 +161,7 @@ public enum ShareProtocol {
         mac(key, "tbs1-refuse", hubNonce, sharerNonce, [reason.rawValue])
     }
 
-    /// Public tag of a share key (Bonjour TXT "k="): hubs skip other servers' sharers.
+    /// Public tag of a sharer's share key (Bonjour TXT "k="): hubs pick their pass by it.
     public static func keyID(_ key: [UInt8]) -> String {
         mac(key, "tbs1-keyid").prefix(4).map { String(format: "%02x", $0) }.joined()
     }

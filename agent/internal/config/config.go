@@ -29,7 +29,8 @@ const (
 
 	DefaultPath    = "/etc/tailbond/tailbond.json"
 	DefaultTunName = "tb0"
-	// DefaultClientMTU is safe on any IPv4/IPv6 uplink (the Android app uses it too).
+	// DefaultClientMTU is the tunnel's MTU: IPv6's minimum, safe on any
+	// IPv4/IPv6 uplink (the Android app uses it too).
 	DefaultClientMTU = 1280
 	DefaultCtlAddr   = "127.0.0.1:9077"
 	DefaultListen    = ":8077"
@@ -100,7 +101,8 @@ type Client struct {
 	ManageRoutes *bool `json:"manage_routes,omitempty"`
 	// Additive: keep mqvpn from changing the system resolver (OpenWrt, tests).
 	NoDNS bool `json:"no_dns,omitempty"`
-	// MTU of the tunnel device. 0 = DefaultClientMTU. mqvpn's own "auto"
+	// MTU of the tunnel device (in every mode: Speed asks mqvpn for 8 more
+	// to cover its reorder header). 0 = DefaultClientMTU. mqvpn's own "auto"
 	// assumes a 1500-byte uplink; cellular, hotel and WSL links are often
 	// smaller, and then every packet above ~1250 bytes is lost.
 	MTU int `json:"mtu,omitempty"`
@@ -126,11 +128,10 @@ type Client struct {
 	BypassLocalDNS *bool  `json:"bypass_local_dns,omitempty"`
 	// Additive: Pair & Share (docs/pair-and-share.md). UseShares: bond the
 	// mobile data nearby devices share (default on). Share: this machine
-	// shares one of its own uplinks (an LTE dongle). ShareKey caches the
-	// server's share key for pairings made before it existed.
+	// shares one of its own uplinks (an LTE dongle). Keys and passes from
+	// the server are cached per pairing in the state dir (share-cache.json).
 	UseShares *bool        `json:"use_shares,omitempty"`
 	Share     *ShareConfig `json:"share,omitempty"`
-	ShareKey  string       `json:"share_key,omitempty"`
 }
 
 // ShareConfig: this machine lends Iface's data to hubs on its LAN.

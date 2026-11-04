@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -71,19 +72,47 @@ type shareRegistry struct {
 	m  map[string]regSharer
 }
 
-// serverShareKey is this server's share key (created once).
-func (a *Agent) serverShareKey() string {
+// shareSecret is the server's share secret (state dir share.key, random,
+// created once, in backups). Devices' share keys are derived from it.
+func (a *Agent) shareSecret() []byte {
 	k, err := a.stateSecret("share.key")
 	if err != nil {
 		a.Logf("share key: %v", err)
+		return nil
+	}
+	return []byte(k)
+}
+
+// shareKeyFor is device u's share key ("" without a secret).
+func (a *Agent) shareKeyFor(u config.User) string {
+	sec := a.shareSecret()
+	if sec == nil || u.Key == "" {
 		return ""
 	}
-	return k
+	return share.ClientKey(sec, u.Name, u.Key)
+}
+
+// passExpiry: passes run to the end of tomorrow (UTC), so a hub's pass stays
+// the same all day and lasts at least a day without the server; a removed
+// device's last pass runs out within two.
+func passExpiry(now time.Time) uint64 {
+	y, m, d := now.UTC().Date()
+	return uint64(time.Date(y, m, d+2, 0, 0, 0, 0, time.UTC).Unix())
+}
+
+// sharePass is a hub's pass for one sharer (by its key id).
+type sharePass struct {
+	KeyID string `json:"key_id"`
+	Key   string `json:"key"` // hex
+	Exp   uint64 `json:"exp"`
 }
 
 type sharesView struct {
+	// server, to a paired device: its own share key, and its passes for
+	// every other device's shares
 	Key     string      `json:"key,omitempty"`
 	KeyID   string      `json:"key_id,omitempty"`
+	Passes  []sharePass `json:"passes,omitempty"`
 	Sharers []regSharer `json:"sharers"`
 	// client role
 	Shares  []status.Share  `json:"shares,omitempty"`
@@ -91,8 +120,9 @@ type sharesView struct {
 	Sharing *status.Sharing `json:"sharing,omitempty"`
 }
 
-// hShares: server — the share key (to paired clients) and the sharers
-// registered in the last few minutes; client — this hub's shares.
+// hShares: server — to a paired device (client token) its share key and
+// passes, and the sharers registered in the last few minutes; client —
+// this hub's shares.
 func (a *Agent) hShares(w http.ResponseWriter, r *http.Request) {
 	if a.role == config.RoleClient {
 		st := &status.Status{}
@@ -101,15 +131,31 @@ func (a *Agent) hShares(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := sharesView{Sharers: []regSharer{}}
-	if a.clientForToken(r) != "" || a.authorized(r) {
-		if k := a.serverShareKey(); k != "" {
-			v.Key, v.KeyID = k, share.KeyID([]byte(k))
+	users := a.store.Get().Server.Users
+	if c := a.clientForToken(r); c != "" {
+		if sec := a.shareSecret(); sec != nil {
+			exp := passExpiry(time.Now())
+			for _, u := range users {
+				if u.Key == "" {
+					continue
+				}
+				k := share.ClientKey(sec, u.Name, u.Key)
+				if u.Name == c {
+					v.Key, v.KeyID = k, share.KeyID([]byte(k))
+					continue
+				}
+				v.Passes = append(v.Passes, sharePass{KeyID: share.KeyID([]byte(k)), Key: hex.EncodeToString(share.PassKey([]byte(k), c, exp)), Exp: exp})
+			}
 		}
+	}
+	paired := map[string]bool{}
+	for _, u := range users {
+		paired[u.Name] = true
 	}
 	a.shareReg.mu.Lock()
 	now := time.Now()
 	for id, s := range a.shareReg.m {
-		if now.Sub(s.Seen) > shareRegTTL {
+		if now.Sub(s.Seen) > shareRegTTL || !paired[s.Client] {
 			delete(a.shareReg.m, id)
 			continue
 		}
@@ -118,6 +164,17 @@ func (a *Agent) hShares(w http.ResponseWriter, r *http.Request) {
 	a.shareReg.mu.Unlock()
 	sort.Slice(v.Sharers, func(i, j int) bool { return v.Sharers[i].ID < v.Sharers[j].ID })
 	writeJSON(w, http.StatusOK, v)
+}
+
+// dropSharers forgets a removed device's registered shares.
+func (a *Agent) dropSharers(client string) {
+	a.shareReg.mu.Lock()
+	defer a.shareReg.mu.Unlock()
+	for id, s := range a.shareReg.m {
+		if s.Client == client {
+			delete(a.shareReg.m, id)
+		}
+	}
 }
 
 // hShareRegister: a sharer (with its client token) says where it is.
@@ -144,6 +201,12 @@ func (a *Agent) hShareRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	in.LAN, in.Client, in.Seen = lan, client, time.Now()
+	// the key id is the server's to say: hubs pick the pass by it
+	for _, u := range a.store.Get().Server.Users {
+		if u.Name == client {
+			in.KeyID = share.KeyID([]byte(a.shareKeyFor(u)))
+		}
+	}
 	a.shareReg.mu.Lock()
 	if len(a.shareReg.m) >= 64 && a.shareReg.m[in.ID].ID == "" {
 		a.shareReg.mu.Unlock()
@@ -181,6 +244,18 @@ type shareState struct {
 	sharerID     string
 	sharerLabel  string
 	lastReg      time.Time
+
+	// what the home server said, per pairing (share-cache.json)
+	cache       map[string]shareCacheEntry
+	cacheLoaded bool
+}
+
+// shareCacheEntry is one pairing's share key (for pairings made before
+// pairings carried it) and the hub's passes, kept so sharing still works
+// while the server can't be reached (a share may be the only way out).
+type shareCacheEntry struct {
+	Key    string      `json:"key,omitempty"`
+	Passes []sharePass `json:"passes,omitempty"`
 }
 
 func newShareState() *shareState { return &shareState{links: map[string]*hubLink{}} }
@@ -192,15 +267,104 @@ func sharePathName(id string) string {
 	return "sh" + hex.EncodeToString(h[:3])
 }
 
-// clientShareKey: the pairing's, else the one cached from the server.
+// pairingID names a pairing in the share cache (not its key).
+func pairingID(p *pairing.Payload) string {
+	h := sha256.Sum256([]byte("tbs1-pairing\x00" + p.Server + "\x00" + p.User + "\x00" + p.Key))
+	return hex.EncodeToString(h[:8])
+}
+
+func (a *Agent) shareCachePath() string {
+	return filepath.Join(a.store.Get().StateDir, "share-cache.json")
+}
+
+// shareCacheLocked loads the cache once. Caller holds a.mu.
+func (a *Agent) shareCacheLocked() map[string]shareCacheEntry {
+	ss := a.client.share
+	if !ss.cacheLoaded {
+		ss.cacheLoaded = true
+		ss.cache = map[string]shareCacheEntry{}
+		if b, err := os.ReadFile(a.shareCachePath()); err == nil {
+			_ = json.Unmarshal(b, &ss.cache)
+		}
+	}
+	return ss.cache
+}
+
+// setShareCache stores what the server said for p's pairing; entries of
+// pairings no longer configured go.
+func (a *Agent) setShareCache(p *pairing.Payload, e shareCacheEntry) {
+	id := pairingID(p)
+	a.mu.Lock()
+	c := a.shareCacheLocked()
+	old, had := c[id]
+	same := had && old.Key == e.Key && slices.Equal(old.Passes, e.Passes)
+	known := map[string]bool{id: true}
+	if a.client.payload != nil {
+		known[pairingID(a.client.payload)] = true
+	}
+	for _, s := range a.client.servers {
+		if s.payload != nil {
+			known[pairingID(s.payload)] = true
+		}
+	}
+	for k := range c {
+		if !known[k] {
+			delete(c, k)
+			same = false
+		}
+	}
+	c[id] = e
+	var b []byte
+	if !same {
+		b, _ = json.Marshal(c)
+	}
+	a.mu.Unlock()
+	if b != nil {
+		if err := writeFileAtomic(a.shareCachePath(), b, 0o600); err != nil {
+			a.Logf("share: %v", err)
+		}
+	}
+}
+
+func (a *Agent) shareCacheFor(p *pairing.Payload) shareCacheEntry {
+	if p == nil {
+		return shareCacheEntry{}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.shareCacheLocked()[pairingID(p)]
+}
+
+// clientShareKey: this device's share key, the pairing's, else the one the
+// server gave this pairing.
 func (a *Agent) clientShareKey(p *pairing.Payload) []byte {
 	if p != nil && p.ShareKey != "" {
 		return []byte(p.ShareKey)
 	}
-	if k := a.store.Get().Client.ShareKey; k != "" {
+	if k := a.shareCacheFor(p).Key; k != "" {
 		return []byte(k)
 	}
 	return nil
+}
+
+// hubPass is a pass decoded for a link.
+type hubPass struct {
+	key []byte
+	exp uint64
+}
+
+// hubPasses: this pairing's unexpired passes, by sharer key id.
+func (a *Agent) hubPasses(p *pairing.Payload) map[string]hubPass {
+	out := map[string]hubPass{}
+	now := uint64(max(time.Now().Unix(), 0))
+	for _, ps := range a.shareCacheFor(p).Passes {
+		k, err := hex.DecodeString(ps.Key)
+		if err != nil || len(k) == 0 || ps.Exp <= now {
+			continue
+		}
+		out[ps.KeyID] = hubPass{key: k, exp: ps.Exp}
+	}
+	return out
 }
 
 // serverAPI calls the active server's API through the tunnel with this
@@ -276,21 +440,22 @@ func (a *Agent) shareRound(ctx context.Context) {
 	a.mu.Unlock()
 
 	var reg *sharesView
-	if ready {
+	if ready && p != nil {
 		if b, err := a.serverAPI(ctx, http.MethodGet, "/api/shares", nil); err == nil {
 			var v sharesView
 			if json.Unmarshal(b, &v) == nil {
 				reg = &v
-				// cache the key for pairings made before share keys existed
-				if v.Key != "" && (p == nil || p.ShareKey == "") && cfg.Client.ShareKey != v.Key {
-					_, _ = a.store.Update(func(c *config.Config) error { c.Client.ShareKey = v.Key; return nil })
+				e := shareCacheEntry{Passes: v.Passes}
+				if p.ShareKey == "" {
+					e.Key = v.Key // pairings made before they carried it
 				}
+				a.setShareCache(p, e)
 			}
 		}
 	}
 	key := a.clientShareKey(p)
 	a.runSharer(ctx, cfg, p, key, ready)
-	changed := a.runHub(ctx, cfg, p, key, reg)
+	changed := a.runHub(ctx, cfg, p, a.hubPasses(p), reg)
 	if changed {
 		select {
 		case a.rescan <- struct{}{}:
@@ -303,19 +468,18 @@ func (a *Agent) shareRound(ctx context.Context) {
 
 // runHub finds sharers and keeps a link to each; true when a link's
 // readiness changed (the path set may change).
-func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Payload, key []byte, reg *sharesView) bool {
+func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Payload, passes map[string]hubPass, reg *sharesView) bool {
 	a.mu.Lock()
 	ss := a.client.share
 	own := ss.sharerID
 	a.mu.Unlock()
-	if !cfg.Client.SharesUsed() || p == nil || len(key) == 0 {
-		a.stopLinks(func(*hubLink) bool { return true })
+	if !cfg.Client.SharesUsed() || p == nil || len(passes) == 0 {
+		stopped := a.stopLinks(func(*hubLink) bool { return true })
 		a.mu.Lock()
 		ss.note = ""
 		a.mu.Unlock()
-		return false
+		return stopped > 0 // the path set lost them
 	}
-	kid := share.KeyID(key)
 	skip := []string{config.DefaultTunName}
 	if cfg.Client.Share != nil && cfg.Client.Share.Enabled {
 		skip = append(skip, cfg.Client.Share.Iface)
@@ -332,7 +496,7 @@ func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Paylo
 	fromServer := map[string]bool{}
 	if reg != nil {
 		for _, r := range reg.Sharers {
-			if r.Client == p.User || r.KeyID != kid {
+			if _, ok := passes[r.KeyID]; !ok || r.Client == p.User {
 				continue
 			}
 			for _, ip := range r.LAN {
@@ -348,8 +512,9 @@ func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Paylo
 	changed := false
 	a.mu.Lock()
 	for _, f := range found {
-		if f.KeyID != kid || f.ID == own || f.Addr == nil {
-			continue
+		pass, ok := passes[f.KeyID]
+		if !ok || f.ID == own || f.Addr == nil {
+			continue // another server's, or a removed device's
 		}
 		hl := ss.links[f.ID]
 		if hl != nil && hl.found.Addr.String() != f.Addr.String() && (f.Via == "mdns" || !hl.mdns) {
@@ -357,10 +522,12 @@ func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Paylo
 			port := hl.link.Local().Port
 			hl.cancel()
 			delete(ss.links, f.ID)
-			hl = a.newHubLinkLocked(ss, f, p.User, key, port)
+			hl = a.newHubLinkLocked(ss, f, p.User, pass, port)
 		} else if hl == nil {
-			hl = a.newHubLinkLocked(ss, f, p.User, key, 0)
+			hl = a.newHubLinkLocked(ss, f, p.User, pass, 0)
 			changed = true
+		} else {
+			hl.link.SetPass(pass.key, pass.exp) // renewed daily
 		}
 		if hl == nil {
 			continue
@@ -377,6 +544,13 @@ func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Paylo
 	}
 	note := ""
 	for id, hl := range ss.links {
+		if _, ok := passes[hl.found.KeyID]; !ok {
+			// the server no longer gives a pass for it: removed
+			hl.cancel()
+			delete(ss.links, id)
+			changed = true
+			continue
+		}
 		st := hl.link.Status()
 		ready := st.State == share.StateReady
 		if ready != hl.ready {
@@ -422,13 +596,13 @@ func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Paylo
 }
 
 // newHubLinkLocked starts a link. Caller holds a.mu.
-func (a *Agent) newHubLinkLocked(ss *shareState, f share.Found, hubID string, key []byte, localPort int) *hubLink {
+func (a *Agent) newHubLinkLocked(ss *shareState, f share.Found, hubID string, pass hubPass, localPort int) *hubLink {
 	onChange := func(st share.LinkStatus) {
 		// ready <-> not ready changes the path set: re-check now, not at
 		// the next round (a dead relay path loses most of what it's given)
 		go a.reconcilePaths(true)
 	}
-	l, err := share.NewLink(share.LinkConfig{Sharer: f.Addr, Key: key, HubID: hubID, LocalPort: localPort, Logf: a.Logf, OnChange: onChange})
+	l, err := share.NewLink(share.LinkConfig{Sharer: f.Addr, Key: pass.key, Exp: pass.exp, HubID: hubID, LocalPort: localPort, Logf: a.Logf, OnChange: onChange})
 	if err != nil {
 		a.Logf("share: link to %s: %v", f.Addr, err)
 		return nil
@@ -441,15 +615,19 @@ func (a *Agent) newHubLinkLocked(ss *shareState, f share.Found, hubID string, ke
 	return hl
 }
 
-func (a *Agent) stopLinks(which func(*hubLink) bool) {
+// stopLinks ends the links which picks; how many it ended.
+func (a *Agent) stopLinks(which func(*hubLink) bool) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	n := 0
 	for id, hl := range a.client.share.links {
 		if which(hl) {
 			hl.cancel()
 			delete(a.client.share.links, id)
+			n++
 		}
 	}
+	return n
 }
 
 func localSubnets(ifaces []net.Interface) []netip.Prefix {

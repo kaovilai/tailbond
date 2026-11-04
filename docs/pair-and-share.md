@@ -13,6 +13,8 @@ with its own Wi-Fi and Ethernet in one tunnel to your home server.
   an LTE dongle (`client.share`, below).
 
 Only devices paired with the **same home server** can share with each other.
+Removing a device on the home server (Clients → remove) also ends its sharing,
+both ways, within two days at most.
 
 ## At a hotel, step by step
 
@@ -81,19 +83,24 @@ other devices' shares.
 
 1. **Discovery.** Sharers advertise `_tailbond-share._udp` over mDNS
    (Android NSD, iOS Bonjour, the agent's own responder) with TXT `v=1`,
-   `id`, `n` (label) and `k` (a public tag of the server's share key, so a hub
+   `id`, `n` (label) and `k` (a public tag of the sharer's share key, so a hub
    ignores other servers' sharers). Sharers that are connected also register
    their LAN address with the home server (`POST /api/shares`); a hub lists
    them (`GET /api/shares`) and uses those on one of its own subnets. That
    catches networks where multicast doesn't pass, and it's how the hub tells
    client isolation apart: the server lists a sharer on our subnet, mDNS never
    saw it, and it never answers.
-2. **Session.** The hub and the sharer prove to each other that they hold the
-   server's **share key** (an HMAC challenge, [protocol](architecture.md#pair--share)).
-   The key comes in every pairing (`share_key`) and, for older pairings, from
-   `GET /api/shares` with the client token. The sharer forwards only to **its
-   own home server**, so it isn't an open relay; frames from any address but
-   the session's hub are dropped.
+2. **Session.** Each paired device has its **own share key**, which comes
+   in its pairing (`share_key`; older pairings get it from `GET /api/shares`
+   with the client token). The hub asks its home server for a **pass** for
+   each nearby sharer: derived from that sharer's key, the hub's own name and
+   an expiry (the end of tomorrow). The sharer derives the same pass from its
+   key and what the hub says in its hello, so it checks the hub without
+   reaching the server ([protocol](architecture.md#pair--share)). A hub
+   can't pass itself off as another one (so **allowed hubs** really means
+   those devices), and a removed device gets no new passes. The sharer
+   forwards only to **its own home server**, so it isn't an open relay;
+   frames from any address but the session's hub are dropped.
 3. **Relay.** The hub's mqvpn runs the share as a **relay path**: it sends
    that path's QUIC datagrams to the hub agent on `127.0.0.1`, which frames
    them (9 bytes: type + session) to the sharer, which sends the datagram

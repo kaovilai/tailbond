@@ -115,9 +115,10 @@ wait_for 20 "server up" sh -c "ip netns exec $NS_S curl -fsS -m 2 http://$API/ap
   && ok "server up" || { bad "server did not come up"; exit 1; }
 pair() { sapi -X POST -d "{\"name\":\"$1\"}" "http://$API/api/clients" | jq -r .uri; }
 HUB_URI="$(pair slate7)"; PHN_URI="$(pair pixel)"
-B64="${PHN_URI#tailbond://pair?d=}"; while [ $(( ${#B64} % 4 )) -ne 0 ]; do B64="$B64="; done
-printf '%s' "$B64" | tr '_-' '/+' | base64 -d | jq -e '.share_key | length > 20' >/dev/null \
-  && ok "pairings carry the server's share key" || bad "no share_key in the pairing"
+share_key_of() { local b="${1#tailbond://pair?d=}"; while [ $(( ${#b} % 4 )) -ne 0 ]; do b="$b="; done; printf '%s' "$b" | tr '_-' '/+' | base64 -d | jq -r '.share_key // ""'; }
+PK="$(share_key_of "$PHN_URI")"; HK="$(share_key_of "$HUB_URI")"
+[ "${#PK}" -gt 20 ] && [ "${#HK}" -gt 20 ] && [ "$PK" != "$HK" ] \
+  && ok "each pairing carries its own share key" || bad "share keys missing or shared: phone ${#PK} hub ${#HK} chars"
 
 say "phone: client role over wwan0, sharing wwan0 on its Wi-Fi"
 cat >"$WORK/phn/tailbond.json" <<EOF
@@ -210,6 +211,13 @@ else
   bad "no isolation note: $(hapi "http://$API/api/status" | jq -c '{shares, share_note}')"
 fi
 hapi "http://$API/api/status" | jq -e '.state == "connected"' >/dev/null && ok "hub still connected over eth0" || bad "hub not connected"
+
+say "the phone is removed on the server: the hub stops using its share"
+sapi -X DELETE "http://$API/api/clients/pixel" >/dev/null && ok "pixel removed" || bad "could not remove pixel"
+wait_for 40 "hub dropped the removed phone's share" sh -c "ip netns exec $NS_H curl -fsS -m 2 http://$API/api/status | jq -e '[.shares[]?] | length == 0'" \
+  && ok "hub no longer lists the removed phone's share" || bad "hub still lists it: $(hapi "http://$API/api/status" | jq -c .shares)"
+sapi "http://$API/api/shares" | jq -e '.sharers | length == 0' >/dev/null \
+  && ok "server forgot the removed phone's registration" || bad "registry still lists it: $(sapi "http://$API/api/shares" | jq -c .sharers)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

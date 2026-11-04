@@ -89,8 +89,11 @@ final class ShareModel: ObservableObject {
         do {
             let p = try SharePairing.parse(text)
             Keychain.save(try JSONEncoder().encode(p))
+            let wasSharing = sharing
+            if wasSharing { stop() } // the relay holds the old pairing's key and server
             pairing = p
             pairError = nil
+            if wasSharing { start() }
         } catch SharePairing.ParseError.noShareKey {
             pairError = "This pairing is from an older home server. Update tailbond on it, then make a new code."
         } catch {
@@ -140,6 +143,14 @@ final class ShareModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.status = st
+                if self.usedMonth != self.month {
+                    // a new month while sharing: the relay's count and the
+                    // stored one start over together
+                    self.usedMonth = self.month
+                    self.usedBytesStored = 0
+                    self.relay?.resetUsage()
+                    return
+                }
                 self.usedBytesStored = Double(st.used)
             }
         }

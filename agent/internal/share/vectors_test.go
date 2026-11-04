@@ -10,7 +10,9 @@ import (
 // testdata/vectors.json pins the wire format and MACs; the Android and iOS
 // relays check theirs against the same file (UPDATE_VECTORS=1 rewrites it).
 type vectors struct {
-	Key         string `json:"key"`
+	Key         string `json:"key"` // the sharer's share key
+	Exp         uint64 `json:"exp"`
+	PassKey     string `json:"pass_key"` // the hub's pass: MACs below use it
 	HubNonce    string `json:"hub_nonce"`
 	SharerNonce string `json:"sharer_nonce"`
 	HubID       string `json:"hub_id"`
@@ -36,18 +38,20 @@ type vectors struct {
 
 func buildVectors() vectors {
 	key := []byte("tailbond-share-key-for-vectors-0")
+	const exp = 1767225600 // 2026-01-01T00:00:00Z
+	pass := PassKey(key, "slate7", exp)
 	var hn, sn [NonceLen]byte
 	for i := range hn {
 		hn[i], sn[i] = byte(i), byte(0xa0+i)
 	}
 	sess := [SessionLen]byte{1, 2, 3, 4, 5, 6, 7, 8}
 	h := hex.EncodeToString
-	am, wm, rm := AuthMAC(key, hn, sn, "slate7"), WelcomeMAC(key, hn, sn, sess, 1<<30), RefuseMAC(key, hn, sn, ReasonBattery)
+	am, wm, rm := AuthMAC(pass, hn, sn, "slate7"), WelcomeMAC(pass, hn, sn, sess, 1<<30), RefuseMAC(pass, hn, sn, ReasonBattery)
 	return vectors{
-		Key: string(key), HubNonce: h(hn[:]), SharerNonce: h(sn[:]), HubID: "slate7", SharerID: "pixel-1", Label: "Pixel's 5G",
+		Key: string(key), Exp: exp, PassKey: h(pass), HubNonce: h(hn[:]), SharerNonce: h(sn[:]), HubID: "slate7", SharerID: "pixel-1", Label: "Pixel's 5G",
 		Session: h(sess[:]), CapLeft: 1 << 30, Reason: ReasonBattery, KeyID: KeyID(key),
 		AuthMAC: h(am[:]), WelcomeMAC: h(wm[:]), RefuseMAC: h(rm[:]),
-		Hello:     h((&Hello{HubNonce: hn, HubID: "slate7"}).Marshal()),
+		Hello:     h((&Hello{HubNonce: hn, Exp: exp, HubID: "slate7"}).Marshal()),
 		Challenge: h((&Challenge{HubNonce: hn, SharerNonce: sn, SharerID: "pixel-1", Label: "Pixel's 5G"}).Marshal()),
 		Auth:      h((&Auth{HubNonce: hn, SharerNonce: sn, MAC: am}).Marshal()),
 		Welcome:   h((&Welcome{HubNonce: hn, Session: sess, CapLeft: 1 << 30, MAC: wm}).Marshal()),

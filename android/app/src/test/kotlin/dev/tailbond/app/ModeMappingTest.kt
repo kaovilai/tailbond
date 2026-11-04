@@ -103,6 +103,16 @@ class ModeMappingTest {
         assertEquals(Scheduler.MIN_RTT, TunnelPlan.config(pairing, AppSettings(mode = Mode.FAILOVER)).scheduler)
     }
 
+    /** The TUN gets 1280 (IPv6's minimum) in every mode: Speed's cap covers mqvpn's 8-byte reorder header. */
+    @Test fun tunnelMtuIsAtLeast1280InEveryMode() {
+        for (m in Mode.entries) {
+            val c = TunnelPlan.config(pairing, AppSettings(mode = m))
+            val tun = c.tunMtu - if (c.reorderEnabled) TunnelPlan.REORDER_HEADER else 0
+            assertEquals("$m", 1280, tun)
+        }
+        assertEquals(1288, TunnelPlan.config(pairing, AppSettings(mode = Mode.SPEED)).tunMtu)
+    }
+
     @Test fun pinnedSelfSigned() {
         val pin = "ab".repeat(32)
         val c = TunnelPlan.config(pairing.copy(insecure = true, certSha256 = pin), AppSettings())

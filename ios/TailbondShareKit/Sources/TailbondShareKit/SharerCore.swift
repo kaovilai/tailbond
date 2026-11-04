@@ -9,6 +9,7 @@ public final class SharerCore {
     public struct Config {
         public var id: String
         public var label: String
+        /// This iPhone's own share key (its pairing's): hubs' passes derive from it.
         public var key: [UInt8]
         public var capBytes: UInt64 // 0 = no cap
         public var usedBytes: UInt64
@@ -51,14 +52,17 @@ public final class SharerCore {
         public var since: Date
     }
 
-    struct Pending { var sharerNonce: [UInt8]; var hubID: String; var from: Hub; var at: Date }
+    struct Pending { var sharerNonce: [UInt8]; var hubID: String; var exp: UInt64; var from: Hub; var at: Date }
     final class Session {
         let id: [UInt8], hubID: String, hub: Hub, since: Date
+        /// The hub's pass expiry (unix seconds): the session ends with it.
+        let exp: UInt64
         var up: UInt64 = 0, down: UInt64 = 0
         var lastSeen: Date
-        init(id: [UInt8], hubID: String, hub: Hub, now: Date) {
+        init(id: [UInt8], hubID: String, exp: UInt64, hub: Hub, now: Date) {
             self.id = id
             self.hubID = hubID
+            self.exp = exp
             self.hub = hub
             since = now
             lastSeen = now
@@ -85,6 +89,33 @@ public final class SharerCore {
     var capLeft: UInt64 {
         if config.capBytes == 0 { return ShareProtocol.noCap }
         return used >= config.capBytes ? 0 : config.capBytes - used
+    }
+
+    static func expired(_ exp: UInt64, _ now: Date) -> Bool {
+        let t = now.timeIntervalSince1970
+        return t < 0 || UInt64(t) > exp
+    }
+
+    /// New limits, at once: hubs no longer allowed are dropped, and a cap now
+    /// reached ends every session (a raised one lets hubs back in).
+    public func updateLimits(capBytes: UInt64, allowedHubs: Set<String>) -> [Action] {
+        config.capBytes = capBytes
+        config.allowedHubs = allowedHubs
+        var out: [Action] = []
+        if !allowedHubs.isEmpty {
+            for s in sessions.values where !allowedHubs.contains(s.hubID) { out += end(s, .notAllowed, bye: true) }
+        }
+        if capLeft == 0 { out += stopAll(.cap) }
+        return out
+    }
+
+    /// A new month: the cap counts from zero again.
+    public func resetUsage() { used = 0 }
+
+    /// Whether `hub` has a session or a handshake under way (else the
+    /// transport may forget it).
+    public func knows(_ hub: Hub) -> Bool {
+        sessions.values.contains { $0.hub == hub } || pending.values.contains { $0.from == hub }
     }
 
     static func random(_ n: Int) -> [UInt8] {
@@ -122,20 +153,24 @@ public final class SharerCore {
         case P.hello:
             guard let h = P.parseHello(b), pending.count < 64 else { return [] }
             let sn = Self.random(P.nonceLen)
-            pending[h.hubNonce] = Pending(sharerNonce: sn, hubID: h.hubID, from: from, at: now)
+            pending[h.hubNonce] = Pending(sharerNonce: sn, hubID: h.hubID, exp: h.exp, from: from, at: now)
             return [.toHub(from, P.challengeFrame(hubNonce: h.hubNonce, sharerNonce: sn, sharerID: config.id, label: config.label))]
         case P.auth:
             guard let a = P.parseAuth(b), let p = pending.removeValue(forKey: a.hubNonce) else { return [] }
+            // the hub's pass for this iPhone: bound to its name and expiry, so a
+            // hub can't use another hub's name
+            let pass = P.passKey(sharerKey: config.key, hubID: p.hubID, exp: p.exp)
             // a wrong key, a replay or a stranger gets no answer at all
             guard p.sharerNonce == a.sharerNonce, p.from == from,
-                  P.macEqual(a.mac, P.authMAC(key: config.key, hubNonce: a.hubNonce, sharerNonce: a.sharerNonce, hubID: p.hubID))
+                  P.macEqual(a.mac, P.authMAC(key: pass, hubNonce: a.hubNonce, sharerNonce: a.sharerNonce, hubID: p.hubID))
             else { return [] }
             var reason = check().reason
+            if Self.expired(p.exp, now) { reason = .expired }
             if reason == .none, !config.allowedHubs.isEmpty, !config.allowedHubs.contains(p.hubID) { reason = .notAllowed }
             if reason == .none, capLeft == 0 { reason = .cap }
             if reason != .none {
                 return [.toHub(from, P.refuseFrame(hubNonce: a.hubNonce, reason: reason,
-                                                    mac: P.refuseMAC(key: config.key, hubNonce: a.hubNonce, sharerNonce: a.sharerNonce, reason: reason)))]
+                                                    mac: P.refuseMAC(key: pass, hubNonce: a.hubNonce, sharerNonce: a.sharerNonce, reason: reason)))]
             }
             var out: [Action] = []
             if let old = sessions.values.first(where: { $0.hubID == p.hubID }) {
@@ -143,12 +178,12 @@ public final class SharerCore {
             } else if sessions.count >= 8 {
                 return []
             }
-            let s = Session(id: Self.random(P.sessionLen), hubID: p.hubID, hub: from, now: now)
+            let s = Session(id: Self.random(P.sessionLen), hubID: p.hubID, exp: p.exp, hub: from, now: now)
             sessions[s.id] = s
             let cap = capLeft
             out.append(.openUpstream(session: s.id))
             out.append(.toHub(from, P.welcomeFrame(hubNonce: a.hubNonce, session: s.id, capLeft: cap,
-                                                   mac: P.welcomeMAC(key: config.key, hubNonce: a.hubNonce, sharerNonce: a.sharerNonce, session: s.id, capLeft: cap))))
+                                                   mac: P.welcomeMAC(key: pass, hubNonce: a.hubNonce, sharerNonce: a.sharerNonce, session: s.id, capLeft: cap))))
             return out
         default:
             return []
@@ -173,6 +208,10 @@ public final class SharerCore {
     public func tick(now: Date = Date()) -> [Action] {
         pending = pending.filter { now.timeIntervalSince($0.value.at) <= 10 }
         var out: [Action] = []
+        // a removed hub gets no new pass: its sessions end with its last one
+        for s in sessions.values where Self.expired(s.exp, now) {
+            out += end(s, .expired, bye: true)
+        }
         for s in sessions.values where now.timeIntervalSince(s.lastSeen) > 30 {
             out += end(s, .idle, bye: true)
         }

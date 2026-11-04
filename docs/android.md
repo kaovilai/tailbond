@@ -208,8 +208,7 @@ on the runner, which the emulator reaches as `10.0.2.2`:
   opens the `tailbond://pair` deep link and taps **Add phone** (found with
   `uiautomator dump`), then connects with the app's own connect action (the
   one the quick settings tile sends). It checks: a VPN network in `dumpsys
-  connectivity`, `tun0` with `10.77.0.x` and MTU 1280 (1272 in Speed, less
-  the reorder header), `ping 10.77.0.1`, the token through the tunnel (and
+  connectivity`, `tun0` with `10.77.0.x` and MTU 1280 (in every mode), `ping 10.77.0.1`, the token through the tunnel (and
   not before it), the server's `/api/status` (the phone connected, kind
   `android`), the machine list from `GET /api/peers`, **two paths** (the
   emulator's Wi-Fi and cellular; `requestNetwork(CELLULAR)` keeps cellular up
@@ -491,9 +490,10 @@ Two ways to let traffic use the phone's own connection instead of tailbond:
   addresses ([Skipping the tunnel](#skipping-the-tunnel)).
 - **DNS**: the pairing's `dns` list (default `10.77.0.1`, the server's
   forwarder that resolves MagicDNS names).
-- **MTU**: the tunnel is capped at 1280 (`TunnelPlan.TUN_MTU`, the same as
-  tailbondd's `client.mtu`), 1272 in Speed where the reorder header takes 8
-  bytes. mqvpn's auto value (1382) assumes a 1500-byte uplink; cellular and
+- **MTU**: the tunnel is 1280 (`TunnelPlan.TUN_MTU`, the same as
+  tailbondd's `client.mtu`, IPv6's minimum) in every mode: in Speed mqvpn
+  takes its 8-byte reorder header off after the cap, so the cap is 1288
+  there. mqvpn's auto value (1382) assumes a 1500-byte uplink; cellular and
   hotel Wi-Fi often carry less, and larger packets were lost.
 
 ## Wi-Fi sign-in pages (captive portals)

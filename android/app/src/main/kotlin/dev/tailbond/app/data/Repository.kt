@@ -12,6 +12,11 @@ import dev.tailbond.app.pairing.PairingPayload
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.time.YearMonth
 
 /**
@@ -72,10 +77,14 @@ class Repository private constructor(ctx: Context) {
 
     @Synchronized
     fun saveServers(list: List<ServerProfile>) {
+        // share keys fetched for pairings that are gone go with them
+        val keys = shareKeys().filterKeys { id -> list.any { pairingId(it.payload) == id } }
         prefs.edit {
             if (list.isEmpty()) remove(KEY_SERVERS) else putString(KEY_SERVERS, SecureBox.seal(ServerList.toJson(list)))
             remove(KEY_PROFILE)
             if (list.isEmpty()) remove(KEY_PEERS)
+            putString(KEY_SHARE_KEYS, JsonObject(keys.mapValues { JsonPrimitive(it.value) }).toString())
+            remove(KEY_SHARE_KEY) // the single key of earlier builds: whose was it?
         }
         _servers.value = list
         _profile.value = list.firstOrNull()?.payload
@@ -155,18 +164,41 @@ class Repository private constructor(ctx: Context) {
 
     // --- Pair & Share ---
 
-    /** The server's share key: the pairing's, else the one fetched from the server (older pairings). */
-    fun shareKey(p: PairingPayload?): String? =
-        p?.shareKey?.takeIf { it.isNotBlank() } ?: prefs.getString(KEY_SHARE_KEY, null)?.takeIf { it.isNotBlank() }
+    /**
+     * This phone's share key for pairing [p]: the pairing's, else the one
+     * fetched from that pairing's server (pairings made before they carried
+     * it). Each pairing has its own.
+     */
+    @Synchronized
+    fun shareKey(p: PairingPayload?): String? {
+        if (p == null) return null
+        return p.shareKey?.takeIf { it.isNotBlank() } ?: shareKeys()[pairingId(p)]?.takeIf { it.isNotBlank() }
+    }
 
-    fun saveShareKey(k: String) = prefs.edit { putString(KEY_SHARE_KEY, k) }
+    @Synchronized
+    fun saveShareKey(p: PairingPayload, k: String) {
+        val keys = shareKeys() + (pairingId(p) to k)
+        prefs.edit { putString(KEY_SHARE_KEYS, JsonObject(keys.mapValues { JsonPrimitive(it.value) }).toString()) }
+    }
+
+    private fun shareKeys(): Map<String, String> = try {
+        prefs.getString(KEY_SHARE_KEYS, null)?.let { s ->
+            Json.parseToJsonElement(s).jsonObject.mapValues { it.value.jsonPrimitive.content }
+        }.orEmpty()
+    } catch (_: Exception) {
+        emptyMap()
+    }
 
     /** Mobile data shared with hubs this month (bytes). */
     @Synchronized
     fun sharedBytes(): Long = if (prefs.getString(KEY_SHARE_MONTH, null) == monthKey()) prefs.getLong(KEY_SHARE_BYTES, 0) else 0
 
+    /** [v] bytes shared in [month] (yyyy-MM): the month the relay counted them in, not today's. */
     @Synchronized
-    fun setSharedBytes(v: Long) = prefs.edit { putString(KEY_SHARE_MONTH, monthKey()); putLong(KEY_SHARE_BYTES, v) }
+    fun setSharedBytes(month: String, v: Long) = prefs.edit { putString(KEY_SHARE_MONTH, month); putLong(KEY_SHARE_BYTES, v) }
+
+    /** This month, as the share counter names it (yyyy-MM). */
+    fun shareMonth(): String = monthKey()
 
     /** A stable id for this phone as a sharer. */
     fun shareId(): String = prefs.getString(KEY_SHARE_ID, null) ?: ("an-" + java.util.UUID.randomUUID().toString().take(10)).also {
@@ -188,11 +220,19 @@ class Repository private constructor(ctx: Context) {
         private const val KEY_CELL_BYTES = "cell_bytes"
         private const val KEY_PEERS = "peers_json"
         private const val KEY_SHARE_KEY = "share_key"
+        private const val KEY_SHARE_KEYS = "share_keys"
         private const val KEY_SHARE_MONTH = "share_month"
         private const val KEY_SHARE_BYTES = "share_bytes"
         private const val KEY_SHARE_ID = "share_id"
 
         @Volatile private var instance: Repository? = null
+
+        /** Names a pairing in the share key cache (not by its key). */
+        fun pairingId(p: PairingPayload): String {
+            val d = java.security.MessageDigest.getInstance("SHA-256")
+                .digest("tbs1-pairing\u0000${p.server}\u0000${p.user}\u0000${p.key}".toByteArray())
+            return d.copyOf(8).joinToString("") { "%02x".format(it) }
+        }
 
         fun get(ctx: Context): Repository =
             instance ?: synchronized(this) {

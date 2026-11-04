@@ -160,9 +160,9 @@ if [ -n "$TUN" ]; then
   ok "$TUN has $(sh_ ip -o -4 addr show dev "$TUN" | awk '{print $4}')"
   # from the ip addr dump: SELinux closes /sys/class/net to adb's shell
   MTU="$(sed -n "s/^[0-9]*: $TUN: .* mtu \([0-9]*\) .*/\1/p" "$OUT/ip-addr-connected.txt")"
-  # 1280 (the client default, like tailbondd's client.mtu), less the 8-byte
-  # reorder header when the mode negotiates reordering (Speed)
-  if [ "$MTU" = 1280 ] || [ "$MTU" = 1272 ]; then ok "$TUN MTU $MTU (1280 cap)"; else bad "$TUN MTU is $MTU, not 1280 (1272 with reorder)"; fi
+  # 1280 in every mode (like tailbondd's client.mtu, IPv6's minimum): in
+  # Speed the cap covers mqvpn's 8-byte reorder header
+  if [ "$MTU" = 1280 ]; then ok "$TUN MTU $MTU"; else bad "$TUN MTU is $MTU, not 1280"; fi
 else
   bad "no interface with a 10.77.0.x address: $(sh_ ip -o -4 addr show | awk '{print $2, $4}' | tr '\n' ' ')"
 fi

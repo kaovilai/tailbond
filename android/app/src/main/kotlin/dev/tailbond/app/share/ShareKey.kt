@@ -7,7 +7,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.InetAddress
 
-/** The home server's share key for pairings made before it existed: GET /api/shares through the tunnel. */
+/** This pairing's share key, for pairings made before they carried it: GET /api/shares through the tunnel. */
 object ShareKey {
     /** Blocking; null when the server has none or can't be reached. */
     fun fetch(pairingKey: String, host: String): String? = try {
