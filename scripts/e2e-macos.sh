@@ -198,6 +198,11 @@ ST="$(hapi "http://$API/api/status")"
 jq -e '.control_api == true' <<<"$ST" >/dev/null && ok "per-path stats come from mqvpn's control API (patch 0003)" || bad "no control API: $(jq -c '{control_api, error}' <<<"$ST")"
 jq -e '.platform == "darwin" and .use_local == true and .use_shares == true' <<<"$ST" >/dev/null \
   && ok "platform darwin, use_local and use_shares on" || bad "$(jq -c '{platform, use_local, use_shares}' <<<"$ST")"
+# a share's path can still be validating (pending) when the server already
+# counts it: wait for the hub to see both active
+both_active() { hapi "http://$API/api/status" | jq -e '[.paths[] | select(.kind == "shared-cellular" and .state == "active")] | length >= 2'; }
+wait_for 15 "both shares active on the hub" both_active || true
+ST="$(hapi "http://$API/api/status")"
 for l in "Pixel's 5G (shared)" "iPhone 16 (shared)"; do
   jq -e --arg l "$l" '.paths[] | select(.label == $l and .kind == "shared-cellular" and .state == "active")' <<<"$ST" >/dev/null \
     && ok "path \"$l\": kind shared-cellular, active ($(jq -r --arg l "$l" '.paths[] | select(.label == $l) | .iface' <<<"$ST"))" \

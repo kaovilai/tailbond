@@ -203,7 +203,9 @@ else
 fi
 grep -q 'machine list from 10.77.0.1: 2 machines' "$OUT/logcat.txt" && ok "logcat: machine list from 10.77.0.1: 2 machines" \
   || bad "logcat has no successful machine list fetch: $(grep 'machine list' "$OUT/logcat.txt" | tail -n 2)"
-[ "$(srv_client | jq -r .kind)" = android ] && ok "server saw the app's token requests (kind android, version $(srv_client | jq -r .version))" \
+# the server's status refreshes once a second: give it a few
+srv_kind_android() { [ "$(srv_client | jq -r .kind)" = android ]; }
+wait_for 10 srv_kind_android && ok "server saw the app's token requests (kind android, version $(srv_client | jq -r .version))" \
   || bad "server has no kind=android for $CLIENT: $(srv_client | jq -c '{kind, version}')"
 
 say "connected home screen"
