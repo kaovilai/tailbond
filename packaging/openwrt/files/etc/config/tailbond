@@ -13,6 +13,11 @@ config tailbond 'main'
 	option enabled '1'
 	# speed | streaming | redundant | failover
 	option mode 'speed'
+	# How the agent opens its TCP listeners: 'auto' (MPTCP, then plain TCP
+	# if the kernel's MPTCP doesn't connect: some GL.iNet kernels, e.g. the
+	# Brume 2, accept an MPTCP socket but never complete a connection),
+	# 'tcp' (always plain TCP) or 'mptcp' (always MPTCP, no check).
+	option tcp_mode 'auto'
 	# Agent listen address. Empty: client role 127.0.0.1:8077 (the GL panel
 	# talks to it locally), server role 127.0.0.1 + its Tailscale IP.
 	option listen ''

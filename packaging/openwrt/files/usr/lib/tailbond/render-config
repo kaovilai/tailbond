@@ -175,6 +175,13 @@ render() {
 	json_add_string listen "$(listen_addr "$role")"
 	json_add_string ui_password "$(keep main.ui_password @.ui_password '')"
 	json_add_string mode "$(keep main.mode @.mode speed)"
+	# How the agent opens TCP listeners: auto (MPTCP, then plain TCP if a
+	# kernel's MPTCP doesn't connect), mptcp or tcp. Anything else = auto,
+	# so a typo can't stop the agent from starting.
+	case "$(cfg main.tcp_mode)" in
+	mptcp | tcp) json_add_string tcp_mode "$(cfg main.tcp_mode)" ;;
+	*) json_add_string tcp_mode auto ;;
+	esac
 	# Server role: the phone page (http://<name>/) binds landing_port on
 	# the Tailscale IPs; the server-up hook redirects tailnet tcp/80 to it
 	# (GL's nginx owns port 80). 0 turns it off.

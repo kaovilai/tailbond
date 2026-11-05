@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kaovilai/tailbond/agent/internal/tcplisten"
+
 	"github.com/miekg/dns"
 )
 
@@ -48,7 +50,7 @@ func (f *Forwarder) Run(ctx context.Context) {
 				continue
 			}
 		}
-		ln, err := net.Listen("tcp", f.Addr)
+		ln, err := tcplisten.Listen("tcp", f.Addr)
 		if err != nil {
 			pc.Close()
 			select {

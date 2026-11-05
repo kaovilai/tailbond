@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/kaovilai/tailbond/agent/internal/tcplisten"
 )
 
 const (
@@ -267,6 +269,10 @@ type Config struct {
 	Mode       string `json:"mode"`
 	Server     Server `json:"server"`
 	Client     Client `json:"client"`
+	// Additive: how TCP listeners are opened: auto (MPTCP, falling back to
+	// plain TCP when a kernel's MPTCP stack doesn't connect; default),
+	// mptcp or tcp. See internal/tcplisten.
+	TCPMode string `json:"tcp_mode,omitempty"`
 	// Additive: skip every tailscale CLI call (e2e tests, hosts without it).
 	DisableTailscale bool `json:"disable_tailscale,omitempty"`
 	// Additive: mqvpn control API endpoint (contract fixes 127.0.0.1:9077).
@@ -484,6 +490,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port out of range: %d", c.Server.Port)
+	}
+	if !tcplisten.Valid(c.TCPMode) {
+		return fmt.Errorf("tcp_mode must be auto, mptcp or tcp, got %q", c.TCPMode)
 	}
 	if c.LandingPort > 65535 || c.LandingPublicPort < 0 || c.LandingPublicPort > 65535 {
 		return fmt.Errorf("landing_port / landing_public_port out of range")

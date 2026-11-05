@@ -323,3 +323,66 @@ func TestTunnelIPFollowsActiveServer(t *testing.T) {
 		t.Fatalf("tunnel ip %q", got)
 	}
 }
+
+func TestServersEnableAndRename(t *testing.T) {
+	a := clientAgent(t, nil)
+	home1 := pairURI(t, "203.0.113.7:443", "homebox", "10.77.0.0/24")
+	if w := req(t, a, "POST", "/api/pair", lan, "", map[string]string{"uri": home1}); w.Code != 200 {
+		t.Fatalf("pair: %d %s", w.Code, w.Body)
+	}
+	if w := req(t, a, "POST", "/api/servers", lan, "", map[string]string{"uri": pairURI(t, "198.51.100.9:8443", "vps", "10.83.142.0/24")}); w.Code != 200 {
+		t.Fatalf("add: %d %s", w.Code, w.Body)
+	}
+
+	// rename: validated, unique, unknown
+	if w := req(t, a, "POST", "/api/servers/rename", lan, "", map[string]string{"name": "homebox", "new_name": "home1"}); w.Code != 200 {
+		t.Fatalf("rename: %d %s", w.Code, w.Body)
+	}
+	if got := a.store.Get().Client.Servers[0].Name; got != "home1" {
+		t.Fatalf("name = %q", got)
+	}
+	for _, bad := range []string{"", "has space", "vps", strings.Repeat("x", 33)} {
+		if w := req(t, a, "POST", "/api/servers/rename", lan, "", map[string]string{"name": "home1", "new_name": bad}); w.Code != 400 {
+			t.Errorf("rename to %q: %d", bad, w.Code)
+		}
+	}
+	if w := req(t, a, "POST", "/api/servers/rename", lan, "", map[string]string{"name": "nope", "new_name": "x"}); w.Code != 404 {
+		t.Errorf("rename unknown: %d", w.Code)
+	}
+
+	// "Always use home1" follows the rename
+	if w := req(t, a, "POST", "/api/servers/policy", lan, "", map[string]string{"policy": "always", "server": "home1"}); w.Code != 200 {
+		t.Fatalf("always: %d %s", w.Code, w.Body)
+	}
+	req(t, a, "POST", "/api/servers/rename", lan, "", map[string]string{"name": "home1", "new_name": "home2"})
+	if f := a.store.Get().Client.FailoverOrDefault(); f.Policy != "always" || f.Server != "home2" {
+		t.Fatalf("failover after rename %+v", f)
+	}
+
+	// turn off: the "Always use" server falls back to prefer; the last one stays on
+	if w := req(t, a, "POST", "/api/servers/enabled", lan, "", map[string]any{"name": "home2", "enabled": false}); w.Code != 200 {
+		t.Fatalf("disable: %d %s", w.Code, w.Body)
+	}
+	c := a.store.Get().Client
+	if c.Servers[0].On() || c.FailoverOrDefault().Policy != "prefer" {
+		t.Fatalf("after disable: %+v %+v", c.Servers, c.FailoverOrDefault())
+	}
+	if w := req(t, a, "POST", "/api/servers/enabled", lan, "", map[string]any{"name": "vps", "enabled": false}); w.Code != 400 {
+		t.Fatalf("disabled the last server: %d", w.Code)
+	}
+	if w := req(t, a, "POST", "/api/servers/active", lan, "", map[string]string{"name": "home2"}); w.Code != 404 {
+		t.Fatalf("picked an off server: %d", w.Code)
+	}
+	a.poll(context.Background())
+	if st := a.Snapshot(); st.ActiveServer != "vps" {
+		t.Fatalf("active = %q, want vps while home2 is off", st.ActiveServer)
+	}
+
+	// back on; keeps its place
+	if w := req(t, a, "POST", "/api/servers/enabled", lan, "", map[string]any{"name": "home2", "enabled": true}); w.Code != 200 {
+		t.Fatalf("enable: %d", w.Code)
+	}
+	if c := a.store.Get().Client; !c.Servers[0].On() || c.Servers[0].Name != "home2" {
+		t.Fatalf("after enable %+v", c.Servers)
+	}
+}

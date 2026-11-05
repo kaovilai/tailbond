@@ -642,6 +642,113 @@ func (a *Agent) hServersOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// hServersEnabled turns one server on or off. An off server stays in the
+// list (and keeps its place) but is never connected to, probed or failed
+// over to. At least one server must stay on.
+func (a *Agent) hServersEnabled(w http.ResponseWriter, r *http.Request) {
+	if a.role != config.RoleClient {
+		httpErr(w, http.StatusBadRequest, errClientOnly)
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := readJSON(r, &body); err != nil || body.Enabled == nil {
+		httpErr(w, http.StatusBadRequest, errors.New("send name and enabled"))
+		return
+	}
+	found := false
+	if _, err := a.store.Update(func(c *config.Config) error {
+		i := c.Client.ServerIndex(body.Name)
+		if i < 0 {
+			return nil
+		}
+		found = true
+		if !*body.Enabled {
+			others := 0
+			for j, e := range c.Client.Servers {
+				if j != i && e.On() {
+					others++
+				}
+			}
+			if others == 0 {
+				return errors.New("keep at least one server on")
+			}
+			// "Always use <it>" can't stand once it is off
+			if f := c.Client.Failover; f != nil && f.Server == body.Name {
+				f.Policy, f.Server = config.PolicyPrefer, ""
+			}
+		}
+		en := *body.Enabled
+		c.Client.Servers[i].Enabled = &en
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if !found {
+		httpErr(w, http.StatusNotFound, errNotFound)
+		return
+	}
+	a.Logf("server %s turned %s", body.Name, map[bool]string{true: "on", false: "off"}[*body.Enabled])
+	a.afterServersChanged(switchList)
+	a.poll(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// hServersRename gives a server a name of the user's choosing (home1,
+// home2, vps). The pairing stays; the failover choice that names it follows.
+func (a *Agent) hServersRename(w http.ResponseWriter, r *http.Request) {
+	if a.role != config.RoleClient {
+		httpErr(w, http.StatusBadRequest, errClientOnly)
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		NewName string `json:"new_name"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	nn := strings.TrimSpace(body.NewName)
+	if !validServerName(nn) {
+		httpErr(w, http.StatusBadRequest, errors.New("name: 1-32 letters, digits, '.', '_' or '-'"))
+		return
+	}
+	found := false
+	if _, err := a.store.Update(func(c *config.Config) error {
+		i := c.Client.ServerIndex(body.Name)
+		if i < 0 {
+			return nil
+		}
+		found = true
+		if nn == body.Name {
+			return nil
+		}
+		if c.Client.ServerIndex(nn) >= 0 {
+			return fmt.Errorf("there is already a server called %q", nn)
+		}
+		c.Client.Servers[i].Name = nn
+		if f := c.Client.Failover; f != nil && f.Server == body.Name {
+			f.Server = nn
+		}
+		return nil
+	}); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if !found {
+		httpErr(w, http.StatusNotFound, errNotFound)
+		return
+	}
+	a.Logf("server %s renamed %s", body.Name, nn)
+	a.afterServersChanged(switchList)
+	a.poll(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": nn})
+}
+
 func (a *Agent) hServersPolicy(w http.ResponseWriter, r *http.Request) {
 	if a.role != config.RoleClient {
 		httpErr(w, http.StatusBadRequest, errClientOnly)

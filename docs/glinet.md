@@ -419,6 +419,57 @@ UDP 443 to it on the upstream router. Who can approve: anyone logged in to
 GL's admin, and anyone on the tailnet who opens `http://homebox:8077` unless
 the panel sets a password for that page.
 
+## Brume 2 (GL-MT2500), as a home server
+
+Installed and run as a server on one real Brume 2; its quirks, so you can
+skip the digging. Everything under [Home router](#home-router-flint-3-server)
+applies.
+
+| | Brume 2 |
+|---|---|
+| SoC | MediaTek MT7981 |
+| Firmware | GL 4.x on OpenWrt 21.02, kernel 5.4, fw3 (iptables) |
+| opkg arch | `aarch64_cortex-a53` (**no** `_neon-vfpv4`) |
+
+- **Package:** use the plain OpenWrt ipk
+  (`tailbond-openwrt-aarch64_cortex-a53.ipk`), not the GL.iNet one: check
+  with `opkg print-architecture`. 21.02 is older than the 23.05 the docs
+  list; it installs and runs, the rest of this list is what to expect.
+- **Role:** a fresh install starts as `client`. Open **VPN → tailbond** and
+  switch to **server** (or `uci set tailbond.main.role=server && uci commit
+  tailbond && /etc/init.d/tailbond restart`).
+- **"tailbond not running" while `tailbondd` runs:** Go listens with MPTCP
+  by default, and this firmware's kernel has an MPTCP stack that accepts
+  the listening socket but never completes a connection to it, loopback
+  included, so the panel's `/rpc` call to `127.0.0.1:8077` times out.
+  The agent now checks each new listener with a plain TCP connection and
+  falls back to plain TCP when it doesn't connect (the log says `an MPTCP
+  listener on … didn't accept a connection; using plain TCP`). To force it,
+  set `option tcp_mode 'tcp'` (or `'mptcp'`; default `'auto'`) in
+  `/etc/config/tailbond` and restart, or set `TAILBOND_TCP_MODE` for the
+  agent. Builds from before this check: add
+  `procd_set_param env GODEBUG=multipathtcp=0` to `/etc/init.d/tailbond`
+  after the `procd_set_param command` line. Check: `curl -s -m5 -o /dev/null
+  -w '%{http_code}\n' http://127.0.0.1:8077/api/status` prints `200`.
+- **The package cache can come up empty** if the agent was hung when the
+  package installed (nothing to cache from). Run
+  `/usr/lib/tailbond/pkg-cache seed` once the agent answers, so a firmware
+  upgrade with **Keep Settings** can reinstall it
+  ([Firmware upgrades](#firmware-upgrades)).
+- **Log lines that are expected:** `nginx can't load the admin panel
+  fallback (no Lua module); using /rpc only` (the panel works over `/rpc`;
+  the same firmware family as the Flint 3), and `Command failed: Not found`
+  from `opkg` during install and `restart` (the package still configures
+  and starts).
+- **Admin over WAN is blocked** by GL's firewall, as on every GL router,
+  and SSH too. A Brume behind another router is reachable from its LAN
+  side, or over Tailscale once GL's Tailscale is on.
+- **Behind another router:** the Brume's WAN gets a private address, so
+  forward UDP 443 to it on the upstream router, or keep phones on
+  Tailscale. `server-up` already opens UDP 443 on the Brume's own `wan`
+  zone.
+- **Not tested:** pairing a phone and bonding over this unit's data path.
+
 ## Pair & Share: phones lend their mobile data
 
 Phones on the Slate 7's Wi-Fi can lend their 5G/LTE to it

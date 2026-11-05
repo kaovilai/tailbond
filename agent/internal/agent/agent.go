@@ -28,6 +28,7 @@ import (
 	"github.com/kaovilai/tailbond/agent/internal/status"
 	"github.com/kaovilai/tailbond/agent/internal/supervisor"
 	"github.com/kaovilai/tailbond/agent/internal/tailscale"
+	"github.com/kaovilai/tailbond/agent/internal/tcplisten"
 	"github.com/kaovilai/tailbond/agent/internal/update"
 )
 
@@ -247,6 +248,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.hookStop, a.hookDone = hcancel, make(chan struct{})
 	go func() { a.hookWorker(hctx); close(a.hookDone) }()
 	a.Logf("tailbondd %s starting, role=%s mode=%s config=%s", a.opts.Version, cfg.Role, cfg.Mode, a.store.Path())
+	tcplisten.SetMode(cfg.TCPMode, a.Logf)
 	a.setupCrash()
 
 	switch cfg.Role {

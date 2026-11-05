@@ -54,6 +54,7 @@ import (
 	"github.com/kaovilai/tailbond/agent/internal/share"
 	"github.com/kaovilai/tailbond/agent/internal/status"
 	"github.com/kaovilai/tailbond/agent/internal/sysproxy"
+	"github.com/kaovilai/tailbond/agent/internal/tcplisten"
 )
 
 const (
@@ -516,7 +517,7 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 	if local == "" {
 		local = LocalProxyAddr
 	}
-	ln, err := net.Listen("tcp", local)
+	ln, err := tcplisten.Listen("tcp", local)
 	if err != nil {
 		return fmt.Errorf("the local proxy port %s: %v", local, err)
 	}

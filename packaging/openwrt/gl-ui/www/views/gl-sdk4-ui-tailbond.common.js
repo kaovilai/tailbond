@@ -963,7 +963,7 @@
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
         wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false,
         // client: more servers (failover) and bypass rules
-        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", histAll: false,
+        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", srvRename: "", srvRenameVal: "", histAll: false,
         bp: null, lan: null, bpEdit: null,
         // updates and backups
         updX: null, bks: null, ub: null, ubSched: null, restartUntil: 0, restarting: false,
@@ -1402,6 +1402,15 @@
         var t = names[i]; names[i] = names[j]; names[j] = t;
         return this.run("srv", api("POST", "/api/servers/order", { names: names }), names[0] + " is the first choice");
       },
+      setServerOn: function (s, on) {
+        return this.run("srv", api("POST", "/api/servers/enabled", { name: s.name, enabled: on }), s.name + (on ? " is on" : " is off: it won't be used or switched to"));
+      },
+      startRename: function (s) { this.srvMore = ""; this.srvRename = s.name; this.srvRenameVal = s.name; },
+      saveRename: function (s) {
+        var self = this, v = (this.srvRenameVal || "").trim();
+        if (!v || v === s.name) { this.srvRename = ""; return; }
+        return this.run("srv", api("POST", "/api/servers/rename", { name: s.name, new_name: v }), "Renamed to " + v).then(function () { self.srvRename = ""; });
+      },
       useServer: function (s) {
         return this.run("srv", api("POST", "/api/servers/active", { name: s.name }), "Switching to " + s.name + "…");
       },
@@ -1575,6 +1584,7 @@
         kids.push(this.rDown(h));
       } else {
         kids.push(this.rCrashAlert(h));
+        kids.push(this.rRoleSwitch(h));
         kids = kids.concat(this.role === "server" ? this.rServer(h) : this.rClient(h));
       }
       if (this.loaded && !this.down && this.st) {
@@ -1596,6 +1606,17 @@
     // Render helpers (a mixin keeps render() short; Vue binds `this`).
     mixins: [UB, REP, {
       methods: {
+        // One switch at the top: what this router is. Asks before changing.
+        rRoleSwitch: function (h) {
+          var self = this, cur = this.role;
+          var opts = [["client", "Travel router"], ["server", "Home server"]];
+          return h("div", { class: "tb-row", style: { justifyContent: "space-between", marginBottom: "12px", flexWrap: "wrap", gap: "8px" } }, [
+            h("span", { class: "tb-muted tb-small" }, "This router is a"),
+            h("div", { class: "tb-seg", attrs: { role: "radiogroup", "aria-label": "What this router is" } }, opts.map(function (o) {
+              return h("button", { class: cur === o[0] ? "on" : "", attrs: { type: "button", role: "radio", "aria-checked": String(cur === o[0]) }, on: { click: function () { if (cur !== o[0]) self.setRole(o[0]); } } }, o[1]);
+            }))
+          ]);
+        },
         card: function (h, title, body, extra, cls) {
           return h("div", { class: "tb-card" + (cls ? " " + cls : "") }, [
             title ? h("div", { class: "tb-card-h" }, [h("span", title), extra || null]) : null,
@@ -1955,17 +1976,27 @@
             return h("div", { class: "tb-srv" }, [
               h("div", { class: "tb-wan-icon" }, [icon(h, "server")]),
               h("div", { class: "tb-grow" }, [
-                h("div", { class: "tb-wan-t" }, [sv.name, h("span", { class: "tb-role" + (i === 0 ? " first" : "") }, i === 0 ? "First choice" : "Backup")]),
+                self.srvRename === sv.name
+                  ? h("div", { class: "tb-row", style: { gap: "6px" } }, [
+                    h("input", { class: "tb-input", attrs: { "aria-label": "Name for " + sv.name, maxlength: 32, placeholder: "home1, vps…" }, domProps: { value: self.srvRenameVal }, on: { input: function (e) { self.srvRenameVal = e.target.value; }, keydown: function (e) { if (e.key === "Enter") self.saveRename(sv); else if (e.key === "Escape") self.srvRename = ""; } } }),
+                    self.btn(h, "Save", function () { self.saveRename(sv); }, "small primary", busy),
+                    self.btn(h, "Cancel", function () { self.srvRename = ""; }, "small text", busy)
+                  ])
+                  : h("div", { class: "tb-wan-t" }, [sv.name, h("span", { class: "tb-role" + (i === 0 ? " first" : "") }, sv.state === "off" ? "Off" : i === 0 ? "First choice" : "Backup")]),
                 h("div", { class: "tb-muted tb-small" }, detail)
               ]),
               h("span", { class: "tb-chip " + chip[0] }, chip[1]),
               h("div", { class: "tb-srv-ctl" }, [
+                self.sw(h, sv.state !== "off", function () { self.setServerOn(sv, sv.state === "off"); }, false, busy, "Use " + sv.name),
                 h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move up", "aria-label": "Move " + sv.name + " up", disabled: i === 0 || !!busy }, on: { click: function () { self.moveServer(i, -1); } } }, [icon(h, "up", 16)]),
                 h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move down", "aria-label": "Move " + sv.name + " down", disabled: i === ss.length - 1 || !!busy }, on: { click: function () { self.moveServer(i, 1); } } }, [icon(h, "down", 16)]),
                 sv.active || sv.state === "unreachable" || sv.state === "off" ? h("span", { class: "tb-btn small", style: { visibility: "hidden" }, attrs: { "aria-hidden": "true" } }, "Use now")
                   : self.btn(h, "Use now", function () { self.useServer(sv); }, "small", busy || !self.isOn()),
                 self.srvMore === sv.name
-                  ? self.btn(h, "Remove " + sv.name, function () { self.srvMore = ""; self.removeServer(sv); }, "small danger", busy)
+                  ? h("span", { class: "tb-srv-ctl" }, [
+                    self.btn(h, "Rename", function () { self.startRename(sv); }, "small", busy),
+                    self.btn(h, "Remove " + sv.name, function () { self.srvMore = ""; self.removeServer(sv); }, "small danger", busy)
+                  ])
                   : self.btn(h, "More", function () { self.srvMore = sv.name; }, "small text", busy)
               ])
             ]);
@@ -2430,9 +2461,6 @@
               h("div", { class: "tb-actions" }, [this.btn(h, this.busy.paste ? "Pairing…" : "Pair", function () { self.pastePair(); }, "primary", this.busy.paste)])
             ]) : null
           ]));
-          out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Setting up the router that stays at home? ", h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.setRole("server"); } } }, "Make this the home server"), " (you can switch back here)"
-          ]));
           return out;
         },
         joinErrTitle: function (j) {
@@ -2498,9 +2526,6 @@
           out.push(this.rRouterGuide(h));
           out.push(this.rMachines(h, true));
           out.push(this.rUpdates(h), this.rBackup(h));
-          out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Is this a travel router? ", h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.setRole("client"); } } }, "Use it as a travel router instead"), " (you can switch back here)"
-          ]));
           return out;
         },
 

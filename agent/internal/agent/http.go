@@ -21,6 +21,7 @@ import (
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/tcplisten"
 	"github.com/kaovilai/tailbond/agent/web"
 )
 
@@ -72,6 +73,8 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/servers/{name}", a.hServersDelete)
 	mux.HandleFunc("POST /api/servers/active", a.hServersActive)
 	mux.HandleFunc("POST /api/servers/order", a.hServersOrder)
+	mux.HandleFunc("POST /api/servers/enabled", a.hServersEnabled)
+	mux.HandleFunc("POST /api/servers/rename", a.hServersRename)
 	mux.HandleFunc("POST /api/servers/policy", a.hServersPolicy)
 	mux.HandleFunc("GET /api/bypass", a.hBypassGet)
 	mux.HandleFunc("POST /api/bypass", a.hBypassPost)
@@ -680,7 +683,7 @@ func (a *Agent) serveOn(ctx context.Context, what string, h http.Handler, addrs 
 			if ok {
 				continue
 			}
-			ln, err := net.Listen("tcp", addr)
+			ln, err := tcplisten.Listen("tcp", addr)
 			if err != nil {
 				// loopback/explicit failures are fatal at startup; Tailscale
 				// IPs may simply not be up yet.
