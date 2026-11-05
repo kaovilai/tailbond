@@ -146,7 +146,8 @@ focus_is "EditText|Home server's name" "pairing starts on the server's name fiel
 has_text "Scan code" && bad "a camera scan is offered on a TV with no camera" || ok "no camera scan offered"
 key DOWN
 f="$(focused)"
-if ! grep -q "Home server's name" <<<"$f"; then ok "D-pad leaves the text field (focus: $f)"
+if [ -z "$f" ]; then bad "no focused node after D-pad down from the text field (UI dump failed?)"
+elif ! grep -q "Home server's name" <<<"$f"; then ok "D-pad leaves the text field (focus: $f)"
 elif [ -z "$KEYDEV" ]; then note "input keyevent's arrows stay in the text field (a keyboard's would too): not a remote"
 else bad "D-pad down stays in the text field (focus: $f)"; fi
 shot tv-03-pairing-moved
