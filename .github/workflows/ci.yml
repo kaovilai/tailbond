@@ -120,15 +120,31 @@ jobs:
           sudo apt-get install -y -q cmake build-essential libevent-dev iproute2 curl netcat-openbsd openssl dnsmasq-base nftables bind9-dnsutils jq python3
       - name: mqvpn submodule revision
         id: mq
-        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
-      - name: Cache mqvpn build tree
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=${ImageOS:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+      # The binaries are cached, not the build tree: a fresh checkout gives
+      # every source a new mtime, so a restored tree rebuilt from scratch
+      # anyway. Same inputs (pinned mqvpn, patches, build scripts, week)
+      # give the same binary, so a hit skips the build.
+      - name: Cache patched mqvpn (binary, its 0005 unit tests)
+        id: mqbin
         uses: actions/cache@v6
         with:
-          path: out/build/mqvpn-native
-          key: mqvpn-native-${{ runner.os }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-native.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
-          restore-keys: |
-            mqvpn-native-${{ runner.os }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-native.sh', 'scripts/lib/*.sh') }}-
+          path: |
+            out/native/mqvpn
+            out/build/mqvpn-native/src/build/tests/test_cert_pin
+            out/build/mqvpn-native/src/build/tests/test_config_bridge
+          key: mqvpn-native-bin-${{ steps.mq.outputs.os }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-native.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Build patched mqvpn
+        if: steps.mqbin.outputs.cache-hit != 'true'
         run: scripts/build-mqvpn-native.sh
       - name: mqvpn certificate pin unit tests (patches/mqvpn/0005)
         run: |
@@ -172,7 +188,16 @@ jobs:
         run: android/scripts/setup-sdk.sh
       - name: mqvpn submodule revision
         id: mq
-        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=${ImageOS:-unknown}"
+          } >> "$GITHUB_OUTPUT"
       - name: Cache native libs
         uses: actions/cache@v6
         with:
@@ -180,8 +205,7 @@ jobs:
           # (arm64-v8a for phones, x86_64 for the emulator)
           # (from the patched copy of mqvpn, scripts/lib/mqvpn-src.sh)
           path: out/mqvpn-android/src/android/sdk-native/prebuilt
-          key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh', 'patches/mqvpn/*.patch') }}-${{ github.sha }}
-          restore-keys: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh', 'patches/mqvpn/*.patch') }}-
+          key: android-native-${{ steps.mq.outputs.sha }}-${{ hashFiles('android/scripts/build-native.sh', 'android/scripts/setup-sdk.sh', 'patches/mqvpn/*.patch', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Unit tests, lint, debug APK
         run: android/scripts/build-apk.sh
       - uses: actions/upload-artifact@v7
@@ -341,15 +365,29 @@ jobs:
           fi
       - name: mqvpn submodule revision
         id: mq
-        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
-      # same tree and key as job openwrt: whichever runs first fills it
-      - name: Cache aarch64 mqvpn build tree
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=${ImageOS:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+      # The binaries are cached, not the build tree: a fresh checkout gives
+      # every source a new mtime, so a restored tree rebuilt from scratch
+      # anyway. Same inputs (pinned mqvpn, patches, build scripts, week)
+      # give the same binary, so a hit skips the build.
+      # same key in jobs mqvpn-aarch64, openwrt and macos-e2e-server
+      - name: Cache static aarch64 mqvpn
+        id: mqbin
         uses: actions/cache@v6
         with:
-          path: out/build/mqvpn-aarch64
-          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
-          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+          path: out/aarch64/mqvpn
+          key: mqvpn-aarch64-bin-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Static aarch64 mqvpn
+        if: steps.mqbin.outputs.cache-hit != 'true'
         run: scripts/build-mqvpn-aarch64-musl.sh
       - name: tailbondd linux/arm64
         run: agent/build.sh arm64
@@ -378,15 +416,34 @@ jobs:
         run: brew install libevent gpatch librsvg
       - name: mqvpn submodule revision
         id: mq
-        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
-      - name: Cache mqvpn build tree
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=${ImageOS:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+      # The binaries are cached, not the build tree: a fresh checkout gives
+      # every source a new mtime, so a restored tree rebuilt from scratch
+      # anyway. Same inputs (pinned mqvpn, patches, build scripts, week)
+      # give the same binary, so a hit skips the build.
+      # The key also names the macOS release and Homebrew's libevent (linked
+      # statically). A hit skips mqvpn's Darwin unit tests too: they ran when
+      # this binary was built.
+      - name: Homebrew libevent version
+        id: libevent
+        run: echo "v=$(brew list --versions libevent | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+      - name: Cache patched mqvpn
+        id: mqbin
         uses: actions/cache@v6
         with:
-          path: out/build/mqvpn-macos
-          key: mqvpn-macos-${{ runner.arch }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-macos.sh', 'scripts/lib/*.sh') }}
-          # a new patch rebuilds only what it touches (the sync re-patches every file)
-          restore-keys: mqvpn-macos-${{ runner.arch }}-${{ steps.mq.outputs.sha }}-
+          path: out/macos/mqvpn
+          key: mqvpn-macos-bin-${{ runner.arch }}-${{ steps.mq.outputs.os }}-${{ steps.libevent.outputs.v }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-macos.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Build patched mqvpn and run its Darwin unit tests
+        if: steps.mqbin.outputs.cache-hit != 'true'
         run: TB_TEST=1 scripts/build-mqvpn-macos.sh
       - name: go vet + go test (darwin)
         working-directory: agent
@@ -547,14 +604,29 @@ jobs:
           done
       - name: mqvpn submodule revision
         id: mq
-        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
-      - name: Cache aarch64 mqvpn build tree
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=${ImageOS:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+      # The binaries are cached, not the build tree: a fresh checkout gives
+      # every source a new mtime, so a restored tree rebuilt from scratch
+      # anyway. Same inputs (pinned mqvpn, patches, build scripts, week)
+      # give the same binary, so a hit skips the build.
+      # same key in jobs mqvpn-aarch64, openwrt and macos-e2e-server
+      - name: Cache static aarch64 mqvpn
+        id: mqbin
         uses: actions/cache@v6
         with:
-          path: out/build/mqvpn-aarch64
-          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
-          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+          path: out/aarch64/mqvpn
+          key: mqvpn-aarch64-bin-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Static aarch64 mqvpn
+        if: steps.mqbin.outputs.cache-hit != 'true'
         run: scripts/build-mqvpn-aarch64-musl.sh
       - name: Build ipk
         env:
@@ -602,14 +674,28 @@ jobs:
           submodules: recursive
       - name: mqvpn submodule revision
         id: mq
-        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
-      - name: Cache x86_64 mqvpn build tree
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=${ImageOS:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+      # The binaries are cached, not the build tree: a fresh checkout gives
+      # every source a new mtime, so a restored tree rebuilt from scratch
+      # anyway. Same inputs (pinned mqvpn, patches, build scripts, week)
+      # give the same binary, so a hit skips the build.
+      - name: Cache static x86_64 mqvpn
+        id: mqbin
         uses: actions/cache@v6
         with:
-          path: out/build/mqvpn-x86_64
-          key: mqvpn-x86_64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
-          restore-keys: mqvpn-x86_64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+          path: out/x86_64/mqvpn
+          key: mqvpn-x86_64-bin-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Build (native amd64 Alpine, podman)
+        if: steps.mqbin.outputs.cache-hit != 'true'
         run: scripts/build-mqvpn-musl.sh x86_64
       - uses: actions/upload-artifact@v7
         with:
@@ -630,14 +716,29 @@ jobs:
         run: command -v podman || { sudo apt-get update -q && sudo apt-get install -y -q podman; }
       - name: mqvpn submodule revision
         id: mq
-        run: echo "sha=$(git rev-parse HEAD:third_party/mqvpn)" >> "$GITHUB_OUTPUT"
-      - name: Cache aarch64 mqvpn build tree
-        uses: actions/cache/restore@v6
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=${ImageOS:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+      # The binaries are cached, not the build tree: a fresh checkout gives
+      # every source a new mtime, so a restored tree rebuilt from scratch
+      # anyway. Same inputs (pinned mqvpn, patches, build scripts, week)
+      # give the same binary, so a hit skips the build.
+      # same key in jobs mqvpn-aarch64, openwrt and macos-e2e-server
+      - name: Cache static aarch64 mqvpn
+        id: mqbin
+        uses: actions/cache@v6
         with:
-          path: out/build/mqvpn-aarch64
-          key: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ github.sha }}
-          restore-keys: mqvpn-aarch64-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-
+          path: out/aarch64/mqvpn
+          key: mqvpn-aarch64-bin-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Build (native arm64 Alpine, podman)
+        if: steps.mqbin.outputs.cache-hit != 'true'
         run: scripts/build-mqvpn-aarch64-musl.sh
       - uses: actions/upload-artifact@v7
         with:
@@ -884,6 +985,23 @@ jobs:
           for f in out/android-release/tailbond-*.apk; do
             if [ -f "$f" ]; then echo "TAILBOND_APK=$PWD/$f" >>"$GITHUB_ENV"; fi
           done
+      # build-rpm.sh skips building mqvpn when these two exist (see the
+      # mqvpn caches above for why the binaries, not the build tree)
+      - name: mqvpn submodule revision, Fedora release
+        id: mq
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+            echo "os=$(. /etc/os-release && echo "$ID$VERSION_ID")"
+          } >> "$GITHUB_OUTPUT"
+      - name: Cache mqvpn (built by build-rpm.sh)
+        uses: actions/cache@v6
+        with:
+          path: |
+            third_party/mqvpn/build/mqvpn
+            third_party/mqvpn/build/mqvpn-nat-config
+          key: rpm-mqvpn-${{ steps.mq.outputs.os }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('packaging/fedora/build-rpm.sh') }}-${{ steps.mq.outputs.week }}
       - name: Build RPM
         run: packaging/fedora/build-rpm.sh
       - name: Install and remove test
