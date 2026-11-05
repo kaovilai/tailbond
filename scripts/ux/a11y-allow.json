@@ -1,0 +1,4 @@
+{
+  "//": "Accessibility findings accepted on purpose (scripts/ux/a11y.sh). Each entry: rule (axe rule id or tb-*), optional surface and target (a substring of the element's selector), reason, and link (why it's accepted: an issue, a spec, axe's own docs). Prefer fixing; an entry without a link fails the run.",
+  "allow": []
+}

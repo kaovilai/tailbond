@@ -15,6 +15,12 @@
 (function () {
   "use strict";
 
+  // A control that isn't a <button> (role checkbox / radio, tabindex 0):
+  // a click, or Space or Enter from the keyboard.
+  function press(fn) {
+    return { click: fn, keydown: function (e) { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!e.repeat) fn(e); } } };
+  }
+
   var MODES = [
     { wire: "speed", label: "Fastest", blurb: "Adds all your connections together for the most speed." },
     { wire: "streaming", label: "Smooth calls and video", blurb: "Calls and video keep going when one connection has trouble." },
@@ -45,7 +51,7 @@
     ".tb-card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,21,41,.08);margin-bottom:16px;}",
     ".tb-card-h{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #ebeef5;font-size:15px;font-weight:600;gap:12px;}",
     ".tb-card-b{padding:16px 20px;}",
-    ".tb-muted{color:#909399;font-size:13px;}",
+    ".tb-muted{color:#686b70;font-size:13px;}",
     ".tb-small{font-size:12px;}",
     ".tb-row{display:flex;align-items:center;gap:12px;}",
     ".tb-grow{flex:1;min-width:0;}",
@@ -53,7 +59,7 @@
     ".tb-hero-icon{width:52px;height:52px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex:none;background:color-mix(in srgb,var(--tb-primary,#0f766e) 10%,#fff);color:var(--tb-primary,#0f766e);}",
     ".tb-hero-icon.on{background:#e8f8ef;color:var(--tb-ok,#15803d);}",
     ".tb-hero-icon.warn{background:#fdf6ec;color:#e6a23c;}",
-    ".tb-hero-icon.err{background:#fef0f0;color:#f56c6c;}",
+    ".tb-hero-icon.err{background:#fef0f0;color:#c03737;}",
     ".tb-hero-t{font-size:18px;font-weight:600;}",
     ".tb-hero-s{font-size:14px;color:#606266;margin-top:4px;line-height:1.45;}",
     ".tb-rates{display:flex;gap:24px;padding:0 20px 16px 88px;color:#606266;font-size:13px;}",
@@ -69,25 +75,25 @@
     ".tb-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 16px;border-radius:4px;border:1px solid #dcdfe6;background:#fff;color:#606266;font-size:14px;cursor:pointer;white-space:nowrap;text-decoration:none;}",
     ".tb-btn:hover{color:var(--tb-primary,#0f766e);border-color:color-mix(in srgb,var(--tb-primary,#0f766e) 32%,#fff);background:color-mix(in srgb,var(--tb-primary,#0f766e) 10%,#fff);}",
     ".tb-btn.primary{background:var(--tb-primary,#0f766e);border-color:var(--tb-primary,#0f766e);color:#fff;}",
-    ".tb-btn.primary:hover{background:var(--tb-teal,#0d9488);border-color:var(--tb-teal,#0d9488);}",
-    ".tb-btn.danger{color:#f56c6c;border-color:#fbc4c4;background:#fef0f0;}",
+    ".tb-btn.primary:hover{background:color-mix(in srgb,var(--tb-primary,#0f766e) 85%,#000);border-color:color-mix(in srgb,var(--tb-primary,#0f766e) 85%,#000);}",
+    ".tb-btn.danger{color:#c03737;border-color:#fbc4c4;background:#fef0f0;}",
     ".tb-btn.text{border:0;background:none;color:var(--tb-primary,#0f766e);padding:0 4px;height:auto;}",
     ".tb-btn.small{height:28px;padding:0 12px;font-size:13px;}",
     ".tb-btn[disabled]{opacity:.55;cursor:not-allowed;}",
     ".tb-input{height:34px;border:1px solid #dcdfe6;border-radius:4px;padding:0 12px;font-size:14px;color:#303133;width:100%;outline:none;}",
     ".tb-input:focus{border-color:var(--tb-primary,#0f766e);}",
     "textarea.tb-input{height:72px;padding:8px 12px;resize:vertical;font-family:inherit;}",
-    ".tb-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:11px;font-size:12px;white-space:nowrap;background:#f4f4f5;color:#909399;}",
+    ".tb-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:11px;font-size:12px;white-space:nowrap;background:#f4f4f5;color:#686b70;}",
     ".tb-chip:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;}",
     ".tb-chip.ok{background:#e8f8ef;color:var(--tb-ok,#15803d);}",
-    ".tb-chip.warn{background:#fdf6ec;color:#c88a1a;}",
-    ".tb-chip.err{background:#fef0f0;color:#f56c6c;}",
+    ".tb-chip.warn{background:#fdf6ec;color:#8a5d10;}",
+    ".tb-chip.err{background:#fef0f0;color:#c03737;}",
     ".tb-chip.blue{background:color-mix(in srgb,var(--tb-primary,#0f766e) 10%,#fff);color:var(--tb-primary,#0f766e);}",
     ".tb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;}",
     ".tb-wan{border:1px solid #ebeef5;border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:12px;}",
     ".tb-wan.dim{background:#fafafa;}",
     ".tb-wan-icon{width:40px;height:40px;border-radius:8px;background:color-mix(in srgb,var(--tb-primary,#0f766e) 10%,#fff);color:var(--tb-primary,#0f766e);display:flex;align-items:center;justify-content:center;flex:none;}",
-    ".tb-wan.dim .tb-wan-icon{background:#f4f4f5;color:#909399;}",
+    ".tb-wan.dim .tb-wan-icon{background:#f4f4f5;color:#686b70;}",
     ".tb-wan-t{font-weight:600;font-size:15px;}",
     ".tb-wan-ctl{display:flex;align-items:center;justify-content:space-between;border-top:1px dashed #ebeef5;padding-top:10px;gap:8px;}",
     ".tb-check{display:inline-flex;align-items:center;gap:8px;cursor:pointer;color:#606266;user-select:none;}",
@@ -100,7 +106,7 @@
     ".tb-wan-icon.k-wifi{--k:var(--tb-wifi)}.tb-wan-icon.k-cellular{--k:var(--tb-cellular)}.tb-wan-icon.k-ethernet{--k:var(--tb-ethernet)}",
     ".tb-wan-icon.k-usb{--k:var(--tb-usb)}.tb-wan-icon.k-shared-cellular{--k:var(--tb-shared)}.tb-wan-icon.k-tailnet{--k:var(--tb-tailnet)}",
     ".tb-wan-icon[class*=' k-']{color:var(--k);background:color-mix(in srgb,var(--k) 12%,#fff);}",
-    ".tb-wan.dim .tb-wan-icon[class*=' k-']{color:#909399;background:#f4f4f5;}",
+    ".tb-wan.dim .tb-wan-icon[class*=' k-']{color:#686b70;background:#f4f4f5;}",
     ".tb-bar i.full{background:#f56c6c;}",
     ".tb-modes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}",
     ".tb-modes.three{grid-template-columns:repeat(3,minmax(0,1fr));}",
@@ -110,7 +116,7 @@
     ".tb-mode-t{font-weight:600;display:flex;align-items:center;gap:8px;}",
     ".tb-mode-t:before{content:'';width:14px;height:14px;border-radius:50%;border:1px solid #dcdfe6;background:#fff;flex:none;}",
     ".tb-mode.on .tb-mode-t:before{border:4px solid var(--tb-primary,#0f766e);}",
-    ".tb-mode-b{font-size:12px;color:#909399;margin-top:6px;line-height:1.45;}",
+    ".tb-mode-b{font-size:12px;color:#686b70;margin-top:6px;line-height:1.45;}",
     ".tb-list{border-top:1px solid #ebeef5;}",
     ".tb-li{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #ebeef5;}",
     ".tb-li:last-child{border-bottom:0;}",
@@ -118,7 +124,7 @@
     ".tb-dot.ok{background:var(--tb-ok,#15803d);}",
     ".tb-mono{font-family:Menlo,Consolas,monospace;font-size:12px;color:#606266;}",
     ".tb-alert{display:flex;gap:12px;padding:14px 16px;border-radius:8px;background:#fdf6ec;color:#8a5d10;margin-bottom:16px;line-height:1.5;}",
-    ".tb-alert.err{background:#fef0f0;color:#c45656;}",
+    ".tb-alert.err{background:#fef0f0;color:#c03737;}",
     ".tb-alert.info{background:color-mix(in srgb,var(--tb-primary,#0f766e) 10%,#fff);color:#33689f;}",
     ".tb-alert.ok{background:#e8f8ef;color:#137a46;}",
     ".tb-alert b{color:inherit;}",
@@ -130,30 +136,36 @@
     "@keyframes tbspin{to{transform:rotate(360deg)}}",
     ".tb-steps{margin:8px 0 0 0;padding-left:20px;color:#606266;line-height:1.7;}",
     ".tb-kv{display:grid;grid-template-columns:160px 1fr;gap:8px 16px;align-items:center;}",
-    ".tb-kv>div:nth-child(odd){color:#909399;}",
+    ".tb-kv>div:nth-child(odd){color:#686b70;}",
     ".tb-qr{width:200px;height:200px;}",
     ".tb-qr svg{width:100%;height:100%;}",
     ".tb-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:3000;padding:16px;}",
     ".tb-dialog{background:#fff;border-radius:8px;max-width:440px;width:100%;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,.2);}",
     ".tb-dialog-t{font-size:16px;font-weight:600;margin-bottom:10px;}",
-    ".tb-toast{position:fixed;left:50%;top:72px;transform:translateX(-50%);background:#f0f9eb;color:#529b2e;border:1px solid #e1f3d8;padding:10px 18px;border-radius:4px;z-index:3001;box-shadow:0 2px 12px rgba(0,0,0,.1);}",
+    ".tb-toast{position:fixed;left:50%;top:72px;transform:translateX(-50%);background:#f0f9eb;color:#3b7520;border:1px solid #e1f3d8;padding:10px 18px;border-radius:4px;z-index:3001;box-shadow:0 2px 12px rgba(0,0,0,.1);}",
     ".tb-link{color:var(--tb-primary,#0f766e);cursor:pointer;text-decoration:none;}",
+    // links that go somewhere are underlined (told apart from the text around them without colour); actions are <button class="tb-link"> that look like links
+    "a.tb-link[href]{text-decoration:underline;text-underline-offset:2px;}",
+    "button.tb-link{background:none;border:0;padding:0;margin:0;font:inherit;line-height:inherit;text-align:inherit;}",
+    "label.tb-label{display:block;}",
+    // reduced motion: spinners stand still (the text beside them says what is going on)
+    "@media (prefers-reduced-motion:reduce){.tb-spin{animation:none;}}",
     ".tb-seg{display:inline-flex;border:1px solid #dcdfe6;border-radius:4px;overflow:hidden;}",
     ".tb-seg button{border:0;border-left:1px solid #dcdfe6;background:#fff;color:#606266;font:inherit;font-size:13px;height:30px;padding:0 12px;cursor:pointer;white-space:nowrap;}",
     ".tb-seg button:first-child{border-left:0;}",
     ".tb-seg button.on{background:var(--tb-primary,#0f766e);color:#fff;}",
-    ".tb-seg button.on.off{background:#909399;}",
+    ".tb-seg button.on.off{background:#686b70;}",
     ".tb-seg button[disabled]{cursor:not-allowed;opacity:.6;}",
     ".tb-nowrap{white-space:nowrap;}",
     ".tb-steps-n{margin:6px 0 0;padding-left:22px;line-height:1.7;color:#606266;}",
     ".tb-qr{width:150px;height:150px;flex:none;background:#fff;border:1px solid #ebeef5;border-radius:8px;padding:4px;box-sizing:border-box;}.tb-qr svg{width:100%;height:100%;display:block;}",
-    ".tb-foot{text-align:center;color:#c0c4cc;font-size:12px;margin:8px 0 24px;}",
+    ".tb-foot{text-align:center;color:#686b70;font-size:12px;margin:8px 0 24px;}",
     // servers and failover
     ".tb-srv{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #ebeef5;flex-wrap:wrap;}",
     ".tb-srv:last-child{border-bottom:0;}",
     ".tb-srv-ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}",
     ".tb-btn.icon{width:28px;padding:0;}",
-    ".tb-role{font-size:12px;color:#909399;font-weight:400;margin-left:8px;}",
+    ".tb-role{font-size:12px;color:#686b70;font-weight:400;margin-left:8px;}",
     ".tb-role.first{color:var(--tb-primary,#0f766e);}",
     ".tb-sec{border-top:1px solid #ebeef5;margin-top:14px;padding-top:14px;}",
     ".tb-sec-t{font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}",
@@ -164,7 +176,7 @@
     ".tb-rule.off .tb-wan-icon,.tb-rule.off .tb-grow{opacity:.5;}",
     ".tb-tgt{font-weight:600;}",
     ".tb-tgt.direct{color:var(--tb-ok,#15803d);}",
-    ".tb-tgt.wan{color:#b07a12;}",
+    ".tb-tgt.wan{color:#8a5d10;}",
     ".tb-tgt.tunnel{color:var(--tb-primary,#0f766e);}",
     ".tb-presets{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}",
     ".tb-preset{display:inline-flex;align-items:center;gap:6px;border:1px dashed #b3d8ff;background:#f5faff;color:var(--tb-primary,#0f766e);border-radius:14px;height:28px;padding:0 12px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;}",
@@ -176,7 +188,7 @@
     ".tb-pick-i.on{background:color-mix(in srgb,var(--tb-primary,#0f766e) 10%,#fff);box-shadow:inset 3px 0 0 var(--tb-primary,#0f766e);}",
     ".tb-dialog.wide{max-width:560px;max-height:calc(100vh - 32px);overflow:auto;}",
     "select.tb-input{background:#fff;padding:0 8px;}",
-    ".tb-help{font-size:12px;color:#909399;margin-top:6px;line-height:1.5;}",
+    ".tb-help{font-size:12px;color:#686b70;margin-top:6px;line-height:1.5;}",
     ".tb code{font-family:Menlo,Consolas,monospace;font-size:12px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px;}",
     ".tb-empty{display:flex;gap:16px;align-items:flex-start;}",
     // updates and backups
@@ -476,13 +488,13 @@
         var u = this.upd(), s = this.updState(u), cur = u.current || st.version || "";
         var msg = null, ico = "up", color = "#303133";
         if (u.state === "installing") msg = "Installing tailbond " + u.available + "; this page comes back by itself in about a minute.";
-        else if (u.state === "failed") { msg = "An update to " + (u.last_result_version || u.available || "a new version") + " didn't install. Still on " + cur + ", nothing changed."; color = "#c45656"; ico = "warn"; }
+        else if (u.state === "failed") { msg = "An update to " + (u.last_result_version || u.available || "a new version") + " didn't install. Still on " + cur + ", nothing changed."; color = "#c03737"; ico = "warn"; }
         else if (u.state === "rolled_back") { msg = "Everything works as before on " + cur + ": " + (u.last_result_version || "the new version") + " didn't start here, so tailbond went back by itself."; ico = "check"; }
         else if (s.reinstalled) { msg = "tailbond is back after the firmware update, with your settings."; ico = "check"; color = "#137a46"; }
         else if (u.available && !s.off) msg = "Update available: tailbond " + u.available + " (this router runs " + cur + ").";
         if (!msg) return null;
         return h("div", { class: "tb-row", style: { borderTop: "1px solid #ebeef5", padding: "12px 20px 14px 88px", gap: "10px", color: color, fontSize: "14px" } }, [
-          icon(h, ico, 18), h("div", { class: "tb-grow" }, msg), h("a", { class: "tb-link", on: { click: this.toUpdates } }, "Show")
+          icon(h, ico, 18), h("div", { class: "tb-grow" }, msg), h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: this.toUpdates } }, "Show")
         ]);
       },
       bset: function () { return (this.settings && this.settings.backup) || (this.st && this.st.backup) || {}; },
@@ -576,18 +588,18 @@
         if (u.state === "checking") body.push(big([h("div", { class: "tb-spin" }), "Checking for updates…"]));
         else if (u.state === "downloading") body.push(big([h("div", { class: "tb-spin" }), "Downloading " + u.available + "…"]));
         else if (u.state === "installing") body.push(big([h("div", { class: "tb-spin" }), "Installing " + u.available]), h("div", { class: "tb-muted", style: { marginTop: "4px" } }, "tailbond restarts. Leave the router on; it comes back by itself, and this page with it, in about a minute."));
-        else if (off) body.push(big(["Updates are off"]), line("tailbond doesn't check for new versions. Choose Tell me below to hear about them.", { color: "#909399" }));
+        else if (off) body.push(big(["Updates are off"]), line("tailbond doesn't check for new versions. Choose Tell me below to hear about them.", { color: "#686b70" }));
         else if (u.available && !S.retry) {
           body.push(big(["Update available: " + u.available + (u.security ? " (security fix)" : ""), notes]));
-          if (u.waiting) body.push(line("It " + u.waiting + ".", { color: "#909399" }));
+          if (u.waiting) body.push(line("It " + u.waiting + ".", { color: "#686b70" }));
           if (u.method === "dnf") body.push(line("Updates for this server come from dnf. In a terminal on this server, run:"), cmdRow("sudo dnf upgrade tailbond-server"));
-          else if (selfUp) body.push(line("You can update now or later; everything keeps working meanwhile.", { color: "#909399" }));
+          else if (selfUp) body.push(line("You can update now or later; everything keeps working meanwhile.", { color: "#686b70" }));
           else {
             var repo = String(u.repo || "kaovilai/tailbond").replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
             body.push(line(["This build can't update itself; install the new release from ", h("a", { class: "tb-link", attrs: { href: "https://github.com/" + repo + "/releases", target: "_blank", rel: "noopener" } }, "the releases page"), "."]));
           }
         } else if (S.noCheck) {
-          body.push(big(["Couldn't check for updates"]), line("Couldn't reach GitHub (" + u.error + "). tailbond tries again later by itself; Check now tries again now.", { color: "#b07a12" }));
+          body.push(big(["Couldn't check for updates"]), line("Couldn't reach GitHub (" + u.error + "). tailbond tries again later by itself; Check now tries again now.", { color: "#8a5d10" }));
         } else if (!S.retry) body.push(big([u.no_release ? "No release published yet" : "Up to date"]));
         var meta = [], lv = u.last_result_version, la = u.last_result_at ? ", " + fmtWhen(u.last_result_at) : "";
         if (u.last_check && !off) meta.push("Checked " + fmtAgo(u.last_check));
@@ -598,7 +610,7 @@
         }
         var checkErr = u.error && !S.noCheck && u.state !== "failed" && !busyState && !off;
         if (meta.length || checkErr) body.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, [meta.join(" · ").replace(/^./, function (c) { return c.toUpperCase(); }),
-          checkErr ? h("span", { style: { color: "#b07a12" } }, (meta.length ? " · " : "") + "Couldn't reach GitHub (" + u.error + ")") : null]));
+          checkErr ? h("span", { style: { color: "#8a5d10" } }, (meta.length ? " · " : "") + "Couldn't reach GitHub (" + u.error + ")") : null]));
         var acts = [];
         if (u.available && selfUp && !busyState && !off) acts.push(S.retry ? this.btn(h, "Try " + u.available + " again", function () { self.confirmInstall(u); }, "", this.busy.upd)
           : this.btn(h, "Update now", function () { self.confirmInstall(u); }, "primary", this.busy.upd));
@@ -684,7 +696,7 @@
               !srv && b.push ? " A copy also goes to " + (this.serverShort || "your home server") + (b.last_push ? " (sent " + fmtAgo(b.last_push) + ")" : "") + ", so you can get it back if this router is lost or reset." : ""]
             : ["Off. Set a passphrase to have tailbond save a backup by itself" + (srv ? "." : ", and send a copy to " + (this.serverShort || "your home server") + ".")]));
           if (on) sched.push(h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, ["Saved in ", h("code", BACKUP_DIR), " on this router (kept through firmware upgrades with Keep Settings). Copy them somewhere else too."]));
-          if (b.last_error) sched.push(h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "4px" } }, "The last automatic backup didn't work: " + b.last_error));
+          if (b.last_error) sched.push(h("div", { class: "tb-small", style: { color: "#c03737", marginTop: "4px" } }, "The last automatic backup didn't work: " + b.last_error));
           sched.push(h("div", { class: "tb-actions" }, [
             this.btn(h, on ? "Change" : "Turn on", function () { self.ubSched = { pass: "", pass2: "", every: String(every), keep: String(keep), push: b.push !== false, err: "" }; }, "small"),
             on ? this.btn(h, "Turn off", function () { self.saveSched({ passphrase: "" }, "Automatic backups off"); }, "small") : null
@@ -695,8 +707,8 @@
           sched = sched.concat(this.rPass(h, s));
           var num = function (k) { return h("input", { class: "tb-input", style: { width: "72px" }, attrs: { type: "number", min: 1 }, domProps: { value: s[k] }, on: { input: function (e) { s[k] = e.target.value; } } }); };
           sched.push(h("div", { class: "tb-row", style: { marginTop: "10px", flexWrap: "wrap", gap: "8px" } }, ["Every", num("every"), "hours, keep the last", num("keep")]));
-          if (!srv) sched.push(h("div", { style: { marginTop: "10px" } }, [h("span", { class: "tb-check" + (s.push ? " on" : ""), on: { click: function () { s.push = !s.push; } } }, [h("i"), "Also send a copy to " + (this.serverShort || "your home server") + " (it keeps the last 3)"])]));
-          if (s.err) sched.push(h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "6px" } }, s.err));
+          if (!srv) sched.push(h("div", { style: { marginTop: "10px" } }, [h("span", { class: "tb-check" + (s.push ? " on" : ""), attrs: { role: "checkbox", "aria-checked": String(!!s.push), tabindex: 0 }, on: press(function () { s.push = !s.push; }) }, [h("i"), "Also send a copy to " + (this.serverShort || "your home server") + " (it keeps the last 3)"])]));
+          if (s.err) sched.push(h("div", { class: "tb-small", style: { color: "#c03737", marginTop: "6px" } }, s.err));
           sched.push(h("div", { class: "tb-actions" }, [
             this.btn(h, this.busy.sched ? "Saving…" : "Save", function () {
               var body2 = { every_hours: Number(s.every) || 24, keep: Number(s.keep) || 7 };
@@ -756,37 +768,37 @@
         var width = { weak: "25%", ok: "60%", strong: "100%" }[lv[0]] || "0";
         return [
           h("div", { class: "tb-label" }, "Passphrase"),
-          h("input", { class: "tb-input", attrs: { type: "password", autocomplete: "new-password", placeholder: "At least 10 characters" }, domProps: { value: s.pass }, on: { input: function (e) { s.pass = e.target.value; } } }),
+          h("input", { class: "tb-input", attrs: { "aria-label": "Passphrase", type: "password", autocomplete: "new-password", placeholder: "At least 10 characters" }, domProps: { value: s.pass }, on: { input: function (e) { s.pass = e.target.value; } } }),
           h("div", { class: "tb-bar", style: { marginTop: "6px" } }, [h("i", { style: { width: width, background: color } })]),
           lv[1] ? h("div", { class: "tb-help", style: { marginTop: "4px" } }, lv[1]) : null,
           h("div", { class: "tb-label" }, "Type it again"),
-          h("input", { class: "tb-input", attrs: { type: "password", autocomplete: "new-password", placeholder: "Same again" }, domProps: { value: s.pass2 }, on: { input: function (e) { s.pass2 = e.target.value; } } })
+          h("input", { class: "tb-input", attrs: { "aria-label": "Passphrase, again", type: "password", autocomplete: "new-password", placeholder: "Same again" }, domProps: { value: s.pass2 }, on: { input: function (e) { s.pass2 = e.target.value; } } })
         ];
       },
 
       rUbDialog: function (h) {
         var self = this, u = this.ub, k = u.kind, kids = [], foot = [];
         var close = function () { self.ub = null; self.ubFiles = []; self.ubBody = null; };
-        var err = u.err ? h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "10px" } }, u.err) : null;
+        var err = u.err ? h("div", { class: "tb-small", style: { color: "#c03737", marginTop: "10px" } }, u.err) : null;
         var p = function (t, extra) { return h("div", { class: "tb-muted", style: Object.assign({ lineHeight: 1.55, marginBottom: "8px" }, extra || {}) }, t); };
         if (k === "backup") {
-          kids.push(h("div", { class: "tb-dialog-t" }, "Download a backup"),
+          kids.push(h("div", { class: "tb-dialog-t", attrs: { id: "tb-ub-t" } }, "Download a backup"),
             p("Everything this router needs to start over: " + (this.role === "server" ? "settings, devices and their keys, the certificate devices check" : "settings, servers, connection settings and rules") + ". It's locked with a passphrase you choose now."));
           kids = kids.concat(this.rPass(h, u));
           kids.push(h("div", { class: "tb-alert", style: { marginTop: "14px", marginBottom: 0 } }, [h("div", [h("b", "Write it down. "), "Without the passphrase the backup can't be opened, by anyone, tailbond included. A password manager or a note in a drawer both work."])]), err);
           foot = [this.btn(h, "Cancel", close), this.btn(h, u.busy ? "Locking…" : "Download backup", function () { self.doBackup(); }, "primary", u.busy)];
         } else if (k === "restore" && u.step === "pick") {
-          kids.push(h("div", { class: "tb-dialog-t" }, "Restore from a backup"),
+          kids.push(h("div", { class: "tb-dialog-t", attrs: { id: "tb-ub-t" } }, "Restore from a backup"),
             p("Pick a .tbbackup file and type its passphrase. Nothing changes yet: you see what it would replace first."),
-            h("div", { class: "tb-label" }, "Backup file"),
-            h("input", { class: "tb-input tb-file", attrs: { type: "file", accept: ".tbbackup" }, on: { change: function (e) { self.ubFiles = Array.prototype.slice.call(e.target.files || []); u.file = self.ubFiles[0] ? self.ubFiles[0].name : ""; } } }),
-            h("div", { class: "tb-label" }, "Passphrase"),
-            h("input", { class: "tb-input", attrs: { type: "password", autocomplete: "off", placeholder: "The passphrase of that backup" }, domProps: { value: u.pass }, on: { input: function (e) { u.pass = e.target.value; } } }),
+            h("label", { class: "tb-label", attrs: { for: "tb-rs-file" } }, "Backup file"),
+            h("input", { class: "tb-input tb-file", attrs: { id: "tb-rs-file", type: "file", accept: ".tbbackup" }, on: { change: function (e) { self.ubFiles = Array.prototype.slice.call(e.target.files || []); u.file = self.ubFiles[0] ? self.ubFiles[0].name : ""; } } }),
+            h("label", { class: "tb-label", attrs: { for: "tb-rs-pass" } }, "Passphrase"),
+            h("input", { class: "tb-input", attrs: { id: "tb-rs-pass", type: "password", autocomplete: "off", placeholder: "The passphrase of that backup" }, domProps: { value: u.pass }, on: { input: function (e) { u.pass = e.target.value; } } }),
             err);
           foot = [this.btn(h, "Cancel", close), this.btn(h, u.busy ? "Opening…" : "Check the backup", function () { self.doPreview(); }, "primary", u.busy)];
         } else if (k === "restore" && u.step === "preview") {
           var pv = u.preview || {}, ch = A(pv.changes), warns = this.ubWarns(pv);
-          kids.push(h("div", { class: "tb-dialog-t" }, "Restore this backup?"),
+          kids.push(h("div", { class: "tb-dialog-t", attrs: { id: "tb-ub-t" } }, "Restore this backup?"),
             h("div", { class: "tb-found", style: { marginBottom: "12px", padding: "12px" } }, [
               h("div", { class: "tb-wan-icon" }, [icon(h, pv.role === "server" ? "server" : "router")]),
               h("div", { class: "tb-grow" }, [h("div", { style: { fontWeight: 600, wordBreak: "break-all" } }, u.file), h("div", { class: "tb-muted tb-small" }, (pv.host || "?") + " (" + (ROLE_WORDS[pv.role] || pv.role) + ") · made " + fmtWhen(pv.created) + " · tailbond " + (pv.agent_version || "?"))])
@@ -800,7 +812,7 @@
         } else if (k === "restore") {
           // after restoring, "Restore here while … still runs" is done
           var dw = this.ubWarns(u.preview || {}).filter(function (w) { return !/^1\.\s+Restore here while /.test(w); }), dhost = (u.preview && u.preview.host) || "the backup";
-          kids.push(h("div", { class: "tb-dialog-t", style: { color: "var(--tb-ok,#15803d)", display: "flex", alignItems: "center", gap: "8px" } }, [icon(h, "check", 22), "Restored"]),
+          kids.push(h("div", { class: "tb-dialog-t", attrs: { id: "tb-ub-t" }, style: { color: "var(--tb-ok,#15803d)", display: "flex", alignItems: "center", gap: "8px" } }, [icon(h, "check", 22), "Restored"]),
             p("The settings from " + dhost + " are in place. A copy of the previous settings was kept" + (u.rollback ? " (" + u.rollback + ")" : "") + ", locked with the same passphrase, in case you want them back.", { color: "#303133" }),
             dw.length ? this.restoreSteps(h, dw, "Next, in order:", "If you haven't already:")
               : p(this.role === "server" ? "Devices reconnect by themselves within a few minutes." : "tailbond connects to its home server again by itself within a minute.", { color: "#303133" }),
@@ -828,7 +840,7 @@
             else val = String(v);
             return [h("div", SUMMARY_LABEL[key] || key.replace(/_/g, " ")), h("div", val)];
           }) : [];
-          kids.push(h("div", { class: "tb-dialog-t" }, "What's in a backup"),
+          kids.push(h("div", { class: "tb-dialog-t", attrs: { id: "tb-ub-t" } }, "What's in a backup"),
             p("What a backup made now would hold. Keys and passwords are in it too (locked), but never shown here.", { fontSize: "12px" }),
             sm ? h("div", { class: "tb-kv tb-small tb-chg" }, [].concat.apply([], rows)) : (u.err ? null : h("div", { class: "tb-row tb-muted" }, [h("div", { class: "tb-spin" }), "Loading…"])),
             this.role === "server" ? p("Your devices' own backups are included (still locked with their passphrases), so they move with this router.", { color: "#303133", marginTop: "12px" }) : null,
@@ -837,7 +849,7 @@
           foot = [this.btn(h, "Close", close, "primary")];
         }
         return h("div", { class: "tb-modal", on: { click: function (e) { if (e.target === e.currentTarget && !u.busy) close(); } } }, [
-          h("div", { class: "tb-dialog wide", attrs: { role: "dialog" } }, kids.concat([h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, foot)]))
+          h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-modal": "true", "aria-labelledby": "tb-ub-t" } }, kids.concat([h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, foot)]))
         ]);
       }
     }
@@ -897,11 +909,11 @@
       rReportDialog: function (h) {
         var self = this, u = this.rep, d = u.d || {};
         var close = function () { self.rep = null; };
-        var lbl = function (t) { return h("div", { class: "tb-label" }, t); };
-        var inp = function (k, ph) { return h("input", { class: "tb-input", attrs: { placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } }); };
+        var lbl = function (t, k) { return h("label", { class: "tb-label", attrs: { for: "tb-rep-" + k } }, t); };
+        var inp = function (k, ph) { return h("input", { class: "tb-input", attrs: { id: "tb-rep-" + k, placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } }); };
         var area = function (k, rows, mono, ph) {
           return h("textarea", { class: "tb-input", style: { height: (rows * 20 + 16) + "px", fontFamily: mono ? "ui-monospace,Menlo,monospace" : "inherit", fontSize: mono ? "12px" : "14px", whiteSpace: mono ? "pre-wrap" : "normal", overflowWrap: mono ? "anywhere" : "normal" },
-            attrs: { spellcheck: mono ? "false" : "true", placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } });
+            attrs: { id: "tb-rep-" + k, spellcheck: mono ? "false" : "true", placeholder: ph || "" }, domProps: { value: u[k] }, on: { input: function (e) { u[k] = e.target.value; } } });
         };
         var canOpen = u.ok && u.what.trim() !== "";
         var kids = [
@@ -909,25 +921,25 @@
           h("div", { class: "tb-alert", style: { marginBottom: "10px" } }, [h("div", d.notice)]),
           h("div", { class: "tb-muted tb-small", style: { marginBottom: "8px" } }, [String(d.security_note || "").replace(/\(.*\)\.?$/, ""), " ",
             h("a", { class: "tb-link", attrs: { href: d.security_url, target: "_blank", rel: "noopener" } }, "Report a vulnerability privately"), "."]),
-          d.crash ? h("div", { class: "tb-small", style: { color: "#e6a23c", marginBottom: "8px" } }, "tailbond stopped unexpectedly" + (d.crash_at ? " (" + new Date(d.crash_at).toLocaleString() + ")" : "") + "; its crash details are below.") : null,
-          lbl("What happened, and what did you expect?"), area("what", 3, false, "e.g. After the firmware upgrade the panel shows Disconnected; I expected Connected."),
-          lbl("Steps to reproduce (optional)"), area("steps", 2, false, "e.g. 1. Upgrade the firmware  2. Open VPN → tailbond"),
-          lbl("Where"), inp("component"),
-          lbl("tailbond version"), inp("version"),
-          lbl("Router and firmware"), inp("device"),
-          d.crash ? lbl("Crash details") : null, d.crash ? area("crash", 5, true) : null,
-          lbl("Logs (newest last)"), area("logs", 8, true),
+          d.crash ? h("div", { class: "tb-small", style: { color: "#8a5d10", marginBottom: "8px" } }, "tailbond stopped unexpectedly" + (d.crash_at ? " (" + new Date(d.crash_at).toLocaleString() + ")" : "") + "; its crash details are below.") : null,
+          lbl("What happened, and what did you expect?", "what"), area("what", 3, false, "e.g. After the firmware upgrade the panel shows Disconnected; I expected Connected."),
+          lbl("Steps to reproduce (optional)", "steps"), area("steps", 2, false, "e.g. 1. Upgrade the firmware  2. Open VPN → tailbond"),
+          lbl("Where", "component"), inp("component"),
+          lbl("tailbond version", "version"), inp("version"),
+          lbl("Router and firmware", "device"), inp("device"),
+          d.crash ? lbl("Crash details", "crash") : null, d.crash ? area("crash", 5, true) : null,
+          lbl("Logs (newest last)", "logs"), area("logs", 8, true),
           h("div", { class: "tb-muted tb-small", style: { marginTop: "4px" } }, "A link holds about 7 KB, so the issue gets the newest lines; Copy full report and Save report file have all of them."),
-          h("div", { style: { marginTop: "12px" } }, [h("span", { class: "tb-check" + (u.ok ? " on" : ""), attrs: { role: "checkbox", "aria-checked": String(u.ok), tabindex: 0, id: "tb-rep-ok" }, on: { click: function () { u.ok = !u.ok; } } }, [h("i"), d.confirm])]),
+          h("div", { style: { marginTop: "12px" } }, [h("span", { class: "tb-check" + (u.ok ? " on" : ""), attrs: { role: "checkbox", "aria-checked": String(u.ok), tabindex: 0, id: "tb-rep-ok" }, on: press(function () { u.ok = !u.ok; }) }, [h("i"), d.confirm])]),
           !canOpen ? h("div", { class: "tb-muted tb-small", attrs: { id: "tb-rep-why" }, style: { marginTop: "6px" } },
             u.what.trim() === "" ? "To open the issue: say what happened (the first box), then tick the box above." : "To open the issue: tick the box above once you have read the report.") : null,
           h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, d.account_note || ""),
-          u.err ? h("div", { class: "tb-small", style: { color: "#f56c6c", marginTop: "10px" } }, u.err) : null
+          u.err ? h("div", { class: "tb-small", style: { color: "#c03737", marginTop: "10px" } }, u.err) : null
         ];
         var foot = [this.btn(h, "Cancel", close), this.btn(h, "Copy full report", function () { self.repCopy(); }), this.btn(h, "Save report file", function () { self.repSave(); }),
           this.btn(h, "Open GitHub issue", function () { self.repOpen(); }, "primary", !canOpen)];
         return h("div", { class: "tb-modal", on: { click: function (e) { if (e.target === e.currentTarget) close(); } } }, [
-          h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-label": "Report a problem" } }, kids.concat([h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px", flexWrap: "wrap" } }, foot)]))
+          h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-modal": "true", "aria-label": "Report a problem" } }, kids.concat([h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px", flexWrap: "wrap" } }, foot)]))
         ]);
       }
     }
@@ -979,6 +991,44 @@
       this.refreshAll();
       this.timer = setInterval(function () { self.tick(); }, 2000);
       this.slow = setInterval(function () { self.refreshSlow(); }, 15000);
+    },
+    // Escape closes a dialog, like a click outside it; Tab stays inside an
+    // open one (aria-modal="true" says the page behind is out of reach).
+    mounted: function () {
+      var self = this;
+      this.$el.addEventListener("keydown", function (e) {
+        var m = e.key === "Escape" ? self.$el.querySelector(".tb-modal") : null;
+        if (m) { m.click(); return; }
+        if (e.key !== "Tab") return;
+        var d = self.$el.querySelector(".tb-dialog");
+        if (!d) return;
+        var f = Array.prototype.filter.call(
+          d.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'),
+          function (el) { return el.getClientRects().length > 0; });
+        if (!f.length) { e.preventDefault(); d.focus(); return; }
+        var first = f[0], last = f[f.length - 1], a = document.activeElement;
+        if (!d.contains(a)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+        if (e.shiftKey && (a === first || a === d)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+      });
+    },
+    // A dialog that opens takes the keyboard focus, and gives it back to
+    // where it was when it closes.
+    updated: function () {
+      var d = this.$el.querySelector ? this.$el.querySelector(".tb-dialog") : null;
+      if (d) {
+        if (d !== this.dlgEl) {
+          if (!this.dlgEl) this.dlgBack = document.activeElement;
+          this.dlgEl = d;
+        }
+        // the dialog re-renders with the page's data (every 2 s): when that
+        // drops focus to <body>, take it back, or the keyboard is stranded
+        if (!d.contains(document.activeElement)) { d.setAttribute("tabindex", "-1"); d.focus(); }
+      } else if (this.dlgEl) {
+        var back = this.dlgBack;
+        this.dlgEl = this.dlgBack = null;
+        if (back && back.focus && document.contains(back)) back.focus();
+      }
     },
     beforeDestroy: function () { clearInterval(this.timer); clearInterval(this.slow); },
     methods: {
@@ -1586,7 +1636,7 @@
         rConfirm: function (h) {
           var self = this, c = this.confirm;
           return h("div", { class: "tb-modal", on: { click: function (e) { if (e.target === e.currentTarget) self.confirm = null; } } }, [
-            h("div", { class: "tb-dialog", attrs: { role: "dialog" } }, [
+            h("div", { class: "tb-dialog", attrs: { role: "dialog", "aria-modal": "true", "aria-label": c.title } }, [
               h("div", { class: "tb-dialog-t" }, c.title),
               h("div", { style: { color: "#606266", lineHeight: 1.55 } }, c.body),
               c.note ? h("div", { class: "tb-muted tb-small", style: { marginTop: "8px", lineHeight: 1.5 } }, c.note) : null,
@@ -1615,7 +1665,7 @@
             h("span", { class: "tb-hide-sm" }, ["Up ", h("b", fmtUptime(st.uptime_sec))])
           ]) : null;
           var line = this.summary();
-          if (fo && fo.act) line = [line, " · ", h("a", { class: "tb-link", on: { click: fo.act[1] } }, fo.act[0])];
+          if (fo && fo.act) line = [line, " · ", h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: fo.act[1] } }, fo.act[0])];
           if (fo && fo.note) line = [h("div", line), h("div", { class: "tb-small tb-muted", style: { marginTop: "4px" } }, fo.note)];
           out.push(this.hero(h, iconCls, title, line,
             this.paired ? this.sw(h, on, function () { self.toggle(); }, true, this.busy.power, "tailbond on/off") : null, rates, this.updTop(h)));
@@ -1663,7 +1713,7 @@
             h("div", { style: { marginTop: "8px", fontWeight: 600 } }, ks
               ? "Meanwhile, devices on this router have no internet, so nothing goes around your home server. To use this internet directly for now, turn tailbond off (GL then picks the connection itself, and may use your phone's data: “Backup only” and limits don't apply while off)."
               : "Meanwhile, devices on this router use this internet directly."),
-            h("div", { class: "tb-small", style: { marginTop: "6px", opacity: 0.85 } }, "Still not working? Whoever set up " + server + " should check that it's on and that UDP port 443 reaches " + addr + " from the internet.")],
+            h("div", { class: "tb-small", style: { marginTop: "6px" } }, "Still not working? Whoever set up " + server + " should check that it's on and that UDP port 443 reaches " + addr + " from the internet.")],
             [this.btn(h, this.busy.svc ? "Trying…" : "Try again", function () { self.run("svc", rpc("service", { action: "restart" }), "Trying again…"); }, "primary", this.busy.svc),
               ks ? this.btn(h, "Turn tailbond off", function () { self.toggle(); }, "", this.busy.power) : null]);
         },
@@ -1726,7 +1776,7 @@
           var capTxt = w.cap ? fmtBytes(w.used) + " of " + fmtCap(w.cap) + " this month" : fmtBytes(w.used) + " this month";
           usage.push(h("div", { class: "tb-row tb-small" }, [
             h("span", { class: "tb-grow tb-muted" }, "Data used: " + capTxt),
-            this.capEdit === w.key ? null : h("a", { class: "tb-link", on: { click: function () { self.capEdit = w.key; self.capValue = w.cap ? String(w.cap / 1000) : ""; } } }, w.cap ? "Change limit" : "Set limit")
+            this.capEdit === w.key ? null : h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.capEdit = w.key; self.capValue = w.cap ? String(w.cap / 1000) : ""; } } }, w.cap ? "Change limit" : "Set limit")
           ]));
           if (w.cap) usage.push(h("div", { class: "tb-bar" }, [h("i", { class: w.used >= w.cap * 1e6 ? "full" : "", style: { width: Math.min(100, (w.used / (w.cap * 1e6)) * 100) + "%" } })]));
           if (this.capEdit === w.key) {
@@ -1938,7 +1988,7 @@
               })),
               paused ? h("div", { class: "tb-alert info", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [
                 h("b", "Paused: " + st.active_server + " was picked by hand" + (fo.since ? " at " + fmtHM(fo.since) : "") + ". "),
-                ss[0].state === "standby" ? h("a", { class: "tb-link", on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
+                ss[0].state === "standby" ? h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
                   : "Automatic switching comes back if " + st.active_server + " stops working, or when you pick " + first + "."])]) : null,
               h("div", { class: "tb-help" }, "How it decides: tailbond checks the standby servers every 10 s with one small packet. It switches when " + first + " hasn't worked for " + fmtDur(fo.switch_after_sec || 15) +
                 ", and comes back once " + first + " has answered for " + fmtDur(fo.failback_after_sec || 120) + ". It watches only whether " + first + " answers tailbond: a slow connection or a website that doesn't load doesn't make it switch.")
@@ -1951,7 +2001,7 @@
             ]),
             this.rAddServer(h),
             h("div", { class: "tb-sec tb-small tb-muted", style: { textAlign: "right" } }, ["Stop using tailbond on this router: ",
-              h("a", { class: "tb-link", style: { color: "#f56c6c" }, on: { click: function () { self.unpair(); } } }, "Forget all servers")])
+              h("button", { class: "tb-link", attrs: { type: "button" }, style: { color: "#c03737" }, on: { click: function () { self.unpair(); } } }, "Forget all servers")])
           ], me ? h("span", { class: "tb-muted tb-small", style: { fontWeight: 400 } }, "This router is " + me) : null);
         },
 
@@ -1978,7 +2028,7 @@
             h("div", { class: "tb-kv tb-small", style: { gridTemplateColumns: "110px 1fr" } }, [].concat.apply([], shown.map(function (x) {
               return [h("div", when(x.at)), h("div", [h("b", (x.from || "—") + " → " + x.to), h("span", { class: "tb-muted" }, " · " + why(x))])];
             }))),
-            hist.length > 3 ? h("div", { class: "tb-small", style: { marginTop: "6px" } }, [h("a", { class: "tb-link", on: { click: function () { self.histAll = !self.histAll; } } }, this.histAll ? "Show fewer" : "Show all (" + hist.length + ")")]) : null
+            hist.length > 3 ? h("div", { class: "tb-small", style: { marginTop: "6px" } }, [h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.histAll = !self.histAll; } } }, this.histAll ? "Show fewer" : "Show all (" + hist.length + ")")]) : null
           ]);
         },
 
@@ -2035,7 +2085,7 @@
               h("input", { class: "tb-input", attrs: { placeholder: "e.g. vps" }, domProps: { value: this.srvTyped }, on: { input: function (e) { self.srvTyped = e.target.value; }, keyup: function (e) { if (e.key === "Enter" && self.srvTyped.trim()) self.askAdd(self.srvTyped.trim()); } } }),
               this.btn(h, "Ask to add", function () { if (self.srvTyped.trim()) self.askAdd(self.srvTyped.trim()); }, "", !this.srvTyped.trim() || this.busy["srv-ask"])
             ]));
-            body.push(h("div", { class: "tb-small", style: { marginTop: "10px" } }, [h("a", { class: "tb-link", on: { click: function () { self.srvShowPaste = !self.srvShowPaste; } } }, this.srvShowPaste ? "Hide the link box" : "No Tailscale there? Paste a pairing link from it")]));
+            body.push(h("div", { class: "tb-small", style: { marginTop: "10px" } }, [h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.srvShowPaste = !self.srvShowPaste; } } }, this.srvShowPaste ? "Hide the link box" : "No Tailscale there? Paste a pairing link from it")]));
             if (this.srvShowPaste) {
               body.push(h("div", { style: { marginTop: "8px" } }, [
                 h("textarea", { class: "tb-input", attrs: { placeholder: "tailbond://pair?d=…" }, domProps: { value: this.srvPaste }, on: { input: function (e) { self.srvPaste = e.target.value; } } }),
@@ -2049,7 +2099,7 @@
             }
           }
           return h("div", { class: "tb-sec" }, [
-            h("div", { class: "tb-sec-t" }, ["Add another server", this.srvAdd ? h("a", { class: "tb-link tb-small", style: { fontWeight: 400 }, on: { click: function () { self.closeAddServer(); } } }, "Close") : null]),
+            h("div", { class: "tb-sec-t" }, ["Add another server", this.srvAdd ? h("button", { class: "tb-link tb-small", attrs: { type: "button" }, style: { fontWeight: 400 }, on: { click: function () { self.closeAddServer(); } } }, "Close") : null]),
             h("div", { class: "tb-muted", style: { marginBottom: "12px", lineHeight: 1.55 } }, "A second tailbond server, for example a VPS, takes over when " + firstName + " can't be reached. It needs tailbond running and the same Tailscale account."),
             h("div", body)
           ]);
@@ -2123,7 +2173,7 @@
                 ])
               ]),
               self.sw(h, row.on, function () { self.toggleRules(row.rules, !row.on); }, false, self.busy["bp-" + r.id], (row.on ? "Turn off: " : "Turn on: ") + label),
-              h("button", { class: "tb-btn small text icon", style: { color: "#909399" }, attrs: { type: "button", title: "Delete", "aria-label": "Delete " + label, disabled: !!self.busy["bp-" + r.id] }, on: { click: function () { self.deleteRules(row.rules, label); } } }, [icon(h, "trash", 18)])
+              h("button", { class: "tb-btn small text icon", style: { color: "#686b70" }, attrs: { type: "button", title: "Delete", "aria-label": "Delete " + label, disabled: !!self.busy["bp-" + r.id] }, on: { click: function () { self.deleteRules(row.rules, label); } } }, [icon(h, "trash", 18)])
             ]);
           });
           var body = [];
@@ -2172,7 +2222,7 @@
             h("div", { class: "tb-seg", attrs: { role: "radiogroup", "aria-label": "What" } }, seg.map(function (o) {
               return h("button", { class: e.kind === o[0] ? "on" : "", attrs: { type: "button", role: "radio", "aria-checked": String(e.kind === o[0]) }, on: { click: function () { self.bpKind(o[0]); } } }, o[1]);
             })),
-            e.more ? null : h("a", { class: "tb-link tb-small", on: { click: function () { self.bpKind("addr"); } } }, "More: an address or port")
+            e.more ? null : h("button", { class: "tb-link tb-small", attrs: { type: "button" }, on: { click: function () { self.bpKind("addr"); } } }, "More: an address or port")
           ]));
           if (e.kind === "domain") {
             body.push(h("div", { class: "tb-label" }, e.multi ? "Websites, one per line (remove any you don't use)" : e.preset === "bank" ? "Your bank's website" : "Website"));
@@ -2190,9 +2240,26 @@
             body.push(h("div", { class: "tb-label" }, "Which device"));
             if (this.lan === null) body.push(h("div", { class: "tb-row tb-muted" }, [h("div", { class: "tb-spin" }), "Loading devices…"]));
             else if (!lan.length) body.push(h("div", { class: "tb-muted" }, "No devices found on this router yet. Type the device's MAC address below."));
-            else body.push(h("div", { class: "tb-pick", attrs: { role: "radiogroup", "aria-label": "Devices" } }, lan.map(function (c) {
+            else {
+              var anyOn = lan.some(function (c) { return e.mac === (c.mac || "").toLowerCase(); });
+              var pickDev = function (c) { e.mac = (c.mac || "").toLowerCase(); e.ip = c.ip || ""; e.name = c.name || ""; e.macTyped = ""; e.err = ""; };
+              body.push(h("div", { class: "tb-pick", attrs: { role: "radiogroup", "aria-label": "Devices" } }, lan.map(function (c, i) {
               var on = e.mac === (c.mac || "").toLowerCase();
-              return h("div", { class: "tb-pick-i" + (on ? " on" : ""), attrs: { role: "radio", tabindex: 0, "aria-checked": String(on) }, on: { click: function () { e.mac = (c.mac || "").toLowerCase(); e.ip = c.ip || ""; e.name = c.name || ""; e.macTyped = ""; e.err = ""; } } }, [
+              // one stop in the Tab order (the chosen one, else the first),
+              // arrows move between them, as a radio group does
+              return h("div", { class: "tb-pick-i" + (on ? " on" : ""), attrs: { role: "radio", tabindex: on || (!anyOn && i === 0) ? 0 : -1, "aria-checked": String(on) }, on: {
+                click: function () { pickDev(c); },
+                keydown: function (ev) {
+                  if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); if (!ev.repeat) pickDev(c); return; }
+                  var d = ev.key === "ArrowDown" || ev.key === "ArrowRight" ? 1
+                        : ev.key === "ArrowUp" || ev.key === "ArrowLeft" ? -1 : 0;
+                  if (!d) return;
+                  ev.preventDefault();
+                  var items = ev.currentTarget.parentNode.querySelectorAll('[role="radio"]');
+                  var next = items[(i + d + items.length) % items.length];
+                  if (next) { next.click(); if (next.focus) next.focus(); }
+                }
+              } }, [
                 h("span", { class: "tb-dot" + (c.online ? " ok" : ""), attrs: { title: c.online ? "Connected" : "Not connected now" } }),
                 h("div", { class: "tb-grow" }, [
                   h("div", { style: { fontWeight: 600 } }, c.name || "Unnamed device"),
@@ -2201,6 +2268,7 @@
                 taken[(c.mac || "").toLowerCase()] ? h("span", { class: "tb-muted tb-small" }, "has a rule") : c.online ? null : h("span", { class: "tb-muted tb-small" }, "not connected")
               ]);
             })));
+            }
             body.push(h("div", { class: "tb-label" }, "Not listed? Its MAC address"));
             body.push(h("input", { class: "tb-input", attrs: { placeholder: "aa:bb:cc:dd:ee:ff" }, domProps: { value: e.macTyped }, on: { input: function (ev) { e.macTyped = ev.target.value; e.mac = ""; e.ip = ""; e.name = ""; } } }));
             body.push(h("div", { class: "tb-help" }, e.mac && e.name
@@ -2228,9 +2296,9 @@
           body.push(h("select", { class: "tb-input", attrs: { "aria-label": "Where it goes" }, domProps: { value: e.target }, on: { change: function (ev) { e.target = ev.target.value; e.touched = true; } } },
             opts.map(function (o) { return h("option", { attrs: { value: o[0] }, domProps: { selected: e.target === o[0] } }, o[1]); })));
           body.push(h("div", { class: "tb-help" }, help));
-          if (e.err) body.push(h("div", { style: { color: "#f56c6c", marginTop: "10px" } }, e.err));
+          if (e.err) body.push(h("div", { style: { color: "#c03737", marginTop: "10px" } }, e.err));
           return h("div", { class: "tb-modal", on: { click: function (ev) { if (ev.target === ev.currentTarget) close(); } } }, [
-            h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-label": "Add a rule" } }, [
+            h("div", { class: "tb-dialog wide", attrs: { role: "dialog", "aria-modal": "true", "aria-label": "Add a rule" } }, [
               h("div", { class: "tb-dialog-t" }, titles[e.preset] || "Add a rule"),
               h("div", body),
               h("div", { class: "tb-actions", style: { justifyContent: "flex-end", marginTop: "18px" } }, [
@@ -2271,7 +2339,7 @@
                     h("div", { class: "tb-mono" }, dotBreaks(h, m.dns_name)),
                     ip ? h("div", { class: "tb-mono tb-nowrap" }, ip) : null,
                     h("div", { class: "tb-muted tb-small" }, [(m.os ? m.os + " · " : "") + lastSeen(m),
-                      m.conn === "relay" ? h("span", { style: { color: "#c88a1a" } }, " · via relay (slower)") : m.conn === "direct" ? " · direct" : null])
+                      m.conn === "relay" ? h("span", { style: { color: "#8a5d10" } }, " · via relay (slower)") : m.conn === "direct" ? " · direct" : null])
                   ]),
                   self.btn(h, "Copy name", function () { self.copy(m.dns_name); }, "small")
                 ]);
@@ -2330,7 +2398,7 @@
             }
             var found = d && A(d.servers).length;
             if (found && !this.showTyped) {
-              body.push(h("div", { class: "tb-small" }, [h("a", { class: "tb-link", on: { click: function () { self.showTyped = true; } } }, "Not your home server? Type its name instead")]));
+              body.push(h("div", { class: "tb-small" }, [h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.showTyped = true; } } }, "Not your home server? Type its name instead")]));
             } else {
               body.push(h("div", { class: "tb-muted", style: { margin: "6px 0 6px" } }, "Home server's name in Tailscale"));
               body.push(h("div", { class: "tb-row" }, [
@@ -2353,12 +2421,12 @@
             ]),
             this.showOther ? h("div", { style: { marginTop: "12px" } }, [
               h("textarea", { class: "tb-input", attrs: { placeholder: "tailbond://pair?d=…" }, domProps: { value: this.pasteUri }, on: { input: function (e) { self.pasteUri = e.target.value; } } }),
-              this.pasteErr ? h("div", { style: { color: "#f56c6c", marginTop: "6px" } }, this.pasteErr) : null,
+              this.pasteErr ? h("div", { style: { color: "#c03737", marginTop: "6px" } }, this.pasteErr) : null,
               h("div", { class: "tb-actions" }, [this.btn(h, this.busy.paste ? "Pairing…" : "Pair", function () { self.pastePair(); }, "primary", this.busy.paste)])
             ]) : null
           ]));
           out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Setting up the router that stays at home? ", h("a", { class: "tb-link", on: { click: function () { self.setRole("server"); } } }, "Make this the home server"), " (you can switch back here)"
+            "Setting up the router that stays at home? ", h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.setRole("server"); } } }, "Make this the home server"), " (you can switch back here)"
           ]));
           return out;
         },
@@ -2426,7 +2494,7 @@
           out.push(this.rMachines(h, true));
           out.push(this.rUpdates(h), this.rBackup(h));
           out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Is this a travel router? ", h("a", { class: "tb-link", on: { click: function () { self.setRole("client"); } } }, "Use it as a travel router instead"), " (you can switch back here)"
+            "Is this a travel router? ", h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.setRole("client"); } } }, "Use it as a travel router instead"), " (you can switch back here)"
           ]));
           return out;
         },
@@ -2463,7 +2531,7 @@
               h("input", { class: "tb-input", attrs: { placeholder: "Name, e.g. pixel-8" }, domProps: { value: this.addName }, on: { input: function (e) { self.addName = e.target.value; } } }),
               this.btn(h, "Add with a code", function () { self.addClient(); }, "", this.busy.add)
             ]));
-            if (this.addErr) add.push(h("div", { style: { color: "#f56c6c", marginTop: "6px" } }, this.addErr));
+            if (this.addErr) add.push(h("div", { style: { color: "#c03737", marginTop: "6px" } }, this.addErr));
           }
           return this.card(h, "Devices", [
             h("div", { class: "tb-list" }, rows),
@@ -2568,7 +2636,7 @@
           var bad = checks.filter(function (c) { return c.status === "warn" || c.status === "bad"; });
           var rest = checks.filter(function (c) { return bad.indexOf(c) < 0; });
           var row = function (c) {
-            var color = c.status === "ok" ? "var(--tb-ok,#15803d)" : c.status === "bad" ? "#f56c6c" : c.status === "warn" ? "#c88a1a" : "#909399";
+            var color = c.status === "ok" ? "var(--tb-ok,#15803d)" : c.status === "bad" ? "#c03737" : c.status === "warn" ? "#8a5d10" : "#686b70";
             var mark = c.status === "ok" ? "✓" : c.status === "unknown" ? "?" : "!";
             return h("div", { class: "tb-li", style: { alignItems: "flex-start" } }, [
               h("span", { style: { color: color, fontWeight: 700, width: "16px", flex: "none", textAlign: "center" } }, mark),
@@ -2591,7 +2659,7 @@
               : "✓ Everything is set up");
           return this.card(h, "Setup health", [head,
             h("div", { class: "tb-list" }, bad.map(row).concat(bad.length && !this.showHealthOk ? [] : rest.map(row))),
-            bad.length && rest.length ? h("a", { class: "tb-link tb-small", on: { click: function () { self.showHealthOk = !self.showHealthOk; } } }, this.showHealthOk ? "Hide the rest" : "Show " + rest.length + " more check" + (rest.length === 1 ? "" : "s")) : null,
+            bad.length && rest.length ? h("button", { class: "tb-link tb-small", attrs: { type: "button" }, on: { click: function () { self.showHealthOk = !self.showHealthOk; } } }, this.showHealthOk ? "Hide the rest" : "Show " + rest.length + " more check" + (rest.length === 1 ? "" : "s")) : null,
             bad.length ? h("div", { class: "tb-small", style: { marginTop: "8px" } }, "Not sure how? Show this card to whoever set up your internet; the links explain each fix.") : null,
             h("div", { class: "tb-muted tb-small", style: { marginTop: "8px" } }, ["Direct connections are faster than relayed ones. ",
               h("a", { class: "tb-link", attrs: { href: "https://tailscale.com/docs/reference/connection-types", target: "_blank", rel: "noopener" } }, "About Tailscale connection types")])

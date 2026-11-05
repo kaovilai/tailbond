@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- A minimal LuCI (bootstrap theme) page for the accessibility run
+     (scripts/ux/a11y.sh): it loads the real Services -> tailbond view
+     (packaging/openwrt/luci/www/luci-static/resources/view/tailbond.js),
+     with stand-ins for LuCI's E(), _() and view.extend(), and renders it
+     into #view the way LuCI does. Only #view is ours; the chrome around it
+     is LuCI's, so the run checks #view alone. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tailbond - Services - LuCI</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Microsoft Yahei","WenQuanYi Micro Hei",sans-serif,Arial;font-size:13px;color:#404040;background:#fff}
+  header{background:#00468c;color:#fff;height:44px;display:flex;align-items:center;padding:0 18px;gap:24px}
+  main{max-width:1100px;margin:0 auto;padding:18px}
+  h2{font-weight:normal;font-size:22px;margin:0 0 12px}
+  .cbi-map-descr{margin:0 0 12px;line-height:1.5}
+  .btn{display:inline-block;padding:5px 12px;border:1px solid #ccc;border-radius:3px;background:linear-gradient(#fff,#e6e6e6);color:#333;font-size:13px;text-decoration:none}
+</style>
+</head>
+<body>
+<header><b>GL-BE3600</b></header>
+<main id="maincontent"><div id="view"></div></main>
+<script>
+(function () {
+  // LuCI's E(tag, attrs, children): children may be a string, a node or a list
+  function E(tag, attrs, kids) {
+    var el = document.createElement(tag);
+    if (Array.isArray(attrs) || typeof attrs === 'string' || attrs instanceof Node) { kids = attrs; attrs = {}; }
+    for (var k in attrs || {}) el.setAttribute(k, attrs[k]);
+    (Array.isArray(kids) ? kids : kids == null ? [] : [kids]).forEach(function (c) {
+      el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+    });
+    return el;
+  }
+  var view = { extend: function (o) { return o; } };
+  fetch('/luci/view/tailbond.js').then(function (r) { return r.text(); }).then(function (src) {
+    var v = new Function('view', 'E', '_', src)(view, E, function (s) { return s; });
+    document.getElementById('view').appendChild(v.render());
+    window.__mounted = true;
+  });
+})();
+</script>
+</body>
+</html>

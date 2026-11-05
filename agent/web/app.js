@@ -380,7 +380,7 @@ function renderLocalHead(st) {
   const cur = box.querySelector('input');
   if (cur && document.activeElement === cur) return;
   box.replaceChildren(
-    h('div', { class: 'row between' }, h('h3', { text: label }), sectionToggle('use_local', on, label)),
+    h('div', { class: 'row between' }, h('h2', { text: label }), sectionToggle('use_local', on, label)),
     h('p', { class: 'muted small', text: on
       ? (mac ? 'Wi-Fi, Ethernet and USB-C adapters, and an iPhone plugged in over USB (Personal Hotspot on) are bonded with the phones below.' : 'Its own uplinks are bonded with the phones below.')
       : "Off: only nearby phones' shared data is bonded. With no phone sharing, tailbond connects over the default route." }));
@@ -395,7 +395,7 @@ function renderShares(st) {
   if (!box) return;
   if (box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   const shares = st.shares || [];
-  const kids = [h('div', { class: 'row between' }, h('h3', { text: 'Shared by nearby devices' }),
+  const kids = [h('div', { class: 'row between' }, h('h2', { text: 'Shared by nearby devices' }),
     sectionToggle('use_shares', st.use_shares !== false, "Use nearby devices' shared connections"))];
   if (st.share_note) kids.push(h('div', { class: 'banner warn', text: st.share_note }));
   const words = { ready: 'Sharing', connecting: 'Connecting…', refused: 'Stopped', unreachable: "Can't reach it", lost: 'Stopped answering' };
@@ -449,7 +449,7 @@ function renderShareOut(st) {
       on.disabled = false;
     }
   });
-  const kids = [h('div', { class: 'row between' }, h('h3', { text: `Share ${self}'s connection` }),
+  const kids = [h('div', { class: 'row between' }, h('h2', { text: `Share ${self}'s connection` }),
     h('label', { class: 'toggle', title: 'Share it' }, on, h('span')))];
   kids.push(h('p', { class: 'muted small', text: `Lend one of ${self}'s connections (the hotel's Ethernet, a second Wi-Fi adapter, a USB modem) to your travel router or another laptop paired with your home server. It bonds it as one more connection, like a phone's mobile data. ${mac ? 'This Mac' : 'This computer'} must also be on the hub's network (its Wi-Fi), and tailbond here doesn't have to be on.` }));
   // where it stands
@@ -536,7 +536,7 @@ function renderPhoneHub(st) {
   };
   const what = (x) => x.bonded ? 'bonded connection' : 'mobile data';
   const where = (x) => x.iface ? ` · reached over ${x.iface}` : '';
-  const kids = [h('h3', { text: "Use a phone's connection" })];
+  const kids = [h('h2', { text: "Use a phone's connection" })];
   if (ph.note) kids.push(h('div', { class: 'banner warn', text: ph.note }));
   const u = ph.using;
   if (u) {
@@ -588,7 +588,7 @@ function renderCoexist(st) {
   const show = st.role === 'client' && cx && (others.length || nb.cli || (cx.conflicts || []).length);
   box.classList.toggle('hidden', !show);
   if (!show || box.contains(document.activeElement)) return;
-  const kids = [h('h3', { text: 'Other VPNs on this ' + (st.platform === 'darwin' ? 'Mac' : 'machine') })];
+  const kids = [h('h2', { text: 'Other VPNs on this ' + (st.platform === 'darwin' ? 'Mac' : 'machine') })];
   for (const c of cx.conflicts || []) kids.push(h('div', { class: 'banner', text: `Conflict: ${c}. tailbond won't add routes like this; turn tailbond off and on to clear it.` }));
   for (const w of cx.warnings || []) kids.push(h('div', { class: 'banner warn', text: w }));
   const nbOn = others.some((f) => f.kind === 'netbird');
@@ -673,7 +673,7 @@ async function renderHealth() {
       test ? h('div', { class: 'small', text: test }) : null);
   });
   box.replaceChildren(...[
-    h('h3', { text: addrTodo && !blocking ? headline + ' · finish the setup step above first' : headline }),
+    h('h2', { text: addrTodo && !blocking ? headline + ' · finish the setup step above first' : headline }),
     h('ul', { class: 'health-list' }, rows),
     bad.length ? h('p', { class: 'small', text: (security ? 'The security setting is fixed on this page (Who can approve and add devices). ' : '') + 'Router fixes are on your home router\'s admin page, route ones in the Tailscale admin console ("How to fix" explains each); this machine\'s own firewall is already set up by tailbond. Not sure how? Show this card to whoever set up your internet.' }) : null,
     h('p', { class: 'muted small' }, 'Direct connections are faster than relayed ones. ',
@@ -841,7 +841,7 @@ async function loadSettings() {
       w.innerHTML = '';
       const lan = (s.effective_public_addr || '').replace(/:\d+$/, '') || 'this machine';
       w.append(
-        h('h3', { text: 'Setup step: tell devices where home is' }),
+        h('h2', { text: 'Setup step: tell devices where home is' }),
         h('p', { text: `Right now devices would connect to ${s.effective_public_addr || 'no address'}, an address inside your home, so they only work at home. Two things, on your home router's admin page:` }),
         h('ol', {},
           h('li', { text: `Forward UDP port ${s.port} to this machine (${lan}). The page is usually called Port forwarding, Virtual server or NAT. Give this machine a fixed address there too (DHCP reservation), so the forward keeps pointing at it.` }),
@@ -874,7 +874,7 @@ async function renderTailscale() {
   const s = state.settings || {};
   const head = h('div', { class: 'ts-head' },
     h('div', { class: 'kind-ico' }, icon('ts')),
-    h('div', {}, h('h3', { text: 'Tailscale' }),
+    h('div', {}, h('h2', { text: 'Tailscale' }),
       h('span', { class: 'chip s-' + (ts.running ? 'active' : ts.installed ? 'pending' : 'off'), text: ts.running ? 'running' : ts.installed ? (ts.backend_state || 'stopped') : 'not installed' })));
   const items = [
     ['Machine', ts.dns_name || ts.self || '—'],
@@ -1312,7 +1312,7 @@ function renderUpdates(st) {
     : noCheck ? ['s-pending', "Couldn't check"] : ['s-active', 'Up to date'];
   const kids = [h('div', { class: 'ub-head' },
     h('div', { class: 'kind-ico' }, icon('update')),
-    h('div', { class: 'grow' }, h('h3', { text: 'Updates' }), h('div', { class: 'muted small', text: `This ${srv ? 'server' : 'machine'} runs tailbond ${cur}` })),
+    h('div', { class: 'grow' }, h('h2', { text: 'Updates' }), h('div', { class: 'muted small', text: `This ${srv ? 'server' : 'machine'} runs tailbond ${cur}` })),
     h('span', { class: 'chip ' + chip[0], text: chip[1] }))];
 
   // what's going on now
@@ -1377,7 +1377,7 @@ function renderUpdates(st) {
     const checked = !!u.last_check && !u.error && !off;
     const devs = (st.clients || []).filter((c) => c.registered !== false);
     const outs = devs.filter((c) => behind(c, latest));
-    const sec = [h('h4', { text: devs.length && outs.length ? `Your devices: ${outs.length} of ${devs.length} out of date` : 'Your devices' })];
+    const sec = [h('h3', { text: devs.length && outs.length ? `Your devices: ${outs.length} of ${devs.length} out of date` : 'Your devices' })];
     if (devs.length) {
       sec.push(h('ul', { class: 'ub-list' }, devs.map((c) => h('li', {}, icon(isPhone(c) ? 'device' : 'ethernet', 'ico sm'), h('b', { text: c.name }),
         h('span', { class: 'muted', text: ` ${KIND_NAME[c.kind] || 'device'} · ${c.version ? c.version + (behind(c, latest) ? ` · behind the latest (${latest})` : '') : 'version not known yet'}` }),
@@ -1394,7 +1394,7 @@ function renderUpdates(st) {
   }
 
   // the policy, in plain words
-  const set = [h('h4', { text: 'When a new version is out' })];
+  const set = [h('h3', { text: 'When a new version is out' })];
   if (u.method === 'dnf') {
     // dnf installs; tailbond only checks, so the choice is just On / Off
     set.push(h('div', { class: 'row ub-seg-row' }, h('span', { class: 'small', text: 'Check for new versions' }),
@@ -1423,7 +1423,7 @@ function renderUpdates(st) {
 }
 
 function confirmInstall(u) {
-  dlg(h('h3', { text: `Update to ${u.available} now?` }),
+  dlg(h('h2', { text: `Update to ${u.available} now?` }),
     h('p', { text: "tailbond restarts; devices drop for a few seconds. If the new version doesn't start, it goes back by itself." }),
     h('p', { class: 'muted small', text: 'Downloaded from the GitHub release and checked against its SHA-256 list before anything is installed.' }),
     h('div', { class: 'row end' },
@@ -1496,7 +1496,7 @@ async function openReport() {
     } catch (e) { if (w) w.close(); toast(e.message, true); }
   });
   dlg(
-    h('h3', { text: 'Report a problem' }),
+    h('h2', { text: 'Report a problem' }),
     h('p', { class: 'notice', id: 'rep-notice', text: rep.notice }),
     h('p', { class: 'muted small' }, rep.security_note.replace(/\(.*\)\.?$/, ''), ' ', h('a', { href: rep.security_url, target: '_blank', rel: 'noopener', text: 'Report a vulnerability privately' }), '.'),
     rep.crash ? h('p', { class: 'warn-text small', text: `tailbond stopped unexpectedly${rep.crash_at ? ' (' + new Date(rep.crash_at).toLocaleString() + ')' : ''}; its crash details are below.` }) : null,
@@ -1584,7 +1584,7 @@ function openBackup() {
       toast('Backup downloaded. Keep the passphrase somewhere safe');
     } catch (e) { err.textContent = e.message; go.disabled = false; go.textContent = 'Download backup'; }
   });
-  dlg(h('h3', { text: 'Download a backup' }),
+  dlg(h('h2', { text: 'Download a backup' }),
     h('p', { class: 'small', text: `Everything this ${state.role === 'server' ? 'server' : 'machine'} needs to start over: settings, devices and their keys, ${state.role === 'server' ? 'the certificate devices check, ' : 'servers, '}rules. It's locked with a passphrase you choose now.` }),
     pf.el,
     h('div', { class: 'ub-note warn' }, h('b', { text: 'Write it down. ' }), "Without the passphrase the backup can't be opened, by anyone, tailbond included. A password manager or a note in a drawer both work."),
@@ -1642,7 +1642,7 @@ function openRestore() {
       go.disabled = false; go.textContent = 'Check the backup';
     }
   });
-  dlg(h('h3', { text: 'Restore from a backup' }),
+  dlg(h('h2', { text: 'Restore from a backup' }),
     h('p', { class: 'small', text: "Pick a .tbbackup file and type its passphrase. Nothing changes yet: you see what it would replace first." }),
     h('label', { class: 'field', for: 'rs-file' }, h('span', { text: 'Backup file' }), file),
     h('label', { class: 'field', for: 'rs-pass' }, h('span', { text: 'Passphrase' }), pass),
@@ -1657,7 +1657,7 @@ function showPreview(body, p, fname) {
     try {
       const r = await api('POST', '/api/restore', { ...body, confirm: true });
       const host = p.host || 'the backup';
-      dlg(h('div', { class: 'ub-done' }, icon('backup'), h('h3', { text: 'Restored' })),
+      dlg(h('div', { class: 'ub-done' }, icon('backup'), h('h2', { text: 'Restored' })),
         h('p', { text: `The settings from ${host} are in place. A copy of the previous settings was kept${r && r.rollback ? ` (${r.rollback})` : ''}, locked with the same passphrase, in case you want them back.` }),
         ...(next.length ? restoreSteps(next, 'Next, in order:', "If you haven't already:")
           : [h('p', { class: 'small', text: state.role === 'server' ? 'Devices reconnect by themselves within a few minutes.' : 'tailbond connects to its home server again by itself within a minute.' })]),
@@ -1670,12 +1670,12 @@ function showPreview(body, p, fname) {
   const warns = (Array.isArray(p.warnings) ? p.warnings : []).map(warnText).filter(Boolean);
   // after restoring, "Restore here while … still runs" is done
   const next = warns.filter((w) => !/^1\.\s+Restore here while /.test(w));
-  dlg(h('h3', { text: 'Restore this backup?' }),
+  dlg(h('h2', { text: 'Restore this backup?' }),
     h('div', { class: 'ub-file' }, icon('backup', 'ico sm'), h('div', {},
       h('b', { text: fname }),
       h('div', { class: 'muted small', text: `${p.host || '?'} (${ROLE_WORDS[p.role] || p.role}) · made ${fmtWhen(p.created)} · tailbond ${p.agent_version || '?'}` }))),
     ...restoreSteps(warns, 'Do these in order', 'Before you restore'),
-    h('h4', { text: changes.length ? 'What it replaces' : 'Nothing differs from the current settings' }),
+    h('h3', { text: changes.length ? 'What it replaces' : 'Nothing differs from the current settings' }),
     changes.length ? h('table', { class: 'ub-changes' }, h('tbody', {}, changes.map((c) => h('tr', {},
       h('th', { text: c.what }), h('td', { class: 'muted', text: c.from || '—' }), h('td', { text: '→' }), h('td', { text: c.to || '—' }))))) : null,
     h('p', { class: 'muted small', text: 'The current settings are saved first (same passphrase), so you can go back. tailbond restarts afterwards.' }),
@@ -1714,7 +1714,7 @@ function summaryRows(s) {
 async function openSummary() {
   let s;
   try { s = splitSummary(await api('GET', '/api/backup/summary')); } catch (e) { return toast(e.message, true); }
-  dlg(h('h3', { text: "What's in a backup" }),
+  dlg(h('h2', { text: "What's in a backup" }),
     h('p', { class: 'small muted', text: 'What a backup made now would hold. Keys and passwords are in it too (locked), but never shown here.' }),
     h('table', { class: 'ub-changes ub-summary' }, h('tbody', {}, summaryRows(s))),
     state.role === 'server' ? h('p', { class: 'small', text: "Your devices' own backups are included (still locked with their passphrases), so they move with this server." }) : null,
@@ -1738,7 +1738,7 @@ function renderBackups() {
   const on = !!(b.passphrase_set && (b.every_hours || 24));
   const kids = [h('div', { class: 'ub-head' },
     h('div', { class: 'kind-ico' }, icon('backup')),
-    h('div', { class: 'grow' }, h('h3', { text: 'Backup & restore' }),
+    h('div', { class: 'grow' }, h('h2', { text: 'Backup & restore' }),
       h('div', { class: 'muted small', text: srv ? 'Settings, devices and keys, locked with a passphrase. Move to a new machine: the restore preview says what each device needs.' : 'Settings, servers and rules, locked with a passphrase.' })),
     h('span', { class: 'chip ' + (on ? 's-active' : 's-off'), text: on ? 'Automatic backups on' : 'Automatic backups off' }))];
   kids.push(h('div', { class: 'row' },
@@ -1747,7 +1747,7 @@ function renderBackups() {
     h('button', { class: 'linkish small', type: 'button', onclick: openSummary }, "See what's inside")));
 
   // scheduled backups
-  const sched = [h('h4', { text: 'Automatic backups' })];
+  const sched = [h('h3', { text: 'Automatic backups' })];
   const every = b.every_hours || 24, keep = b.keep || 7;
   const everyWords = every % 24 === 0 ? (every === 24 ? 'every day' : `every ${every / 24} days`) : `every ${every} hours`;
   if (!ub.schedEdit) {
@@ -1761,8 +1761,8 @@ function renderBackups() {
       on ? h('button', { class: 'btn', type: 'button', onclick: () => saveSched({ passphrase: '' }, 'Automatic backups off') }, 'Turn off') : null));
   } else {
     const pf = passFields();
-    const ev = h('input', { type: 'number', min: 1, max: 720, value: every, id: 'bk-every', class: 'num' });
-    const kp = h('input', { type: 'number', min: 1, max: 100, value: keep, id: 'bk-keep', class: 'num' });
+    const ev = h('input', { type: 'number', min: 1, max: 720, value: every, id: 'bk-every', class: 'num', 'aria-label': 'Every how many hours' });
+    const kp = h('input', { type: 'number', min: 1, max: 100, value: keep, id: 'bk-keep', class: 'num', 'aria-label': 'How many backups to keep' });
     const push = h('input', { type: 'checkbox', id: 'bk-push' });
     push.checked = b.push !== false;
     const err = h('div', { class: 'error small' });
@@ -1792,11 +1792,11 @@ function renderBackups() {
       h('td', {}, h('b', { text: x.client || 'this server' })),
       h('td', { text: fmtWhen(x.created) }), h('td', { class: 'muted', text: fmtBytes(x.size) }),
       h('td', {}, h('a', { href: '/api/backups/' + encodeURIComponent(x.name) + (x.client ? '?client=' + encodeURIComponent(x.client) : ''), download: x.name, text: 'Download' })));
-    const sec = [h('h4', { text: 'Saved backups' })];
+    const sec = [h('h3', { text: 'Saved backups' })];
     if (!ub.backups.length) sec.push(h('p', { class: 'muted small', text: 'None yet. Automatic backups land here, and travel routers that send theirs.' }));
     else {
       sec.push(h('table', { class: 'ub-backups' },
-        h('thead', {}, h('tr', {}, h('th', { text: 'From' }), h('th', { text: 'Made' }), h('th', { text: 'Size' }), h('th'))),
+        h('thead', {}, h('tr', {}, h('th', { text: 'From' }), h('th', { text: 'Made' }), h('th', { text: 'Size' }), h('th', {}, h('span', { class: 'sr-only', text: 'Download' })))),
         h('tbody', {}, mine.map(row), theirs.map(row))));
       sec.push(h('p', { class: 'muted small', text: `Each is locked with the passphrase it was made with${theirs.length ? "; the devices' backups with their own" : ''}. Keep a copy somewhere other than this machine too.` }));
     }

@@ -25,7 +25,13 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:-$REPO/out/ux/report/web}"
 PW="${TAILBOND_UX_NODE:-$HOME/.cache/tailbond-ux}"
 TMP="$(mktemp -d)"
-trap 'kill "${AGENT_PID:-0}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+# stop_pids: kill only PIDs that were set. `kill 0` (the old default) signals
+# the whole process group, which would take the caller down with the test.
+stop_pids() {
+    local pid
+    for pid in "$@"; do [ -n "$pid" ] && kill "$pid" 2>/dev/null || true; done
+}
+trap 'stop_pids "${AGENT_PID:-}"; rm -rf "$TMP"' EXIT
 
 if [[ ! -d "$PW/node_modules/playwright" || ! -d "$PW/node_modules/vue" ]]; then
     mkdir -p "$PW"

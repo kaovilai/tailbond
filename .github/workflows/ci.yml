@@ -700,6 +700,10 @@ jobs:
   # Report a problem (docs/reporting.md) in a browser against a real
   # tailbondd: the dashboard and the GL.iNet panel; redaction, the
   # checkbox gate, the issue URL, the file and the clipboard.
+  # Then the accessibility check (docs/accessibility.md): axe-core on the
+  # site, the phone page, the dashboard, the GL panel and the LuCI view;
+  # fails on serious or critical. Same job (a required check), same
+  # Chromium image; the job's name stays so the required check keeps matching.
   report-ux:
     name: Report a problem (dashboard + GL panel, Chromium)
     runs-on: ubuntu-24.04
@@ -716,6 +720,15 @@ jobs:
         with:
           name: report-screens-web
           path: out/ux/report/web/
+          if-no-files-found: ignore
+      - name: Accessibility (axe-core, every web surface; Playwright in podman)
+        if: ${{ !cancelled() }}
+        run: scripts/ux/a11y.sh "$PWD/out/ux/a11y"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: a11y-report
+          path: out/ux/a11y/
           if-no-files-found: ignore
 
   mqvpn-x86_64:
