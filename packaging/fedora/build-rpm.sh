@@ -9,7 +9,8 @@
 # SRPM_OUT=DIR: rpmbuild -bs into DIR instead (COPR's make_srpm method,
 # .copr/Makefile; the SRPM carries the prebuilt binaries, so build it on the
 # architecture it's for: the COPR project builds x86_64 only).
-# Needs: cmake gcc gcc-c++ make libevent-devel golang rpm-build systemd-rpm-macros.
+# Needs: cmake gcc gcc-c++ make libevent-devel golang rpm-build systemd-rpm-macros,
+# and network for the Go toolchain agent/go.mod names when golang is older.
 #
 # Env: VERSION (semver, a leading v is dropped; default: the v* tag at HEAD,
 # else 0.1.0 with tailbondd reporting git describe, so a dev build never
@@ -64,6 +65,10 @@ if [ ! -x "$MQ/build/mqvpn" ] || [ ! -x "$MQ/build/mqvpn-nat-config" ]; then
 fi
 
 echo "==> building tailbondd ($GOARCH)"
+# Fedora's golang sets GOTOOLCHAIN=local and can be older than agent/go.mod.
+# auto fetches the toolchain go.mod names (proxy.golang.org, checked against
+# sum.golang.org), the one every other build of tailbondd uses.
+export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 VERSION="${AGENT_VERSION:-$VERSION}" "$ROOT/agent/build.sh" "$GOARCH" >/dev/null
 TBD="$ROOT/out/agent/linux-$GOARCH/tailbondd"
 
