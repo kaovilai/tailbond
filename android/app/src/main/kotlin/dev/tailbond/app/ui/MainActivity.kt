@@ -10,6 +10,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -45,6 +46,25 @@ class MainActivity : ComponentActivity() {
 
     private var tailscaleInstalled by mutableStateOf(false)
 
+    /** What this device can open (TVs: no camera, often no browser or VPN settings screen). */
+    // the back camera: the one QrScanner uses
+    private val hasCamera by lazy { packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA) }
+    // any web page, not one site an app claims (GitHub's own app takes github.com)
+    private val hasBrowser by lazy {
+        canOpen(Intent(Intent.ACTION_VIEW, "https://example.com/".toUri()).addCategory(Intent.CATEGORY_BROWSABLE))
+    }
+    private val hasVpnSettings by lazy { canOpen(Intent(Settings.ACTION_VPN_SETTINGS)) }
+
+    private fun canOpen(i: Intent): Boolean = packageManager.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY) != null
+
+    /** startActivity, or nothing when no app takes it (a TV without a browser or a settings screen). */
+    private fun tryStart(i: Intent): Boolean = try {
+        startActivity(i)
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
+    }
+
     /** The passphrase typed in "Save a backup", until the file picker answers. Memory only. */
     private var exportPassphrase: String? = null
     private var exportName: String = ""
@@ -63,7 +83,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleIntent(intent)
-        if (Build.VERSION.SDK_INT >= 33 &&
+        // a TV shows no notification shade: nothing to ask for there (every action is in the app)
+        if (Build.VERSION.SDK_INT >= 33 && !resources.configuration.isTelevision() &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -105,7 +126,16 @@ class MainActivity : ComponentActivity() {
     private fun startConsentOrConnect() {
         vm.askHandoff(null)
         val consent = VpnService.prepare(this)
-        if (consent != null) vpnConsent.launch(consent) else vm.connect()
+        if (consent == null) {
+            vm.connect()
+            return
+        }
+        try {
+            vpnConsent.launch(consent)
+        } catch (_: ActivityNotFoundException) {
+            // some TV builds leave out Android's VPN permission dialog
+            Toast.makeText(this, "This device has no screen to allow a VPN app, so tailbond can't turn on here.", Toast.LENGTH_LONG).show()
+        }
     }
 
     /** Some other app's VPN (normally Tailscale) is up while ours isn't. */
@@ -117,15 +147,15 @@ class MainActivity : ComponentActivity() {
         return cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
     }
 
-    private fun tailscaleLaunchIntent(): Intent? = packageManager.getLaunchIntentForPackage(TAILSCALE_PACKAGE)
+    // on Android TV, Tailscale may have only a TV (leanback) launcher entry
+    private fun tailscaleLaunchIntent(): Intent? =
+        packageManager.getLaunchIntentForPackage(TAILSCALE_PACKAGE) ?: packageManager.getLeanbackLaunchIntentForPackage(TAILSCALE_PACKAGE)
 
     private fun switchToTailscale() {
         vm.handToTailscale()
         val launch = tailscaleLaunchIntent()
-        try {
-            startActivity(launch ?: Intent(Intent.ACTION_VIEW, "market://details?id=$TAILSCALE_PACKAGE".toUri()))
-        } catch (_: ActivityNotFoundException) {
-            startActivity(Intent(Intent.ACTION_VIEW, "https://play.google.com/store/apps/details?id=$TAILSCALE_PACKAGE".toUri()))
+        if (!tryStart(launch ?: Intent(Intent.ACTION_VIEW, "market://details?id=$TAILSCALE_PACKAGE".toUri()))) {
+            tryStart(Intent(Intent.ACTION_VIEW, "https://play.google.com/store/apps/details?id=$TAILSCALE_PACKAGE".toUri()))
         }
     }
 
@@ -136,22 +166,16 @@ class MainActivity : ComponentActivity() {
      */
     private fun openWifiSignIn() {
         val panel = if (android.os.Build.VERSION.SDK_INT >= 29) Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY) else Intent(Settings.ACTION_WIFI_SETTINGS)
-        try {
-            startActivity(panel)
-        } catch (_: ActivityNotFoundException) {
-            startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
-        }
+        // TVs: no internet panel; their Settings has the Wi-Fi list
+        if (!tryStart(panel)) tryStart(Intent(Settings.ACTION_WIFI_SETTINGS))
     }
 
     private fun openHomeServerPage(server: String) {
         val host = server.trim().removePrefix("http://").removePrefix("https://").substringBefore('/')
         if (host.isEmpty()) return
         val withPort = if (':' in host) host else "$host:$AGENT_PORT"
-        try {
-            // the server's phone page ("Get tailbond"), also served on the dashboard port
-            startActivity(Intent(Intent.ACTION_VIEW, "http://$withPort/get".toUri()))
-        } catch (_: ActivityNotFoundException) {
-        }
+        // the server's phone page ("Get tailbond"), also served on the dashboard port
+        tryStart(Intent(Intent.ACTION_VIEW, "http://$withPort/get".toUri()))
     }
 
     private val actions = object : UiActions {
@@ -180,7 +204,7 @@ class MainActivity : ComponentActivity() {
         override fun confirmHandoff() = startConsentOrConnect()
         override fun dismissHandoff() = vm.askHandoff(null)
         override fun switchToTailscale() = this@MainActivity.switchToTailscale()
-        override fun openVpnSettings() = startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+        override fun openVpnSettings() { tryStart(Intent(Settings.ACTION_VPN_SETTINGS)) }
         override fun startAddServer() = vm.setPairTarget(PairTarget.Add)
         override fun startRepair(id: String?) {
             val target = id ?: vm.servers.value.firstOrNull { it.id == vm.live.value.failover?.activeId }?.id ?: vm.servers.value.firstOrNull()?.id
@@ -201,7 +225,7 @@ class MainActivity : ComponentActivity() {
         override fun setUpdatePolicy(p: UpdatePolicy) = vm.setUpdatePolicy(p)
         override fun openUrl(url: String) {
             if (!url.startsWith("https://")) return
-            try { startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) } catch (_: ActivityNotFoundException) {}
+            tryStart(Intent(Intent.ACTION_VIEW, url.toUri()))
         }
         override fun exportBackup(passphrase: String) {
             exportPassphrase = passphrase
@@ -266,6 +290,9 @@ class MainActivity : ComponentActivity() {
             share = dev.tailbond.app.share.ShareState.live.collectAsStateWithLifecycle().value,
             hub = dev.tailbond.app.share.HubState.live.collectAsStateWithLifecycle().value,
             hubShares = dev.tailbond.app.share.ShareHubState.live.collectAsStateWithLifecycle().value,
+            hasCamera = hasCamera,
+            hasBrowser = hasBrowser,
+            hasVpnSettings = hasVpnSettings,
         )
         TailbondApp(state, actions)
     }

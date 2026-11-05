@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -92,10 +93,11 @@ fun OnboardingScreen(onDone: () -> Unit, modifier: Modifier = Modifier) {
             "Android allows one VPN app. While tailbond is on, Tailscale's VPN is off on this phone. Hand it back to Tailscale any time.",
         )
         Spacer(Modifier.height(8.dp))
-        Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Get started") }
+        Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp).tvInitialFocus()) { Text("Get started") }
         Text(
             "Next you'll type your home server's name (the one in the Tailscale app) and ask it to connect. If someone else set it up, they approve it. " +
-                "Installed tailbond from your home server's page in Chrome? Easier: go back to Chrome and tap step 2 there; it fills everything in.",
+                // a TV has no Chrome to come back from
+                if (LocalTv.current) "" else "Installed tailbond from your home server's page in Chrome? Easier: go back to Chrome and tap step 2 there; it fills everything in.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -176,7 +178,8 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             return@Column
         }
 
-        Card(Modifier.fillMaxWidth()) {
+        // the server's page opens in a browser; most TVs have none
+        if (state.hasBrowser) Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(if (adding) "Or use the other server's page" else "Or use the home server's page", style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -200,7 +203,8 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
             }
         }
 
-        Card(Modifier.fillMaxWidth()) {
+        // scanning needs a camera: TVs have none (docs/android.md, "Android TV")
+        if (state.hasCamera) Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("From another screen", style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -234,11 +238,21 @@ fun PairingScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Have a link?", style = MaterialTheme.typography.titleMedium)
+                if (!state.hasCamera) {
+                    Text(
+                        "This device has no camera to scan a code with. Easiest: ask your home server above. " +
+                            "Or type the pairing link from the home server's dashboard (Devices → Add a device with a code shows it under the code).",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it; actions.clearPairError() },
                     label = { Text("Pairing link") },
                     placeholder = { Text("tailbond://pair?d=…") },
+                    // the TV's on-screen keyboard has no Add button of ours to reach: its Done adds
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) actions.offerPairing(text) }),
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 4,
@@ -327,7 +341,8 @@ private fun AskCard(
                     placeholder = { Text(if (adding) "e.g. vps" else "e.g. homebox") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardActions = KeyboardActions(onGo = { if (server.isNotBlank()) actions.askToConnect(server) }),
+                    modifier = Modifier.fillMaxWidth().tvInitialFocus(),
                 )
                 if (suggestions.isNotEmpty()) {
                     Text("Found on your Tailscale (tap to ask):", style = MaterialTheme.typography.labelLarge)
@@ -350,7 +365,7 @@ private fun AskCard(
                 }
             }
             if (busy) {
-                OutlinedButton(onClick = actions::cancelAsk) { Text("Cancel") }
+                OutlinedButton(onClick = actions::cancelAsk, Modifier.tvInitialFocus()) { Text("Cancel") }
             } else {
                 Button(onClick = { actions.askToConnect(server) }, enabled = server.isNotBlank()) {
                     Icon(Icons.Filled.Devices, null)
@@ -441,8 +456,9 @@ fun ConfirmPairingDialog(
                 }
             }
         },
+        modifier = Modifier.tvFocusRing(),
         confirmButton = {
-            TextButton(onClick = onConfirm) {
+            TextButton(onClick = onConfirm, Modifier.tvInitialFocus()) {
                 Text(
                     when {
                         adding -> "Add backup"

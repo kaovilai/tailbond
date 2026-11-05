@@ -241,6 +241,88 @@ phones' shares: hubs are the travel router and Linux.
 
 Details, what's tested and the limits: [phone-hub.md](phone-hub.md).
 
+## Android TV
+
+The same APK runs on Android TV and Google TV (Android 8+), driven with the
+remote: D-pad, OK and Back. It's on the TV's home screen with a tailbond
+banner (`LEANBACK_LAUNCHER`), and nothing in the manifest is required
+hardware: the camera, touchscreen, Wi-Fi, telephony and leanback are all
+`required="false"`, so a TV can install it and a phone still can too.
+
+**Install.** No store listing on TV either. From a computer on the same
+network, with the TV's developer options and network (or USB) debugging
+on (press the build number in Settings' *About* seven times; where it is
+differs between Android TV and Google TV):
+
+```sh
+adb connect <tv-ip>:5555
+adb install tailbond-android.apk
+```
+
+(or a file manager app on the TV that installs APKs). tailbond then shows up
+in the TV's apps row.
+
+**Pairing without a camera.** A TV has no camera, so the pairing screen
+doesn't offer *Scan code*, and with no browser it doesn't offer the home
+server's page either. The way to pair is **Ask your home server**: keep the
+Tailscale app for Android TV on and connected, type the home server's name
+with the TV's keyboard (OK on the field opens it; its Go key asks), and
+approve the TV on the home server's tailbond page. Other ways:
+
+- type the pairing link from the dashboard (*Devices → Add a device with a
+  code* shows it under the code); its keyboard's Done adds it;
+- or, from a computer:
+  `adb shell am start -a android.intent.action.VIEW -d 'tailbond://pair?d=…' dev.tailbond.app`
+  opens the same confirm dialog.
+
+**The remote.** Every screen and dialog works with the D-pad alone: a ring
+(volt on dark, deep teal on light) shows what has focus, each page starts on
+its main action (the switch on the main screen, *Get started*, the server's
+name when pairing, a dialog's confirm button, or *Cancel* when the dialog
+removes something), and Back goes back. Text fields hand the arrows back to
+the D-pad; OK opens the keyboard. Nothing needs a swipe or a long press:
+reordering servers uses the up and down buttons. Pages scroll so the focused
+item keeps some of the text around it in view, and the live rates on
+*Connections* are a stop of their own so they stay readable.
+
+**10-foot layout.** On a TV the pages sit inside 5% overscan margins
+(48x27dp) in a single centred column no wider than 760dp, at the phone's
+type sizes (Android TV's density already scales them for the distance). The
+phone layout is unchanged.
+
+**VPN.** Android TV has `VpnService`: the first *Turn on* shows tailbond's
+handoff dialog and then Android's own VPN dialog (*Connection request*,
+OK/Cancel), both by remote. Should a TV build leave that dialog out,
+tailbond says it can't turn on there instead of crashing. TVs don't show notifications the way phones do (no
+shade), so tailbond doesn't ask for the notification permission on a TV,
+and nothing depends on the notification: the main switch, Sharing and the
+rest are all in the app. Many TVs have no VPN settings screen, so Always-on
+VPN is set from a computer:
+
+```sh
+adb shell settings put secure always_on_vpn_app dev.tailbond.app
+```
+
+(Settings shows this command when the screen is missing.)
+
+**Limits on a TV.**
+
+- The words still say "phone" ("Add this phone", "this phone is called …").
+- Without a browser: *Download update*, *What's new* and the GitHub buttons
+  in *Report a problem* can't open; Updates says to install the APK with
+  `adb install -r`, and *Copy full report* still works.
+- Most TVs have Ethernet or Wi-Fi only, so there's often just one link to
+  bond; Share my mobile data needs a SIM.
+- Checked on the Android TV emulator (CI job `android-tv`,
+  `scripts/e2e-android-tv.sh`: the TV launcher entry, the banner, every
+  step above by remote keys, and Android's VPN dialog where the image has
+  one), not on a real TV. The emulator's keys come from `input keyevent`
+  (its key device needs root, which the image refuses), so leaving a text
+  field with the D-pad is covered by the unit test, not there.
+  Tests: `src/test/.../tv/TvDpadTest.kt` drives each screen with key events
+  only; `ux/TvScreens.kt` renders them at 1080p (artifact
+  `tv-screens-android`).
+
 ## Emulator end-to-end test
 
 CI job `android-e2e` runs the real app on an x86_64 Android 14 emulator
@@ -286,6 +368,8 @@ android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.*'
 scripts/ux/web-screens.sh   # the phone page + the dashboard's "Add this phone" flow → out/ux/web
 ```
 
+`ux/TvScreens.kt` renders the Android TV screens (1920x1080, the D-pad
+focus ring where the remote starts; CI artifact `tv-screens-android`).
 Without `-Ptailbond.uxOut` the render tests are skipped. The simulated user
 tests that used them are in [ux/summary.md](ux/summary.md) and
 [ux/final-summary.md](ux/final-summary.md).
@@ -626,4 +710,5 @@ Android's sign-in can't load: turn it off while you sign in, then on again
   from the home server, and reach it at its tunnel IP only if the server's
   `10.77.0.0/24` route is approved.
 - Only `arm64-v8a` (x86_64 only for the emulator test); `minSdk` 26 (Android 8).
-- The QR scanner needs a back camera; without one, paste the URI.
+- The QR scanner needs a back camera; without one (a TV), ask the home
+  server or paste the URI ([Android TV](#android-tv)).

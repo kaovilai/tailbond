@@ -3,6 +3,7 @@ package dev.tailbond.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -113,7 +114,10 @@ fun TailbondApp(
     if (back != null) BackHandler(onBack = back)
 
     CompositionLocalProvider(LocalCopy provides copy) {
+      // TV: inside the overscan margins, one column, a ring on the D-pad focus (ui/Tv.kt)
+      TvFrame {
         Scaffold(
+            modifier = Modifier.tvFocusRing(),
             topBar = {
                 when (page) {
                     "onboarding" -> {}
@@ -166,6 +170,7 @@ fun TailbondApp(
             snackbarHost = { SnackbarHost(snackbar) },
         ) { pad ->
             val m = Modifier.padding(pad)
+          Box(Modifier.tvPageFocus(page)) {
             when {
                 page == "onboarding" -> OnboardingScreen(actions::finishOnboarding, m)
                 page == Routes.PAIR -> PairingScreen(state, actions, m, startText = startSearch)
@@ -201,7 +206,9 @@ fun TailbondApp(
                     modifier = m,
                 )
             }
+          }
         }
+      }
 
         state.pending?.let {
             val target = state.pendingTarget
@@ -233,7 +240,8 @@ fun TailbondApp(
                             }
                         }
                     },
-                    confirmButton = { TextButton(onClick = actions::dismissServerProblem) { Text("OK") } },
+                    confirmButton = { TextButton(onClick = actions::dismissServerProblem, Modifier.tvInitialFocus()) { Text("OK") } },
+                    modifier = Modifier.tvFocusRing(),
                     dismissButton = clash?.let { c ->
                         {
                             TextButton(onClick = { copyAs(Words.clashMessage(name, c.existing, c.subnet, free), "Message copied: paste it into a chat with whoever runs $name") }) { Text("Copy a message to send them") }
@@ -250,6 +258,8 @@ fun TailbondApp(
 @Composable
 fun HandoffDialog(kind: Handoff, state: UiState, actions: UiActions) {
     val server = state.serverName
+    // a remote selects, a finger taps
+    val tap = if (LocalTv.current) "select" else "tap"
     AlertDialog(
         onDismissRequest = actions::dismissHandoff,
         title = {
@@ -263,19 +273,20 @@ fun HandoffDialog(kind: Handoff, state: UiState, actions: UiActions) {
                     Text("Android runs one VPN at a time. If Tailscale is on, turning on tailbond turns it off.")
                 }
                 Text("You still reach your Tailscale machines, like your NAS, through $server. Your internet traffic goes out from $server too (like an exit node; Settings changes that).")
-                Text("Next, Android asks you to allow tailbond's connection request. Tap OK.")
+                Text("Next, Android asks you to allow tailbond's connection request. ${tap.replaceFirstChar { it.uppercase() }} OK.")
                 Text(
                     "If tailbond switches itself off right after this, Tailscale is set as Always-on VPN on this phone: turn that off in Android Settings → VPN → Tailscale's gear (or ask whoever set up the phone). Android doesn't let tailbond check this setting.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "To go back later, tap Hand the VPN back to Tailscale at the bottom of tailbond's main screen.",
+                    "To go back later, $tap Hand the VPN back to Tailscale at the bottom of tailbond's main screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
-        confirmButton = { TextButton(onClick = actions::confirmHandoff) { Text("Turn on tailbond") } },
+        confirmButton = { TextButton(onClick = actions::confirmHandoff, Modifier.tvInitialFocus()) { Text("Turn on tailbond") } },
         dismissButton = { TextButton(onClick = actions::dismissHandoff) { Text("Cancel") } },
+        modifier = Modifier.tvFocusRing(),
     )
 }

@@ -10,7 +10,18 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- One APK for phones and Android TV (docs/android.md, "Android TV"): no
+         feature is required. Play assumes a touchscreen unless told
+         otherwise, and CAMERA implies the camera; the camera only scans the
+         pairing code (a TV pairs without one). Wi-Fi and mobile data are
+         bonded when the device has them (a TV often has Ethernet only). -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <!-- per-app exclude picker lists launchable apps only;
          "Switch back to Tailscale" needs to see the Tailscale app -->
@@ -19,6 +30,21 @@
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- on a TV, many apps have only a TV launcher entry -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <!-- is there a browser at all (most TVs: no): buttons that only open one aren't offered -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <!-- is there a VPN settings screen (many TVs: no): else Settings shows the adb way to Always-on -->
+        <intent>
+            <action android:name="android.settings.VPN_SETTINGS" />
         </intent>
     </queries>
 
@@ -29,6 +55,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Tailbond">
@@ -41,6 +68,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- the Android TV home screen (banner: drawable/tv_banner.xml) -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
             <!-- tailbond://pair?d=<base64url(JSON)>; tailbond://ask?server=<name> (the home server's phone page) -->
             <intent-filter>

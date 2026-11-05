@@ -196,7 +196,7 @@ fun AddWebsiteDialog(
                     )
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth().focusRequester(field),
+                modifier = Modifier.fillMaxWidth().focusRequester(field).tvInitialFocus(),
             )
             Text("Or pick one:", style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -232,7 +232,7 @@ fun AddWebsiteDialog(
     }
     val dismiss: @Composable () -> Unit = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     if (!inline) {
-        AlertDialog(onDismissRequest = onDismiss, title = title, text = body, confirmButton = confirm, dismissButton = dismiss)
+        AlertDialog(onDismissRequest = onDismiss, title = title, text = body, confirmButton = confirm, dismissButton = dismiss, modifier = Modifier.tvFocusRing())
         return
     }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)), contentAlignment = Alignment.Center) {

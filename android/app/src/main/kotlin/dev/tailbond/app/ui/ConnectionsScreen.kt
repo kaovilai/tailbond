@@ -54,7 +54,7 @@ fun ConnectionsScreen(state: UiState, actions: UiActions, modifier: Modifier = M
     Column(
         modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
     ) {
-        Card(Modifier.fillMaxWidth().padding(16.dp)) {
+        Card(Modifier.fillMaxWidth().padding(16.dp).tvReadable()) {
             Column(Modifier.padding(16.dp)) {
                 Text(
                     Words.connectionsSummary(live, state.settings, state.mode, state.capReached, state.wifiSignIn),
@@ -183,11 +183,12 @@ private fun RolePicker(p: Priority, enabled: Boolean, onPick: (Priority) -> Unit
             Text(p.label)
             Icon(Icons.Filled.ArrowDropDown, "Change role")
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.tvFocusRing()) {
             Priority.entries.forEach {
                 DropdownMenuItem(
                     text = { Column { Text(it.label); Text(it.explain, style = MaterialTheme.typography.bodySmall) } },
                     onClick = { onPick(it); open = false },
+                    modifier = if (it == p) Modifier.tvInitialFocus() else Modifier,
                 )
             }
         }
@@ -245,7 +246,8 @@ private fun DataLimit(state: UiState, actions: UiActions) {
             title = { Text("Reset this month's count?") },
             text = { Text("tailbond's mobile data count starts again from 0. This doesn't change your carrier's count.") },
             confirmButton = { TextButton(onClick = { resetOpen = false; actions.resetCellular() }) { Text("Reset") } },
-            dismissButton = { TextButton(onClick = { resetOpen = false }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { resetOpen = false }, Modifier.tvInitialFocus()) { Text("Cancel") } },
+            modifier = Modifier.tvFocusRing(),
         )
     }
 }

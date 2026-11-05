@@ -64,7 +64,11 @@ and are made at build time:
   build (rsvg-convert; iconutil on a Mac). CI renders it on the macOS
   runner for every bundle.
 - Android: the launcher, monochrome (themed) icon and notification/tile
-  glyph are vector drawables traced from the same SVGs; no PNGs.
+  glyph are vector drawables traced from the same SVGs; no PNGs. The
+  Android TV banner (`res/drawable/tv_banner.xml`, the dark wordmark on ink
+  with the beam bar, 320x180) is one too: `scripts/brand/render-tv-banner.sh`
+  makes it, with the wordmark's text as Inter's own glyph outlines
+  (fontTools, in a container), since a vector drawable can't draw text.
 
 Two rasters are kept in git, because the platform needs the file itself
 and can't make it from an SVG:

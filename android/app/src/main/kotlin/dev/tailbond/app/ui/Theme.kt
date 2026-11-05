@@ -1,5 +1,9 @@
 package dev.tailbond.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.ui.platform.LocalConfiguration
+
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -32,13 +36,15 @@ data class BrandColors(
     val ok: Color,
     val warn: Color,
     val error: Color,
+    /** Android TV's D-pad focus ring (ui/Tv.kt): volt on dark, deep teal on light. */
+    val focus: Color,
 )
 
 private val DarkBrand = with(BrandTokens.Dark) {
-    BrandColors(BeamStart, BeamEnd, Wifi, Cellular, Ethernet, Usb, SharedCellular, Tailnet, StatusOk, StatusWarn, StatusError)
+    BrandColors(BeamStart, BeamEnd, Wifi, Cellular, Ethernet, Usb, SharedCellular, Tailnet, StatusOk, StatusWarn, StatusError, focus = BrandTokens.Volt)
 }
 private val LightBrand = with(BrandTokens.Light) {
-    BrandColors(BeamStart, BeamEnd, Wifi, Cellular, Ethernet, Usb, SharedCellular, Tailnet, StatusOk, StatusWarn, StatusError)
+    BrandColors(BeamStart, BeamEnd, Wifi, Cellular, Ethernet, Usb, SharedCellular, Tailnet, StatusOk, StatusWarn, StatusError, focus = BrandTokens.Teal700)
 }
 
 val LocalBrand = staticCompositionLocalOf { LightBrand }
@@ -89,10 +95,17 @@ fun kindColor(k: PathKind): Color = when (k) {
     PathKind.ETHERNET -> LocalBrand.current.ethernet
 }
 
+/** On a TV (ui mode television) also the remote's focus ring and scrolling (ui/Tv.kt). */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TailbondTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    CompositionLocalProvider(LocalBrand provides if (dark) DarkBrand else LightBrand) {
+    val tv = LocalConfiguration.current.isTelevision()
+    CompositionLocalProvider(
+        LocalBrand provides if (dark) DarkBrand else LightBrand,
+        LocalTv provides tv,
+        LocalBringIntoViewSpec provides if (tv) TvBringIntoViewSpec else LocalBringIntoViewSpec.current,
+    ) {
         MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)
     }
 }

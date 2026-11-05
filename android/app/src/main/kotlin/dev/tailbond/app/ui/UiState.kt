@@ -107,6 +107,12 @@ data class UiState(
     val hub: dev.tailbond.app.share.HubLive = dev.tailbond.app.share.HubLive(),
     /** Pair & Share, hub side: nearby phones' shares this phone bonds. */
     val hubShares: List<dev.tailbond.app.share.HubShare> = emptyList(),
+    /** A camera to scan the pairing code with (TVs have none: the scan button isn't offered). */
+    val hasCamera: Boolean = true,
+    /** A browser for web pages (most TVs have none: buttons that only open one aren't offered). */
+    val hasBrowser: Boolean = true,
+    /** Android's VPN settings screen (Always-on VPN); many TVs have none. */
+    val hasVpnSettings: Boolean = true,
 ) {
     /** The server the tunnel uses (or will use): failover's active one, else the main one. */
     val activeServer: ServerProfile?
