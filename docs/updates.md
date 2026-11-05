@@ -87,7 +87,12 @@ Pre-releases (`v1.2.3-beta.1`) are never offered.
   dashboard says "went back to vX". Going back by hand:
   `sudo /usr/local/lib/tailbond/install.sh --update --version vX.Y.Z`.
 - **Mac**: the same as the Linux bundle with `tailbond-macos-arm64.tar.gz`;
-  the LaunchDaemon is restarted (`/usr/local/var/log/tailbond.log`).
+  the LaunchDaemon is restarted (`/usr/local/var/log/tailbond.log`). CI runs
+  this whole path on a macOS runner against a fake GitHub release
+  (`scripts/e2e-macos-update.sh`): the agent downloads and checks the bundle,
+  runs the new `install.sh --update` detached from the LaunchDaemon, a
+  release that doesn't start is rolled back, and one whose `SHA256SUMS`
+  doesn't match is refused.
 - **GL router**: `opkg install` of the release's package; if the agent
   doesn't answer within 90 seconds, the previous package goes back
   (`logread -e tailbond-update`).
