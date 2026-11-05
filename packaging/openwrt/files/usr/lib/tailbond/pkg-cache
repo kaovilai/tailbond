@@ -97,7 +97,7 @@ seed() {
 
 # keep NEW [PREV]: NEW/PREV are paths or names; copied in when outside.
 keep() {
-	local new prev f b
+	local new prev extra spare f b
 	mkdir -p "$PKGDIR" && chmod 700 "$PKGDIR"
 	new="$(basename "$1")"
 	[ -f "$PKGDIR/$new" ] || cp "$1" "$PKGDIR/$new" || return 1
@@ -109,10 +109,20 @@ keep() {
 		fi
 	fi
 	[ "$prev" = "$new" ] && prev=""
+	# A package that is downloaded and not installed yet must survive the
+	# prune: seeding the running package (update-ipk, when there is no
+	# rollback copy) happens *after* the agent put the new one here, and
+	# deleting it made `opkg install` fail on a missing file — then the
+	# update rolled back with "the agent didn't answer".
+	extra=""
+	[ -n "${TB_PENDING:-}" ] && extra="$(basename "$TB_PENDING")"
 	for f in "$PKGDIR"/*.ipk; do
 		[ -e "$f" ] || continue
 		b="$(basename "$f")"
-		[ "$b" = "$new" ] || [ "$b" = "$prev" ] || rm -f "$f"
+		spare=0
+		[ "$b" = "$new" ] || [ "$b" = "$prev" ] && spare=1
+		[ -n "$extra" ] && [ "$b" = "$extra" ] && spare=1
+		[ "$spare" = 1 ] || rm -f "$f"
 	done
 	echo "$new" >"$PKGDIR/current"
 	if [ -n "$prev" ]; then echo "$prev" >"$PKGDIR/previous"; else rm -f "$PKGDIR/previous"; fi

@@ -279,6 +279,19 @@ opkg install /t/tailbond.ipk >/tmp/up.log 2>&1 && NEWV="$(ver)" && [ "$NEWV" != 
 opkg install --force-reinstall /t/tailbond.ipk >/dev/null 2>&1
 [ "$(grep -c '# tailbond-reinstall$' /etc/rc.local)" = 1 ] && ok "rc.local line stays single over re-installs" || bad "rc.local line duplicated"
 
+echo "== pkg-cache: seeding keeps a package that is downloaded but not installed"
+# The router that installed tailbond by hand has no rollback copy, so the
+# agent's next update downloads the new ipk into the pkg dir and then
+# update-ipk seeds the running package. The prune used to delete the
+# download, and `opkg install` failed on a missing file — the update rolled
+# back with "the agent didn't answer". Caught on a Flint 3 with 0.1.15.
+sd=$(mktemp -d)
+cp "$V99" "$sd/new.ipk" && cp "$V99" "$sd/old.ipk" || true
+TB_PKG_DIR=$sd TB_PENDING=$sd/new.ipk /usr/lib/tailbond/pkg-cache keep "$sd/old.ipk" >/dev/null 2>&1
+[ -f "$sd/new.ipk" ] && [ -f "$sd/old.ipk" ] \
+	&& ok "seeding spares the downloaded package" || bad "seeding deleted the downloaded package: $(ls $sd)"
+rm -rf "$sd"
+
 echo "== update-ipk"
 cat >/tmp/restart.sh <<'SH'
 #!/bin/sh

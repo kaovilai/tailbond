@@ -87,7 +87,10 @@ fi
 
 if [ -z "$PREV" ] && [ -n "$FROM" ]; then
 	# No rollback copy yet (installed by hand): save the running package.
-	"$CACHE" seed >>"$LOG" 2>&1 && PREV="/etc/tailbond/pkg/$(cat /etc/tailbond/pkg/current 2>/dev/null)"
+	# TB_PENDING keeps the new package, which the agent downloaded here
+	# before starting this script: seeding prunes the cache, and without it
+	# the prune deleted the package `opkg install` was about to read.
+	TB_PENDING="$NEW" "$CACHE" seed >>"$LOG" 2>&1 && PREV="/etc/tailbond/pkg/$(cat /etc/tailbond/pkg/current 2>/dev/null)"
 	[ -f "$PREV" ] || PREV=""
 fi
 
