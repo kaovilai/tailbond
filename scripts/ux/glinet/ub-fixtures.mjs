@@ -103,6 +103,15 @@ const flint = (u) => {
   }), clock, model: 'GL-BE9300', info: { ...fx.info, version: u.current === '0.2.0' ? '0.2.0-r1' : '0.1.0-r42' } };
 };
 glStates['s01-flint-devices-out-of-date'] = flint(upd({ current: '0.2.0', ...went, outdated }));
+// The server's Setup card ("Finish setting up"): Tailscale off and no
+// address yet, so the steps show and the row list renders under them — the
+// blocks whose layout the rows are read in.
+glStates['s03-flint-setup-rows'] = (() => {
+  const fx = flint(upd({ current: '0.2.0', ...went }));
+  const noTs = { ...fx, ts: { ...fx.ts, running: false, installed: true, dns_name: '' } };
+  const api = { ...noTs.api, 'GET /api/settings': { ...noTs.api['GET /api/settings'], effective_public_addr: '', public_addr: '', password_set: false } };
+  return { ...noTs, api };
+})();
 
 // steps: {text} clicks the first element with that text, {click} a selector,
 // {button} a button by exact name, {fill: [selector, value]},
