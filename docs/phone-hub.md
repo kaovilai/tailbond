@@ -279,9 +279,14 @@ tailbond's messages):
   `…3c60` (challenge, read), `…3c61` (command, write), `…3c62` (state,
   read/notify), all requiring an encrypted link.
 - The challenge is 8 bytes of the phone's share key id (ASCII) + 16 fresh
-  random bytes; hello carries the user (`<hub>/<expiry>`), the proof
-  (`HMAC-SHA256(ble key, challenge)`, hex) and is answered `ok` or
-  refused. Any message before hello, and any unknown command, is refused.
+  random bytes; hello carries the user (`<hub>/<expiry>`), the Mac's own
+  16-byte nonce, and the proof (`HMAC-SHA256(ble key, challenge)`, hex).
+  The answer is `ok` **with the phone's proof over the Mac's nonce**
+  (`HMAC-SHA256(ble key, the Mac's nonce)`) — the hello is mutual: a rogue
+  device that answers hello without the key can't produce that proof, so
+  the Mac never trusts an SSID or passphrase it was handed by something
+  that didn't prove itself. Any message before hello, any unknown command,
+  and a hello without a nonce, are refused.
 - Messages are JSON (`{"id":N,"cmd":"…"}`), length-prefixed and chunked to
   the negotiated ATT MTU (`[flags][data]`, START/END bits, 2-byte
   big-endian frame length); replies come back on the state characteristic

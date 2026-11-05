@@ -29,7 +29,7 @@ trap 'kill "${AGENT_PID:-0}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
 if [[ ! -d "$PW/node_modules/playwright" || ! -d "$PW/node_modules/vue" ]]; then
     mkdir -p "$PW"
-    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i playwright vue@2.6.14 >/dev/null)
+    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i playwright@1.64.1 vue@2.6.14 >/dev/null)
 fi
 PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').version")"
 

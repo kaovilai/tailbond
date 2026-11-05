@@ -92,6 +92,27 @@ public enum BleFrame {
     public static func proof(key: String, challenge: Data) -> String {
         BleCrypto.hmacSha256(key: Data(key.utf8), data: challenge).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// The phone's proof in its hello answer: HMAC-SHA256 over the Mac's
+    /// own nonce with the same key. A rogue device that answered hello
+    /// without holding the key can't produce it — this is what makes the
+    /// hello mutual, and what the Mac checks before trusting any SSID or
+    /// passphrase it was handed (compared in constant time).
+    public static func phoneProof(key: String, nonce: Data, matches proof: String) -> Bool {
+        let want = BleCrypto.hmacSha256(key: Data(key.utf8), data: nonce).map { String(format: "%02x", $0) }.joined()
+        let got = proof.lowercased()
+        guard got.utf8.count == want.utf8.count else { return false }
+        var diff: UInt8 = 0
+        for (a, b) in zip(want.utf8, got.utf8) { diff |= a ^ b }
+        return diff == 0
+    }
+}
+
+public extension Data {
+    /// Lower-case hex, as both sides write nonces and proofs.
+    func hexEncoded() -> String {
+        map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 /// HMAC-SHA256 (RFC 2104) with SHA-256 (FIPS 180-4) written out: CryptoKit

@@ -30,7 +30,7 @@ PW="${TAILBOND_UX_NODE:-$HOME/.cache/tailbond-ux}"
 
 if [[ ! -d "$PW/node_modules/playwright" || ! -d "$PW/node_modules/vue" ]]; then
     mkdir -p "$PW"
-    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i playwright vue@2.6.14 >/dev/null)
+    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i playwright@1.64.1 vue@2.6.14 >/dev/null)
 fi
 PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').version")"
 mkdir -p "$OUT"

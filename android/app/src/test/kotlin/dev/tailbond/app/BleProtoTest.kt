@@ -3,6 +3,7 @@ package dev.tailbond.app
 import dev.tailbond.app.share.BleProto
 import dev.tailbond.app.share.ProxyServer
 import dev.tailbond.app.share.ShareProtocol
+import dev.tailbond.app.share.hexBytes
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -84,10 +85,16 @@ class BleProtoTest {
             }
         }
 
-        fun hello(device: String = "mac", hub: String = "mac", exp: Long = 4102444800L, pass: ByteArray = key) {
+        fun hello(device: String = "mac", hub: String = "mac", exp: Long = 4102444800L, pass: ByteArray = key, nonce: String = "00112233445566778899aabbccddeeff") {
             val ch = proto.challenge(device).copyOfRange(8, 24)
             val (_, bleKey) = ProxyServer.bleLogin(ShareProtocol.passKey(pass, hub, exp), hub, exp)
-            write("id" to 1, "cmd" to "hello", "user" to "$hub/$exp", "proof" to BleProto.proof(bleKey, ch), device = device)
+            write("id" to 1, "cmd" to "hello", "user" to "$hub/$exp", "nonce" to nonce, "proof" to BleProto.proof(bleKey, ch), device = device)
+        }
+
+        /** The proof the phone should answer with, over the Mac's nonce. */
+        fun phoneProof(hub: String = "mac", exp: Long = 4102444800L, nonce: String = "00112233445566778899aabbccddeeff"): String {
+            val (_, k) = ProxyServer.bleLogin(ShareProtocol.passKey(key, hub, exp), hub, exp)
+            return BleProto.proof(k, nonce.hexBytes())
         }
 
         /** The frames the phone sent, as JSON. */
@@ -132,6 +139,8 @@ class BleProtoTest {
         assertEquals(1, r["id"]!!.jsonPrimitive.content.toInt())
         assertEquals("true", r["ok"]!!.jsonPrimitive.content)
         assertEquals(ShareProtocol.keyId(key), r["key_id"]!!.jsonPrimitive.content)
+        // mutual: the phone proves it holds the key, over the Mac's nonce
+        assertEquals(link.phoneProof(), r["proof"]!!.jsonPrimitive.content)
 
         // hotspot.on: the reply carries the hotspot's network
         link.write("id" to 2, "cmd" to "hotspot.on")
@@ -201,8 +210,30 @@ class BleProtoTest {
         assertFalse("a new read gives a new challenge", ch1.contentEquals(ch2))
         // hello signed over the stale challenge fails
         val (_, bleKey) = ProxyServer.bleLogin(ShareProtocol.passKey(key, "mac", exp), "mac", exp)
-        link.write("id" to 1, "cmd" to "hello", "user" to "mac/$exp", "proof" to BleProto.proof(bleKey, ch1.copyOfRange(8, 24)), device = "mac")
+        link.write("id" to 1, "cmd" to "hello", "user" to "mac/$exp", "nonce" to "00112233445566778899aabbccddeeff", "proof" to BleProto.proof(bleKey, ch1.copyOfRange(8, 24)), device = "mac")
         assertEquals("false", link.replies().last()["ok"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun helloWithoutANonceIsRefused() {
+        // the Mac's nonce is what makes the phone prove itself: without it
+        // there is nothing mutual, so the phone says no
+        val link = Link(Cmds(), key)
+        val ch = link.proto.challenge("mac").copyOfRange(8, 24)
+        val (_, bleKey) = ProxyServer.bleLogin(ShareProtocol.passKey(key, "mac", exp), "mac", exp)
+        link.write("id" to 1, "cmd" to "hello", "user" to "mac/$exp", "proof" to BleProto.proof(bleKey, ch))
+        assertEquals("false", link.replies().last()["ok"]!!.jsonPrimitive.content)
+        link.write("id" to 2, "cmd" to "hub.on")
+        assertEquals("say hello first", link.replies().last()["error"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun theReplyProofIsOverTheMacsNonce() {
+        // a different nonce must produce a different proof (a replay of the
+        // phone's proof from another attempt doesn't verify)
+        val link = Link(Cmds(), key)
+        link.hello(nonce = "ffffffffffffffffffffffffffffffff")
+        val r = link.replies().last()
+        assertEquals(link.phoneProof(nonce = "ffffffffffffffffffffffffffffffff"), r["proof"]!!.jsonPrimitive.content)
+        assertNotEquals(link.phoneProof(), r["proof"]!!.jsonPrimitive.content)
     }
 
     @Test fun hotspotRefusalCarriesTheError() {

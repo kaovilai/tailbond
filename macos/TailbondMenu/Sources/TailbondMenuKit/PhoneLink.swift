@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import Security
 
 /// What the Mac learned from the phone over Bluetooth: its hotspot's
 /// network and its status.
@@ -129,9 +130,22 @@ public final class PhoneLink: NSObject {
                 ? "connect to your home server once first: the phone's password comes from it"
                 : "this Mac has no password for that phone (paired with another home server?)")
         }
-        let hello = try await send(["cmd": "hello", "user": login.user, "proof": BleFrame.proof(key: login.key, challenge: challenge)], timeout: 15, step: "auth")
+        // the Mac's own nonce: the phone's answer must prove it holds the
+        // key over it too, or a rogue device answering hello could hand
+        // this Mac its own Wi-Fi to join
+        var nonce = [UInt8](repeating: 0, count: 16)
+        _ = SecRandomCopyBytes(kSecRandomDefault, nonce.count, &nonce)
+        let nonceData = Data(nonce)
+        let hello = try await send([
+            "cmd": "hello", "user": login.user, "nonce": nonceData.hexEncoded(),
+            "proof": BleFrame.proof(key: login.key, challenge: challenge),
+        ], timeout: 15, step: "auth")
         if hello["ok"] as? Bool != true {
             throw PhoneLinkError(step: "auth", message: (hello["error"] as? String) ?? "the phone refused this Mac's password")
+        }
+        guard let phoneProof = hello["proof"] as? String,
+              BleFrame.phoneProof(key: login.key, nonce: nonceData, matches: phoneProof) else {
+            throw PhoneLinkError(step: "auth", message: "the phone didn't prove itself back (a rogue device answered?)")
         }
         authed = true
         let on = try await send(["cmd": "hotspot.on"], timeout: 40, step: "hotspot")

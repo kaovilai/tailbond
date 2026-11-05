@@ -142,6 +142,7 @@ class ShizukuTethering(private val ctx: Context) : TetheringControl {
             readConfig { ssid, pass, err -> onDone(ssid, pass, err) }
             return
         }
+        if (starting != null) return onDone(null, null, "the hotspot is already starting")
         starting = onDone
         startTimeout = Runnable { startDone(null, null, "the hotspot didn't come up (it may need starting by hand once, in Settings → Hotspot & tethering)") }
             .also { main.postDelayed(it, START_TIMEOUT_MS) }
@@ -153,6 +154,8 @@ class ShizukuTethering(private val ctx: Context) : TetheringControl {
     override fun stop(onDone: (error: String?) -> Unit) {
         val why = shizukuProblem()
         if (why != null) return onDone(why)
+        if (_ap.value.state == "off") return onDone(null)
+        if (stopping != null) return onDone("the hotspot is already stopping")
         stopping = onDone
         stopTimeout = Runnable { stopDone("the hotspot didn't stop in time") }.also { main.postDelayed(it, STOP_TIMEOUT_MS) }
         if (!call("Stop") { remote!!.stop() }) {

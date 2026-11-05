@@ -166,23 +166,34 @@ class BleProto(
     private fun hello(device: String, id: Int?, el: JsonObject) {
         val user = el.str("user").orEmpty()
         val proof = el.str("proof").orEmpty()
+        // the Mac's own nonce: the reply must prove the phone holds the
+        // key over it, or a rogue device could answer hello itself and
+        // hand the Mac its own Wi-Fi to join
+        val macNonce = el.str("nonce").orEmpty().hexBytes()
         val key = ownKey()
         val challenge = challenges[device]
         challenges.remove(device) // single use
         val slash = user.indexOf('/')
         val hub = if (slash > 0) user.substring(0, slash) else ""
         val exp = if (slash > 0) user.substring(slash + 1).toLongOrNull() else null
-        val ok = key != null && challenge != null && exp != null && exp > nowSec() && run {
+        var bleKey: String? = null
+        val ok = key != null && challenge != null && exp != null && exp > nowSec() && macNonce.size == NONCE && run {
             // the BLE key of the same pass the proxy uses, its own label
-            val (_, bleKey) = ProxyServer.bleLogin(ShareProtocol.passKey(key, hub, exp!!), hub, exp)
+            val (_, k) = ProxyServer.bleLogin(ShareProtocol.passKey(key, hub, exp!!), hub, exp)
+            bleKey = k
             val mac = Mac.getInstance("HmacSHA256")
-            mac.init(SecretKeySpec(bleKey.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+            mac.init(SecretKeySpec(k.toByteArray(Charsets.UTF_8), "HmacSHA256"))
             val want = mac.doFinal(challenge).joinToString("") { "%02x".format(it) }
             MessageDigest.isEqual(want.toByteArray(), proof.toByteArray(Charsets.UTF_8))
         }
-        if (ok) {
+        if (ok && bleKey != null) {
             authed.add(device)
-            send(device, buildJsonObject { put("id", id ?: 0); put("ok", true); put("key_id", keyId()) })
+            // mutual: the phone proves it holds the same key, over the
+            // Mac's nonce (the Mac checks it before trusting anything)
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(bleKey!!.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+            val mine = mac.doFinal(macNonce).joinToString("") { "%02x".format(it) }
+            send(device, buildJsonObject { put("id", id ?: 0); put("ok", true); put("key_id", keyId()); put("proof", mine) })
             log("ble: $device said hello as $hub")
         } else {
             send(device, err(id, "wrong password (paired with another home server?)"))
@@ -263,6 +274,9 @@ class BleProto(
         private const val START = 0x01
         private const val END = 0x02
 
+        /** the challenge's and the hello nonce's length, bytes */
+        const val NONCE = 16
+
         /** a heartbeat to every connected Mac, even when nothing changed */
         private const val PUSH_EVERY_MS = 10_000L
 
@@ -297,6 +311,17 @@ class BleProto(
             return mac.doFinal(challenge).joinToString("") { "%02x".format(it) }
         }
     }
+}
+
+/** Hex, or an empty array when it isn't. */
+internal fun String.hexBytes(): ByteArray {
+    if (length % 2 != 0) return ByteArray(0)
+    val out = ByteArray(length / 2)
+    for (i in out.indices) {
+        val v = substring(i * 2, i * 2 + 2).toIntOrNull(16) ?: return ByteArray(0)
+        out[i] = v.toByte()
+    }
+    return out
 }
 
 /** BLE UUIDs of the tailbond control service (the phone is the peripheral). */

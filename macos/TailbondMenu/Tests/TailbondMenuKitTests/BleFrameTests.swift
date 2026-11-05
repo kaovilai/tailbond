@@ -77,6 +77,25 @@ final class BleFrameTests: XCTestCase {
                        "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
     }
 
+    /// The hello is mutual: the phone's answer must prove it holds the key
+    /// over the Mac's own nonce, or a rogue device answering hello could
+    /// hand the Mac its own Wi-Fi to join. (The phone's half of this is
+    /// BleProtoTest's "the reply proof is over the Mac's nonce".)
+    func testPhoneProofIsMutual() {
+        let nonce = Data((0..<16).map { UInt8($0 * 3) })
+        let proof = BleFrame.proof(key: "7kceoolvxnekqfq2", challenge: nonce)
+        XCTAssertTrue(BleFrame.phoneProof(key: "7kceoolvxnekqfq2", nonce: nonce, matches: proof))
+        // upper case hex is still the proof
+        XCTAssertTrue(BleFrame.phoneProof(key: "7kceoolvxnekqfq2", nonce: nonce, matches: proof.uppercased()))
+        // a rogue device: right shape, wrong key or another nonce
+        XCTAssertFalse(BleFrame.phoneProof(key: "another16charkey", nonce: nonce, matches: proof))
+        XCTAssertFalse(BleFrame.phoneProof(key: "7kceoolvxnekqfq2", nonce: Data(repeating: 1, count: 16), matches: proof))
+        XCTAssertFalse(BleFrame.phoneProof(key: "7kceoolvxnekqfq2", nonce: nonce, matches: String(proof.dropLast(2))))
+        XCTAssertFalse(BleFrame.phoneProof(key: "7kceoolvxnekqfq2", nonce: nonce, matches: ""))
+        // hex helper
+        XCTAssertEqual(Data([0x00, 0x0f, 0xff]).hexEncoded(), "000fff")
+    }
+
     func testEncodeFromJSON() {
         let frame = BleFrame.encode(["cmd": "hello", "id": 2])
         let payload = frame.dropFirst(2)

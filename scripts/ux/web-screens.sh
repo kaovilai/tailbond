@@ -34,7 +34,7 @@ trap 'kill "${AGENT_PID:-0}" "${CLIENT_PID:-0}" 2>/dev/null || true; rm -rf "$TM
 
 if [[ ! -d "$PW/node_modules/playwright" ]]; then
     mkdir -p "$PW"
-    (cd "$PW" && npm init -y >/dev/null && npm i playwright >/dev/null)
+    (cd "$PW" && npm init -y >/dev/null && npm i playwright@1.64.1 >/dev/null)
 fi
 PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').version")"
 
