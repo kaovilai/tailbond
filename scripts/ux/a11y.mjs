@@ -145,6 +145,9 @@ function ownChecks({ scope, off }) {
   const root = scope ? document.querySelector(scope) : document.body;
   const out = [];
   const FOCUS = 'a[href],button,input,select,textarea,summary,label,iframe,[contenteditable="true"],[tabindex]:not([tabindex^="-"])';
+  // roving tabindex: one radio/tab/option is in the Tab order and the arrows
+  // move between the rest, so they are keyboard reachable with tabindex="-1"
+  const ROVING = '[role="radiogroup"] [role="radio"],[role="tablist"] [role="tab"],[role="listbox"] [role="option"]';
   const shown = (el) => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 && el.checkVisibility({ visibilityProperty: true, opacityProperty: true }); };
   const name = (el) => {
     let s = el.tagName.toLowerCase();
@@ -157,7 +160,7 @@ function ownChecks({ scope, off }) {
   if (!off['tb-pointer-only']) {
     const nodes = [];
     for (const el of root.querySelectorAll('*')) {
-      if (getComputedStyle(el).cursor !== 'pointer' || el.closest(FOCUS) || el.querySelector(FOCUS) || el.closest('[inert]')) continue;
+      if (getComputedStyle(el).cursor !== 'pointer' || el.closest(FOCUS) || el.querySelector(FOCUS) || el.closest(ROVING) || el.closest('[inert]')) continue;
       // cursor is inherited: report the outermost element of a clickable area
       const p = el.parentElement;
       if (p && root.contains(p) && p !== root && getComputedStyle(p).cursor === 'pointer' && !p.querySelector(FOCUS)) continue;

@@ -32,6 +32,7 @@
 set -euo pipefail
 
 AXE_VERSION=4.14.0
+PW_PINNED=1.64.1
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:-$REPO/out/ux/a11y}"
 PW="${TAILBOND_UX_NODE:-$HOME/.cache/tailbond-ux}"
@@ -46,14 +47,16 @@ stop_pids() {
 }
 trap 'stop_pids "${AGENT_PID:-}" "${CLIENT_PID:-}"; rm -rf "$TMP"' EXIT
 
-if [[ ! -d "$PW/node_modules/playwright" || ! -d "$PW/node_modules/vue" ]]; then
+# Playwright is pinned too, and a cache with another version is reinstalled: the
+# npm version picks the container image tag, and a brand-new release has none.
+if [[ "$(node -p "try{require('$PW/node_modules/playwright/package.json').version}catch(e){''}")" != "$PW_PINNED" || ! -d "$PW/node_modules/vue" ]]; then
     mkdir -p "$PW"
-    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i playwright vue@2.6.14 >/dev/null)
+    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i --save-exact "playwright@$PW_PINNED" vue@2.6.14 >/dev/null)
 fi
 if [[ "$(node -p "try{require('$PW/node_modules/axe-core/package.json').version}catch(e){''}")" != "$AXE_VERSION" ]]; then
     (cd "$PW" && npm i --save-exact "axe-core@$AXE_VERSION" >/dev/null)
 fi
-PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').version")"
+PW_VERSION="$PW_PINNED"
 
 (cd "$REPO/agent" && CGO_ENABLED=0 go build -ldflags "-X main.version=0.2.0" -o "$TMP/tailbondd" ./cmd/tailbondd)
 mkdir -p "$OUT" && rm -f "$OUT"/report.json "$OUT"/report.html "$OUT"/error-*.png "$OUT"/shots/*.png

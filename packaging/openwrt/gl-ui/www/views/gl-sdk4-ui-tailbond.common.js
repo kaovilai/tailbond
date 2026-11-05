@@ -18,7 +18,7 @@
   // A control that isn't a <button> (role checkbox / radio, tabindex 0):
   // a click, or Space or Enter from the keyboard.
   function press(fn) {
-    return { click: fn, keydown: function (e) { if (e.key === " " || e.key === "Enter") { e.preventDefault(); fn(e); } } };
+    return { click: fn, keydown: function (e) { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!e.repeat) fn(e); } } };
   }
 
   var MODES = [
@@ -2240,9 +2240,26 @@
             body.push(h("div", { class: "tb-label" }, "Which device"));
             if (this.lan === null) body.push(h("div", { class: "tb-row tb-muted" }, [h("div", { class: "tb-spin" }), "Loading devices…"]));
             else if (!lan.length) body.push(h("div", { class: "tb-muted" }, "No devices found on this router yet. Type the device's MAC address below."));
-            else body.push(h("div", { class: "tb-pick", attrs: { role: "radiogroup", "aria-label": "Devices" } }, lan.map(function (c) {
+            else {
+              var anyOn = lan.some(function (c) { return e.mac === (c.mac || "").toLowerCase(); });
+              var pickDev = function (c) { e.mac = (c.mac || "").toLowerCase(); e.ip = c.ip || ""; e.name = c.name || ""; e.macTyped = ""; e.err = ""; };
+              body.push(h("div", { class: "tb-pick", attrs: { role: "radiogroup", "aria-label": "Devices" } }, lan.map(function (c, i) {
               var on = e.mac === (c.mac || "").toLowerCase();
-              return h("div", { class: "tb-pick-i" + (on ? " on" : ""), attrs: { role: "radio", tabindex: 0, "aria-checked": String(on) }, on: press(function () { e.mac = (c.mac || "").toLowerCase(); e.ip = c.ip || ""; e.name = c.name || ""; e.macTyped = ""; e.err = ""; }) }, [
+              // one stop in the Tab order (the chosen one, else the first),
+              // arrows move between them, as a radio group does
+              return h("div", { class: "tb-pick-i" + (on ? " on" : ""), attrs: { role: "radio", tabindex: on || (!anyOn && i === 0) ? 0 : -1, "aria-checked": String(on) }, on: {
+                click: function () { pickDev(c); },
+                keydown: function (ev) {
+                  if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); if (!ev.repeat) pickDev(c); return; }
+                  var d = ev.key === "ArrowDown" || ev.key === "ArrowRight" ? 1
+                        : ev.key === "ArrowUp" || ev.key === "ArrowLeft" ? -1 : 0;
+                  if (!d) return;
+                  ev.preventDefault();
+                  var items = ev.currentTarget.parentNode.querySelectorAll('[role="radio"]');
+                  var next = items[(i + d + items.length) % items.length];
+                  if (next) { next.click(); if (next.focus) next.focus(); }
+                }
+              } }, [
                 h("span", { class: "tb-dot" + (c.online ? " ok" : ""), attrs: { title: c.online ? "Connected" : "Not connected now" } }),
                 h("div", { class: "tb-grow" }, [
                   h("div", { style: { fontWeight: 600 } }, c.name || "Unnamed device"),
@@ -2251,6 +2268,7 @@
                 taken[(c.mac || "").toLowerCase()] ? h("span", { class: "tb-muted tb-small" }, "has a rule") : c.online ? null : h("span", { class: "tb-muted tb-small" }, "not connected")
               ]);
             })));
+            }
             body.push(h("div", { class: "tb-label" }, "Not listed? Its MAC address"));
             body.push(h("input", { class: "tb-input", attrs: { placeholder: "aa:bb:cc:dd:ee:ff" }, domProps: { value: e.macTyped }, on: { input: function (ev) { e.macTyped = ev.target.value; e.mac = ""; e.ip = ""; e.name = ""; } } }));
             body.push(h("div", { class: "tb-help" }, e.mac && e.name
