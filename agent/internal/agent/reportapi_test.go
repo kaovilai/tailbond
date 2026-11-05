@@ -85,7 +85,11 @@ func TestCrashKeptUntilDismissed(t *testing.T) {
 func TestMqvpnCrashSignal(t *testing.T) {
 	a := pairServer(t)
 	a.logs.Add("mqvpn", "path wifi up")
-	err := exec.Command("sh", "-c", "kill -SEGV $$").Run()
+	// no core dump: it would land in the package directory (and once got
+	// committed); a temp dir in case the shell ignores the limit
+	crash := exec.Command("sh", "-c", "ulimit -c 0; kill -SEGV $$")
+	crash.Dir = t.TempDir()
+	err := crash.Run()
 	a.noteChildCrash(err)
 	b, _ := os.ReadFile(a.crashPath(crashLast))
 	if !strings.Contains(string(b), "mqvpn stopped with signal segmentation fault") || !strings.Contains(string(b), "path wifi up") {
