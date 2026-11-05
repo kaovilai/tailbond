@@ -66,7 +66,8 @@ key() {
 
 # The UI as uiautomator sees it (Compose exposes its semantics).
 dump() { sh_ uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb exec-out cat /sdcard/ui.xml 2>/dev/null >"$OUT/ui.xml"; }
-# The focused node: its text, content description and its children's texts.
+# The focused node: its class (+ "checkable" for switches and checkboxes),
+# then its text, content description and its children's texts.
 focused() {
   dump
   python3 - "$OUT/ui.xml" <<'PY'
@@ -78,7 +79,8 @@ except Exception:
 for n in root.iter("node"):
     if n.get("focused") == "true":
         words = [m.get("text") or m.get("content-desc") or "" for m in n.iter("node")]
-        print(n.get("class", ""), "|", " / ".join(w for w in words if w))
+        kind = n.get("class", "") + (" checkable" if n.get("checkable") == "true" else "")
+        print(kind, "|", " / ".join(w for w in words if w))
         break
 PY
 }
@@ -157,7 +159,7 @@ focus_is "Add phone" "the confirm dialog starts on Add phone"
 key CENTER
 sleep 3
 shot tv-05-home
-focus_is "Switch [|] ?$" "home starts on the main switch"
+focus_is "checkable [|] ?$" "home starts on the main switch"
 
 say "Settings, Sharing and back"
 key UP
@@ -180,7 +182,7 @@ has_text "This device" && ok "Back, Back: home" || bad "Back didn't come home"
 shot tv-09-home-again
 
 say "Turning it on: the handoff dialog, then Android's VPN dialog"
-move UP "Switch [|] ?$" 15 "back up to the main switch"
+move UP "checkable [|] ?$" 15 "back up to the main switch"
 key CENTER
 sleep 2
 shot tv-10-handoff
