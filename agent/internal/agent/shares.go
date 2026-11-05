@@ -959,8 +959,10 @@ func realShareIf(name string) (shareIfFacts, bool) {
 }
 
 // isTunnelName: tailbond's own tunnel or another VPN's, never shared.
+// tb<N> is tailbond's tunnel on Linux and OpenWrt (config.DefaultTunName is
+// "utun" on macOS), refused on every platform alike.
 func isTunnelName(name string) bool {
-	if name == config.DefaultTunName {
+	if name == config.DefaultTunName || isTbTun(name) {
 		return true
 	}
 	for _, p := range []string{"utun", "tun", "wg", "tailscale", "mqvpn", "ipsec"} {
@@ -969,6 +971,19 @@ func isTunnelName(name string) bool {
 		}
 	}
 	return false
+}
+
+// isTbTun: "tb" and one or more digits.
+func isTbTun(name string) bool {
+	if len(name) < 3 || !strings.HasPrefix(name, "tb") {
+		return false
+	}
+	for _, c := range name[2:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // loopbackServer: the pairing's server is on this machine's loopback (a
