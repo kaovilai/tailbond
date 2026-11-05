@@ -18,3 +18,6 @@ local.properties
 
 # Compose settings (deploy/docker/compose.yaml): addresses, the dashboard password
 deploy/docker/.env
+
+# core dumps (a crashing test process)
+core.[0-9]*
