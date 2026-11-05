@@ -122,7 +122,8 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                 val apk = s.apkUrl
                 if (!state.hasBrowser) {
                     // most TVs: no browser to download with (docs/android.md, "Android TV")
-                    if (a == Availability.AVAILABLE) Text(UpdateWords.noBrowser(u.repo), style = MaterialTheme.typography.bodyMedium)
+                    // a debug build can't take the release APK (Hint below says so)
+                    if (a == Availability.AVAILABLE && !u.debugBuild) Text(UpdateWords.noBrowser(u.repo), style = MaterialTheme.typography.bodyMedium)
                 } else if (a == Availability.AVAILABLE && apk != null && !u.debugBuild) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Button(onClick = { actions.openUrl(apk) }) {

@@ -953,7 +953,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, android-e2e, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, oci-image, kubernetes, macos-e2e-server, macos, macos-server]
+    needs: [agent, shellcheck, e2e, android, android-e2e, android-tv, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, oci-image, kubernetes, macos-e2e-server, macos, macos-server]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

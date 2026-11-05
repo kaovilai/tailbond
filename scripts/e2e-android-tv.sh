@@ -16,9 +16,10 @@
 #     Settings, down through it to Sharing, Back home, and the switch → the
 #     handoff dialog → Android's own VPN dialog (left with Back);
 #   - Android's VPN dialog and VPN settings screen exist on this TV image.
-# The keys go through the emulator's own key device (adb emu), like a
-# remote's; `input keyevent` comes from a virtual device, which text fields
-# treat as a keyboard (its arrows move the cursor).
+# The keys go into the emulator's own key device (sendevent, as root), a
+# real input device like a remote; `input keyevent` comes from a virtual
+# device, which text fields treat as a keyboard (its arrows move the
+# cursor), so it's only the fallback.
 #
 # Artifacts in $OUT (default out/e2e-android-tv): a screenshot per step,
 # UI dumps, logcat.
@@ -40,20 +41,22 @@ shot() { adb exec-out screencap -p >"$OUT/$1.png" 2>/dev/null && echo "  screens
 mkdir -p "$OUT"
 [ -f "$APK" ] || { echo "APK not found: $APK"; exit 2; }
 
-# The remote: Linux key codes into the emulator's keyboard device (arrows
-# are DPAD_*, Enter is OK for Compose and Android's dialogs alike, Back);
-# input keyevent if the console isn't there.
-declare -A LINUX=([UP]=KEY_UP [DOWN]=KEY_DOWN [LEFT]=KEY_LEFT [RIGHT]=KEY_RIGHT [CENTER]=KEY_ENTER [BACK]=KEY_BACK)
+# The remote: Linux key codes into the emulator's key device (arrows are
+# DPAD_*, Enter is OK for Compose and Android's dialogs alike, Back).
+declare -A LINUX=([UP]=103 [DOWN]=108 [LEFT]=105 [RIGHT]=106 [CENTER]=28 [BACK]=158)
 declare -A ANDROID=([UP]=DPAD_UP [DOWN]=DPAD_DOWN [LEFT]=DPAD_LEFT [RIGHT]=DPAD_RIGHT [CENTER]=DPAD_CENTER [BACK]=BACK)
-USE_EMU=1
+adb root >/dev/null 2>&1 && adb wait-for-device
+# the input device with arrow keys and Enter
+KEYDEV="$(sh_ getevent -pl 2>/dev/null | awk '/^add device/ {dev=$4} /KEY_DOWN/ {d[dev]=1} /KEY_ENTER/ {e[dev]=1} END {for (k in d) if (e[k]) {print k; exit}}')"
+if [ -n "$KEYDEV" ] && sh_ "sendevent $KEYDEV 0 0 0" 2>&1 | grep -q .; then KEYDEV=""; fi
+[ -n "$KEYDEV" ] && echo "  remote keys: $KEYDEV" || note "no writable key device: input keyevent instead (text fields then keep the arrows)"
 key() {
   local k=$1 n=${2:-1}
   for _ in $(seq "$n"); do
-    if [ "$USE_EMU" = 1 ] && r="$(adb emu event send "EV_KEY:${LINUX[$k]}:1" "EV_KEY:${LINUX[$k]}:0" 2>&1)" && ! grep -q KO <<<"$r"; then :
+    if [ -n "$KEYDEV" ]; then
+      sh_ "sendevent $KEYDEV 1 ${LINUX[$k]} 1; sendevent $KEYDEV 0 0 0; sendevent $KEYDEV 1 ${LINUX[$k]} 0; sendevent $KEYDEV 0 0 0"
     else
-      [ "$USE_EMU" = 1 ] && note "emulator console keys unavailable ($r): input keyevent instead (text fields then keep the arrows)"
-      USE_EMU=0
-      sh_ input dpad keyevent "${ANDROID[$k]}" >/dev/null
+      sh_ input keyevent "${ANDROID[$k]}" >/dev/null
     fi
     sleep 0.7
   done
@@ -113,11 +116,13 @@ fi
 
 say "Install and the TV launcher"
 adb install -r "$APK" | tail -n1
-sh_ getprop ro.build.characteristics | grep -q tv && ok "a TV image ($(sh_ getprop ro.build.version.release), $(sh_ wm size | tail -n1))" || note "not a TV image? ro.build.characteristics=$(sh_ getprop ro.build.characteristics)"
+sh_ pm has-feature android.software.leanback | grep -q true && ok "a TV (leanback) image, Android $(sh_ getprop ro.build.version.release), $(sh_ wm size | tail -n1)" || bad "not a TV image: no android.software.leanback"
 sh_ cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER >"$OUT/leanback.txt"
 grep -q "$PKG/.ui.MainActivity" "$OUT/leanback.txt" && ok "the TV launcher lists tailbond" || bad "LEANBACK_LAUNCHER doesn't resolve to tailbond"
 # Android's VPN dialog (VpnService.prepare) and VPN settings on this TV
-sh_ pm list packages | grep -q "com.android.vpndialogs" && ok "Android's VPN permission dialog is installed" || note "no com.android.vpndialogs: tailbond says it can't turn on here"
+HAS_VPNDIALOGS=0
+if sh_ pm list packages | grep -q "com.android.vpndialogs"; then HAS_VPNDIALOGS=1; ok "Android's VPN permission dialog is installed"
+else note "no com.android.vpndialogs on this image: tailbond says it can't turn on here"; fi
 vs="$(sh_ cmd package resolve-activity --brief -a android.settings.VPN_SETTINGS | tail -n1)"
 if [ -n "$vs" ] && ! grep -q "No activity" <<<"$vs"; then note "VPN settings screen: $vs"; else note "no VPN settings screen: Settings shows the adb way to set Always-on"; fi
 
@@ -136,7 +141,9 @@ focus_is "EditText|Home server's name" "pairing starts on the server's name fiel
 has_text "Scan code" && bad "a camera scan is offered on a TV with no camera" || ok "no camera scan offered"
 key DOWN
 f="$(focused)"
-if grep -q "Home server's name" <<<"$f"; then bad "D-pad down stays in the text field (focus: $f)"; else ok "D-pad leaves the text field (focus: $f)"; fi
+if ! grep -q "Home server's name" <<<"$f"; then ok "D-pad leaves the text field (focus: $f)"
+elif [ -z "$KEYDEV" ]; then note "input keyevent's arrows stay in the text field (a keyboard's would too): not a remote"
+else bad "D-pad down stays in the text field (focus: $f)"; fi
 shot tv-03-pairing-moved
 
 say "A pairing link (no server: only the screens are checked)"
@@ -180,7 +187,9 @@ key CENTER
 sleep 3
 shot tv-11-vpn-consent
 win="$(sh_ dumpsys window | grep -E 'mCurrentFocus' | head -n1)"
-grep -q vpndialogs <<<"$win" && ok "Android's VPN dialog is up ($win)" || note "focused window after Turn on: $win"
+if grep -q vpndialogs <<<"$win"; then ok "Android's VPN dialog is up ($win)"
+elif [ "$HAS_VPNDIALOGS" = 1 ]; then bad "Turn on didn't reach Android's VPN dialog (focus: $win)"
+else note "no VPN dialog on this image: tailbond says it can't turn on here (focus: $win)"; fi
 key BACK
 sleep 2
 shot tv-12-after-consent-back

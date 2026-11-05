@@ -47,8 +47,12 @@ class MainActivity : ComponentActivity() {
     private var tailscaleInstalled by mutableStateOf(false)
 
     /** What this device can open (TVs: no camera, often no browser or VPN settings screen). */
-    private val hasCamera by lazy { packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
-    private val hasBrowser by lazy { canOpen(Intent(Intent.ACTION_VIEW, "https://github.com".toUri())) }
+    // the back camera: the one QrScanner uses
+    private val hasCamera by lazy { packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA) }
+    // any web page, not one site an app claims (GitHub's own app takes github.com)
+    private val hasBrowser by lazy {
+        canOpen(Intent(Intent.ACTION_VIEW, "https://example.com/".toUri()).addCategory(Intent.CATEGORY_BROWSABLE))
+    }
     private val hasVpnSettings by lazy { canOpen(Intent(Settings.ACTION_VPN_SETTINGS)) }
 
     private fun canOpen(i: Intent): Boolean = packageManager.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY) != null
