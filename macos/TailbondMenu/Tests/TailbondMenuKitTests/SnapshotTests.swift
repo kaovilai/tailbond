@@ -44,11 +44,23 @@ final class SnapshotTests: XCTestCase {
             ("menu-04-not-paired", try fixture("not-paired")),
             ("menu-05-not-running", nil),
             ("menu-06-sharing", try fixture("sharing")),
+            // Connect via phone (docs/phone-hub.md, "One click from the Mac")
+            ("menu-07-phone-idle", try fixture("phone-idle")),
+            ("menu-08-phone-bonded", try fixture("phone-bonded")),
+            ("menu-09-phone-failed", try fixture("phone-failed")),
+            ("menu-10-phone-fallback", try fixture("phone-fallback")),
         ]
         for (name, st) in cases {
             for dark in [false, true] {
                 try render(name, MenuModel(fixed: st), dark: dark, dir: dir)
             }
+        }
+        // the app's own Bluetooth half, before tailbondd takes over
+        try render("menu-11-phone-bluetooth", MenuModel(fixed: try fixture("phone-idle"), phoneStage: "Turning on Pixel 9's hotspot…"), dark: false, dir: dir)
+        // the real tailbondd's status from the macOS e2e (TB_E2E_STATUS)
+        if let p = ProcessInfo.processInfo.environment["TB_E2E_STATUS"], !p.isEmpty {
+            let st = try JSONDecoder().decode(AgentStatus.self, from: Data(contentsOf: URL(fileURLWithPath: p)))
+            try render("menu-12-phone-e2e", MenuModel(fixed: st), dark: false, dir: dir)
         }
     }
 }

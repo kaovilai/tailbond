@@ -525,10 +525,11 @@ jobs:
           path: out/e2e-macos/
           if-no-files-found: ignore
       # the menu bar app (macos/TailbondMenu): unit tests, the menu window
-      # rendered for each state (artifact menubar-screens), tailbond.app
+      # rendered for each state (artifact menubar-screens), tailbond.app;
+      # TB_E2E_STATUS: the status e2e-macos saved after "Connect via phone"
       - name: Menu bar app (tests, screens, ad-hoc signed tailbond.app)
         run: |
-          TB_SNAPSHOT_DIR="$PWD/out/ux/menubar" swift test --package-path macos/TailbondMenu
+          TB_SNAPSHOT_DIR="$PWD/out/ux/menubar" TB_E2E_STATUS="$PWD/out/e2e-macos/phone-connect-status.json" swift test --package-path macos/TailbondMenu
           ls out/ux/menubar/*.png
           packaging/macos/build-app.sh
       - uses: actions/upload-artifact@v7

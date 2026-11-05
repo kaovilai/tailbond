@@ -12,4 +12,9 @@
     <string name="share_stop">Stop sharing</string>
     <string name="hub_channel">Sharing bonded connection</string>
     <string name="hub_stop">Stop sharing</string>
+    <string name="mac_link_channel">One click from your Mac</string>
+    <string name="mac_link_title">Your Mac can connect with one click</string>
+    <string name="mac_link_waiting">Waiting for your Mac over Bluetooth</string>
+    <string name="mac_link_connected">Connected to %1$s over Bluetooth</string>
+    <string name="mac_link_stop">Turn off</string>
 </resources>

@@ -42,6 +42,20 @@ public struct MenuSummary: Equatable {
     public let connected: Bool
     /// "Share this Mac's connection" (nil: the agent doesn't offer it)
     public let share: Share?
+    /// "Connect via phone" (nil: the agent doesn't offer it)
+    public let phone: Phone?
+
+    /// "Connect via phone": the phone's hotspot over Bluetooth, then its
+    /// bonded connection through the phone hub (docs/phone-hub.md).
+    public struct Phone: Equatable {
+        public let title: String
+        public let detail: String
+        public let tone: Tone
+        /// the button: "Connect via phone", "Disconnect from phone", "Try again"; "" while it works
+        public let action: String
+        /// in use: the button disconnects
+        public let connected: Bool
+    }
 
     public struct Share: Equatable {
         /// the switch's state
@@ -95,7 +109,7 @@ public struct MenuSummary: Equatable {
             subtitle = unreachable ?? "Nothing answers on 127.0.0.1:8077. Start it: sudo launchctl kickstart -k system/com.tailbond.tailbondd"
             tone = .bad; symbol = "exclamationmark.triangle"; rates = ""; links = []; coexist = []
             workVPNChoice = false; workVPN = ""; workExplain = []; bondedBlocked = ""; update = Line(text: "", warn: false); updatePolicy = ""
-            canInstall = false; crash = nil; connected = false; share = nil
+            canInstall = false; crash = nil; connected = false; share = nil; phone = nil
             return
         }
         let server = s.activeServer.isEmpty ? s.server : s.activeServer
@@ -213,6 +227,49 @@ public struct MenuSummary: Equatable {
         }
         crash = s.crash.isEmpty ? nil : Self.when(s.crash)
         share = s.sharing.map(Self.shareSummary)
+        phone = s.role == "client" ? s.phoneHub.map(Self.phoneSummary) : nil
+    }
+
+    /// The steps tailbondd names (status.PhoneConnect).
+    public static func stepWords(_ step: String) -> String {
+        switch step {
+        case "bluetooth": return "Asking the phone over Bluetooth"
+        case "login": return "Logging in to the phone"
+        case "hotspot": return "Turning on the phone's hotspot"
+        case "phone_hub": return "Turning on Share bonded connection"
+        case "wifi": return "Joining the phone's hotspot"
+        case "find": return "Looking for the phone's hub"
+        case "use": return "Setting this Mac's proxy"
+        case "internet": return "Checking the internet through the phone"
+        default: return step
+        }
+    }
+
+    static func phoneSummary(_ h: PhoneHubInfo) -> Phone {
+        let c = h.connect
+        switch c?.state ?? "idle" {
+        case "bonded":
+            let b = c!
+            var parts = [b.phone.isEmpty ? "Your phone" : b.phone]
+            if b.battery > 0 { parts.append("\(b.battery)% battery") }
+            if b.paths > 0 { parts.append(b.paths == 1 ? "1 path bonded" : "\(b.paths) paths bonded") }
+            var detail = parts.joined(separator: " · ")
+            if !b.note.isEmpty { detail += ". " + b.note }
+            return Phone(title: "Bonded via phone" + (b.network.isEmpty ? "" : " · \(b.network)"), detail: detail, tone: .good,
+                         action: "Disconnect from phone", connected: true)
+        case "working":
+            return Phone(title: "Connecting via phone…", detail: stepWords(c!.step) + "…", tone: .busy, action: "", connected: false)
+        case "failed":
+            return Phone(title: "Couldn't connect via phone", detail: "\(stepWords(c!.step)): \(c!.error)", tone: .bad, action: "Try again", connected: false)
+        default:
+            if let u = h.using {
+                return Phone(title: "Using \(u.label.isEmpty ? "a phone" : u.label)'s \(u.bonded ? "bonded connection" : "mobile data")",
+                             detail: "Picked in the dashboard", tone: .good, action: "Disconnect from phone", connected: true)
+            }
+            let note = !(c?.note ?? "").isEmpty ? c!.note : h.note
+            return Phone(title: "Connect via phone", detail: note.isEmpty ? "Turns on your phone's hotspot over Bluetooth, joins it and uses the phone's bonded connection." : note,
+                         tone: .off, action: "Connect via phone", connected: false)
+        }
     }
 
     /// "1.2 MB", "120 MB", "3.4 GB" (the dashboard's units)
@@ -269,6 +326,7 @@ public struct MenuSummary: Equatable {
         if !update.text.isEmpty { out.append("  \(update.text)") }
         if !updatePolicy.isEmpty { out.append("  Install updates: \(Self.policyLabel(updatePolicy))") }
         if let sh = share { out.append("  \(sh.warn ? "! " : "")Share this Mac's connection: \(sh.on ? "on" : "off"): \(sh.text)") }
+        if let p = phone { out.append("  \(p.tone == .bad ? "! " : "")Phone: \(p.title) (\(p.detail))") }
         if let c = crash { out.append("  ! tailbond stopped unexpectedly (\(c)): Report a problem…") }
         return out.joined(separator: "\n")
     }

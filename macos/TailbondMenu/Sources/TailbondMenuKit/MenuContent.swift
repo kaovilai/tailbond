@@ -36,6 +36,7 @@ public struct MenuContent: View {
             if model.status != nil {
                 modes
                 if !s.links.isEmpty { section("Connections") { linksList } }
+                if let p = s.phone { section("Phone") { phoneBox(p) } }
                 if let sh = s.share { section("Share this Mac's connection") { shareBox(sh) } }
                 if !s.coexist.isEmpty { section("Next to other VPNs") { coexistBox } }
                 section("Updates") { updatesBox }
@@ -131,6 +132,34 @@ public struct MenuContent: View {
                 ForEach(s.bondedBlocked.isEmpty ? s.workExplain : Array(s.workExplain.prefix(1)), id: \.self) {
                     Text($0).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+            }
+        }
+    }
+
+    /// "Connect via phone": one click, the phone's hotspot over Bluetooth and its bonded connection.
+    private func phoneBox(_ p: MenuSummary.Phone) -> some View {
+        let stage = model.phoneStage
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: p.connected ? "iphone.radiowaves.left.and.right" : "iphone")
+                    .foregroundStyle(stage != nil ? Brand.warn : color(p.tone))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stage != nil ? "Connecting via phone…" : p.title).font(.callout.weight(.semibold))
+                    Text(stage ?? p.detail).font(.caption).foregroundStyle(p.tone == .bad && stage == nil ? Brand.bad : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if stage == nil && !p.action.isEmpty {
+                HStack {
+                    Button(p.action) { p.connected ? model.disconnectPhone() : model.connectViaPhone() }
+                        .disabled(model.busy)
+                    // only with a Bluetooth session: without one nothing can reach the phone
+                    if p.connected && model.phoneLinked {
+                        Button("…and turn off its hotspot") { model.disconnectPhone(hotspotOff: true) }
+                            .disabled(model.busy)
+                    }
+                }
+                .controlSize(.small)
             }
         }
     }

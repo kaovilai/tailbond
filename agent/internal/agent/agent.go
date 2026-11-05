@@ -97,6 +97,12 @@ type Agent struct {
 	hubRouters func(context.Context) []hubCand
 	hubLocal   string
 	hubRecheck []time.Duration
+	// one click from the Mac (phoneconnect.go): joining the phone's
+	// hotspot (nil: not on this OS), the URL fetched through the hub to
+	// prove internet, and how long to look for the hub
+	joinWiFi   func(ctx context.Context, ssid, pass string) error
+	pcCheckURL string
+	pcFindWait time.Duration
 	// other VPNs (coexist.go): test hooks for commands and /etc/resolver
 	cxRun         coexist.Runner
 	cxResolverDir string
