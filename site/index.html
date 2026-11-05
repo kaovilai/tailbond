@@ -117,6 +117,64 @@ summary { cursor: pointer; font-weight: 600; }
 details p { color: var(--muted); margin: .6rem 0 0; }
 footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-top: 1px solid var(--border); }
 :focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; border-radius: 6px; }
+
+/* ---- dots: a Tailscale-ish speckle under everything, drifting slowly so
+   the page feels like it's flowing. transform only (composited), one paint. */
+body::before {
+  content: ""; position: fixed; inset: -40vmax; z-index: 0; pointer-events: none;
+  background-image: radial-gradient(circle, var(--border) 1px, transparent 1.4px);
+  background-size: var(--dot-gap) var(--dot-gap);
+  opacity: var(--dot-alpha);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 40%, transparent 100%);
+}
+:root { --dot-gap: 22px; --dot-alpha: .55; }
+@media (prefers-reduced-motion: no-preference) {
+  body::before { animation: drift 120s linear infinite; }
+}
+@keyframes drift { to { transform: translate3d(calc(-1 * var(--dot-gap)), calc(-1 * var(--dot-gap)), 0); } }
+@media (max-width: 640px) { :root { --dot-gap: 18px; --dot-alpha: .45; } }
+header, main, footer { position: relative; z-index: 1; }
+
+/* a row of dots under each section heading, like a tiny scale */
+section > h2::after {
+  content: ""; display: block; width: 4.5rem; height: 6px; margin-top: .55rem;
+  background-image: radial-gradient(circle, var(--primary) 2px, transparent 2.6px);
+  background-size: 13px 6px; background-repeat: repeat-x; opacity: .85;
+}
+nav a { text-decoration: none; }
+nav a:hover, nav a:focus-visible { text-decoration: underline dotted; text-underline-offset: 4px; }
+
+/* the hero lights up under the pointer and the braid leans towards it */
+.hero { position: relative; isolation: isolate; --px: 50%; --py: 40%; }
+.hero::before {
+  content: ""; position: absolute; inset: -1rem; z-index: -1; pointer-events: none;
+  background: radial-gradient(28rem 20rem at var(--px) var(--py),
+              color-mix(in srgb, var(--primary) 14%, transparent), transparent 70%);
+  opacity: 0; transition: opacity .45s ease;
+}
+.hero:hover::before, .hero:focus-within::before { opacity: 1; }
+.hero .braid { transition: transform .35s cubic-bezier(.2,.7,.2,1); }
+@media (prefers-reduced-motion: no-preference) {
+  .hero:hover .braid { transform: perspective(900px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)); }
+  /* moving the pointer makes the packets hurry: quicker to look at than to read about */
+  .hero:hover .braid .pkt { animation-duration: 1.5s; }
+  .flow:hover .pkt { animation-duration: 1.9s; }
+}
+.steps li { transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
+@media (prefers-reduced-motion: no-preference) {
+  .steps li:hover { transform: translateY(-3px); border-color: var(--primary); box-shadow: 0 8px 24px -18px var(--primary); }
+}
+/* dotted edge on a card when you're on it */
+.card:hover, .steps li:hover { background-image: radial-gradient(circle, var(--border) 1px, transparent 1.4px); background-size: 10px 10px; }
+
+/* sections fade up once, the first time they're seen */
+html.js .reveal { opacity: 0; transform: translateY(16px); }
+html.js .reveal.in { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s cubic-bezier(.2,.7,.2,1); }
+@media (prefers-reduced-motion: reduce) {
+  html.js .reveal { opacity: 1; transform: none; }
+  .hero .braid, .steps li { transition: none; }
+}
 </style>
 </head>
 <body>
@@ -294,6 +352,45 @@ footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .9rem; border-t
   </div>
 </footer>
 <script>
+document.documentElement.classList.add('js');
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+  const hero = document.querySelector('.hero');
+  // pointer: the glow follows, the braid leans (a few degrees, clamped)
+  if (hero && !reduce.matches && matchMedia('(pointer: fine)').matches) {
+    const braid = hero.querySelector('.braid');
+    let raf = 0, ev = null;
+    hero.addEventListener('pointermove', (e) => {
+      ev = e;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const r = hero.getBoundingClientRect();
+        const x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+        hero.style.setProperty('--px', `${(x * 100).toFixed(1)}%`);
+        hero.style.setProperty('--py', `${(y * 100).toFixed(1)}%`);
+        if (braid) {
+          braid.style.setProperty('--tilt-x', `${((x - .5) * 6).toFixed(2)}deg`);
+          braid.style.setProperty('--tilt-y', `${((.5 - y) * 5).toFixed(2)}deg`);
+        }
+      });
+    });
+    hero.addEventListener('pointerleave', () => {
+      if (braid) { braid.style.removeProperty('--tilt-x'); braid.style.removeProperty('--tilt-y'); }
+    });
+  }
+  // reveal each section once, as it comes into view
+  const targets = [...document.querySelectorAll('main > section')];
+  for (const el of targets) el.classList.add('reveal');
+  if (!('IntersectionObserver' in window) || reduce.matches) {
+    for (const el of targets) el.classList.add('in');
+  } else {
+    const io = new IntersectionObserver((es) => {
+      for (const e of es) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }, { rootMargin: '0px 0px -8% 0px', threshold: .08 });
+    for (const el of targets) io.observe(el);
+  }
+})();
 document.querySelector('.pausebtn')?.addEventListener('click', (e) => {
   const still = document.documentElement.classList.toggle('still');
   e.currentTarget.setAttribute('aria-pressed', String(still));
