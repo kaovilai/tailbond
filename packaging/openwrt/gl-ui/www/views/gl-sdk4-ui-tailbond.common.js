@@ -2637,10 +2637,10 @@
                     this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
               steps.indexOf("address") >= 0 ? "Travel routers need a name for your home to reach it from away." : null),
             this.kvRow(h, "Port",
-              "UDP " + (s.port || 443) + ", opened on this router automatically",
+              "UDP " + (s.port || 443) + " (this router's own firewall already allows it)",
               steps.indexOf("health:cgnat") >= 0
                 ? "Your provider keeps travel routers from reaching it (step above)."
-                : "Behind your provider's modem-router? Forward UDP " + (s.port || 443) + " to this router there. Test: turn tailbond on over mobile data; Setup health then reports \"UDP " + (s.port || 443) + " reached from the internet\"."),
+                : "If another router is in front of this one (for example your internet provider's modem-router), it blocks incoming connections: in its settings, add a port forward (also called Virtual server or NAT) for UDP " + (s.port || 443) + " to this router's address on that network, and give this router a fixed address there. tailbond can't do that part. Test: turn tailbond on over mobile data; Setup health then reports \"UDP " + (s.port || 443) + " reached from the internet\"."),
             this.kvRow(h, "Tailscale name", h("span", { class: "tb-mono" }, ts.dns_name || "—"), null),
             this.kvRow(h, "tailbond page password",
               this.pwEdit ? h("div", { class: "tb-row" }, [
