@@ -17,9 +17,10 @@
 #     handoff dialog → Android's own VPN dialog (left with Back);
 #   - Android's VPN dialog and VPN settings screen exist on this TV image.
 # The keys go into the emulator's own key device (sendevent, as root), a
-# real input device like a remote; `input keyevent` comes from a virtual
-# device, which text fields treat as a keyboard (its arrows move the
-# cursor), so it's only the fallback.
+# real input device like a remote, where the image allows root; else
+# `input keyevent`, from a virtual device, which text fields treat as a
+# keyboard (its arrows move the cursor), so that one step is then a note
+# (TvDpadTest covers it with a D-pad device).
 #
 # Artifacts in $OUT (default out/e2e-android-tv): a screenshot per step,
 # UI dumps, logcat.
@@ -48,7 +49,8 @@ declare -A ANDROID=([UP]=DPAD_UP [DOWN]=DPAD_DOWN [LEFT]=DPAD_LEFT [RIGHT]=DPAD_
 adb root >/dev/null 2>&1 && adb wait-for-device
 # the input device with arrow keys and Enter
 KEYDEV="$(sh_ getevent -pl 2>/dev/null | awk '/^add device/ {dev=$4} /KEY_DOWN/ {d[dev]=1} /KEY_ENTER/ {e[dev]=1} END {for (k in d) if (e[k]) {print k; exit}}')"
-if [ -n "$KEYDEV" ] && sh_ "sendevent $KEYDEV 0 0 0" 2>&1 | grep -q .; then KEYDEV=""; fi
+# writable only as root, which some TV images (Google-signed) refuse
+if [ -n "$KEYDEV" ] && ! sh_ "sendevent $KEYDEV 0 0 0 2>/dev/null && echo writable" | grep -q writable; then KEYDEV=""; fi
 [ -n "$KEYDEV" ] && echo "  remote keys: $KEYDEV" || note "no writable key device: input keyevent instead (text fields then keep the arrows)"
 key() {
   local k=$1 n=${2:-1}

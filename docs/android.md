@@ -292,8 +292,9 @@ phone layout is unchanged.
 
 **VPN.** Android TV has `VpnService`: the first *Turn on* shows tailbond's
 handoff dialog and then Android's own VPN dialog, both by remote. Some TV
-builds leave that dialog out; tailbond then says it can't turn on there
-instead of crashing. TVs don't show notifications the way phones do (no
+builds leave that dialog out (the Android 16 Android TV emulator image has
+neither it nor a VPN settings screen); tailbond then says it can't turn on
+there instead of crashing. TVs don't show notifications the way phones do (no
 shade), so tailbond doesn't ask for the notification permission on a TV,
 and nothing depends on the notification: the main switch, Sharing and the
 rest are all in the app. Many TVs have no VPN settings screen, so Always-on
@@ -315,7 +316,10 @@ adb shell settings put secure always_on_vpn_app dev.tailbond.app
   bond; Share my mobile data needs a SIM.
 - Checked on the Android TV emulator (CI job `android-tv`,
   `scripts/e2e-android-tv.sh`: the TV launcher entry, the banner, every
-  step above by remote keys, and Android's VPN dialog), not on a real TV.
+  step above by remote keys, and Android's VPN dialog where the image has
+  one), not on a real TV. The emulator's keys come from `input keyevent`
+  (its key device needs root, which the image refuses), so leaving a text
+  field with the D-pad is covered by the unit test, not there.
   Tests: `src/test/.../tv/TvDpadTest.kt` drives each screen with key events
   only; `ux/TvScreens.kt` renders them at 1080p (artifact
   `tv-screens-android`).
