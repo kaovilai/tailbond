@@ -1114,7 +1114,9 @@ failover flap; the other WANs keep the tunnel up.
 
 `status` is `ok` | `warn` | `bad` | `unknown`; `all_good` means no `warn`/`bad`.
 Check ids: `tailscale` (off), `tailscale_direct` (online peers with a
-`CurAddr` are direct, with only a `Relay` relayed; the client role counts
+`CurAddr` are direct; one with no `CurAddr` is relayed only when it also
+has traffic in the last two minutes (`LastHandshake`), since an unused peer
+has no direct path either and is not slow. The client role counts
 only its home server), `netcheck` (`tailscale netcheck --format=json`,
 cached 10 minutes: UDP blocked, hard NAT = `MappingVariesByDestIP`, UPnP /
 NAT-PMP / PCP), and on the server `route` (the tunnel subnet approved),

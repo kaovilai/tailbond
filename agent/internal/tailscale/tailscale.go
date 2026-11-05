@@ -68,6 +68,11 @@ type nodeJSON struct {
 	LastSeen     time.Time
 	CurAddr      string
 	Relay        string
+	// LastHandshake: last time traffic (direct or relayed) was exchanged.
+	// Without it, an empty CurAddr only means "no direct path right now",
+	// which is every peer that hasn't been used since the tunnel came up —
+	// not a peer that is going through a relay.
+	LastHandshake time.Time
 }
 
 func (n nodeJSON) node() Node {
@@ -79,7 +84,9 @@ func (n nodeJSON) node() Node {
 	switch {
 	case n.CurAddr != "":
 		out.Conn = "direct"
-	case n.Relay != "" && n.Online:
+	case n.Relay != "" && n.Online && recently(n.LastHandshake, now()):
+		// traffic in the last couple of minutes with no direct path: this one
+		// really is going through the relay
 		out.Conn, out.Relay = "relay", n.Relay
 	}
 	// tailscale reports the zero time ("0001-01-01T00:00:00Z") for never/now-online peers
@@ -88,6 +95,15 @@ func (n nodeJSON) node() Node {
 	}
 	return out
 }
+
+// relayWindow: how fresh a handshake must be for "no direct path" to mean
+// "relayed" rather than "not used since it connected".
+const relayWindow = 2 * time.Minute
+
+func recently(t, at time.Time) bool { return !t.IsZero() && at.Sub(t) < relayWindow && t.Before(at.Add(time.Minute)) }
+
+// now is swapped in tests.
+var now = time.Now
 
 type CLI struct {
 	Bin      string
