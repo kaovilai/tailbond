@@ -84,7 +84,8 @@ a { color: var(--primary); }
   .flow .pkt.d1 { animation-delay: -.8s; } .flow .pkt.d2 { animation-delay: -1.6s; } .flow .pkt.d3 { animation-delay: -2.4s; }
 }
 @media (width < 600px) { .flow .lbl { font-size: 22px; } .flow .sub { font-size: 20px; } .flow .hubsub { display: none; } }
-.still .pkt { animation-play-state: paused; }
+.still .pkt, .still body::before { animation-play-state: paused; }
+.still .hero .braid { transform: none; }
 .flowbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin: .8rem 0 1.4rem; }
 .legend { display: flex; gap: 1.2rem; flex-wrap: wrap; color: var(--muted); font-size: .9rem; margin: 0; padding: 0; list-style: none; }
 .legend span { display: inline-block; width: 1.4rem; height: 0; border-top: 4px solid; vertical-align: .25em; margin-right: .4rem; }
@@ -173,8 +174,15 @@ html.js .reveal { opacity: 0; transform: translateY(16px); }
 html.js .reveal.in { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s cubic-bezier(.2,.7,.2,1); }
 @media (prefers-reduced-motion: reduce) {
   html.js .reveal { opacity: 1; transform: none; }
-  .hero .braid, .steps li { transition: none; }
+  .hero .braid, .steps li, .hero::before { transition: none; }
 }
+
+/* printing before scrolling: nothing may stay transparent */
+@media print {
+  html.js .reveal, html.js .reveal.in { opacity: 1; transform: none; transition: none; }
+  body::before, .hero::before { display: none; }
+}
+
 </style>
 </head>
 <body>
