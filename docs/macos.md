@@ -630,13 +630,14 @@ tunnel off, shares `lo0` with the hub: the hub finds it over Bonjour and
 the server sees it as one more path that carries traffic. It also installs
 the bundle (`install.sh`, `--update`, `uninstall.sh`), runs the update path
 end to end against a fake GitHub release (`scripts/e2e-macos-update.sh`:
-the dashboard's **Update now** with the detached `install.sh --update`
-restarting the LaunchDaemon, the rollback of a release that doesn't start,
-`install.sh --update` alone, a refused bad `SHA256SUMS`), and the Homebrew
-formula.
+the update API that the dashboard's **Update now** calls, with the detached
+`install.sh --update` restarting the LaunchDaemon, the rollback of a
+release that doesn't start, `install.sh --update` alone, a refused bad
+`SHA256SUMS`), and the Homebrew formula.
 
 What that can't cover:
 
+- **The dashboard UI itself.** The update test drives the API behind **Update now** (what the button calls), not the button, its progress text or the restart nag in a browser.
 - **The interface path in CI is `lo0`.** The runner has one network
   interface, and the only way it reaches the server VM is QEMU's port
   forwarding on 127.0.0.1, so the hub's IP_BOUND_IF-pinned path is pinned to

@@ -34,7 +34,7 @@ pack() { # VERSION TAILBONDD
     rm -rf "$OUT/p" && mkdir -p "$OUT/p" && cp -a "$src" "$d"
     install -m 0755 "$2" "$d/bin/tailbondd"
     echo "$1" >"$d/VERSION"
-    tar -C "$OUT/p" -czf "$OUT/tailbond-macos-arm64-$1.tar.gz" "tailbond-macos-arm64"
+    tar -C "$OUT/p" --uid 0 --gid 0 -czf "$OUT/tailbond-macos-arm64-$1.tar.gz" "tailbond-macos-arm64"
 }
 for v in 0.0.1 0.0.2 0.0.4 0.0.5; do
     (cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \

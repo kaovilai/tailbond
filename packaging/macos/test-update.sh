@@ -67,7 +67,15 @@ role_is() { api "$API/api/hello" 2>/dev/null | grep -q "\"role\":\"$1\""; }
 upd_is() { [ "$(status_upd "$1" 2>/dev/null)" = "$2" ]; }
 upd_has() { api "$API/api/update" 2>/dev/null | grep -q -- "$1"; }
 gh_up() { api "$GHURL/repos/kaovilai/tailbond/releases/latest" >/dev/null; }
-none_available() { [ -z "$(status_upd available 2>/dev/null)" ]; }
+# none_available: the API answers (a status with a version) and has no update.
+# An unreachable API or bad JSON is not "nothing available".
+none_available() {
+  api "$API/api/update" 2>/dev/null | python3 -c '
+import json,sys
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(1)
+raise SystemExit(0 if isinstance(d, dict) and d.get("version") and not d.get("available") else 1)'
+}
 prev_is() { [ -x "$BINDIR/tailbondd.prev" ] && "$BINDIR/tailbondd.prev" -version 2>&1 | grep -q "tailbondd $1"; }
 result_says() { # RESULT SNIPPET: update-result.json holds both
   grep -q "\"result\":\"$1\"" "$STATE/update-result.json" && grep -q "$2" "$STATE/update-result.json"
@@ -142,6 +150,14 @@ check "still the client role" role_is client
 # the bundle carries the menu bar app (CI's does): it must come through the
 # agent's unpack and install_app intact
 [ -d "$B/tailbond.app" ] && check "menu bar app intact after the update" codesign --verify --strict /Applications/tailbond.app
+# and it came from the agent's unpack of 0.0.2, not from the 0.0.1 install:
+# the unpacked 0.0.2 bundle has the app, and the installed one was replaced
+upd_app_0_0_2() {
+  local u; u="$(ls -d "$STATE"/update/0.0.2/tailbond-macos-arm64/tailbond.app 2>/dev/null | head -1)"
+  [ -n "$u" ] && [ -d /Applications/tailbond.app ] && [ "$u" -nt "$W/install.log" ] &&
+    [ /Applications/tailbond.app -nt "$W/install.log" ]
+}
+[ -d "$B/tailbond.app" ] && check "the 0.0.2 unpack carries the app, and it replaced the installed one" upd_app_0_0_2
 check "nothing available any more" wait_for 30 none_available
 
 say "0.0.3 doesn't start: rolled back"
@@ -174,26 +190,34 @@ check "still 0.0.2 after both refusals" is_version 0.0.2
 
 say "install.sh --update on its own (downloads the latest)"
 publish 0.0.4
-TB_API_URL=$GHURL "$LIBDIR/install.sh" --update >"$W/u4.log" 2>&1
+rc4=0
+TB_API_URL=$GHURL "$LIBDIR/install.sh" --update >"$W/u4.log" 2>&1 || rc4=$?
 check "install.sh --update: 0.0.4 running" wait_for 20 is_version 0.0.4
+check "install.sh --update: exit 0" [ "$rc4" = 0 ]
 check "it said so" grep -q 'tailbond 0.0.4 is running' "$W/u4.log"
 check "install.env records 0.0.4" grep -qx 'TB_VERSION=0.0.4' "$MANIFEST"
-TB_API_URL=$GHURL "$LIBDIR/install.sh" --update >"$W/u4b.log" 2>&1
+rc4b=0
+TB_API_URL=$GHURL "$LIBDIR/install.sh" --update >"$W/u4b.log" 2>&1 || rc4b=$?
 check "again: already installed" grep -q 'installed already' "$W/u4b.log"
+check "again: exit 0" [ "$rc4b" = 0 ]
+
+dump_diag() {
+  echo "---- agent log (tail) ----"; tail -n 60 "$LOG" 2>/dev/null
+  echo "---- install.env ----"; cat "$MANIFEST" 2>/dev/null
+  echo "---- update-result.json ----"; cat "$STATE/update-result.json" 2>/dev/null; echo
+  echo "---- install.sh logs ----"; tail -n 20 "$W"/u*.log "$W"/install.log 2>/dev/null
+}
 
 say "uninstall.sh --purge"
+# before the purge removes the manifest, the state and the log
+[ "$FAIL" = 0 ] || dump_diag
 "$LIBDIR/uninstall.sh" --purge
 check "daemon gone" daemon_gone
 check "no tailbondd process" no_tailbondd
 left="$(ls -d "$BINDIR/tailbondd" "$BINDIR/mqvpn" "$BINDIR/tailbondd.prev" "$LIBDIR" "$ETC" "$STATE" "$PLIST" /Applications/tailbond.app 2>/dev/null || true)"
 [ -z "$left" ] && ok "nothing left behind" || bad "left behind: $left"
 
-if [ "$FAIL" != 0 ]; then
-  echo "---- agent log (tail) ----"; tail -n 60 "$LOG" 2>/dev/null
-  echo "---- install.env ----"; cat "$MANIFEST" 2>/dev/null
-  echo "---- update-result.json ----"; cat "$STATE/update-result.json" 2>/dev/null; echo
-  echo "---- install.sh logs ----"; tail -n 20 "$W"/u*.log "$W"/install.log 2>/dev/null
-fi
+[ "$FAIL" = 0 ] || [ ! -e "$ETC" ] || dump_diag
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
