@@ -29,6 +29,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:-$REPO/out/ux/web}"
 PW="${TAILBOND_UX_NODE:-$HOME/.cache/tailbond-ux}"
+PW_PINNED=1.64.1
 TMP="$(mktemp -d)"
 # stop_pids: kill only PIDs that were set. `kill 0` (the old default) signals
 # the whole process group, which would take the caller down with the test.
@@ -38,11 +39,14 @@ stop_pids() {
 }
 trap 'stop_pids "${AGENT_PID:-}" "${CLIENT_PID:-}"; rm -rf "$TMP"' EXIT
 
-if [[ ! -d "$PW/node_modules/playwright" ]]; then
+# Playwright is pinned, and a cache holding another version is reinstalled:
+# the npm version picks the container image tag, and a fresh release can have
+# dependencies npm hasn't published yet (playwright-core@1.65.0: ETARGET).
+if [[ "$(node -p "try{require('$PW/node_modules/playwright/package.json').version}catch(e){''}")" != "$PW_PINNED" ]]; then
     mkdir -p "$PW"
-    (cd "$PW" && npm init -y >/dev/null && npm i playwright >/dev/null)
+    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i --save-exact "playwright@$PW_PINNED" >/dev/null)
 fi
-PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').version")"
+PW_VERSION="$PW_PINNED"
 
 (cd "$REPO/agent" && CGO_ENABLED=0 go build -ldflags "-X main.version=0.1.0-r42" -o "$TMP/tailbondd" ./cmd/tailbondd)
 mkdir -p "$TMP/state" "$TMP/hooks" "$TMP/bin" "$OUT"
