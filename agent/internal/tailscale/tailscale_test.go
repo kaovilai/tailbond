@@ -3,6 +3,7 @@ package tailscale
 import (
 	"net/netip"
 	"testing"
+	"time"
 )
 
 const statusFixture = `{
@@ -85,12 +86,21 @@ func TestIsTailnetIP(t *testing.T) {
 }
 
 func TestPeerConn(t *testing.T) {
+	// relay is claimed only for a peer with traffic in the last couple of
+	// minutes and no direct path: an idle peer is not "relayed", it just has
+	// no live connection (that was the bug behind "everything is via relay")
+	wasNow := now
+	now = func() time.Time { return time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC) }
+	defer func() { now = wasNow }()
+	fresh, stale := `"2026-11-05T11:59:30Z"`, `"2026-11-05T09:00:00Z"`
 	info := &Info{}
 	err := parseStatus([]byte(`{"BackendState":"Running","Self":{"HostName":"homebox","DNSName":"homebox.t.ts.net.","TailscaleIPs":["100.101.1.1"]},
-	 "Peer":{"a":{"HostName":"nas","Online":true,"CurAddr":"192.168.1.20:41641","Relay":"fra"},
-	         "b":{"HostName":"slate7","Online":true,"CurAddr":"","Relay":"fra"},
+	 "Peer":{"a":{"HostName":"nas","Online":true,"CurAddr":"192.168.1.20:41641","Relay":"fra","LastHandshake":`+fresh+`},
+	         "b":{"HostName":"slate7","Online":true,"CurAddr":"","Relay":"fra","LastHandshake":`+fresh+`},
 	         "c":{"HostName":"idle","Online":true,"CurAddr":"","Relay":""},
-	         "d":{"HostName":"old","Online":false,"CurAddr":"","Relay":"nyc"}}}`), "", info)
+	         "d":{"HostName":"old","Online":false,"CurAddr":"","Relay":"nyc","LastHandshake":`+fresh+`},
+	         "e":{"HostName":"quiet","Online":true,"CurAddr":"","Relay":"fra","LastHandshake":`+stale+`},
+	         "f":{"HostName":"unused","Online":true,"CurAddr":"","Relay":"fra"}}}`), "", info)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +108,7 @@ func TestPeerConn(t *testing.T) {
 	for _, p := range info.PeerList {
 		got[p.HostName] = p.Conn + "/" + p.Relay
 	}
-	if got["nas"] != "direct/" || got["slate7"] != "relay/fra" || got["idle"] != "/" || got["old"] != "/" {
+	if got["nas"] != "direct/" || got["slate7"] != "relay/fra" || got["idle"] != "/" || got["old"] != "/" || got["quiet"] != "/" || got["unused"] != "/" {
 		t.Fatalf("%v", got)
 	}
 }

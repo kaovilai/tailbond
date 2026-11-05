@@ -21,14 +21,25 @@ func check(t *testing.T, v healthView, id string) healthCheck {
 	return healthCheck{}
 }
 
-// canned `tailscale status --json` on the home server
-const homeStatus = `{"BackendState":"Running","Self":{"HostName":"homebox","DNSName":"homebox.tail1234.ts.net.","TailscaleIPs":["100.101.1.1"],
+// homeStatus: canned `tailscale status --json` on the home server, built per
+// test. The two relayed peers carry a handshake 30 s old — that freshness is
+// what makes them relayed rather than merely unused (an idle peer has no
+// CurAddr either, and used to be reported as slow). It is stamped when the
+// test runs, not when the package loads: a package-level string ages past the
+// two-minute window on a slow run and the relay test starts failing.
+func homeStatus() string {
+	fresh := hAgo(30 * time.Second)
+	return `{"BackendState":"Running","Self":{"HostName":"homebox","DNSName":"homebox.tail1234.ts.net.","TailscaleIPs":["100.101.1.1"],
  "PrimaryRoutes":["10.77.0.0/24"],"AllowedIPs":["100.101.1.1/32","10.77.0.0/24"]},
  "Peer":{"a":{"HostName":"nas","Online":true,"CurAddr":"192.168.1.20:41641"},
          "b":{"HostName":"pixel-8","Online":true,"CurAddr":"198.51.100.20:41641"},
-         "c":{"HostName":"slate7","Online":true,"Relay":"fra"},
-         "d":{"HostName":"work-laptop","Online":true,"Relay":"nyc"},
+         "c":{"HostName":"slate7","Online":true,"Relay":"fra","LastHandshake":"` + fresh + `"},
+         "d":{"HostName":"work-laptop","Online":true,"Relay":"nyc","LastHandshake":"` + fresh + `"},
          "e":{"HostName":"apple-tv","Online":true}}}`
+}
+
+// hAgo: a timestamp a little in the past, for LastHandshake.
+func hAgo(d time.Duration) string { return time.Now().UTC().Add(-d).Format(time.RFC3339) }
 
 func tsInfo(t *testing.T, js, route string) *tailscale.Info {
 	t.Helper()
@@ -40,7 +51,7 @@ func tsInfo(t *testing.T, js, route string) *tailscale.Info {
 }
 
 func TestHealthAllGood(t *testing.T) {
-	js := strings.Replace(homeStatus, `"Relay":"fra"`, `"CurAddr":"203.0.113.9:41641"`, 1)
+	js := strings.Replace(homeStatus(), `"Relay":"fra"`, `"CurAddr":"203.0.113.9:41641"`, 1)
 	js = strings.Replace(js, `"Relay":"nyc"`, `"CurAddr":"203.0.113.10:41641"`, 1)
 	v := buildHealth(healthInputs{Role: config.RoleServer, TS: tsInfo(t, js, "10.77.0.0/24"), Route: "10.77.0.0/24", Port: 443,
 		Netcheck: &tailscale.Netcheck{UDP: true, UPnP: true, GlobalV4: "203.0.113.7:41641"}, WANIP: "203.0.113.7",
@@ -57,7 +68,7 @@ func TestHealthAllGood(t *testing.T) {
 }
 
 func TestHealthRelayedHardNATRouteCGNAT(t *testing.T) {
-	v := buildHealth(healthInputs{Role: config.RoleServer, TS: tsInfo(t, homeStatus, "10.66.0.0/24"), Route: "10.66.0.0/24", Port: 443,
+	v := buildHealth(healthInputs{Role: config.RoleServer, TS: tsInfo(t, homeStatus(), "10.66.0.0/24"), Route: "10.66.0.0/24", Port: 443,
 		Netcheck: &tailscale.Netcheck{UDP: true, MappingVariesByDestIP: true}, WANIP: "100.72.3.4", Now: time.Now()})
 	if v.OK {
 		t.Fatal("ok with problems")
@@ -82,7 +93,7 @@ func TestHealthRelayedHardNATRouteCGNAT(t *testing.T) {
 }
 
 func TestHealthUDPBlockedBehindRouter(t *testing.T) {
-	v := buildHealth(healthInputs{Role: config.RoleServer, TS: tsInfo(t, homeStatus, "10.77.0.0/24"), Route: "10.77.0.0/24", Port: 443,
+	v := buildHealth(healthInputs{Role: config.RoleServer, TS: tsInfo(t, homeStatus(), "10.77.0.0/24"), Route: "10.77.0.0/24", Port: 443,
 		Netcheck: &tailscale.Netcheck{UDP: false}, WANIP: "192.168.1.10", Now: time.Now()})
 	if c := check(t, v, "netcheck"); c.Status != hBad || c.FixURL != urlFwPorts {
 		t.Fatalf("%+v", c)
@@ -98,7 +109,7 @@ func TestHealthTailscaleOffAndClientRole(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 	// client: only the path to its home server counts
-	v = buildHealth(healthInputs{Role: config.RoleClient, TS: tsInfo(t, strings.Replace(homeStatus, `"HostName":"nas"`, `"HostName":"homebox2"`, 1), ""), ServerTS: "work-laptop", Now: time.Now()})
+	v = buildHealth(healthInputs{Role: config.RoleClient, TS: tsInfo(t, strings.Replace(homeStatus(), `"HostName":"nas"`, `"HostName":"homebox2"`, 1), ""), ServerTS: "work-laptop", Now: time.Now()})
 	if c := check(t, v, "tailscale_direct"); c.Title != "Tailscale to your home server: 0 machines direct, 1 through a relay (slower)" {
 		t.Fatalf("%+v", c)
 	}
