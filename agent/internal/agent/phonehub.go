@@ -119,6 +119,8 @@ type phoneHubState struct {
 	use   *hubUse
 	note  string
 	asked time.Time
+	// "Connect via phone", the menu bar's one click (phoneconnect.go)
+	conn pcState
 	// guards useHub/stopHub against each other (not held with a.mu)
 	op sync.Mutex
 }
@@ -133,6 +135,9 @@ func (a *Agent) phoneHub() *phoneHubState {
 func (a *Agent) initSysProxy() {
 	if a.sysProxy == nil && goruntime.GOOS == "darwin" {
 		a.sysProxy = &sysproxy.Mac{RecordPath: filepath.Join(a.store.Get().StateDir, "phone-hub-proxy.json")}
+	}
+	if a.joinWiFi == nil && goruntime.GOOS == "darwin" {
+		a.joinWiFi = macJoinWiFi
 	}
 }
 
@@ -576,7 +581,12 @@ func (a *Agent) hubDial(ctx context.Context, network, addr string) (net.Conn, er
 
 // stopHub stops using the hub and puts the system proxy back; note says
 // why when it wasn't the user.
-func (a *Agent) stopHub(note string) {
+func (a *Agent) stopHub(note string) { a.stopHubIf(note, nil) }
+
+// stopHubIf is stopHub when ours (nil: any) says the hub in use is the one
+// the caller set up; checked under the operation lock, so a hub picked
+// meanwhile (the dashboard) isn't torn down.
+func (a *Agent) stopHubIf(note string, ours func(*hubUse) bool) {
 	hs := a.phoneHub()
 	if hs == nil {
 		return
@@ -585,6 +595,10 @@ func (a *Agent) stopHub(note string) {
 	defer hs.op.Unlock()
 	a.mu.Lock()
 	u := hs.use
+	if u != nil && ours != nil && !ours(u) {
+		a.mu.Unlock()
+		return
+	}
 	hs.use, hs.note = nil, note
 	a.mu.Unlock()
 	if u == nil {
@@ -603,7 +617,7 @@ func (a *Agent) phoneHubStatus() *status.PhoneHub {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil}
+	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil, Connect: a.phoneConnectStatusLocked(hs)}
 	for _, c := range hs.found {
 		out.Found = append(out.Found, status.PhoneHubFound{ID: c.ID, Label: c.Label, Addr: c.Addr, Via: c.Via, Bonded: c.Bonded != "0", Iface: ifaceFor(c.Addr)})
 	}

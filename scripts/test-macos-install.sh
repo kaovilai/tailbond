@@ -64,6 +64,9 @@ if [ -d "$B/tailbond.app" ]; then
   codesign --verify --strict "$APP" 2>/dev/null && ok "signature verifies (ad-hoc)" || bad "codesign --verify: $(codesign --verify --strict "$APP" 2>&1)"
   codesign -dv "$APP" 2>&1 | grep -q 'Signature=adhoc' && ok "ad-hoc signed" || bad "signature: $(codesign -dv "$APP" 2>&1 | tail -n 3)"
   [ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist" 2>/dev/null)" = true ] && ok "menu bar only (LSUIElement)" || bad "LSUIElement not set"
+  # without it macOS kills the app on its first CoreBluetooth call (Connect via phone)
+  /usr/libexec/PlistBuddy -c 'Print :NSBluetoothAlwaysUsageDescription' "$APP/Contents/Info.plist" 2>/dev/null | grep -q Bluetooth \
+    && ok "Bluetooth usage description (Connect via phone)" || bad "NSBluetoothAlwaysUsageDescription missing"
   xattr -p com.apple.quarantine "$APP/Contents/MacOS/tailbond" >/dev/null 2>&1 && bad "app is quarantined" || ok "app carries no quarantine flag"
   out="$("$APP/Contents/MacOS/tailbond" --status 2>&1)" && ok "the app reads the running agent: $(echo "$out" | head -n 1)" || bad "tailbond --status: $out"
   echo "$out" | grep -q '^tailbond: Not paired' && ok "it says Not paired (fresh install)" || bad "--status said: $out"

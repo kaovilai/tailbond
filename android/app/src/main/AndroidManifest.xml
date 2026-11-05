@@ -9,6 +9,14 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- "One click from your Mac" (ble/BleControlService.kt, docs/phone-hub.md):
+         a Bluetooth LE GATT server the Mac connects to. Android 12+ asks for
+         advertise and connect at run time; older releases need the legacy pair. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!-- One APK for phones and Android TV (docs/android.md, "Android TV"): no
          feature is required. Play assumes a touchscreen unless told
@@ -21,12 +29,16 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <!-- per-app exclude picker lists launchable apps only;
          "Switch back to Tailscale" needs to see the Tailscale app -->
     <queries>
         <package android:name="com.tailscale.ipn" />
+        <!-- Shizuku, which starts the hotspot for "One click from your Mac" -->
+        <package android:name="moe.shizuku.privileged.api" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -116,6 +128,21 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Lets the user's own laptop on this phone's hotspot or USB tethering use the phone's VPN tunnel through a local proxy" />
         </service>
+
+        <!-- "One click from your Mac": the Bluetooth LE GATT server (ble/BleControlService.kt) -->
+        <service
+            android:name=".ble.BleControlService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- Shizuku: it starts ble/HotspotShell.kt as the shell user, which may start the hotspot -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <service
             android:name=".service.TailbondTileService"

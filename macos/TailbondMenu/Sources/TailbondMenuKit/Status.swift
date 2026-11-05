@@ -192,11 +192,33 @@ public struct PhoneHubInfo: Decodable, Equatable {
             bonded = try c.decodeIfPresent(Bool.self, forKey: .bonded) ?? false
         }
     }
+    /// "Connect via phone" (docs/phone-hub.md, "One click from the Mac").
+    public struct Connect: Decodable, Equatable {
+        public var state = "idle", step = "", via = "", phone = "", network = "", error = "", note = ""
+        public var paths = 0, battery = 0
+        enum CodingKeys: String, CodingKey { case state, step, via, phone, network, error, note, paths, battery }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            state = try c.decodeIfPresent(String.self, forKey: .state) ?? "idle"
+            step = try c.decodeIfPresent(String.self, forKey: .step) ?? ""
+            via = try c.decodeIfPresent(String.self, forKey: .via) ?? ""
+            phone = try c.decodeIfPresent(String.self, forKey: .phone) ?? ""
+            network = try c.decodeIfPresent(String.self, forKey: .network) ?? ""
+            error = try c.decodeIfPresent(String.self, forKey: .error) ?? ""
+            note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+            paths = try c.decodeIfPresent(Int.self, forKey: .paths) ?? 0
+            battery = try c.decodeIfPresent(Int.self, forKey: .battery) ?? 0
+        }
+    }
     public var using: Use?
-    enum CodingKeys: String, CodingKey { case using }
+    public var connect: Connect?
+    public var note = ""
+    enum CodingKeys: String, CodingKey { case using, connect, note }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         using = try c.decodeIfPresent(Use.self, forKey: .using)
+        connect = try? c.decodeIfPresent(Connect.self, forKey: .connect)
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
     }
 }
 

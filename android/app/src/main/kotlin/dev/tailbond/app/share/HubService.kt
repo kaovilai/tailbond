@@ -129,11 +129,7 @@ class HubService : Service() {
         return START_STICKY
     }
 
-    /** "pixel-e2e": this phone's name on the home server, as the Mac shows it. */
-    private fun label(): String {
-        val p = repo.servers.value.firstOrNull()?.payload
-        return p?.name?.takeIf { it.isNotBlank() } ?: p?.user?.takeIf { it.isNotBlank() } ?: Build.MODEL ?: "Android phone"
-    }
+    private fun label(): String = label(repo)
 
     private fun startHub() {
         running = true
@@ -225,7 +221,7 @@ class HubService : Service() {
         }
     }
 
-    private fun hubId() = repo.shareId() + "-hub"
+    private fun hubId() = hubId(repo)
 
     private fun registerNsd(key: String) {
         val m = getSystemService<NsdManager>() ?: return
@@ -355,6 +351,15 @@ class HubService : Service() {
 
         fun start(ctx: Context) =
             ContextCompat.startForegroundService(ctx, Intent(ctx, HubService::class.java).setAction(ACTION_START))
+
+        /** "pixel-e2e": this phone's name on the home server, as the Mac shows it. */
+        fun label(repo: Repository): String {
+            val p = repo.servers.value.firstOrNull()?.payload
+            return p?.name?.takeIf { it.isNotBlank() } ?: p?.user?.takeIf { it.isNotBlank() } ?: Build.MODEL ?: "Android phone"
+        }
+
+        /** The hub's id in its mDNS advert and the server's list (the Mac's "Connect via phone" looks for it). */
+        fun hubId(repo: Repository) = repo.shareId() + "-hub"
 
         fun stop(ctx: Context) {
             ctx.startService(Intent(ctx, HubService::class.java).setAction(ACTION_STOP))

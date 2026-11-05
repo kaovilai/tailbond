@@ -1,6 +1,9 @@
 package dev.tailbond.app.ux
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.tailbond.app.ble.MacLinkLive
+import dev.tailbond.app.ble.MacLinkStatus
+import dev.tailbond.app.ble.ShizukuStatus
 import dev.tailbond.app.model.AppSettings
 import dev.tailbond.app.model.ServerProfile
 import dev.tailbond.app.share.HubLive
@@ -29,10 +32,10 @@ import org.robolectric.annotation.Config
 class PhoneHubScreens : UxRender() {
     private val home = ServerProfile("h", UxFixtures.profile)
 
-    private fun state(hub: HubLive, shares: List<HubShare> = emptyList(), s: AppSettings = AppSettings(onboarded = true)) = UiState(
+    private fun state(hub: HubLive, shares: List<HubShare> = emptyList(), s: AppSettings = AppSettings(onboarded = true), mac: MacLinkLive = MacLinkLive()) = UiState(
         profile = home.payload, servers = listOf(home), settings = s,
         live = UxFixtures.connectedBoth.copy(tunnelIp = "10.77.0.3"), peers = PeersUi(UxFixtures.peers),
-        tailscaleInstalled = true, sdkInt = 35, share = ShareLive(label = "Mobile data from pixel-9"), hub = hub, hubShares = shares,
+        tailscaleInstalled = true, sdkInt = 35, share = ShareLive(label = "Mobile data from pixel-9"), hub = hub, hubShares = shares, macLink = mac,
     )
 
     private fun app(name: String, st: UiState, dark: Boolean = false) = shot(name, dark, 2200) { TailbondApp(st, NoActions, Routes.SHARE) }
@@ -46,4 +49,10 @@ class PhoneHubScreens : UxRender() {
     @Test fun sharing() = app("hub-03-sharing", state(HubLive(HubStatus.SHARING, listOf(mac), 48_200_000, 912_000_000, "pixel-8"), listOf(sam)))
     @Test fun sharingDark() = app("hub-04-sharing-dark", state(HubLive(HubStatus.SHARING, listOf(mac), 48_200_000, 912_000_000, "pixel-8"), listOf(sam)), dark = true)
     @Test fun noTunnel() = app("hub-05-no-tunnel", state(HubLive(HubStatus.NO_TUNNEL, label = "pixel-8")))
+
+    // "One click from your Mac" (the Bluetooth control channel)
+    @Test fun macLinkWaiting() = app("hub-06-mac-link-waiting", state(HubLive(label = "pixel-8"), mac = MacLinkLive(MacLinkStatus.WAITING, shizuku = ShizukuStatus.OK)))
+    @Test fun macLinkConnected() = app("hub-07-mac-link-connected",
+        state(HubLive(HubStatus.SHARING, listOf(mac), 48_200_000, 912_000_000, "pixel-8"), mac = MacLinkLive(MacLinkStatus.CONNECTED, listOf("tiger-mbp"), ShizukuStatus.OK)))
+    @Test fun macLinkNoShizuku() = app("hub-08-mac-link-no-shizuku", state(HubLive(label = "pixel-8"), mac = MacLinkLive(MacLinkStatus.WAITING, shizuku = ShizukuStatus.NO_PERMISSION)))
 }
