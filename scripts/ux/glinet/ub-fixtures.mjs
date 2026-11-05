@@ -103,6 +103,21 @@ const flint = (u) => {
   }), clock, model: 'GL-BE9300', info: { ...fx.info, version: u.current === '0.2.0' ? '0.2.0-r1' : '0.1.0-r42' } };
 };
 glStates['s01-flint-devices-out-of-date'] = flint(upd({ current: '0.2.0', ...went, outdated }));
+// The server's Setup card ("Finish setting up"): Tailscale off and no
+// address yet, so the steps show and the row list renders under them — the
+// blocks whose layout the rows are read in.
+glStates['s03-flint-setup-rows'] = (() => {
+  // every answer comes from the shell's `api` map, so the overrides go there
+  // (a top-level `ts` is ignored) — Tailscale off and the address unconfirmed,
+  // which is what makes the card read "Finish setting up" and show the steps
+  const fx = flint(upd({ current: '0.2.0', ...went }));
+  const api = {
+    ...fx.api,
+    'GET /api/tailscale': { ...fx.api['GET /api/tailscale'], running: false, dns_name: '', routes_approved: false },
+    'GET /api/settings': { ...fx.api['GET /api/settings'], public_addr: '', effective_public_addr: '', public_addr_guessed: true, password_set: false },
+  };
+  return { ...fx, api };
+})();
 
 // steps: {text} clicks the first element with that text, {click} a selector,
 // {button} a button by exact name, {fill: [selector, value]},

@@ -99,7 +99,7 @@ done
 rc=0
 podman run --rm --network=host --userns=keep-id \
     -v "$PW/node_modules:/pw/node_modules:ro,z" -v "$REPO:/repo:ro,z" -v "$OUT:/out:z" \
-    -e NODE_PATH=/pw/node_modules -e TB_UX_DEBUG="${TB_UX_DEBUG:-}" -e TB_A11Y_ONLY="${TB_A11Y_ONLY:-}" -e TB_A11Y_JOBS="${TB_A11Y_JOBS:-}" -e TB_A11Y_SHOTS="${TB_A11Y_SHOTS:-}" \
+    -e NODE_PATH=/pw/node_modules -e TB_UX_DEBUG="${TB_UX_DEBUG:-}" -e TB_A11Y_ONLY="${TB_A11Y_ONLY:-}" -e TB_A11Y_JOBS="${TB_A11Y_JOBS:-}" -e TB_A11Y_SHOTS="${TB_A11Y_SHOTS:-}" -e TB_A11Y_TEXT="${TB_A11Y_TEXT:-}" \
     -w /repo/scripts/ux \
     "mcr.microsoft.com/playwright:v$PW_VERSION-noble" \
     node /repo/scripts/ux/a11y.mjs /repo /out "http://127.0.0.1:$DASH/" "http://127.0.0.1:$LAND/" "http://127.0.0.1:$CLIENT/" || rc=$?

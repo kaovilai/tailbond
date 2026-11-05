@@ -136,6 +136,10 @@
     "@keyframes tbspin{to{transform:rotate(360deg)}}",
     ".tb-steps{margin:8px 0 0 0;padding-left:20px;color:#606266;line-height:1.7;}",
     ".tb-kv{display:grid;grid-template-columns:160px 1fr;gap:8px 16px;align-items:center;}",
+    ".tb-kvrows{margin-top:10px;}",
+    ".tb-kvr{display:grid;grid-template-columns:170px minmax(0,1fr);gap:2px 16px;align-items:baseline;padding:9px 0;border-top:1px solid #ebeef5;}",
+    ".tb-kvr:first-child{border-top:0;padding-top:0;}",
+    ".tb-kvr-k{color:#686b70;}",
     ".tb-kv>div:nth-child(odd){color:#686b70;}",
     ".tb-qr{width:200px;height:200px;}",
     ".tb-qr svg{width:100%;height:100%;}",
@@ -208,6 +212,7 @@
     " .tb-req .tb-actions,.tb-found .tb-actions{margin-top:0;}",
     " .tb-req .tb-btn,.tb-found .tb-btn{flex:1;}",
     " .tb-kv{grid-template-columns:1fr;gap:2px;}",
+    " .tb-kvr{grid-template-columns:1fr;gap:2px;}",
     " .tb-kv>div:nth-child(even){margin-bottom:8px;}",
     " .tb-hide-sm{display:none;}",
     " .tb-srv-ctl{width:100%;padding-left:52px;}",
@@ -2592,21 +2597,45 @@
           if (!steps.length) {
             items.push(this.alert(h, "ok", "Setup done", "Travel routers and phones can connect from anywhere" + (ts.routes_approved ? ", and your Tailscale machines reach them" : "") + ". The first connection from away from home confirms the port works."));
           }
-          items.push(h("div", { class: "tb-kv", style: { marginTop: "4px" } }, [
-            h("div", "Internet address"),
-            steps.indexOf("address") >= 0 ? h("div", { class: "tb-muted" }, "not set yet (step above)") : (this.addrEdit ? this.addrEditor(h) : h("div", { class: "tb-row" }, [h("span", { class: "tb-mono" }, addr || "not set"),
-              this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
-            h("div", "Port"), steps.indexOf("health:cgnat") >= 0 ? h("div", "UDP " + (s.port || 443) + " is opened on this router, but your provider's shared address (step above) keeps travel routers from reaching it.") : h("div", ["UDP " + (s.port || 443) + ", opened on this router automatically. ", h("span", { class: "tb-muted" }, "Is your internet cable plugged straight into this router? Then nothing else to do. If it's plugged into another box (your internet provider's modem-router), that box must forward UDP " + (s.port || 443) + " to this router; see the box's manual under \"port forwarding\". To test it now: turn tailbond on on a phone using mobile data (Wi-Fi off); Setup health then shows \"UDP " + (s.port || 443) + " reached from the internet\".")]),
-            h("div", "Tailscale name"), h("div", { class: "tb-mono" }, ts.dns_name || "—"),
-            h("div", "tailbond page password"), this.pwEdit ? h("div", { class: "tb-row" }, [
-              h("input", { class: "tb-input", attrs: { type: "password", placeholder: "New password (empty: none)", autocomplete: "new-password" }, domProps: { value: this.pwValue }, on: { input: function (e) { self.pwValue = e.target.value; } } }),
-              this.btn(h, "Save", function () { self.run("pw", api("POST", "/api/settings", { ui_password: self.pwValue || "" }), self.pwValue ? "Password set" : "Password removed").then(function () { self.pwEdit = false; self.pwValue = ""; }); }, "primary small", this.busy.pw),
-              this.btn(h, "Cancel", function () { self.pwEdit = false; }, "small text")
-            ]) : h("div", { class: "tb-row" }, [h("span", s.password_set ? "Set: needed to open http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077" : s.owner ? "None: only " + s.owner + "'s devices can use http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077; set one to let others approve" : "None: anyone on your Tailscale network can open http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077"),
-              this.btn(h, s.password_set ? "Change" : "Set", function () { self.pwEdit = true; }, "small text")]),
-            h("div", "Secure connection"), h("div", s.tls === "tailscale" ? "Certificate from Tailscale for " + (s.tls_name || "") : "This router's own certificate, checked by each device")
+          var url = "http://" + ((ts.dns_name || "").split(".")[0] || "this router") + ":8077";
+          var pwNote = s.password_set ? "Anyone who may reach this router opens " + url + " with it."
+            : (s.owner ? "Only " + s.owner + "'s devices can open " + url + " and approve others; set one to let other people approve."
+                       : "Anyone on your Tailscale network can open " + url + " and approve devices.");
+          items.push(h("div", { class: "tb-kvrows" }, [
+            this.kvRow(h, "Internet address",
+              steps.indexOf("address") >= 0 ? h("span", { class: "tb-muted" }, "not set yet (step above)")
+                : (this.addrEdit ? this.addrEditor(h) : h("div", { class: "tb-row" }, [h("span", { class: "tb-mono" }, addr || "not set"),
+                    this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
+              steps.indexOf("address") >= 0 ? "Travel routers need a name for your home to reach it from away." : null),
+            this.kvRow(h, "Port",
+              "UDP " + (s.port || 443) + ", opened on this router automatically",
+              steps.indexOf("health:cgnat") >= 0
+                ? "Your provider keeps travel routers from reaching it (step above)."
+                : "Behind your provider's modem-router? Forward UDP " + (s.port || 443) + " to this router there. Test: turn tailbond on over mobile data; Setup health then reports \"UDP " + (s.port || 443) + " reached from the internet\"."),
+            this.kvRow(h, "Tailscale name", h("span", { class: "tb-mono" }, ts.dns_name || "—"), null),
+            this.kvRow(h, "tailbond page password",
+              this.pwEdit ? h("div", { class: "tb-row" }, [
+                h("input", { class: "tb-input", attrs: { type: "password", placeholder: "New password (empty: none)", autocomplete: "new-password" }, domProps: { value: this.pwValue }, on: { input: function (e) { self.pwValue = e.target.value; } } }),
+                this.btn(h, "Save", function () { self.run("pw", api("POST", "/api/settings", { ui_password: self.pwValue || "" }), self.pwValue ? "Password set" : "Password removed").then(function () { self.pwEdit = false; self.pwValue = ""; }); }, "primary small", this.busy.pw),
+                this.btn(h, "Cancel", function () { self.pwEdit = false; }, "small text")
+              ]) : h("div", { class: "tb-row" }, [
+                h("span", s.password_set ? "Set" : "None"),
+                this.btn(h, s.password_set ? "Change" : "Set", function () { self.pwEdit = true; }, "small text")]),
+              pwNote),
+            this.kvRow(h, "Secure connection",
+              s.tls === "tailscale" ? "Certificate from Tailscale for " + (s.tls_name || "") : "This router's own certificate",
+              s.tls === "tailscale" ? null : "Each device checks it the first time it pairs.")
           ]));
           return this.card(h, steps.length ? "Finish setting up" : "Internet and Tailscale", items);
+        },
+
+        // kvRow: a label, its value, and (optionally) a muted line under the
+        // value — long explanations belong under it, not beside the label.
+        kvRow: function (h, label, value, note) {
+          return h("div", { class: "tb-kvr" }, [
+            h("div", { class: "tb-kvr-k" }, label),
+            h("div", {}, [value, note ? h("div", { class: "tb-small tb-muted", style: { marginTop: "2px" } }, note) : null])
+          ]);
         },
 
         addrEditor: function (h) {

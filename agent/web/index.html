@@ -174,9 +174,11 @@
     <div class="card router-guide">
       <h2>Add a GL.iNet travel router (recommended)</h2>
       <ol class="muted">
-        <li><span id="ipk-yes" class="hidden"><a class="btn small" href="/tailbond-glinet.ipk" download>Download the router package</a> to this computer.</span><span id="ipk-no">Get the router package (the file ending in <b>_neon-vfpv4.ipk</b>) from whoever set up tailbond.</span></li>
-        <li>On the travel router's admin page: <b>SYSTEM → Advanced Settings → Go To LuCI</b>, then <b>System → Software → Upload Package…</b>, pick the file, <b>Install</b>.</li>
-        <li>Back in the router's admin page, open <b>VPN → tailbond</b> and tap <b>Ask to connect</b>. Approve it here when it shows up at the top.</li>
+        <li><span id="ipk-yes" class="hidden"><a class="btn small" href="/tailbond-glinet.ipk" download>Download the router package</a>
+            <span class="muted small">Save it to this computer. It's the same tailbond version this router runs.</span></span>
+          <span id="ipk-no">Get the router package (the file ending in <b>_neon-vfpv4.ipk</b>) from whoever set up tailbond.</span></li>
+        <li>On the travel router: <b>SYSTEM → Advanced Settings → Go To LuCI</b> (same password), then <b>System → Software → Upload Package…</b>, pick the file and <b>Install</b>. Leave the other options as they are; the router keeps working.</li>
+        <li>Back on the router's page, open <b>VPN → tailbond</b> and click <b>Ask to connect</b>. It appears at the top of this page: <b>Approve</b> it.</li>
       </ol>
     </div>
     <form class="card add-client" id="add-client">

@@ -108,7 +108,7 @@ async function runCheck(surface, name, { vp = 'desktop', scheme = 'light', ua, s
     await page.waitForTimeout(200);
     r.url = page.url();
     // TB_A11Y_SHOTS=1: what each check looked at → <outdir>/shots/
-    if (process.env.TB_A11Y_SHOTS) await page.screenshot({ path: `${out}/shots/${id.replace(/[^\w.@-]+/g, '_')}.png` });
+    if (process.env.TB_A11Y_SHOTS) await page.screenshot({ path: `${out}/shots/${id.replace(/[^\w.@-]+/g, '_')}.png`, fullPage: true });
     await page.addScriptTag({ content: AXE });
     const axeV = await page.evaluate(async ({ scope, off }) => {
       const rules = {};
@@ -120,6 +120,12 @@ async function runCheck(surface, name, { vp = 'desktop', scheme = 'light', ua, s
         nodes: v.nodes.map((n) => ({ target: n.target.join(' '), html: n.html.slice(0, 400), summary: n.failureSummary })) }));
     }, { scope, off });
     const own = await page.evaluate(ownChecks, { scope, off });
+    // TB_A11Y_TEXT=<selector>: print what that element says (debugging a
+    // screenshot is slower than reading the text it shows)
+    if (process.env.TB_A11Y_TEXT) {
+      const txt = (await page.locator(process.env.TB_A11Y_TEXT).first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+      console.log(`  text ${id}: ${txt.slice(0, 400)}`);
+    }
     if (!off['tb-no-key-handler']) own.push(...await keyHandlers(page, scope));
     own.push(...await modalFocus(page, scope));
     r.violations = [...axeV, ...own];
@@ -413,6 +419,9 @@ const H = 'http://homebox.test/';
 for (const vp of ['desktop', 'phone']) {
   await check('dashboard', 'server-pair-request', { vp, setup: homebox({ status: fedoraStatus }), open: dash(H, '', '#pair-requests:not(.hidden)') });
 }
+// the Clients tab's router guide, with the download button the package
+// offers (glinet_ipk): the card users follow to add a travel router
+await check('dashboard', 'server-router-guide', { setup: homebox({ status: fedoraStatus, settings: { ...fedoraSettings, glinet_ipk: true } }), open: tab(H, 'clients') });
 await check('dashboard', 'server-fresh-install-health', { setup: homebox({ status: fedoraStatusFresh, health: fedoraHealthRoute,
   settings: { ...fedoraSettings, public_addr: '', effective_public_addr: '192.168.1.2:443', public_addr_guessed: true, tls: 'self-signed' },
   ts: { ...fedoraTs, routes_approved: false, approved_routes: [] } }), open: tab(H, 'clients') });
