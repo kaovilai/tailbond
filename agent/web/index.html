@@ -66,7 +66,7 @@
         <b>Get the tailbond app</b> <span class="muted small">(skip if it's installed)</span>
         <div id="apk-yes" class="hidden"><a class="btn" href="tailbond.apk" download>Download tailbond for Android</a>
           <p class="muted small">Open the downloaded file to install it. Android warns about apps from outside the Play Store and asks you to allow installs from your browser: this app comes from your own home server. Unsure? Ask whoever set up the server to install it for you. Then come back to this page for step 2.</p></div>
-        <p id="apk-no" class="muted small">Ask whoever set up this home server for the tailbond app.</p>
+        <p id="apk-no" class="muted small">This server has no copy of the app. Get it from tailbond's GitHub release: <a id="apk-gh" href="https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk" rel="noopener">tailbond-android.apk</a> (open it once it's downloaded).</p>
       </div>
     </div>
     <div class="step">
@@ -167,7 +167,7 @@
           <p>On the phone, with Tailscale on: point the camera at this code, or type <b id="landing-typed">this server's name</b> into its browser (with the slash at the end, so it opens the page instead of searching). That page has the app and three short steps. The phone then asks to connect and shows up at the top of this page: tap <b>Approve</b>.</p>
           <p class="muted small">For family: their phone needs Tailscale signed in to your Tailscale network. Simplest: invite them (Tailscale admin console → Users → Invite). Once you approve their phone here, it reaches what this server reaches, whichever way they joined. Then send them this link, or tell them what to type. The page only offers the app; nothing on it can change this server, and this dashboard only answers the approvers (see Who can approve).</p>
           <div class="uri-row"><input id="invite-link" readonly aria-label="Link to the phone page"><button class="btn icon" type="button" id="invite-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
-          <p class="muted small hidden" id="landing-no-apk">The page can't offer the app yet: put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code> (the tailbond-server package normally does).</p>
+          <p class="muted small hidden" id="landing-no-apk">This server has no copy of the app, so the phone page links to tailbond's GitHub release instead. To serve it from here, put <code>tailbond.apk</code> in <code>/usr/share/tailbond/</code> (the tailbond-server package normally does).</p>
         </div>
       </div>
     </div>
