@@ -40,6 +40,10 @@ config server 'server'
 	option subnet '10.77.0.0/24'
 	option subnet6 'fd77:77::/112'
 	option use_tailscale_cert '1'
+	# Devices reach this router through a relay you run (a VPS forwarding the
+	# tunnel port here; docs/behind-cgnat.md): set public_addr to the relay and
+	# this to 1, and Setup health stops checking this router's own address
+	option relayed '0'
 	# Advertise the tunnel subnet to the tailnet (tailscale set --advertise-routes)
 	option advertise_routes '1'
 	# Withdraw that route again when the server stops

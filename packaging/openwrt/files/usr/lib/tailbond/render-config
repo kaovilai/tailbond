@@ -198,6 +198,7 @@ render() {
 	json_add_string subnet "$(cfg_or server.subnet 10.77.0.0/24)"
 	json_add_string subnet6 "$(cfg_or server.subnet6 fd77:77::/112)"
 	json_add_boolean use_tailscale_cert "$(bool "$(cfg_or server.use_tailscale_cert 1)")"
+	json_add_boolean relayed "$(bool "$(cfg_or server.relayed 0)")"
 	keep_users
 	json_close_object
 

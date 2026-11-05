@@ -110,7 +110,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 
 GL.iNet routers can also install and update tailbond from **APPLICATIONS → Plug-ins**, with the signed feed `https://github.com/kaovilai/tailbond/releases/latest/download` as a custom source ([how](docs/glinet.md#install-and-update-from-gls-plug-ins-page)).
 
-More: [coming from Tailscale](docs/coming-from-tailscale.md) · [setup tips for best speed](docs/setup-tips.md) · [updates](docs/updates.md) · [backup and restore](docs/backup-restore.md) · [comparison with OpenMPTCProuter](docs/comparison-openmptcprouter.md) · [brand](docs/brand.md)
+More: [coming from Tailscale](docs/coming-from-tailscale.md) · [setup tips for best speed](docs/setup-tips.md) · [behind carrier-grade NAT](docs/behind-cgnat.md) · [updates](docs/updates.md) · [backup and restore](docs/backup-restore.md) · [comparison with OpenMPTCProuter](docs/comparison-openmptcprouter.md) · [brand](docs/brand.md)
 
 ## Quick start
 

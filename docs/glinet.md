@@ -464,6 +464,7 @@ applies.
 - **Admin over WAN is blocked** by GL's firewall, as on every GL router,
   and SSH too. A Brume behind another router is reachable from its LAN
   side, or over Tailscale once GL's Tailscale is on.
+- **Behind carrier-grade NAT:** see [behind-cgnat.md](behind-cgnat.md).
 - **Behind another router:** the Brume's WAN gets a private address, so
   forward UDP 443 to it on the upstream router, or keep phones on
   Tailscale. `server-up` already opens UDP 443 on the Brume's own `wan`

@@ -131,3 +131,16 @@ func TestNoteOutside(t *testing.T) {
 		t.Fatalf("%+v", a.outside)
 	}
 }
+
+// Behind carrier-grade NAT with a relay in front: the line's own address isn't checked.
+func TestHealthRelayedServerSkipsAddressCheck(t *testing.T) {
+	in := healthInputs{Role: config.RoleServer, TS: tsInfo(t, homeStatus(), "10.66.0.0/24"), Route: "10.66.0.0/24", Port: 443,
+		Netcheck: &tailscale.Netcheck{UDP: true}, WANIP: "100.72.3.4", Now: time.Now()}
+	if c := check(t, buildHealth(in), "cgnat"); c.Status != hBad || c.FixURL != urlBehindCGNAT {
+		t.Fatalf("without relay: %+v", c)
+	}
+	in.Relayed = true
+	if c := check(t, buildHealth(in), "cgnat"); c.Status != hOK || !strings.Contains(c.Title, "relay") {
+		t.Fatalf("with relay: %+v", c)
+	}
+}

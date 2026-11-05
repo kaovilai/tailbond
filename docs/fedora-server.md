@@ -87,7 +87,7 @@ Bonding needs each of the device's links to reach the server **directly over UDP
    `sudo systemctl restart tailbond`.
 4. Once a phone is paired (section 4), test the forward from outside: on that phone, turn Wi-Fi off; once tailbond connects over mobile data, the dashboard's *UDP 443* health item turns green.
 
-**Carrier-grade NAT**: if the router's own WAN address is in `100.64.0.0`–`100.127.255.255`, or is private (`10.x`, `192.168.x`, `172.16–31.x`) while your public address is different, your provider shares one address between customers and a port forward can't work. Ask the provider for a public IPv4 address, or use a public IPv6 address for `public_addr` (for example `[2001:db8::10]:443`) and allow UDP 443 in the router's IPv6 firewall. The dashboard's setup health detects this.
+**Carrier-grade NAT**: if the router's own WAN address is in `100.64.0.0`–`100.127.255.255`, or is private (`10.x`, `192.168.x`, `172.16–31.x`) while your public address is different, your provider shares one address between customers and a port forward can't work. Ask the provider for a public IPv4 address, or use a public IPv6 address for `public_addr` (for example `[2001:db8::10]:443`) and allow UDP 443 in the router's IPv6 firewall. The dashboard's setup health detects this. Without either, see [Behind carrier-grade NAT](behind-cgnat.md) (a server on a VPS, or a VPS that relays the port).
 
 ## 3. Tailscale (optional, recommended)
 

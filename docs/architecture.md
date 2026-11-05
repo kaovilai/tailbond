@@ -347,6 +347,7 @@ The agent generates the mqvpn INI under `state_dir` (`server.conf` / `client.con
 Additive keys (all optional):
 - `server.users`: `[{"name","key","created"}]`, the registered clients (written by `POST /api/clients`; the file is mode 0600);
 - `server.disable_dns`: no DNS forwarder (the pairing payload then has no `dns`);
+- `server.relayed` (additive: devices reach this server through a relay you run, so Setup health skips the line's own address check; `public_addr` is the relay's; [behind-cgnat.md](behind-cgnat.md); OpenWrt UCI `server.relayed`);
 - `server.no_advertise_route`: don't advertise the tunnel subnet to the tailnet (Fedora hook; OpenWrt uses UCI `server.advertise_routes`);
 - `approvers`: Tailscale logins who may use the dashboard from the tailnet without a password, besides the server's owner (on a tagged server, the only ones);
 - `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic), `client.mtu` (tunnel MTU, default 1280, IPv6's minimum: mqvpn's auto value assumes a 1500-byte uplink and loses large packets on smaller ones; in Speed, which reorders, mqvpn is given 8 more for its reorder header so the TUN still gets it);

@@ -448,13 +448,41 @@ func (a *Agent) publicAddrFor(fresh bool) (addr string, auto bool) {
 	} else {
 		n = a.netcheck()
 	}
-	if ip := publicIPv4(n); ip != "" {
-		return net.JoinHostPort(ip, port), true
+	// IPv4 first. Not when the WAN address itself is carrier-grade NAT: the
+	// public IPv4 is then shared and nothing reaches this machine on it.
+	v4 := publicIPv4(n)
+	if w, err := netip.ParseAddr(wanAddr()); err == nil && cgnat.Contains(w.Unmap()) {
+		v4 = ""
+	}
+	if v4 != "" {
+		return net.JoinHostPort(v4, port), true
+	}
+	// public IPv6: reachable with no port forward (the firewall still has to
+	// allow the tunnel port); clients need IPv6 on a path to use it
+	if v6 := publicIPv6(n); v6 != "" {
+		return net.JoinHostPort(v6, port), true
 	}
 	if ip := outboundIP(); ip != "" {
 		return net.JoinHostPort(ip, port), false
 	}
 	return "", false
+}
+
+// publicIPv6 is the global unicast IPv6 address from a netcheck result, or
+// "" when there is none (ULA, link-local and tailnet addresses don't count).
+func publicIPv6(n *tailscale.Netcheck) string {
+	if n == nil || n.GlobalV6 == "" {
+		return ""
+	}
+	ap, err := netip.ParseAddrPort(n.GlobalV6)
+	if err != nil {
+		return ""
+	}
+	ip := ap.Addr()
+	if !ip.Is6() || ip.Is4In6() || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return ""
+	}
+	return ip.String()
 }
 
 // publicIPv4 is the internet-facing IPv4 from a netcheck result, or "" when
@@ -473,6 +501,9 @@ func publicIPv4(n *tailscale.Netcheck) string {
 	}
 	return ip.String()
 }
+
+// wanAddr is outboundIP, a variable so tests don't depend on the host's routes.
+var wanAddr = outboundIP
 
 func outboundIP() string {
 	c, err := net.Dial("udp", "192.0.2.1:9")

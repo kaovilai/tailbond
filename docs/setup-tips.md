@@ -27,7 +27,8 @@ Fedora page's Devices tab, `GET /api/health`) checks most of these for you.
   Forward it on any router in front of the server (a Flint 3 opens it on
   itself). Carrier-grade NAT on the home line (the router's WAN address is
   in 100.64.0.0/10 or private while your public IP differs) can't work: ask
-  the provider for a public IPv4, or use public IPv6.
+  the provider for a public IPv4, or use public IPv6, or see
+  [Behind carrier-grade NAT](behind-cgnat.md) (a VPS as the server or as a relay).
   [Device connectivity](https://tailscale.com/docs/reference/device-connectivity)
 - [ ] **Approve the `10.77.0.0/24` route once** in the Tailscale admin console,
   so tailnet machines reach bonded devices.

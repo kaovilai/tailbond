@@ -415,6 +415,9 @@ func TestPublicIPv4(t *testing.T) {
 // public IP and the tunnel port; an explicit one wins.
 func TestPublicAddrFromNetcheck(t *testing.T) {
 	a := clientAgent(t, nil)
+	old := wanAddr
+	defer func() { wanAddr = old }()
+	wanAddr = func() string { return "192.168.1.10" }
 	a.nc.res, a.nc.at = &tailscale.Netcheck{GlobalV4: "203.0.113.7:41641"}, time.Now()
 	addr, auto := a.publicAddrFor(false)
 	if want := net.JoinHostPort("203.0.113.7", strconv.Itoa(a.store.Get().Server.Port)); addr != want || !auto {
@@ -445,5 +448,49 @@ func TestRenameActiveServerKeepsSelection(t *testing.T) {
 	a.mu.Unlock()
 	if active != "cabin" || fo != "cabin" {
 		t.Fatalf("active after rename: %q / %q, want cabin", active, fo)
+	}
+}
+
+func TestPublicIPv6(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"[2001:db8::1]:41641", "2001:db8::1"},
+		{"[fd7a:115c:a1e0::1]:41641", ""}, // tailnet / ULA
+		{"[fe80::1]:41641", ""},           // link-local
+		{"[::ffff:203.0.113.7]:41641", ""},
+		{"203.0.113.7:41641", ""},
+		{"", ""},
+	} {
+		if got := publicIPv6(&tailscale.Netcheck{GlobalV6: c.in}); got != c.want {
+			t.Errorf("publicIPv6(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// IPv6 is used when there is no public IPv4; IPv4 wins when there is one.
+func TestPublicAddrPrefersV4ThenV6(t *testing.T) {
+	a := clientAgent(t, nil)
+	port := strconv.Itoa(a.store.Get().Server.Port)
+	old := wanAddr
+	defer func() { wanAddr = old }()
+	wanAddr = func() string { return "192.168.1.10" }
+	a.nc.res, a.nc.at = &tailscale.Netcheck{GlobalV4: "203.0.113.7:41641", GlobalV6: "[2001:db8::1]:41641"}, time.Now()
+	if addr, auto := a.publicAddrFor(false); addr != net.JoinHostPort("203.0.113.7", port) || !auto {
+		t.Fatalf("both: %q %v", addr, auto)
+	}
+	a.nc.res = &tailscale.Netcheck{GlobalV6: "[2001:db8::1]:41641"}
+	if addr, auto := a.publicAddrFor(false); addr != net.JoinHostPort("2001:db8::1", port) || !auto {
+		t.Fatalf("v6 only: %q %v", addr, auto)
+	}
+}
+
+// A carrier-grade NAT WAN address makes the shared public IPv4 useless: IPv6 is used.
+func TestPublicAddrSkipsV4BehindCGNAT(t *testing.T) {
+	a := clientAgent(t, nil)
+	old := wanAddr
+	defer func() { wanAddr = old }()
+	wanAddr = func() string { return "100.72.1.2" }
+	a.nc.res, a.nc.at = &tailscale.Netcheck{GlobalV4: "203.0.113.7:41641", GlobalV6: "[2001:db8::1]:41641"}, time.Now()
+	if addr, _ := a.publicAddrFor(false); !strings.HasPrefix(addr, "[2001:db8::1]:") {
+		t.Fatalf("behind CGNAT: %q", addr)
 	}
 }
