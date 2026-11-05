@@ -819,6 +819,7 @@ async function loadSettings() {
   if (s.role === 'server') {
     $('#apk-yes').classList.toggle('hidden', !s.android_apk);
     $('#apk-no').classList.toggle('hidden', !!s.android_apk);
+    if (s.android_apk_url) $('#apk-gh').href = s.android_apk_url;
     $('#ipk-yes').classList.toggle('hidden', !s.glinet_ipk);
     $('#pw-state').textContent = s.password_set
       ? 'Only people with this page\'s password, from any device on your Tailscale network. Change it, or save an empty one to remove it. Family adding a phone don\'t need it: their phone asks, you approve.'

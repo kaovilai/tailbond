@@ -2736,7 +2736,7 @@
               h("div", { class: "tb-grow", style: { minWidth: "220px", lineHeight: 1.6 } }, [
                 h("div", ["On the phone, with Tailscale on: point the camera at this code, or type ", h("b", name), " into its browser (with the slash at the end, so it opens the page instead of searching). That page has the tailbond app and three short steps. The phone then asks to connect and shows up at the top of this page: click ", h("b", "Approve"), "."]),
                 h("div", { class: "tb-muted tb-small", style: { marginTop: "6px" } }, ["For family: send them ", h("span", { class: "tb-mono" }, s.landing_url), ", or tell them what to type. That page only offers the app; nothing on it can change this router."]),
-                s.android_apk ? null : h("div", { class: "tb-small", style: { marginTop: "6px", color: "#8a5d10" } }, "The page can't offer the app yet: this router has no copy of it. Install the tailbond package that includes the Android app, or ask whoever set up tailbond.")
+                s.android_apk ? null : h("div", { class: "tb-small", style: { marginTop: "6px", color: "#8a5d10" } }, ["This router has no copy of the app, so the phone page links to tailbond's GitHub release instead: ", s.android_apk_url ? h("a", { class: "tb-link", attrs: { href: s.android_apk_url, target: "_blank", rel: "noopener" } }, "tailbond-android.apk") : "tailbond-android.apk", "."])
               ])
             ])
           ]);

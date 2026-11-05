@@ -509,6 +509,8 @@ type settingsView struct {
 	CaptiveDetect *bool  `json:"captive_portal_detect,omitempty"`
 	Version       string `json:"version"`
 	AndroidAPK    bool   `json:"android_apk"`
+	// without a copy of the app here: tailbond's GitHub release download (the phone page links to it)
+	AndroidAPKURL string `json:"android_apk_url,omitempty"`
 	GLiNetIPK     bool   `json:"glinet_ipk"`
 	// server: where phones get tailbond (the landing page), what to type
 	// in a phone's browser, and a QR code of the URL
@@ -553,6 +555,9 @@ func apkAvailable(path string) bool {
 func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
 	v := settingsView{Role: cfg.Role, Mode: cfg.Mode, ConfigPath: a.store.Path(), Password: cfg.UIPassword != "", Version: a.opts.Version, AndroidAPK: apkAvailable(cfg.APKPath()), GLiNetIPK: a.glinetIPKAvailable(), Backup: a.backupView()}
+	if !v.AndroidAPK {
+		v.AndroidAPKURL = a.releaseBase() + "tailbond-android.apk"
+	}
 	if cfg.Role == config.RoleServer {
 		a.mu.Lock()
 		tls := a.tlsInfo
