@@ -319,3 +319,17 @@ func sha256hex(b []byte) string {
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
 }
+
+func TestReleaseBase(t *testing.T) {
+	for _, c := range []struct{ ver, want string }{
+		{"0.1.17", "/releases/download/v0.1.17/"},
+		{"0.1.17-r1", "/releases/download/v0.1.17/"}, // package revision isn't in the tag
+		{"dev", "/releases/latest/download/"},
+	} {
+		a := clientAgent(t, nil)
+		a.opts.Version = c.ver
+		if got := a.releaseBase(); !strings.HasSuffix(got, c.want) {
+			t.Errorf("version %q: %q, want suffix %q", c.ver, got, c.want)
+		}
+	}
+}

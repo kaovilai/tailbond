@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -198,10 +199,7 @@ func (a *Agent) hLanding(w http.ResponseWriter, r *http.Request) {
 	v.MacOneLiner = "cd ~/Downloads && curl -fLO " + base + macBundleName + " && tar -xzf " + macBundleName + " && sudo ./tailbond-macos-arm64/install.sh"
 	// Safari may unpack the archive by itself ("Open safe files")
 	v.MacInstall = "cd ~/Downloads && { [ -d tailbond-macos-arm64 ] || tar -xzf " + macBundleName + "; } && sudo ./tailbond-macos-arm64/install.sh"
-	rel := "https://github.com/" + repo + "/releases/latest/download/"
-	if isRelease(a.opts.Version) {
-		rel = "https://github.com/" + repo + "/releases/download/v" + a.opts.Version + "/"
-	}
+	rel := a.releaseBase()
 	v.ReleaseBase = rel
 	v.BrewCmds = []string{
 		"brew tap-new --no-git local/tailbond",
@@ -247,4 +245,17 @@ func (a *Agent) landingAddrs(ctx context.Context) []string {
 
 func (a *Agent) serveLanding(ctx context.Context) {
 	_ = a.serveOn(ctx, "phone page", a.landingHandler(), func() []string { return a.landingAddrs(ctx) }, false, &a.landingUp)
+}
+
+var pkgRevRE = regexp.MustCompile(`-r[0-9]+$`)
+
+// releaseBase is where tailbond's GitHub release downloads are: this
+// version's release, else the latest (ends with "/").
+func (a *Agent) releaseBase() string {
+	repo := a.updateRepo()
+	if isRelease(a.opts.Version) {
+		// packages are versioned <release>-r<N> (0.1.17-r1); the tag is v0.1.17
+		return "https://github.com/" + repo + "/releases/download/v" + pkgRevRE.ReplaceAllString(a.opts.Version, "") + "/"
+	}
+	return "https://github.com/" + repo + "/releases/latest/download/"
 }
