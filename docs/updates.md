@@ -96,6 +96,14 @@ Pre-releases (`v1.2.3-beta.1`) are never offered.
 - **GL router**: `opkg install` of the release's package; if the agent
   doesn't answer within 90 seconds, the previous package goes back
   (`logread -e tailbond-update`).
+- **A build from before v0.1.4 can't update itself.** It compares its own
+  version with the release's, and a development build (`8051e4f`, say) has no
+  version to compare: the panel shows the release, and every press answers
+  *no newer release found*. Install the current package once by hand and it
+  updates itself from then on:
+  `opkg install --force-reinstall tailbond.ipk` (the steps are in
+  [glinet.md](glinet.md#install-without-ssh)), or the dashboard's
+  `install.sh --update` on a server.
 - Devices drop for a few seconds while their server restarts. Update the home
   server first, then routers and phones (the server's dashboard lists devices
   that are behind).
