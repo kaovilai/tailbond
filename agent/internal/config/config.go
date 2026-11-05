@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/kaovilai/tailbond/agent/internal/tcplisten"
 )
 
 const (
@@ -490,9 +488,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port out of range: %d", c.Server.Port)
-	}
-	if !tcplisten.Valid(c.TCPMode) {
-		return fmt.Errorf("tcp_mode must be auto, mptcp or tcp, got %q", c.TCPMode)
 	}
 	if c.LandingPort > 65535 || c.LandingPublicPort < 0 || c.LandingPublicPort > 65535 {
 		return fmt.Errorf("landing_port / landing_public_port out of range")

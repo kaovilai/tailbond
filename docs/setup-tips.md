@@ -16,6 +16,13 @@ Fedora page's Devices tab, `GET /api/health`) checks most of these for you.
   [Device connectivity](https://tailscale.com/docs/reference/device-connectivity) ·
   [DERP servers](https://tailscale.com/docs/reference/derp-servers) ·
   [CLI](https://tailscale.com/docs/reference/tailscale-cli)
+- [ ] **The home server's public address.** With none set, the server uses
+  the public IPv4 Tailscale sees it at (`tailscale netcheck`), with the
+  tunnel port, so Dynamic DNS isn't needed: when your ISP changes the IP,
+  away devices fetch the new address over Tailscale (within about 2 minutes
+  of losing the server, else every 6 hours). Set one (a DNS name, or a
+  fixed IP) in the panel or `server.public_addr` to override. A server
+  behind carrier-grade NAT has no usable public address.
 - [ ] **tailbond's own port: UDP 443 reaches the home server from the internet.**
   Forward it on any router in front of the server (a Flint 3 opens it on
   itself). Carrier-grade NAT on the home line (the router's WAN address is

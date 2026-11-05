@@ -248,6 +248,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.hookStop, a.hookDone = hcancel, make(chan struct{})
 	go func() { a.hookWorker(hctx); close(a.hookDone) }()
 	a.Logf("tailbondd %s starting, role=%s mode=%s config=%s", a.opts.Version, cfg.Role, cfg.Mode, a.store.Path())
+	if !tcplisten.Valid(cfg.TCPMode) {
+		// not a load error: TAILBOND_TCP_MODE must still be able to start a router with a typo here
+		a.Logf("tcp_mode %q isn't auto, mptcp or tcp: using auto", cfg.TCPMode)
+	}
 	tcplisten.SetMode(cfg.TCPMode, a.Logf)
 	a.setupCrash()
 

@@ -318,6 +318,31 @@ func (a *Agent) netcheck() *tailscale.Netcheck {
 	return a.nc.res
 }
 
+// netcheckMaxAge returns the netcheck result, re-running it first (up to
+// 8 s) when it is older than maxAge. Another run in progress isn't waited for.
+func (a *Agent) netcheckMaxAge(maxAge time.Duration) *tailscale.Netcheck {
+	a.nc.mu.Lock()
+	stale := !a.nc.running && time.Since(a.nc.at) > maxAge
+	if stale {
+		a.nc.running = true
+	}
+	a.nc.mu.Unlock()
+	if stale {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		n, err := a.ts.Netcheck(ctx)
+		cancel()
+		a.nc.mu.Lock()
+		if err == nil {
+			a.nc.res = n
+		}
+		a.nc.at, a.nc.running = time.Now(), false
+		a.nc.mu.Unlock()
+	}
+	a.nc.mu.Lock()
+	defer a.nc.mu.Unlock()
+	return a.nc.res
+}
+
 func (a *Agent) hHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
 	in := healthInputs{Role: a.role, TS: a.ts.Get(r.Context()), Netcheck: a.netcheck(), Port: cfg.Server.Port, Now: time.Now()}

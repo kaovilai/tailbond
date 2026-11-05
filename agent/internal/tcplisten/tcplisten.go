@@ -130,7 +130,10 @@ func probe(a net.Addr) error {
 			ip = net.IPv6loopback
 		}
 	}
-	c, err := net.DialTimeout("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(ta.Port)), ProbeTimeout)
+	// plain TCP whatever GODEBUG says: the point is a client that has no MPTCP
+	d := net.Dialer{Timeout: ProbeTimeout}
+	d.SetMultipathTCP(false)
+	c, err := d.Dial("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(ta.Port)))
 	if err != nil {
 		return err
 	}

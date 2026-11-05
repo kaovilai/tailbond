@@ -963,7 +963,7 @@
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
         wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false,
         // client: more servers (failover) and bypass rules
-        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", srvRename: "", srvRenameVal: "", histAll: false,
+        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", srvRename: "", srvRenameVal: "", srvRenameErr: "", histAll: false,
         bp: null, lan: null, bpEdit: null,
         // updates and backups
         updX: null, bks: null, ub: null, ubSched: null, restartUntil: 0, restarting: false,
@@ -1405,11 +1405,13 @@
       setServerOn: function (s, on) {
         return this.run("srv", api("POST", "/api/servers/enabled", { name: s.name, enabled: on }), s.name + (on ? " is on" : " is off: it won't be used or switched to"));
       },
-      startRename: function (s) { this.srvMore = ""; this.srvRename = s.name; this.srvRenameVal = s.name; },
+      startRename: function (s) { this.srvMore = ""; this.srvRename = s.name; this.srvRenameVal = s.name; this.srvRenameErr = ""; },
       saveRename: function (s) {
         var self = this, v = (this.srvRenameVal || "").trim();
         if (!v || v === s.name) { this.srvRename = ""; return; }
-        return this.run("srv", api("POST", "/api/servers/rename", { name: s.name, new_name: v }), "Renamed to " + v).then(function () { self.srvRename = ""; });
+        this.srvRenameErr = "";
+        // runE rejects on failure: the editor stays open with the error under it
+        return this.runE("srv", api("POST", "/api/servers/rename", { name: s.name, new_name: v }), "Renamed to " + v).then(function () { self.srvRename = ""; }, function (e) { self.srvRenameErr = self.humanError(e); });
       },
       useServer: function (s) {
         return this.run("srv", api("POST", "/api/servers/active", { name: s.name }), "Switching to " + s.name + "…");
@@ -1966,7 +1968,8 @@
         // Two or more servers: the ordered list, the switching choice, add/remove.
         rServers: function (h) {
           var self = this, st = this.st, ss = this.servers, fo = st.failover || {}, busy = this.busy.srv;
-          var first = ss[0].name;
+          var onList = ss.filter(function (sv) { return sv.state !== "off"; });
+          var firstSv = onList[0] || ss[0], first = firstSv.name;
           var CHIP = { active: ["ok", "Connected"], connecting: ["blue", "Connecting…"], standby: ["", "Standby"], unreachable: ["err", "Can't reach"], unknown: ["", "Checking…"], off: ["", "Off"] };
           var rows = ss.map(function (sv, i) {
             var chip = !self.isOn() ? ["", "Off"] : CHIP[sv.state] || CHIP.unknown;
@@ -1980,7 +1983,8 @@
                   ? h("div", { class: "tb-row", style: { gap: "6px" } }, [
                     h("input", { class: "tb-input", attrs: { "aria-label": "Name for " + sv.name, maxlength: 32, placeholder: "home1, vps…" }, domProps: { value: self.srvRenameVal }, on: { input: function (e) { self.srvRenameVal = e.target.value; }, keydown: function (e) { if (e.key === "Enter") self.saveRename(sv); else if (e.key === "Escape") self.srvRename = ""; } } }),
                     self.btn(h, "Save", function () { self.saveRename(sv); }, "small primary", busy),
-                    self.btn(h, "Cancel", function () { self.srvRename = ""; }, "small text", busy)
+                    self.btn(h, "Cancel", function () { self.srvRename = ""; }, "small text", busy),
+                    self.srvRenameErr ? h("div", { class: "tb-small", style: { color: "#c03737", width: "100%" }, attrs: { role: "alert" } }, self.srvRenameErr) : null
                   ])
                   : h("div", { class: "tb-wan-t" }, [sv.name, h("span", { class: "tb-role" + (i === 0 ? " first" : "") }, sv.state === "off" ? "Off" : i === 0 ? "First choice" : "Backup")]),
                 h("div", { class: "tb-muted tb-small" }, detail)
@@ -2004,9 +2008,9 @@
           // the switching choice, in the servers' own names
           var cur = fo.policy === "always" ? "always:" + fo.server : "prefer";
           var paused = cur === "prefer" && fo.reason === "manual";
-          var preferLabel = ss.length === 2 ? "Prefer " + first + ", use " + ss[1].name + " if " + first + " is down" : "Prefer " + first + ", then the next one in the list that works";
+          var preferLabel = onList.length === 2 ? "Prefer " + first + ", use " + onList[1].name + " if " + first + " is down" : "Prefer " + first + ", then the next one in the list that works";
           var opts = [{ key: "prefer", t: preferLabel, b: "Switches by itself when " + first + " is down, and back when it's up again." }]
-            .concat(ss.map(function (sv) { return { key: "always:" + sv.name, t: "Always use " + sv.name, b: "Never switches by itself, even if " + sv.name + " is down." }; }));
+            .concat(onList.map(function (sv) { return { key: "always:" + sv.name, t: "Always use " + sv.name, b: "Never switches by itself, even if " + sv.name + " is down." }; }));
           var me = this.settings && this.settings.paired_as;
           var ks = !(this.info && this.info.kill_switch === false);
           return this.card(h, "Servers", [
@@ -2024,7 +2028,7 @@
               })),
               paused ? h("div", { class: "tb-alert info", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [
                 h("b", "Paused: " + st.active_server + " was picked by hand" + (fo.since ? " at " + fmtHM(fo.since) : "") + ". "),
-                ss[0].state === "standby" ? h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
+                firstSv.state === "standby" ? h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
                   : "Automatic switching comes back if " + st.active_server + " stops working, or when you pick " + first + "."])]) : null,
               h("div", { class: "tb-help" }, "How it decides: tailbond checks the standby servers every 10 s with one small packet. It switches when " + first + " hasn't worked for " + fmtDur(fo.switch_after_sec || 15) +
                 ", and comes back once " + first + " has answered for " + fmtDur(fo.failback_after_sec || 120) + ". It watches only whether " + first + " answers tailbond: a slow connection or a website that doesn't load doesn't make it switch.")

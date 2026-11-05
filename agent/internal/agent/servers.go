@@ -131,7 +131,7 @@ func (a *Agent) switchServer(name, why string) {
 	a.mu.Lock()
 	cs := a.client
 	s := cs.server(name)
-	if s == nil {
+	if s == nil || !s.on { // gone, or turned off after the caller decided
 		a.mu.Unlock()
 		return
 	}
@@ -744,6 +744,21 @@ func (a *Agent) hServersRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Logf("server %s renamed %s", body.Name, nn)
+	// carry the runtime state to the new name first, so the reload sees the
+	// same server: the tunnel stays up and a manual choice stays
+	a.mu.Lock()
+	if cs := a.client; cs != nil && nn != body.Name {
+		if cs.fo != nil {
+			cs.fo.Rename(body.Name, nn)
+		}
+		if cs.activeServer == body.Name {
+			cs.activeServer = nn
+		}
+		if s := cs.server(body.Name); s != nil {
+			s.name = nn
+		}
+	}
+	a.mu.Unlock()
 	a.afterServersChanged(switchList)
 	a.poll(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": nn})
@@ -784,8 +799,14 @@ func (a *Agent) hServersPolicy(w http.ResponseWriter, r *http.Request) {
 			}
 			f.FailbackAfterSec = *body.FailbackAfterSec
 		}
-		if f.Policy == config.PolicyAlways && c.Client.ServerIndex(f.Server) < 0 {
-			return errors.New("pick which server to always use")
+		if f.Policy == config.PolicyAlways {
+			i := c.Client.ServerIndex(f.Server)
+			if i < 0 {
+				return errors.New("pick which server to always use")
+			}
+			if !c.Client.Servers[i].On() {
+				return errors.New("that server is off: turn it on first")
+			}
 		}
 		if f.Policy == config.PolicyPrefer {
 			f.Server = ""

@@ -277,3 +277,19 @@ func TestBackdate(t *testing.T) {
 		t.Fatalf("got %q at 26 s", to)
 	}
 }
+
+func TestRenameKeepsState(t *testing.T) {
+	now := time.Now()
+	m := New(Policy{Mode: PolicyAlways, Pinned: "b"}, []string{"a", "b"}, "b", now)
+	m.Rename("b", "c")
+	if m.Active() != "c" || m.Policy().Pinned != "c" || m.Order()[1] != "c" {
+		t.Fatalf("after rename: active %q pinned %q order %v", m.Active(), m.Policy().Pinned, m.Order())
+	}
+	m.Rename("a", "c") // taken: ignored
+	if m.Order()[0] != "a" {
+		t.Fatalf("renamed onto an existing name: %v", m.Order())
+	}
+	if to := m.SetOrder([]string{"a", "c"}, now); to != "" || m.Active() != "c" {
+		t.Fatalf("reload after rename switched: to=%q active=%q", to, m.Active())
+	}
+}

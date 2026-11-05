@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/pairing"
 	"github.com/kaovilai/tailbond/agent/internal/status"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 )
 
 func clientAgent(t *testing.T, edit func(*config.Config)) *Agent {
@@ -367,6 +370,9 @@ func TestServersEnableAndRename(t *testing.T) {
 	if c.Servers[0].On() || c.FailoverOrDefault().Policy != "prefer" {
 		t.Fatalf("after disable: %+v %+v", c.Servers, c.FailoverOrDefault())
 	}
+	if w := req(t, a, "POST", "/api/servers/policy", lan, "", map[string]string{"policy": "always", "server": "home2"}); w.Code != 400 {
+		t.Fatalf("always-use of an off server accepted: %d", w.Code)
+	}
 	if w := req(t, a, "POST", "/api/servers/enabled", lan, "", map[string]any{"name": "vps", "enabled": false}); w.Code != 400 {
 		t.Fatalf("disabled the last server: %d", w.Code)
 	}
@@ -384,5 +390,60 @@ func TestServersEnableAndRename(t *testing.T) {
 	}
 	if c := a.store.Get().Client; !c.Servers[0].On() || c.Servers[0].Name != "home2" {
 		t.Fatalf("after enable %+v", c.Servers)
+	}
+}
+
+func TestPublicIPv4(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"203.0.113.7:41641", "203.0.113.7"},
+		{"192.168.1.10:41641", ""},  // private
+		{"100.72.3.4:41641", ""},    // carrier-grade NAT
+		{"[2001:db8::1]:41641", ""}, // IPv6: the tunnel address is IPv4
+		{"", ""},
+		{"junk", ""},
+	} {
+		if got := publicIPv4(&tailscale.Netcheck{GlobalV4: c.in}); got != c.want {
+			t.Errorf("publicIPv4(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if publicIPv4(nil) != "" {
+		t.Error("nil netcheck")
+	}
+}
+
+// With no server.public_addr the address comes from Tailscale's view of the
+// public IP and the tunnel port; an explicit one wins.
+func TestPublicAddrFromNetcheck(t *testing.T) {
+	a := clientAgent(t, nil)
+	a.nc.res, a.nc.at = &tailscale.Netcheck{GlobalV4: "203.0.113.7:41641"}, time.Now()
+	addr, auto := a.publicAddrFor(false)
+	if want := net.JoinHostPort("203.0.113.7", strconv.Itoa(a.store.Get().Server.Port)); addr != want || !auto {
+		t.Fatalf("auto: %q %v, want %q true", addr, auto, want)
+	}
+	if _, err := a.store.Update(func(c *config.Config) error { c.Server.PublicAddr = "home.example.net"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if addr, auto := a.publicAddrFor(false); !strings.HasPrefix(addr, "home.example.net:") || auto {
+		t.Fatalf("explicit: %q %v", addr, auto)
+	}
+}
+
+// Renaming the server in use keeps the tunnel and a manual choice: no
+// switch, no fall back to the first server.
+func TestRenameActiveServerKeepsSelection(t *testing.T) {
+	a := clientAgent(t, nil)
+	req(t, a, "POST", "/api/pair", lan, "", map[string]string{"uri": pairURI(t, "203.0.113.7:443", "homebox", "10.77.0.0/24")})
+	req(t, a, "POST", "/api/servers", lan, "", map[string]string{"uri": pairURI(t, "198.51.100.9:8443", "vps", "10.83.142.0/24")})
+	if w := req(t, a, "POST", "/api/servers/active", lan, "", map[string]string{"name": "vps"}); w.Code != 200 {
+		t.Fatalf("active: %d %s", w.Code, w.Body)
+	}
+	if w := req(t, a, "POST", "/api/servers/rename", lan, "", map[string]string{"name": "vps", "new_name": "cabin"}); w.Code != 200 {
+		t.Fatalf("rename: %d %s", w.Code, w.Body)
+	}
+	a.mu.Lock()
+	active, fo := a.client.activeServer, a.client.fo.Active()
+	a.mu.Unlock()
+	if active != "cabin" || fo != "cabin" {
+		t.Fatalf("active after rename: %q / %q, want cabin", active, fo)
 	}
 }

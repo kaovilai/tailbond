@@ -35,7 +35,9 @@ func TestListenAccepts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", m, err)
 		}
-		if err := probe(ln.Addr()); err != nil {
+		// explicit mptcp has no fallback: on a kernel whose MPTCP doesn't
+		// connect the probe is expected to fail there
+		if err := probe(ln.Addr()); err != nil && m != ModeMPTCP {
 			t.Errorf("%s: plain TCP connect: %v", m, err)
 		}
 		ln.Close()

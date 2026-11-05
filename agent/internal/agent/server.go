@@ -22,6 +22,7 @@ import (
 	"github.com/kaovilai/tailbond/agent/internal/pairing"
 	"github.com/kaovilai/tailbond/agent/internal/status"
 	"github.com/kaovilai/tailbond/agent/internal/supervisor"
+	"github.com/kaovilai/tailbond/agent/internal/tailscale"
 	"github.com/kaovilai/tailbond/agent/internal/tlsutil"
 )
 
@@ -31,6 +32,7 @@ func (a *Agent) startServer(ctx context.Context) {
 		go a.runDNS(ctx)
 	}
 	go a.certRenewer(ctx)
+	a.netcheck() // warm the cache: the public address comes from it
 	if goruntime.GOOS == "darwin" {
 		go a.tailscaleWatch(ctx)
 	}
@@ -418,21 +420,58 @@ func (a *Agent) serverStatus(ctx context.Context) *status.Status {
 	return st
 }
 
-// publicAddr is what clients dial: server.public_addr, else a guess (the
-// source address of the default route), which is usually a LAN address.
+// publicAddr is what clients dial (cached, never blocks): see publicAddrFor.
 func (a *Agent) publicAddr() string {
+	addr, _ := a.publicAddrFor(false)
+	return addr
+}
+
+// publicAddrFor is what clients dial: server.public_addr; else the public
+// IPv4 Tailscale sees this machine at (netcheck) with the tunnel port, so
+// no Dynamic DNS is needed: clients fetch the refreshed pairing over
+// Tailscale when it changes; else a guess (the source address of the
+// default route), usually a LAN address. auto reports the second case.
+// fresh re-runs netcheck first when its result is over 2 minutes old
+// (pairing requests; may wait a few seconds).
+func (a *Agent) publicAddrFor(fresh bool) (addr string, auto bool) {
 	cfg := a.store.Get()
 	port := strconv.Itoa(cfg.Server.Port)
 	if pa := strings.TrimSpace(cfg.Server.PublicAddr); pa != "" {
 		if _, _, err := net.SplitHostPort(pa); err == nil {
-			return pa
+			return pa, false
 		}
-		return net.JoinHostPort(strings.Trim(pa, "[]"), port)
+		return net.JoinHostPort(strings.Trim(pa, "[]"), port), false
+	}
+	var n *tailscale.Netcheck
+	if fresh {
+		n = a.netcheckMaxAge(2 * time.Minute)
+	} else {
+		n = a.netcheck()
+	}
+	if ip := publicIPv4(n); ip != "" {
+		return net.JoinHostPort(ip, port), true
 	}
 	if ip := outboundIP(); ip != "" {
-		return net.JoinHostPort(ip, port)
+		return net.JoinHostPort(ip, port), false
 	}
-	return ""
+	return "", false
+}
+
+// publicIPv4 is the internet-facing IPv4 from a netcheck result, or "" when
+// there is none or it can't be reached from outside (private, carrier-grade NAT).
+func publicIPv4(n *tailscale.Netcheck) string {
+	if n == nil || n.GlobalV4 == "" {
+		return ""
+	}
+	ap, err := netip.ParseAddrPort(n.GlobalV4)
+	if err != nil {
+		return ""
+	}
+	ip := ap.Addr().Unmap()
+	if !ip.Is4() || isPrivate(ip) || cgnat.Contains(ip) || ip.IsUnspecified() || ip.IsLoopback() {
+		return ""
+	}
+	return ip.String()
 }
 
 func outboundIP() string {
@@ -461,7 +500,7 @@ func (a *Agent) pairingFor(u config.User) (*pairResult, error) {
 			return nil, err
 		}
 	}
-	server := a.publicAddr()
+	server, _ := a.publicAddrFor(true)
 	if server == "" {
 		return nil, errors.New("no public address: set server.public_addr")
 	}

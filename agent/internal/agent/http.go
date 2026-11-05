@@ -485,13 +485,16 @@ func (a *Agent) hTailscale(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsView struct {
-	Role        string `json:"role"`
-	Mode        string `json:"mode"`
-	ConfigPath  string `json:"config_path"`
-	Password    bool   `json:"password_set"`
-	PublicAddr  string `json:"public_addr,omitempty"`
-	Effective   string `json:"effective_public_addr,omitempty"`
-	Guessed     bool   `json:"public_addr_guessed,omitempty"`
+	Role       string `json:"role"`
+	Mode       string `json:"mode"`
+	ConfigPath string `json:"config_path"`
+	Password   bool   `json:"password_set"`
+	PublicAddr string `json:"public_addr,omitempty"`
+	Effective  string `json:"effective_public_addr,omitempty"`
+	Guessed    bool   `json:"public_addr_guessed,omitempty"`
+	// server: no public_addr set; the address is the public IPv4 Tailscale
+	// sees (clients refresh it over Tailscale, no Dynamic DNS needed)
+	Auto        bool   `json:"public_addr_auto,omitempty"`
 	Port        int    `json:"port,omitempty"`
 	Subnet      string `json:"subnet,omitempty"`
 	TLS         string `json:"tls,omitempty"`
@@ -554,7 +557,9 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		tls := a.tlsInfo
 		a.mu.Unlock()
-		v.PublicAddr, v.Effective, v.Guessed = cfg.Server.PublicAddr, a.publicAddr(), cfg.Server.PublicAddr == ""
+		v.PublicAddr = cfg.Server.PublicAddr
+		v.Effective, v.Auto = a.publicAddrFor(false)
+		v.Guessed = v.PublicAddr == "" && !v.Auto
 		v.Port, v.Subnet, v.TLS, v.TLSName, v.CertSHA256 = cfg.Server.Port, cfg.Server.Subnet, tls.source, tls.sni, tls.sha256
 		v.LandingURL, v.LandingTyped = a.landingURL(r.Context(), r.Host)
 		v.LandingQR, _ = pairing.QRSVG(v.LandingURL)
