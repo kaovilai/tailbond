@@ -50,6 +50,15 @@ public struct AgentClient {
     /// "Share this Mac's connection" on or off, as set up in the dashboard.
     public func setSharing(_ on: Bool) async throws { _ = try await call("POST", "/api/share", ["share_enabled": on]) }
 
+    /// "Connect via phone" (docs/phone-hub.md): the Bluetooth logins, this Mac only.
+    public func phoneKeys() async throws -> [BLELogin] {
+        struct Keys: Decodable { var logins: [BLELogin] }
+        return try JSONDecoder().decode(Keys.self, from: try await call("GET", "/api/phone-connect/keys")).logins
+    }
+    /// Hands the Bluetooth half's result to tailbondd, which goes on by itself.
+    public func phoneConnect(_ req: [String: Any]) async throws { _ = try await call("POST", "/api/phone-connect", ["connect": req]) }
+    public func phoneDisconnect() async throws { _ = try await call("POST", "/api/phone-connect", ["disconnect": true]) }
+
     public var dashboard: URL { base }
     /// The dashboard's Report a problem (docs/reporting.md).
     public var report: URL { URL(string: base.absoluteString + "/#report")! }

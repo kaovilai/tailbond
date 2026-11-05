@@ -179,6 +179,25 @@ type PhoneHub struct {
 	Note string `json:"note,omitempty"`
 	// Manual: this OS's proxy setting isn't set for you (not macOS).
 	Manual bool `json:"manual,omitempty"`
+	// Connect is the menu bar's "Connect via phone" (one click: the
+	// phone's hotspot over Bluetooth, then this hub).
+	Connect *PhoneConnect `json:"connect,omitempty"`
+}
+
+// PhoneConnect is where "Connect via phone" is (docs/phone-hub.md, "One
+// click from the Mac").
+type PhoneConnect struct {
+	State string `json:"state"`          // idle, working, bonded, failed
+	Step  string `json:"step,omitempty"` // working or failed: bluetooth, login, hotspot, phone_hub, wifi, find, use, internet
+	// Via: bluetooth (the phone was asked), hotspot (no Bluetooth: a phone
+	// hotspot this Mac is already on)
+	Via     string `json:"via,omitempty"`
+	Phone   string `json:"phone,omitempty"`   // its label
+	Network string `json:"network,omitempty"` // the phone's mobile network type (5G, LTE), from Bluetooth
+	Paths   int    `json:"paths,omitempty"`   // the phone's bonded paths, from Bluetooth
+	Battery int    `json:"battery,omitempty"` // percent, from Bluetooth
+	Error   string `json:"error,omitempty"`
+	Note    string `json:"note,omitempty"`
 }
 
 // PhoneHubFound is a phone hub that took this machine's password.

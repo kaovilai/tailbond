@@ -34,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.Laptop
+import dev.tailbond.app.ble.MacLinkStatus
+import dev.tailbond.app.ble.MacLinkWords
+import dev.tailbond.app.ble.ShizukuStatus
 import dev.tailbond.app.share.HubStatus
 import dev.tailbond.app.share.HubWords
 import dev.tailbond.app.share.ShareStatus
@@ -54,6 +57,7 @@ fun ShareScreen(state: UiState, actions: UiActions, modifier: Modifier = Modifie
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         HubCard(state, actions)
+        MacLinkCard(state, actions)
         SectionHeader("Lend your mobile data to a travel router")
         Card(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -197,6 +201,40 @@ private fun HubCard(state: UiState, actions: UiActions) {
                     style = MaterialTheme.typography.bodySmall, color = muted,
                 )
             }
+        }
+    }
+}
+
+/**
+ * "One click from your Mac" (docs/phone-hub.md): the Mac connects over
+ * Bluetooth, starts this phone's hotspot (Shizuku) and Share bonded
+ * connection, joins the hotspot and uses it.
+ */
+@Composable
+private fun MacLinkCard(state: UiState, actions: UiActions) {
+    val l = state.macLink
+    val on = l.status != MacLinkStatus.OFF && l.status != MacLinkStatus.NO_PERMISSION
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (l.status == MacLinkStatus.CONNECTED) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("One click from your Mac", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Switch(checked = on, onCheckedChange = { if (it) actions.startMacLink() else actions.stopMacLink() })
+            }
+            Text(MacLinkWords.headline(l), style = MaterialTheme.typography.titleMedium)
+            Text(MacLinkWords.shizuku(l.shizuku, state.sdkInt), style = MaterialTheme.typography.bodyMedium)
+            if (l.shizuku == ShizukuStatus.NO_PERMISSION) {
+                TextButton(onClick = { actions.allowShizuku() }) { Text("Allow in Shizuku") }
+            }
+            Text(
+                "On a Mac paired with ${state.serverName}, the tailbond menu's \"Connect via phone\" turns on this phone's hotspot and Share bonded connection over Bluetooth, joins the hotspot and uses it. Without Shizuku, turn the hotspot on yourself: the Mac still finds Share bonded connection on it.",
+                style = MaterialTheme.typography.bodySmall, color = muted,
+            )
         }
     }
 }

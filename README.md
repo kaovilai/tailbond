@@ -80,6 +80,10 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 - **[Phone hub](docs/phone-hub.md):**
   - An Android phone shares its bonded connection with a laptop through a
     proxy, and the Mac's "Use phone hub" points the system proxy at it.
+  - **One click from the Mac:** the menu bar's "Connect via phone" asks the
+    phone over Bluetooth to start its hotspot (through Shizuku, no root) and
+    its phone hub, joins the hotspot and uses the bonded connection. Without
+    Bluetooth it uses a phone hotspot the Mac is already on. Mac only for now.
   - Android also bonds nearby phones' shared data itself.
   - On the iPhone this is experimental and not bonded yet.
 - **Setup health:** direct-vs-relayed Tailscale peers, CGNAT detection and port reachability, each with how to fix it.
@@ -150,6 +154,7 @@ November 2026; check their sites for current plans).
 | [Speedify](https://speedify.com) | Bonding that just works on every platform, plain-language modes, **Pair & Share** (nearby phones lend their data) and a GL.iNet router app. tailbond's modes and Pair & Share follow its lead | A subscription service (a free account includes 5 GB a month, then paid plans) whose traffic exits through Speedify's servers. tailbond is free with no account, and exits from **your** home or VPS. It's Tailscale-native and open source. Speedify is ahead on polish, support, Windows, and iPhones that bond themselves |
 | [Peplink SpeedFusion Connect](https://www.peplink.com/services/products-sfc/) | Per-link control (Always, Backup only), hot failover and duplicated packets for calls, on Peplink routers and apps | Peplink's hosted service is sold as data plans. Self-hosting means Peplink's [FusionHub](https://www.peplink.com/services/software/virtual-appliance-fusionhub/) appliance, which is free for one device and licensed beyond that. tailbond has no plans or licences for any number of devices, and runs on hardware you already have (GL.iNet stock firmware, Fedora, a VPS, a Mac, Android). Peplink is ahead on enterprise hardware and support |
 | [OpenMPTCProuter](https://www.openmptcprouter.com) | Open source, your own VPS, up to 8 WANs, port forwarding and a public IP | Replaces your router's firmware and has no phone or desktop apps. tailbond installs on stock GL.iNet firmware, adds phone and Mac hubs and Pair & Share, and is built around Tailscale. Full comparison: [docs/comparison-openmptcprouter.md](docs/comparison-openmptcprouter.md) |
+| [Untether](https://github.com/ImOstrovskiy/untether) | One click on a Mac starts an Android phone's hotspot over Bluetooth LE through Shizuku, with no root, then joins it. tailbond's "Connect via phone" adapts its Shizuku hotspot control (BSD-3-Clause, [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)) | Untether hands the Mac the phone's plain hotspot. tailbond also turns on the phone's hub, so the Mac gets the phone's bonded tunnel to your home server, and logs in with the passes your home server already gave both devices (no separate pairing) |
 | [Tailscale](https://tailscale.com) | Zero-config identity, MagicDNS, a machine list, one-tap simplicity. tailbond's apps copy its layout, and pairing uses your tailnet | Tailscale uses one path at a time and doesn't bond links. tailbond adds the bonding and leaves your tailnet as it is ([coming from Tailscale](docs/coming-from-tailscale.md)) |
 
 Built on:

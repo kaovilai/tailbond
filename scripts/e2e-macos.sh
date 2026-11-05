@@ -190,6 +190,9 @@ else
   bad "wrong pin: exit $PIN_RC: $(tail -n 4 "$WORK/pin-wrong.log" | tr '\n' ' ')"
 fi
 
+# "Connect via phone" proves internet with a fetch through the phone hub:
+# here a token only the tunnel reaches
+PHONE_CHECK="http://10.77.0.1:8080/token"
 say "hub: tailbondd client role on this Mac (path lo0 + the shares)"
 mkdir -p "$WORK/hub"
 cat >"$WORK/hub/tailbond.json" <<EOF
@@ -198,7 +201,7 @@ cat >"$WORK/hub/tailbond.json" <<EOF
  "client": {"pairing_uri": "$HUB_URI", "no_dns": true, "manage_routes": false, "captive_portal_detect": false,
             "paths": [{"iface": "lo0", "enabled": true, "priority": "primary", "kind": "ethernet"}]}}
 EOF
-"$TAILBONDD" -config "$WORK/hub/tailbond.json" >"$WORK/hub.log" 2>&1 &
+TB_PHONE_CHECK_URL="$PHONE_CHECK" "$TAILBONDD" -config "$WORK/hub/tailbond.json" >"$WORK/hub.log" 2>&1 &
 HUB_PID=$!
 wait_for 90 "hub connected" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
   && ok "hub connected: tunnel $(hapi "http://$API/api/status" | jq -r .tunnel_ip) on $(grep -o 'TUN utun[0-9]* configured' "$WORK/hub.log" | tail -n1 | awk '{print $2}')" \
@@ -428,13 +431,58 @@ curl -fsS -m 5 "http://$API/proxy.pac" | grep -q 'SOCKS5 127.0.0.1:1889' && ok "
 hapi -X POST -d '{"use": ""}' "http://$API/api/phone-hub" >/dev/null
 [ "$(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')" = "$PACORIG" ] && ok "auto-proxy setting restored" || bad "auto-proxy after off: $(networksetup -getautoproxyurl "$SVC" | tr '\n' ' '), want $PACORIG"
 
+say "connect via phone (the menu bar's one click): the Bluetooth half handed over as the app does, then phone hub, internet, undo"
+# CI runners have no Bluetooth radio and no phone: the menu bar app's
+# Bluetooth result is posted as the app posts it, and the stand-in hub
+# (sim-pixel-hub) is the phone's. tailbondd does the rest for real.
+KEYS="$(curl -fsS -m 5 "http://$API/api/phone-connect/keys" || true)"
+jq -e '(.logins | length) >= 1 and all(.logins[]; (.secret | test("^[a-z2-7]{16}$")) and (.user | startswith("mac/")))' <<<"$KEYS" >/dev/null \
+  && ok "the menu bar app's Bluetooth logins (this Mac only): $(jq -c '[.logins[] | {kid, user}]' <<<"$KEYS")" || bad "keys: $KEYS"
+pc() { curl -fsS -m 120 -H 'Content-Type: application/json' -X POST -d "$1" "http://$API/api/phone-connect"; }
+autoproxy() { networksetup -getautoproxyurl "$SVC" | tr '\n' ' '; }
+PCSOCKS="$(socks)"; PCPAC="$(autoproxy)"
+info "before: SOCKS $PCSOCKS; auto-proxy $PCPAC"
+PC="$(pc '{"wait": true, "connect": {"ble": "ok", "joined": true, "phone": {"id": "sim-pixel-hub", "label": "Pixel", "network": "Mobile data + Wi-Fi", "battery": 81, "paths": 2}}}' || true)"
+jq -e '.state == "bonded" and .via == "bluetooth" and .phone == "Pixel" and .network == "Mobile data + Wi-Fi" and .paths == 2' <<<"$PC" >/dev/null \
+  && ok "one click: $(jq -c . <<<"$PC")" || bad "connect via phone: $PC"
+grep -q "URL: http://127.0.0.1:8077/proxy.pac Enabled: Yes" <<<"$(autoproxy)" && ok "system proxy: $(autoproxy)" || bad "auto-proxy after the click: $(autoproxy)"
+grep -q 'connect via phone: bonded via "Pixel"' "$WORK/hub.log" && ok "tailbondd fetched $PHONE_CHECK through the phone hub before saying bonded" || bad "no bonded line in hub.log"
+GOT="$(curl -fsS -m 15 --socks5-hostname 127.0.0.1:1889 "$PHONE_CHECK" || true)"
+[ "$GOT" = "$TOKEN" ] && ok "internet through SOCKS5 127.0.0.1:1889 → the phone hub: the tunnel-only token" || bad "token through the forwarder: got '$GOT'"
+# what the menu bar renders comes from /api/status (the snapshot loop copies it)
+if wait_for 10 "status says bonded" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.phone_hub.connect.state == \"bonded\"'"; then
+  mkdir -p "$ROOT/out/e2e-macos"
+  hapi "http://$API/api/status" >"$ROOT/out/e2e-macos/phone-connect-status.json"
+  chmod 644 "$ROOT/out/e2e-macos/phone-connect-status.json"
+  ok "menu bar status (phone_hub.connect, saved for the menu's test): $(jq -c '.phone_hub.connect' "$ROOT/out/e2e-macos/phone-connect-status.json")"
+else
+  bad "status: $(hapi "http://$API/api/status" | jq -c .phone_hub)"
+fi
+PC="$(pc '{"disconnect": true}' || true)"
+jq -e '.state == "idle" and (.note | test("proxy settings are back"))' <<<"$PC" >/dev/null && ok "second click: $(jq -c . <<<"$PC")" || bad "disconnect: $PC"
+[ "$(socks)" = "$PCSOCKS" ] && [ "$(autoproxy)" = "$PCPAC" ] && ok "the system proxy is back: SOCKS $(socks); auto-proxy $(autoproxy)" \
+  || bad "after disconnect: SOCKS $(socks), auto-proxy $(autoproxy); want $PCSOCKS / $PCPAC"
+[ ! -f "$WORK/hub/phone-hub-proxy.json" ] && ok "restore record removed" || bad "restore record left behind"
+
+say "connect via phone without Bluetooth: the same click uses the phone hotspot this Mac is on"
+PC="$(pc '{"wait": true, "connect": {"ble": "unsupported", "ble_error": "this runner has no Bluetooth"}}' || true)"
+jq -e '.state == "bonded" and .via == "hotspot" and (.note | startswith("No Bluetooth"))' <<<"$PC" >/dev/null \
+  && ok "fallback: $(jq -c '{state, via, phone, note}' <<<"$PC")" || bad "fallback: $PC"
+pc '{"disconnect": true}' >/dev/null || true
+[ "$(socks)" = "$PCSOCKS" ] && [ "$(autoproxy)" = "$PCPAC" ] && ok "put back after the fallback" || bad "after the fallback: SOCKS $(socks), auto-proxy $(autoproxy)"
+
+say "connect via phone, the phone refuses its hotspot (Shizuku not running): the step is named, nothing changes"
+PC="$(pc '{"wait": true, "connect": {"ble": "hotspot", "ble_error": "Shizuku isn'"'"'t running on the phone", "phone": {"id": "sim-pixel-hub", "label": "Pixel"}}}' || true)"
+jq -e '.state == "failed" and .step == "hotspot" and (.error | test("Shizuku"))' <<<"$PC" >/dev/null && ok "failed at: $(jq -c '{step, error}' <<<"$PC")" || bad "hotspot refused: $PC"
+[ "$(socks)" = "$PCSOCKS" ] && [ "$(autoproxy)" = "$PCPAC" ] && ok "system proxy untouched" || bad "proxy changed on a refusal"
+
 say "phone hub, tailbondd killed (-9) while in use: started again (as launchd does), the original comes back"
 use_hub false >/dev/null || true
 socks | grep -q 'Server=127.0.0.1' && ok "in use again: $(socks)" || bad "not in use: $(socks)"
 info "restore record: $(jq -c '{service, mode, previous}' "$WORK/hub/phone-hub-proxy.json" 2>/dev/null)"
 kill -9 "$HUB_PID"; wait "$HUB_PID" 2>/dev/null || true
 info "after kill -9 (nobody to restore it yet): $(socks)"
-"$TAILBONDD" -config "$WORK/hub/tailbond.json" >>"$WORK/hub.log" 2>&1 &
+TB_PHONE_CHECK_URL="$PHONE_CHECK" "$TAILBONDD" -config "$WORK/hub/tailbond.json" >>"$WORK/hub.log" 2>&1 &
 HUB_PID=$!
 if wait_for 30 "restored at start" grep -q "put back the proxy settings of \"$SVC\"" "$WORK/hub.log"; then
   is_orig() { [ "$(socks)" = "$ORIG" ]; }
@@ -500,7 +548,7 @@ chmod +x "$WORK/nbstub/netbird"
 # the hub with DNS on, the stub first on PATH
 kill "$HUB_PID" 2>/dev/null; wait "$HUB_PID" 2>/dev/null || true
 jq '.client.no_dns = false' "$WORK/hub/tailbond.json" >"$WORK/hub/tb.tmp" && mv "$WORK/hub/tb.tmp" "$WORK/hub/tailbond.json"
-start_hub() { PATH="$WORK/nbstub:$PATH" "$TAILBONDD" -config "$WORK/hub/tailbond.json" >>"$WORK/hub.log" 2>&1 & HUB_PID=$!; }
+start_hub() { PATH="$WORK/nbstub:$PATH" TB_PHONE_CHECK_URL="$PHONE_CHECK" "$TAILBONDD" -config "$WORK/hub/tailbond.json" >>"$WORK/hub.log" 2>&1 & HUB_PID=$!; }
 start_hub
 wait_for 90 "hub connected next to the second VPN" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
   && ok "hub connected" || { bad "hub not connected: $(hapi "http://$API/api/status" | jq -c '{state, error}')"; }

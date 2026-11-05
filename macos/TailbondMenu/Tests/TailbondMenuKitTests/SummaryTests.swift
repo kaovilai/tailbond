@@ -142,6 +142,8 @@ final class StubAgent: URLProtocol {
         let data: Data
         if request.url!.path == "/api/status" {
             data = try! Data(contentsOf: Bundle.module.url(forResource: "connected", withExtension: "json", subdirectory: "Fixtures")!)
+        } else if request.url!.path == "/api/phone-connect/keys" {
+            data = Data("{\"logins\":[{\"kid\":\"1a2b3c4d\",\"user\":\"tiger-mbp/1793836800\",\"secret\":\"7kceoolvxnekqfq2\"}]}".utf8)
         } else {
             data = Data("{\"ok\":true}".utf8)
         }

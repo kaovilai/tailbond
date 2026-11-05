@@ -1,0 +1,61 @@
+{
+  "service": "5f1d0001-7462-4e64-8f6c-7461696c626f",
+  "rx": "5f1d0002-7462-4e64-8f6c-7461696c626f",
+  "tx": "5f1d0003-7462-4e64-8f6c-7461696c626f",
+  "logins": [
+    {
+      "share_key": "0123456789abcdef0123456789abcdef",
+      "hub": "mac",
+      "exp": 1793836800,
+      "pass_key": "58617c98f9751f56046b281e303a8d5a0d54cbd26b5de8ab9328961bb3f10ee4",
+      "user": "mac/1793836800",
+      "secret": "7kceoolvxnekqfq2",
+      "proxy_pass": "cddfysqm2dpdgyvb",
+      "cn": "AAECAwQFBgcICQoLDA0ODw==",
+      "sn": "8PHy8/T19vf4+fr7/P3+/w==",
+      "auth_mac": "ef618f94494f30e81f09ba392adb98db704e72046f6a361ca40749dd2f148e6e",
+      "phone_proof": "67fbeec53059c71f2e39b6351dc48799f1a5b594019cdeb581f1c25922d38bf1",
+      "session_key": "f8b20934a6491d15b5c0a0c5acbc78e43bebe7b0b8638f2b99fe045867471078",
+      "to_phone": "{\"t\":\"cmd\",\"id\":1,\"cmd\":\"hotspot.on\"}",
+      "to_phone_sealed": "97963afa8f5535329045ce32202430e94a6952a2e83cffa464c75c6bd90fbb446ae7d9512ae4b3584531079d8ac86a58ec04b98f61",
+      "to_mac": "{\"t\":\"res\",\"id\":1,\"ok\":true,\"ssid\":\"Pixel 9\",\"pass\":\"correct horse\"}",
+      "to_mac_sealed": "f1eceeaf7731ead1aecf0a0d9d03f37bbced0cd1b433894c5e1141b1053b254904390f78e2d5b9904a4130fbb74b83c19c2646a30827a87b67323b3ceddf4b01834fcd338b0d9d3dedac52a676d47daeeefab335"
+    },
+    {
+      "share_key": "a much longer share key, 64 bytes or so, as the server makes it.",
+      "hub": "dana-macbook",
+      "exp": 4102444800,
+      "pass_key": "cf5cfccb4efaa0415fdfcf6aa64a48eb6c951c6bb1d77ca87dc02707463a173a",
+      "user": "dana-macbook/4102444800",
+      "secret": "tbgvr6dovf6zh7rm",
+      "proxy_pass": "aehk4or3u6fzqdqu",
+      "cn": "MTIzNDU2Nzg5MGFiY2RlZg==",
+      "sn": "ZmVkY2JhMDk4NzY1NDMyMQ==",
+      "auth_mac": "ed9408686453e923454b95d65fb8b9a0953313f13c6c1083d6e532474afd1373",
+      "phone_proof": "95904527898698a60cbdbfce4302ac649410cd53a508e304d4b2fbe06ffead8a",
+      "session_key": "a0a6cbbab19a000df2b35a8c2b7f3f66cd07933b9f6b884c340256fb59591aa2",
+      "to_phone": "{\"t\":\"cmd\",\"id\":1,\"cmd\":\"hotspot.on\"}",
+      "to_phone_sealed": "d577849af1cb77f5ab61964c0c73016e980557ae7be18bf10bcdbaa6fbf7590d369330b8a3bb9a00102fda59827cbef546e569ee84",
+      "to_mac": "{\"t\":\"res\",\"id\":1,\"ok\":true,\"ssid\":\"Pixel 9\",\"pass\":\"correct horse\"}",
+      "to_mac_sealed": "f9d635b042c1da4b8cd8124eb35721493257d9ddb37249979990ca8b712b87c5834d58c0e81e688f9217aaf601b25ca65f235eec439f010a4206f2b07e211f220a11c0f25506a66c43509664e964703d2a28a658"
+    }
+  ],
+  "chunks": [
+    {
+      "message": "{\"t\":\"hello\",\"v\":1,\"cn\":\"AAECAwQFBgcICQoLDA0ODw==\"}",
+      "mtu": 23,
+      "chunks": [
+        "00337b2274223a2268656c6c6f222c2276223a31",
+        "2c22636e223a2241414543417751464267634943",
+        "516f4c4441304f44773d3d227d"
+      ]
+    },
+    {
+      "message": "{\"t\":\"cmd\",\"id\":2,\"cmd\":\"status\"}",
+      "mtu": 185,
+      "chunks": [
+        "00217b2274223a22636d64222c226964223a322c22636d64223a22737461747573227d"
+      ]
+    }
+  ]
+}

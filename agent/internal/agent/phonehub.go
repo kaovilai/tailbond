@@ -119,6 +119,8 @@ type phoneHubState struct {
 	use   *hubUse
 	note  string
 	asked time.Time
+	// "Connect via phone", the menu bar's one click (phoneconnect.go)
+	conn pcState
 	// guards useHub/stopHub against each other (not held with a.mu)
 	op sync.Mutex
 }
@@ -133,6 +135,9 @@ func (a *Agent) phoneHub() *phoneHubState {
 func (a *Agent) initSysProxy() {
 	if a.sysProxy == nil && goruntime.GOOS == "darwin" {
 		a.sysProxy = &sysproxy.Mac{RecordPath: filepath.Join(a.store.Get().StateDir, "phone-hub-proxy.json")}
+	}
+	if a.joinWiFi == nil && goruntime.GOOS == "darwin" {
+		a.joinWiFi = macJoinWiFi
 	}
 }
 
@@ -603,7 +608,7 @@ func (a *Agent) phoneHubStatus() *status.PhoneHub {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil}
+	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil, Connect: a.phoneConnectStatusLocked(hs)}
 	for _, c := range hs.found {
 		out.Found = append(out.Found, status.PhoneHubFound{ID: c.ID, Label: c.Label, Addr: c.Addr, Via: c.Via, Bonded: c.Bonded != "0", Iface: ifaceFor(c.Addr)})
 	}

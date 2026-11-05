@@ -201,6 +201,130 @@ API:
   to stop, or `{"refresh": true}`.
 - `GET /api/status` includes the same object as `phone_hub`.
 
+## One click from the Mac
+
+**Menu bar → Phone → Connect via phone** goes from "phone in my pocket" to
+"this Mac on the phone's bonded connection" in one click. Click again to
+stop.
+
+```mermaid
+sequenceDiagram
+  participant App as Menu bar app
+  participant Phone as tailbond on the phone
+  participant D as tailbondd (root)
+  App->>Phone: Bluetooth LE: hello, login (tbp1-ble)
+  App->>Phone: hotspot.on (Shizuku starts tethering)
+  Phone-->>App: hotspot name and password (sealed)
+  App->>Phone: hub.on (Share bonded connection), status
+  App->>App: join the hotspot (CoreWLAN)
+  App->>D: POST /api/phone-connect (what happened)
+  D->>D: join with networksetup if the app couldn't
+  D->>D: find the phone's hub, Use phone hub
+  D->>D: fetch a small URL through it
+  D-->>App: status: Bonded via phone · Mobile data + Wi-Fi
+```
+
+What you need:
+
+- **On the phone:** tailbond → Share → **One click from your Mac** on (it
+  asks for *Nearby devices*, Android's Bluetooth permission), and
+  [Shizuku](https://shizuku.rikka.app/) running, with tailbond allowed in it
+  (the card has **Allow in Shizuku**). Shizuku runs with wireless debugging,
+  no root; Android doesn't let an ordinary app start the hotspot. Starting
+  the hotspot needs Android 11 or newer.
+- **On the Mac:** the menu bar app, allowed to use Bluetooth (macOS asks on
+  the first click), and the Mac and the phone paired with the same home
+  server. There is no Bluetooth pairing and no code to type: both already
+  hold what the login needs.
+
+What happens, step by step (each failure names its step in the menu):
+
+1. **Bluetooth:** the app finds the phone (GATT service
+   `5f1d0001-7462-4e64-8f6c-7461696c626f`) and logs in.
+2. **Hotspot:** `hotspot.on`. The phone starts Wi-Fi tethering through
+   Shizuku with the hotspot name and password set in Android's settings
+   (tailbond changes neither) and sends them back.
+3. **Phone hub:** `hub.on` turns on Share bonded connection; `status`
+   gives the battery, the phone's bonded links (*Mobile data + Wi-Fi*) and
+   their count, for the menu.
+4. **Wi-Fi:** the app joins the hotspot with CoreWLAN. When it can't (macOS
+   refuses, or the network isn't seen yet), tailbondd joins with
+   `networksetup -setairportnetwork` as root.
+5. **Find, use:** tailbondd looks for that phone's hub (by its id, from the
+   Bluetooth hello) with the usual discovery, for up to 45 s, and uses it as
+   the dashboard's **Use** does: the forwarder on 127.0.0.1:1889 and the
+   system proxy, with the PAC file (local, home and tailnet names direct).
+6. **Internet:** tailbondd fetches
+   `http://connectivitycheck.gstatic.com/generate_204` through the
+   forwarder. If nothing comes back, it stops using the hub, puts the proxy
+   settings back and says so.
+
+The menu then says **Bonded via phone · Mobile data + Wi-Fi** (the phone's
+bonded links), with the phone's name, battery and path count.
+
+**Clicking again** stops using the hub: the proxy settings come back exactly
+as before (the same restore record as **Stop using it**). The app tells the
+phone `hub.off`. The phone's hotspot stays on, and the Mac stays on it; **…and
+turn off its hotspot** also sends `hotspot.off`.
+
+**Without Bluetooth** (off, not allowed, no Bluetooth LE, or no phone
+answers), the same click uses a phone hotspot this Mac is on already: you
+turn on the hotspot and Share bonded connection yourself and join it, then
+click. The menu says *No Bluetooth: … Used the phone hotspot this Mac is
+on.* A phone without Shizuku works this way too.
+
+### The Bluetooth protocol
+
+The reference is `agent/internal/bleproto`. `testdata/vectors.json` pins it
+for the Kotlin (`android/.../ble/BleProtocol.kt`) and Swift
+(`macos/TailbondMenu/.../PhoneProtocol.swift`) sides.
+
+- **GATT:** the Mac writes to RX (`5f1d0002-…`), the phone notifies on TX
+  (`5f1d0003-…`). Every message is a 2-byte length and up to 4096 bytes,
+  cut into pieces of the ATT payload (MTU − 3).
+- **Login:** the pass the home server gave the Mac for the phone (as for the
+  proxy, *The protocol* above), under its own label: the secret is the
+  first 16 characters of `base32(HMAC-SHA256(pass, "tbp1-ble"))`, lower
+  case, so the Bluetooth and proxy credentials differ. The user is
+  `<hub name>/<expiry>`.
+  1. `hello` both ways, each with a 16-byte nonce. The phone's also carries
+     its hub id, its name and its share key id (which login to use).
+  2. `auth`: the Mac's `HMAC(secret, "tbp1-ble-auth|cn|sn|user")`. The phone
+     re-derives the pass from its own key and checks it offline, as for the
+     proxy: an expired pass, another server's Mac or a hub not on the
+     phone's allowed list is refused, and the phone drops the connection.
+  3. The phone answers with `HMAC(secret, "tbp1-ble-phone|cn|sn|user")`, so
+     the Mac knows it is the phone and not something pretending to be one.
+- **After the login** every message is sealed with AES-256-GCM, key
+  `HMAC(secret, "tbp1-ble-session|cn|sn|user")`, nonce = direction, three
+  zero bytes, a 64-bit counter per direction. The hotspot password never
+  crosses Bluetooth in clear; a replayed, reordered or changed message ends
+  the session.
+- **Commands:** `hotspot.on`, `hotspot.off`, `hotspot.state`, `hub.on`,
+  `hub.off`, `status`. Anything before the login, or an unknown command, is
+  refused. Refusals carry a code: `shizuku` (not running, or tailbond not
+  allowed), `unsupported` (Android older than 11), `hotspot` (Android
+  refused tethering), `hub`, `unknown`, `auth`.
+- **tailbondd's half:** `GET /api/phone-connect/keys` gives the app its
+  logins (from this Mac only); `POST /api/phone-connect` takes the app's
+  result, `{"connect": {"ble": "ok", "phone": {...}, "ssid", "pass",
+  "joined"}}` (or `"ble": "off" | "denied" | "unsupported" | "no_phone"` to
+  fall back, `"auth" | "hotspot" | "hub"` when the phone refused), and
+  `{"disconnect": true}`. `GET /api/phone-connect` and `/api/status`'s
+  `phone_hub.connect` say where it is: `{state: idle | working | bonded |
+  failed, step, via: bluetooth | hotspot, phone, network, paths, battery,
+  error, note}`.
+
+**Windows and Linux:** not yet. The one click is the Mac menu bar app's;
+on Linux, tailbondd's phone hub works as before (point apps at
+127.0.0.1:1889). Windows is
+[issue #28](https://github.com/kaovilai/tailbond/issues/28).
+
+Credit: the Bluetooth-plus-Shizuku idea, and the Android hotspot control
+(`ble/HotspotShell.kt`), come from
+[Untether](https://github.com/ImOstrovskiy/untether) (BSD-3-Clause; notice in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).
+
 ## iPhone (experimental)
 
 **Recommended for an iPhone: USB.** Turn on Personal Hotspot and plug the
@@ -258,6 +382,11 @@ These are true of any proxy, so they are said in the UI, not only here:
 | Android hub link | `ShareLinkTest` (JVM) | Against the Kotlin sharer over loopback: relay both ways, another server's key refused, unreachable, lost |
 | Android as a Pair & Share hub | CI `android-e2e` | A Go sharer on the host (10.0.2.2:47077) becomes an active relay path of the app's tunnel, and the sharer relays the phone's bytes. Stopping it drops the path, and the tunnel keeps working |
 | iPhone proxy | CI `ios` job, `swift test` | Handshake, the Go vectors, and on macOS curl through the Swift server (SOCKS5 and HTTP CONNECT; wrong password refused) |
+| One click: tailbondd's steps | `go test ./internal/agent -run PhoneConnect` | Every failure names its step and leaves the proxy as it was: no phone, Bluetooth denied (falls back), bad login, hotspot refused, hub refused, Wi-Fi join failed, no hub found, hub up but no internet (proxy put back); the second click restores the proxy |
+| One click: the Bluetooth protocol | `go test ./internal/bleproto`, `BleProtocolTest` (JVM), `PhoneTests` (`swift test`) | The same vectors in Go, Kotlin and Swift: login, phone proof, session key, sealed messages, chunks for MTU 23 and 185 |
+| One click: the phone's side | `BleServerTest` (Robolectric) | A fake GATT peer, fake Shizuku and fake hub: login, every command, chunking, refusals (before login, wrong login, unknown command, replay, Shizuku not running, tethering failed, Android 10, hub not paired) |
+| One click: Mac end to end | CI `macos` job, `scripts/e2e-macos.sh` | See below |
+| One click: the menu | `swift test` (snapshots `menu-07`…`menu-12`) | The words for idle, bonded, failed, no Bluetooth and the app's Bluetooth stage, and the real tailbondd's status from the e2e decoded and rendered |
 
 What the Mac end-to-end test shows:
 
@@ -269,6 +398,15 @@ What the Mac end-to-end test shows:
 - PAC mode sets the auto-proxy URL.
 - Stopping, and `kill -9` followed by a restart, both bring back the exact
   original setting.
+
+For **Connect via phone** the same e2e posts the menu bar app's Bluetooth
+result as the app does (there is no Bluetooth radio or phone on a CI
+runner), with the stand-in hub as the phone. tailbondd then really finds
+it, sets the system proxy (PAC), fetches a token that only the tunnel
+reaches through it, and says *bonded*; `curl` through 127.0.0.1:1889 gets
+the token; the status is saved and the menu bar's test decodes and renders
+it; the second click brings back the exact original proxy setting. The
+fallback (no Bluetooth) and a hotspot refusal are run the same way.
 
 The stand-in's upstream is the Mac's own tunnel, so this proves the Mac's
 half. The phone's half, its upstream going into its own tunnel, is proven
@@ -286,4 +424,9 @@ on the Android emulator.
   sharer is on the host);
 - the iPhone proxy on a real iPhone (`ProxyServer` and the cellular dialer
   are tested on macOS only);
-- a real kill-switch VPN.
+- a real kill-switch VPN;
+- **Connect via phone with a real phone:** Bluetooth LE between a Mac and a
+  phone (CI runners and the Android emulator have no Bluetooth), Shizuku
+  starting the hotspot on a real device, the Mac joining it with CoreWLAN or
+  `networksetup`, and Android letting the Bluetooth service start Share
+  bonded connection from the background.
