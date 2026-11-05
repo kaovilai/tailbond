@@ -103,6 +103,8 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        // ble/IHotspotShell.aidl: the app <-> Shizuku user service interface
+        aidl = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -155,6 +157,10 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.6.2")
     implementation("androidx.camera:camera-view:1.6.2")
     implementation("com.google.zxing:core:3.5.4")
+
+    // "One click from your Mac": Shizuku starts the hotspot (ble/HotspotShell.kt)
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     testImplementation("junit:junit:4.13.2")
     // screen renders: Robolectric (native graphics) + Roborazzi

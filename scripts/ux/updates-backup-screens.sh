@@ -17,12 +17,16 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:-$REPO/out/ux/updates-backup}"
 PW="${TAILBOND_UX_NODE:-$HOME/.cache/tailbond-ux}"
+PW_PINNED=1.64.1
 
-if [[ ! -d "$PW/node_modules/playwright" || ! -d "$PW/node_modules/vue" ]]; then
+# Playwright is pinned, and a cache holding another version is reinstalled:
+# the npm version picks the container image tag, and a fresh release can have
+# dependencies npm hasn't published yet (playwright-core@1.65.0: ETARGET).
+if [[ "$(node -p "try{require('$PW/node_modules/playwright/package.json').version}catch(e){''}")" != "$PW_PINNED" || ! -d "$PW/node_modules/vue" ]]; then
     mkdir -p "$PW"
-    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i playwright vue@2.6.14 >/dev/null)
+    (cd "$PW" && { [ -f package.json ] || npm init -y >/dev/null; } && npm i --save-exact "playwright@$PW_PINNED" vue@2.6.14 >/dev/null)
 fi
-PW_VERSION="$(node -p "require('$PW/node_modules/playwright/package.json').version")"
+PW_VERSION="$PW_PINNED"
 mkdir -p "$OUT"
 podman run --rm --network=none --userns=keep-id \
     -v "$PW/node_modules:/pw/node_modules:ro,z" -v "$REPO:/repo:ro,z" -v "$OUT:/out:z" \

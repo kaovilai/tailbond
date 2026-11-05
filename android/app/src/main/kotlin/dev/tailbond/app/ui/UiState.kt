@@ -107,6 +107,8 @@ data class UiState(
     val hub: dev.tailbond.app.share.HubLive = dev.tailbond.app.share.HubLive(),
     /** Pair & Share, hub side: nearby phones' shares this phone bonds. */
     val hubShares: List<dev.tailbond.app.share.HubShare> = emptyList(),
+    /** "One click from your Mac": the Bluetooth control channel. */
+    val macLink: dev.tailbond.app.ble.MacLinkLive = dev.tailbond.app.ble.MacLinkLive(),
     /** A camera to scan the pairing code with (TVs have none: the scan button isn't offered). */
     val hasCamera: Boolean = true,
     /** A browser for web pages (most TVs have none: buttons that only open one aren't offered). */
@@ -210,6 +212,11 @@ interface UiActions {
     fun stopShare() {}
     fun startHub() {}
     fun stopHub() {}
+    /** "One click from your Mac" on (asks for the Bluetooth permissions first) and off. */
+    fun startMacLink() {}
+    fun stopMacLink() {}
+    /** Asks Shizuku to let tailbond start the hotspot. */
+    fun allowShizuku() {}
     fun setShareMinBattery(pct: Int) {}
     fun setShareCapMb(mb: Long) {}
     fun setShareAllowedHubs(hubs: List<String>) {}

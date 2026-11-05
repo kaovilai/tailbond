@@ -55,6 +55,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHumanReadableCopyright</key><string>Apache-2.0</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>Connect via phone: tailbond asks your phone over Bluetooth to turn on its hotspot and share its bonded connection.</string>
 </dict>
 </plist>
 PLIST

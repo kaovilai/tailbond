@@ -43,6 +43,11 @@ class MainActivity : ComponentActivity() {
         if (VpnService.prepare(this) == null) vm.connect()
     }
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    // "One click from your Mac": Nearby devices (Bluetooth advertise + connect), then the service
+    private val btPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { got ->
+        if (got.values.all { it }) dev.tailbond.app.ble.BleControlService.start(this)
+        else dev.tailbond.app.ble.MacLinkState.set { it.copy(status = dev.tailbond.app.ble.MacLinkStatus.NO_PERMISSION) }
+    }
 
     private var tailscaleInstalled by mutableStateOf(false)
 
@@ -95,6 +100,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         tailscaleInstalled = tailscaleLaunchIntent() != null
+        // Shizuku may have been started (or allowed) meanwhile
+        dev.tailbond.app.ble.MacLinkState.set { it.copy(shizuku = dev.tailbond.app.ble.ShizukuHotspot.status()) }
         // about once a day: GitHub's latest release (docs/android.md, "Updates")
         vm.updatesDue()
     }
@@ -252,6 +259,13 @@ class MainActivity : ComponentActivity() {
         override fun startShare() = dev.tailbond.app.share.ShareService.start(this@MainActivity)
         override fun startHub() = dev.tailbond.app.share.HubService.start(this@MainActivity)
         override fun stopHub() = dev.tailbond.app.share.HubService.stop(this@MainActivity)
+        override fun startMacLink() {
+            val need = dev.tailbond.app.ble.BleControlService.PERMISSIONS
+            if (dev.tailbond.app.ble.BleControlService.hasPermissions(this@MainActivity)) dev.tailbond.app.ble.BleControlService.start(this@MainActivity)
+            else btPermission.launch(need)
+        }
+        override fun stopMacLink() = dev.tailbond.app.ble.BleControlService.stop(this@MainActivity)
+        override fun allowShizuku() = dev.tailbond.app.ble.ShizukuHotspot.requestPermission()
         override fun stopShare() = dev.tailbond.app.share.ShareService.stop(this@MainActivity)
         override fun setShareMinBattery(pct: Int) = vm.setShareMinBattery(pct)
         override fun setShareCapMb(mb: Long) = vm.setShareCapMb(mb)
@@ -290,6 +304,7 @@ class MainActivity : ComponentActivity() {
             share = dev.tailbond.app.share.ShareState.live.collectAsStateWithLifecycle().value,
             hub = dev.tailbond.app.share.HubState.live.collectAsStateWithLifecycle().value,
             hubShares = dev.tailbond.app.share.ShareHubState.live.collectAsStateWithLifecycle().value,
+            macLink = dev.tailbond.app.ble.MacLinkState.live.collectAsStateWithLifecycle().value,
             hasCamera = hasCamera,
             hasBrowser = hasBrowser,
             hasVpnSettings = hasVpnSettings,

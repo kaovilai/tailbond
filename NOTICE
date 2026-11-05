@@ -15,6 +15,11 @@ This product includes or builds against third-party software:
 - github.com/quic-go/quic-go (MIT)
 - rsc.io/qr (BSD-3-Clause)
 - golang.org/x/crypto, golang.org/x/net, golang.org/x/sys (BSD-3-Clause)
+- Untether (https://github.com/ImOstrovskiy/untether), BSD-3-Clause, Copyright
+  (c) 2026 Oleksii Ostrovskyi, after delta (https://github.com/supershadoe/delta),
+  BSD-3-Clause, Copyright 2024, 2025 supershadoe: the Android hotspot control
+  through Shizuku is adapted from it; see THIRD_PARTY_NOTICES.md
+- Shizuku-API (https://github.com/RikkaApps/Shizuku-API), MIT
 - ZXing core (Apache-2.0), AndroidX / Jetpack Compose (Apache-2.0),
   Kotlin (Apache-2.0) and other Android build dependencies listed in
   android/gradle/libs.versions.toml (Apache-2.0 unless noted there)
