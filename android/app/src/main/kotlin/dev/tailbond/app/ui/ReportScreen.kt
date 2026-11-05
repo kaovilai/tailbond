@@ -1,6 +1,7 @@
 package dev.tailbond.app.ui
 
 import android.content.ClipData
+import android.content.ActivityNotFoundException
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
@@ -14,6 +15,9 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -127,6 +131,14 @@ fun ReportScreen(modifier: Modifier = Modifier) {
             Toast.makeText(ctx, if (done) "Report saved" else "Couldn't save the report", Toast.LENGTH_SHORT).show()
         }
     }
+    // a TV may have no browser or file picker: say so instead of crashing
+    fun open(i: Intent, what: String): Boolean = try {
+        ctx.startActivity(i)
+        true
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(ctx, "This device has no $what. Use Copy full report instead.", Toast.LENGTH_LONG).show()
+        false
+    }
     val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     Column(modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
@@ -137,7 +149,7 @@ fun ReportScreen(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, ReportText.SECURITY_URL.toUri())) }) {
+        TextButton(onClick = { open(Intent(Intent.ACTION_VIEW, ReportText.SECURITY_URL.toUri()), "browser") }) {
             Text("Report a vulnerability privately")
         }
         if (crashed != null) {
@@ -167,8 +179,12 @@ fun ReportScreen(modifier: Modifier = Modifier) {
             supportingText = { Text("A link holds about 7 KB, so the issue gets the newest lines; Copy full report and Save report file have all of them.") },
             modifier = Modifier.fillMaxWidth().testTag("report-logs"),
         )
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { ok = !ok }.testTag("report-confirm")) {
-            Checkbox(checked = ok, onCheckedChange = { ok = it })
+        // one focus stop for the remote: the row is the checkbox
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.toggleable(value = ok, role = Role.Checkbox, onValueChange = { ok = it }).testTag("report-confirm"),
+        ) {
+            Checkbox(checked = ok, onCheckedChange = null, modifier = Modifier.minimumInteractiveComponentSize())
             Text(ReportText.CONFIRM, style = MaterialTheme.typography.bodyMedium)
         }
         if (!(ok && what.isNotBlank())) {
@@ -183,8 +199,7 @@ fun ReportScreen(modifier: Modifier = Modifier) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = {
-                    ctx.startActivity(Intent(Intent.ACTION_VIEW, report().issueUrl().toUri()))
-                    if (crashed != null) CrashCapture.dismiss(ctx)
+                    if (open(Intent(Intent.ACTION_VIEW, report().issueUrl().toUri()), "browser") && crashed != null) CrashCapture.dismiss(ctx)
                 },
                 enabled = ok && what.isNotBlank() && logs != null,
                 modifier = Modifier.testTag("report-open"),
@@ -194,7 +209,13 @@ fun ReportScreen(modifier: Modifier = Modifier) {
                 cm?.setPrimaryClip(ClipData.newPlainText("tailbond report", report().full()))
                 Toast.makeText(ctx, "Full report copied", Toast.LENGTH_SHORT).show()
             }) { Text("Copy full report") }
-            OutlinedButton(onClick = { save.launch(Report.fileName(Instant.now().toString().substringBefore('.') + "Z")) }) { Text("Save report file") }
+            OutlinedButton(onClick = {
+                try {
+                    save.launch(Report.fileName(Instant.now().toString().substringBefore('.') + "Z"))
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(ctx, "This device has no file picker. Use Copy full report instead.", Toast.LENGTH_LONG).show()
+                }
+            }) { Text("Save report file") }
         }
         Text(ReportText.ACCOUNT_NOTE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

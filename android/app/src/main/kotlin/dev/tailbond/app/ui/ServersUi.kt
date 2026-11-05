@@ -183,7 +183,8 @@ fun ServersSection(state: UiState, actions: UiActions, onRepair: (String) -> Uni
                 )
             },
             confirmButton = { TextButton(onClick = { removing = null; actions.removeServer(s.id) }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { removing = null }, Modifier.tvInitialFocus()) { Text("Cancel") } },
+            modifier = Modifier.tvFocusRing(),
         )
     }
 }
@@ -250,8 +251,8 @@ private fun ServerCard(
                 }
                 if (count > 1) Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "More for ${s.name}") }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Pair again") }, onClick = { menu = false; onRepair() })
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.tvFocusRing()) {
+                        DropdownMenuItem(text = { Text("Pair again") }, onClick = { menu = false; onRepair() }, modifier = Modifier.tvInitialFocus())
                         DropdownMenuItem(
                             text = { Text("Remove from this phone", color = MaterialTheme.colorScheme.error) },
                             onClick = { menu = false; onRemove() },

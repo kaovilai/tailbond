@@ -120,7 +120,10 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
                 if (s.checking) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(UpdateWords.lastChecked(s, state.now()), style = MaterialTheme.typography.bodySmall, color = muted)
                 val apk = s.apkUrl
-                if (a == Availability.AVAILABLE && apk != null && !u.debugBuild) {
+                if (!state.hasBrowser) {
+                    // most TVs: no browser to download with (docs/android.md, "Android TV")
+                    if (a == Availability.AVAILABLE) Text(UpdateWords.noBrowser(u.repo), style = MaterialTheme.typography.bodyMedium)
+                } else if (a == Availability.AVAILABLE && apk != null && !u.debugBuild) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Button(onClick = { actions.openUrl(apk) }) {
                             Icon(Icons.Filled.Download, null)
@@ -154,7 +157,7 @@ fun UpdatesScreen(state: UiState, actions: UiActions, modifier: Modifier = Modif
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(UpdateWords.OBTAINIUM_TITLE, style = MaterialTheme.typography.titleMedium)
             Text(UpdateWords.obtainium(u.repo), style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = { actions.openUrl("https://github.com/${u.repo}/blob/main/docs/android.md#updates") }) {
+            if (state.hasBrowser) TextButton(onClick = { actions.openUrl("https://github.com/${u.repo}/blob/main/docs/android.md#updates") }) {
                 Text("How to set up Obtainium")
             }
         }
@@ -275,7 +278,7 @@ private fun PassphraseDialog(inline: Boolean, title: String, confirm: String, on
                 Text("Choose a passphrase for this backup. You need it to restore. tailbond can't recover it if you forget it.")
                 PassField(pass, { pass = it }, "Passphrase", show,
                     if (pass.isNotEmpty() && short) "At least ${BackupFile.MIN_PASSPHRASE} characters (${pass.length} so far)" else "At least ${BackupFile.MIN_PASSPHRASE} characters. A few words work well",
-                    pass.isNotEmpty() && short)
+                    pass.isNotEmpty() && short, first = true)
                 PassField(again, { again = it }, "Type it again", show, if (mismatch) "Doesn't match" else null, mismatch)
                 Row(Modifier.selectable(selected = show, onClick = { show = !show }, role = Role.Checkbox), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = show, onCheckedChange = null)
@@ -293,7 +296,7 @@ private fun PassphraseDialog(inline: Boolean, title: String, confirm: String, on
 }
 
 @Composable
-private fun PassField(value: String, onChange: (String) -> Unit, label: String, show: Boolean, help: String?, error: Boolean) {
+private fun PassField(value: String, onChange: (String) -> Unit, label: String, show: Boolean, help: String?, error: Boolean, first: Boolean = false) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -303,7 +306,7 @@ private fun PassField(value: String, onChange: (String) -> Unit, label: String, 
         supportingText = help?.let { { Text(it) } },
         visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(if (first) Modifier.tvInitialFocus() else Modifier),
     )
 }
 
@@ -317,7 +320,7 @@ private fun RestorePassphraseDialog(h: dev.tailbond.app.backup.BackupHeader, b: 
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Backup of ${h.host.ifBlank { "a phone" }} from ${createdText(h.created)}, tailbond ${h.agentVersion}. Type its passphrase.")
-                PassField(pass, { pass = it }, "Passphrase", false, b.error, b.error != null)
+                PassField(pass, { pass = it }, "Passphrase", false, b.error, b.error != null, first = true)
                 b.busy?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         },
@@ -354,7 +357,8 @@ private fun RestorePreviewDialog(p: dev.tailbond.app.backup.RestorePreview, b: B
             }
         },
         confirmButton = { TextButton(onClick = actions::confirmRestore, enabled = b.busy == null) { Text("Restore") } },
-        dismissButton = { TextButton(onClick = actions::dismissBackup) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = actions::dismissBackup, Modifier.tvInitialFocus()) { Text("Cancel") } },
+        modifier = Modifier.tvFocusRing(),
     )
 }
 
@@ -369,8 +373,9 @@ private fun RestoreDoneDialog(b: BackupUi, actions: UiActions) {
                     "Not what you wanted? Undo puts everything back as it was. It works once.",
             )
         },
-        confirmButton = { TextButton(onClick = actions::dismissBackup) { Text("Done") } },
+        confirmButton = { TextButton(onClick = actions::dismissBackup, Modifier.tvInitialFocus()) { Text("Done") } },
         dismissButton = { TextButton(onClick = actions::undoRestore, enabled = b.undoAt != null) { Text("Undo restore") } },
+        modifier = Modifier.tvFocusRing(),
     )
 }
 
@@ -385,7 +390,7 @@ private fun DialogFrame(
     dismissButton: @Composable () -> Unit,
 ) {
     if (!inline) {
-        AlertDialog(onDismissRequest = onDismiss, title = title, text = text, confirmButton = confirmButton, dismissButton = dismissButton)
+        AlertDialog(onDismissRequest = onDismiss, title = title, text = text, confirmButton = confirmButton, dismissButton = dismissButton, modifier = Modifier.tvFocusRing())
         return
     }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)), contentAlignment = Alignment.Center) {

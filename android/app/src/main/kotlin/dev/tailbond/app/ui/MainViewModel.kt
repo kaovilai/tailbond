@@ -465,9 +465,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _apps.value = withContext(Dispatchers.IO) {
                 val pm = getApplication<Application>().packageManager
                 val self = getApplication<Application>().packageName
-                // launchable apps only (manifest <queries> for MAIN/LAUNCHER, no QUERY_ALL_PACKAGES)
-                val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                pm.queryIntentActivities(launcher, 0)
+                // launchable apps only (manifest <queries> for MAIN/LAUNCHER, no QUERY_ALL_PACKAGES);
+                // on a TV, also the apps with only a TV (leanback) launcher entry
+                listOf(Intent.CATEGORY_LAUNCHER, Intent.CATEGORY_LEANBACK_LAUNCHER)
+                    .flatMap { pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(it), 0) }
                     .map { it.activityInfo.applicationInfo }
                     .filter { it.packageName != self }
                     .distinctBy { it.packageName }

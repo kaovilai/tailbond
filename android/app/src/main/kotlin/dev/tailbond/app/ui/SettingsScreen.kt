@@ -1,5 +1,7 @@
 package dev.tailbond.app.ui
 
+import dev.tailbond.app.BuildConfig
+
 import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.foundation.clickable
@@ -129,9 +131,18 @@ fun SettingsScreen(
                 style = if (multi) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
                 color = if (multi) MaterialTheme.colorScheme.onSurface else muted,
             )
-            OutlinedButton(onClick = actions::openVpnSettings) {
-                Icon(Icons.Filled.VpnKey, null)
-                Text("  Open Android VPN settings")
+            if (state.hasVpnSettings) {
+                OutlinedButton(onClick = actions::openVpnSettings) {
+                    Icon(Icons.Filled.VpnKey, null)
+                    Text("  Open Android VPN settings")
+                }
+            } else {
+                // many TVs have no VPN settings screen: Always-on is set from a computer (docs/android.md, "Android TV")
+                Text(
+                    "This device has no VPN settings screen. From a computer with adb: " +
+                        "adb shell settings put secure always_on_vpn_app ${BuildConfig.APPLICATION_ID}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
 

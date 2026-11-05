@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -226,7 +227,8 @@ private fun StatusCard(state: UiState, actions: UiActions) {
                     Text(Words.stateLine(live, state.serverName, state.settings.handedToTailscale), style = MaterialTheme.typography.bodyMedium)
                 }
                 Spacer(Modifier.width(12.dp))
-                Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f))
+                // TV: the remote starts here, on the main switch
+                Switch(checked = on, onCheckedChange = actions::setOn, modifier = Modifier.scale(1.3f).tvInitialFocus().testTag("main-switch"))
             }
             // which server is in use and why, full width under the switch
             val note = if (on) Words.serverNote(live.failover, state.serverNames) else null
@@ -239,7 +241,8 @@ private fun StatusCard(state: UiState, actions: UiActions) {
                         Text(note.line, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         note.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         val cardInk = androidx.compose.material3.LocalContentColor.current
-                        note.action?.let { a ->
+                        // no VPN settings screen (many TVs): no button that does nothing
+                        note.action?.takeIf { !it.vpnSettings || state.hasVpnSettings }?.let { a ->
                             val run = { if (a.vpnSettings) actions.openVpnSettings() else a.serverId?.let { actions.useServerNow(it) } ?: Unit }
                             if (a.filled) Button(onClick = run, modifier = Modifier.padding(top = 8.dp)) { Text(a.label) }
                             else TextButton(onClick = run, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {

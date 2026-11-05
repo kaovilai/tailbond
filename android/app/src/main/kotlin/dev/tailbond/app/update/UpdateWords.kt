@@ -90,6 +90,11 @@ object UpdateWords {
             "and installs each new version. Add tailbond in it by that address, and set Obtainium to check every hour " +
             "(Obtainium → Settings → Background update checking interval → 1 hour)."
 
+    /** A device with no browser (most TVs) can't download the APK itself. */
+    fun noBrowser(repo: String): String =
+        "This device has no browser to download it with. On a computer, get tailbond-android.apk from " +
+            "github.com/$repo/releases/latest and install it with adb install -r, or with a file manager app that installs APKs."
+
     const val NOTIFY_TITLE = "Update ready: tap to install"
     fun notifyText(version: String) = "tailbond $version is out. Tap to download it; Android then asks you to install it."
 }

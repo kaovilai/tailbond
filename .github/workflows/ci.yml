@@ -198,6 +198,14 @@ jobs:
           name: report-screens-android
           path: out/ux/report/android/
           if-no-files-found: error
+      # Android TV (docs/android.md, "Android TV"): the key screens at 1080p, with the D-pad focus
+      - name: Android TV screens (Robolectric renders)
+        run: android/scripts/gradle.sh :app:testDebugUnitTest --tests 'dev.tailbond.app.ux.TvScreens' -Ptailbond.uxOut="$PWD/out/ux/tv/android"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tv-screens-android
+          path: out/ux/tv/android/
+          if-no-files-found: error
       - name: x86_64 debug APK (emulator e2e)
         run: android/scripts/build-e2e-apk.sh
       - uses: actions/upload-artifact@v7
@@ -315,6 +323,43 @@ jobs:
         with:
           name: android-e2e
           path: out/e2e-android/
+          if-no-files-found: warn
+
+  # Android TV (docs/android.md, "Android TV"): the same x86_64 debug APK on
+  # an Android TV emulator, found through the TV launcher and driven with the
+  # remote's keys only (scripts/e2e-android-tv.sh). No server: the screens,
+  # focus and dialogs, not the tunnel (job android-e2e covers that).
+  android-tv:
+    name: Android TV emulator (remote only)
+    runs-on: ubuntu-24.04
+    needs: android
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-apk-x86_64
+          path: out/android/
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android TV emulator (API 36, x86_64, 1080p) and the checks
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: scripts/e2e-android-tv.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-tv
+          path: out/e2e-android-tv/
           if-no-files-found: warn
 
   # The macOS client (hub) role (docs/macos.md): patched mqvpn built natively

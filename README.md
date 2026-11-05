@@ -100,6 +100,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 | macOS (Apple silicon) | Home server | [Mac as home server](docs/macos.md#mac-as-home-server) (`install.sh --role server`) | CI-tested (runner + Linux client VM; not on a real Mac or with a real Tailscale) |
 | Linux laptop | Hub | [VPS guide, `--client`](docs/vps.md#a-linux-laptop-instead-client-role) | CI-tested |
 | Android 8+ | Phone (bonds itself) and sharer | [Android](docs/android.md) | CI-tested (emulator) |
+| Android TV / Google TV (Android 8+) | Bonds itself, by remote | [Android TV](docs/android.md#android-tv) | CI-tested (TV emulator, remote keys only; no tunnel) |
 | iPhone (iOS 16+) | Sharer (tailbond Share) | [iOS](docs/ios.md) | CI-tested (simulator) |
 
 GL.iNet routers can also install and update tailbond from **APPLICATIONS → Plug-ins**, with the signed feed `https://github.com/kaovilai/tailbond/releases/latest/download` as a custom source ([how](docs/glinet.md#install-and-update-from-gls-plug-ins-page)).
