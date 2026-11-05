@@ -125,7 +125,8 @@ sh_ cmd package query-activities --brief -a android.intent.action.MAIN -c androi
 grep -q "$PKG/.ui.MainActivity" "$OUT/leanback.txt" && ok "the TV launcher lists tailbond" || bad "LEANBACK_LAUNCHER doesn't resolve to tailbond"
 # Android's VPN dialog (VpnService.prepare) and VPN settings on this TV
 HAS_VPNDIALOGS=0
-if sh_ pm list packages | grep -q "com.android.vpndialogs"; then HAS_VPNDIALOGS=1; ok "Android's VPN permission dialog is installed"
+# pm path: pm list packages leaves it out on the Android TV image
+if sh_ pm path com.android.vpndialogs | grep -q "^package:"; then HAS_VPNDIALOGS=1; ok "Android's VPN permission dialog is installed"
 else note "no com.android.vpndialogs on this image: tailbond says it can't turn on here"; fi
 vs="$(sh_ cmd package resolve-activity --brief -a android.settings.VPN_SETTINGS | tail -n1)"
 if [ -n "$vs" ] && ! grep -q "No activity" <<<"$vs"; then note "VPN settings screen: $vs"; else note "no VPN settings screen: Settings shows the adb way to set Always-on"; fi
