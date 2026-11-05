@@ -145,6 +145,8 @@ Requests that arrive on a tunnel address (the server's `subnet`/`subnet6`) come 
 | DELETE | `/api/servers/{name}` | client, additive: forget one server (the next one takes over if it was active) |
 | POST | `/api/servers/active` | client, additive: `{"name"}` "Use this server now" (switches immediately; no automatic failback until it fails) |
 | POST | `/api/servers/order` | client, additive: `{"names":[…]}` the full list in the new order; the first is the primary |
+| POST | `/api/servers/enabled` | client, additive: `{"name","enabled"}` turns a server off or on. An off server keeps its place but is never connected to, probed or switched to; one server must stay on; an "Always use" choice naming it goes back to prefer |
+| POST | `/api/servers/rename` | client, additive: `{"name","new_name"}` (1-32 letters, digits, `.`, `_`, `-`; unique); the failover choice that names it follows |
 | POST | `/api/servers/policy` | client, additive: `{"policy":"prefer"\|"always","server"?,"switch_after_sec"?,"failback_after_sec"?}` |
 | GET | `/api/bypass` | client, additive: `{"rules":[…],"support":{…},"wans":[{"name","label","up","default"}],"counters":{"<id>":{"connections"}}}` (connections a rule sent past the tunnel since it was applied) ([bypass rules](#bypass-rules-client-role)) |
 | POST | `/api/bypass` | client, additive: one rule; without `id` (or an unknown one) it is added, else replaced. Returns the stored rule (with its `id`) |
@@ -345,6 +347,7 @@ The agent generates the mqvpn INI under `state_dir` (`server.conf` / `client.con
 Additive keys (all optional):
 - `server.users`: `[{"name","key","created"}]`, the registered clients (written by `POST /api/clients`; the file is mode 0600);
 - `server.disable_dns`: no DNS forwarder (the pairing payload then has no `dns`);
+- `server.relayed` (additive: devices reach this server through a relay you run, so Setup health skips the line's own address check; `public_addr` is the relay's; [behind-cgnat.md](behind-cgnat.md); OpenWrt UCI `server.relayed`);
 - `server.no_advertise_route`: don't advertise the tunnel subnet to the tailnet (Fedora hook; OpenWrt uses UCI `server.advertise_routes`);
 - `approvers`: Tailscale logins who may use the dashboard from the tailnet without a password, besides the server's owner (on a tagged server, the only ones);
 - `client.manage_routes` (default `true`; set it to `false` on OpenWrt), `client.no_dns` (don't let mqvpn change the system resolver), `client.disconnected` (persisted connect toggle), `client.paths[].kind` (override the kind heuristic), `client.mtu` (tunnel MTU, default 1280, IPv6's minimum: mqvpn's auto value assumes a 1500-byte uplink and loses large packets on smaller ones; in Speed, which reorders, mqvpn is given 8 more for its reorder header so the TUN still gets it);
@@ -352,6 +355,7 @@ Additive keys (all optional):
 - `android_apk`: APK offered as `GET /tailbond.apk` (default `/usr/share/tailbond/tailbond.apk`; nothing is offered when the file is missing);
 - `glinet_ipk`: router package offered as `GET /tailbond-glinet.ipk`;
 - `macos_bundle`: the macOS bundle the phone page offers (default `/usr/share/tailbond/tailbond-macos-arm64.tar.gz`; without it, fetched from the GitHub release and cached);
+- `tcp_mode` (`auto` default: TCP listeners open with MPTCP and fall back to plain TCP when a kernel's MPTCP doesn't connect; `mptcp`; `tcp`; env `TAILBOND_TCP_MODE` wins),
 - `landing_port` (server: phone page bind port, default 80, `-1` = off), `landing_public_port` (the port tailnet devices use, default the same);
 - `server.users[].ts_node`: the Tailscale stable node ID that asked to pair (re-asking re-issues this user's key);
 - `client.paths[].iface` may be an OpenWrt network name (`wan`, `wwan`, `tethering`, `modem_0001`); unconfigured networks in the firewall's wan zone are used as primary (Ethernet, Wi-Fi) or secondary (tethering, cellular) paths;

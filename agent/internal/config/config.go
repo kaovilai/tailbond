@@ -77,6 +77,11 @@ type Server struct {
 	// Additive: don't advertise the tunnel subnet to the tailnet (default:
 	// advertise it; hooks get TB_ADVERTISE_ROUTE=0).
 	NoAdvertiseRoute bool `json:"no_advertise_route,omitempty"`
+	// Additive: devices reach this server through a relay you run (a VPS
+	// that forwards the tunnel port here, docs/behind-cgnat.md), so this
+	// machine's own internet address doesn't matter: Setup health stops
+	// checking it. public_addr is the relay's address.
+	Relayed bool `json:"relayed,omitempty"`
 }
 
 type PathSetting struct {
@@ -267,6 +272,10 @@ type Config struct {
 	Mode       string `json:"mode"`
 	Server     Server `json:"server"`
 	Client     Client `json:"client"`
+	// Additive: how TCP listeners are opened: auto (MPTCP, falling back to
+	// plain TCP when a kernel's MPTCP stack doesn't connect; default),
+	// mptcp or tcp. See internal/tcplisten.
+	TCPMode string `json:"tcp_mode,omitempty"`
 	// Additive: skip every tailscale CLI call (e2e tests, hosts without it).
 	DisableTailscale bool `json:"disable_tailscale,omitempty"`
 	// Additive: mqvpn control API endpoint (contract fixes 127.0.0.1:9077).

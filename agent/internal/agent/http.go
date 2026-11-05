@@ -21,6 +21,7 @@ import (
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
 	"github.com/kaovilai/tailbond/agent/internal/pairing"
+	"github.com/kaovilai/tailbond/agent/internal/tcplisten"
 	"github.com/kaovilai/tailbond/agent/web"
 )
 
@@ -72,6 +73,8 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/servers/{name}", a.hServersDelete)
 	mux.HandleFunc("POST /api/servers/active", a.hServersActive)
 	mux.HandleFunc("POST /api/servers/order", a.hServersOrder)
+	mux.HandleFunc("POST /api/servers/enabled", a.hServersEnabled)
+	mux.HandleFunc("POST /api/servers/rename", a.hServersRename)
 	mux.HandleFunc("POST /api/servers/policy", a.hServersPolicy)
 	mux.HandleFunc("GET /api/bypass", a.hBypassGet)
 	mux.HandleFunc("POST /api/bypass", a.hBypassPost)
@@ -482,13 +485,16 @@ func (a *Agent) hTailscale(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsView struct {
-	Role        string `json:"role"`
-	Mode        string `json:"mode"`
-	ConfigPath  string `json:"config_path"`
-	Password    bool   `json:"password_set"`
-	PublicAddr  string `json:"public_addr,omitempty"`
-	Effective   string `json:"effective_public_addr,omitempty"`
-	Guessed     bool   `json:"public_addr_guessed,omitempty"`
+	Role       string `json:"role"`
+	Mode       string `json:"mode"`
+	ConfigPath string `json:"config_path"`
+	Password   bool   `json:"password_set"`
+	PublicAddr string `json:"public_addr,omitempty"`
+	Effective  string `json:"effective_public_addr,omitempty"`
+	Guessed    bool   `json:"public_addr_guessed,omitempty"`
+	// server: no public_addr set; the address is the public IPv4 Tailscale
+	// sees (clients refresh it over Tailscale, no Dynamic DNS needed)
+	Auto        bool   `json:"public_addr_auto,omitempty"`
 	Port        int    `json:"port,omitempty"`
 	Subnet      string `json:"subnet,omitempty"`
 	TLS         string `json:"tls,omitempty"`
@@ -551,7 +557,9 @@ func (a *Agent) hSettingsGet(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		tls := a.tlsInfo
 		a.mu.Unlock()
-		v.PublicAddr, v.Effective, v.Guessed = cfg.Server.PublicAddr, a.publicAddr(), cfg.Server.PublicAddr == ""
+		v.PublicAddr = cfg.Server.PublicAddr
+		v.Effective, v.Auto = a.publicAddrFor(false)
+		v.Guessed = v.PublicAddr == "" && !v.Auto
 		v.Port, v.Subnet, v.TLS, v.TLSName, v.CertSHA256 = cfg.Server.Port, cfg.Server.Subnet, tls.source, tls.sni, tls.sha256
 		v.LandingURL, v.LandingTyped = a.landingURL(r.Context(), r.Host)
 		v.LandingQR, _ = pairing.QRSVG(v.LandingURL)
@@ -680,7 +688,7 @@ func (a *Agent) serveOn(ctx context.Context, what string, h http.Handler, addrs 
 			if ok {
 				continue
 			}
-			ln, err := net.Listen("tcp", addr)
+			ln, err := tcplisten.Listen("tcp", addr)
 			if err != nil {
 				// loopback/explicit failures are fatal at startup; Tailscale
 				// IPs may simply not be up yet.

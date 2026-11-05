@@ -963,7 +963,7 @@
         addName: "", added: null, addErr: "", addrEdit: false, addrValue: "",
         wantOn: null, actErr: "", showTyped: false, pwEdit: false, pwValue: "", health: null, showHealthOk: false,
         // client: more servers (failover) and bypass rules
-        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", histAll: false,
+        srvAdd: false, srvTyped: "", srvPaste: "", srvErr: null, srvShowPaste: false, backOnUntil: 0, srvMore: "", srvRename: "", srvRenameVal: "", srvRenameErr: "", histAll: false,
         bp: null, lan: null, bpEdit: null,
         // updates and backups
         updX: null, bks: null, ub: null, ubSched: null, restartUntil: 0, restarting: false,
@@ -1402,6 +1402,17 @@
         var t = names[i]; names[i] = names[j]; names[j] = t;
         return this.run("srv", api("POST", "/api/servers/order", { names: names }), names[0] + " is the first choice");
       },
+      setServerOn: function (s, on) {
+        return this.run("srv", api("POST", "/api/servers/enabled", { name: s.name, enabled: on }), s.name + (on ? " is on" : " is off: it won't be used or switched to"));
+      },
+      startRename: function (s) { this.srvMore = ""; this.srvRename = s.name; this.srvRenameVal = s.name; this.srvRenameErr = ""; },
+      saveRename: function (s) {
+        var self = this, v = (this.srvRenameVal || "").trim();
+        if (!v || v === s.name) { this.srvRename = ""; return; }
+        this.srvRenameErr = "";
+        // runE rejects on failure: the editor stays open with the error under it
+        return this.runE("srv", api("POST", "/api/servers/rename", { name: s.name, new_name: v }), "Renamed to " + v).then(function () { self.srvRename = ""; }, function (e) { self.srvRenameErr = self.humanError(e); });
+      },
       useServer: function (s) {
         return this.run("srv", api("POST", "/api/servers/active", { name: s.name }), "Switching to " + s.name + "…");
       },
@@ -1575,6 +1586,7 @@
         kids.push(this.rDown(h));
       } else {
         kids.push(this.rCrashAlert(h));
+        kids.push(this.rRoleSwitch(h));
         kids = kids.concat(this.role === "server" ? this.rServer(h) : this.rClient(h));
       }
       if (this.loaded && !this.down && this.st) {
@@ -1596,6 +1608,17 @@
     // Render helpers (a mixin keeps render() short; Vue binds `this`).
     mixins: [UB, REP, {
       methods: {
+        // One switch at the top: what this router is. Asks before changing.
+        rRoleSwitch: function (h) {
+          var self = this, cur = this.role;
+          var opts = [["client", "Travel router"], ["server", "Home server"]];
+          return h("div", { class: "tb-row", style: { justifyContent: "space-between", marginBottom: "12px", flexWrap: "wrap", gap: "8px" } }, [
+            h("span", { class: "tb-muted tb-small" }, "This router is a"),
+            h("div", { class: "tb-seg", attrs: { role: "radiogroup", "aria-label": "What this router is" } }, opts.map(function (o) {
+              return h("button", { class: cur === o[0] ? "on" : "", attrs: { type: "button", role: "radio", "aria-checked": String(cur === o[0]) }, on: { click: function () { if (cur !== o[0]) self.setRole(o[0]); } } }, o[1]);
+            }))
+          ]);
+        },
         card: function (h, title, body, extra, cls) {
           return h("div", { class: "tb-card" + (cls ? " " + cls : "") }, [
             title ? h("div", { class: "tb-card-h" }, [h("span", title), extra || null]) : null,
@@ -1945,7 +1968,8 @@
         // Two or more servers: the ordered list, the switching choice, add/remove.
         rServers: function (h) {
           var self = this, st = this.st, ss = this.servers, fo = st.failover || {}, busy = this.busy.srv;
-          var first = ss[0].name;
+          var onList = ss.filter(function (sv) { return sv.state !== "off"; });
+          var firstSv = onList[0] || ss[0], first = firstSv.name;
           var CHIP = { active: ["ok", "Connected"], connecting: ["blue", "Connecting…"], standby: ["", "Standby"], unreachable: ["err", "Can't reach"], unknown: ["", "Checking…"], off: ["", "Off"] };
           var rows = ss.map(function (sv, i) {
             var chip = !self.isOn() ? ["", "Off"] : CHIP[sv.state] || CHIP.unknown;
@@ -1955,17 +1979,28 @@
             return h("div", { class: "tb-srv" }, [
               h("div", { class: "tb-wan-icon" }, [icon(h, "server")]),
               h("div", { class: "tb-grow" }, [
-                h("div", { class: "tb-wan-t" }, [sv.name, h("span", { class: "tb-role" + (i === 0 ? " first" : "") }, i === 0 ? "First choice" : "Backup")]),
+                self.srvRename === sv.name
+                  ? h("div", { class: "tb-row", style: { gap: "6px" } }, [
+                    h("input", { class: "tb-input", attrs: { "aria-label": "Name for " + sv.name, maxlength: 32, placeholder: "home1, vps…" }, domProps: { value: self.srvRenameVal }, on: { input: function (e) { self.srvRenameVal = e.target.value; }, keydown: function (e) { if (e.key === "Enter") self.saveRename(sv); else if (e.key === "Escape") self.srvRename = ""; } } }),
+                    self.btn(h, "Save", function () { self.saveRename(sv); }, "small primary", busy),
+                    self.btn(h, "Cancel", function () { self.srvRename = ""; }, "small text", busy),
+                    self.srvRenameErr ? h("div", { class: "tb-small", style: { color: "#c03737", width: "100%" }, attrs: { role: "alert" } }, self.srvRenameErr) : null
+                  ])
+                  : h("div", { class: "tb-wan-t" }, [sv.name, h("span", { class: "tb-role" + (i === 0 ? " first" : "") }, sv.state === "off" ? "Off" : i === 0 ? "First choice" : "Backup")]),
                 h("div", { class: "tb-muted tb-small" }, detail)
               ]),
               h("span", { class: "tb-chip " + chip[0] }, chip[1]),
               h("div", { class: "tb-srv-ctl" }, [
+                self.sw(h, sv.state !== "off", function () { self.setServerOn(sv, sv.state === "off"); }, false, busy, "Use " + sv.name),
                 h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move up", "aria-label": "Move " + sv.name + " up", disabled: i === 0 || !!busy }, on: { click: function () { self.moveServer(i, -1); } } }, [icon(h, "up", 16)]),
                 h("button", { class: "tb-btn small icon", attrs: { type: "button", title: "Move down", "aria-label": "Move " + sv.name + " down", disabled: i === ss.length - 1 || !!busy }, on: { click: function () { self.moveServer(i, 1); } } }, [icon(h, "down", 16)]),
                 sv.active || sv.state === "unreachable" || sv.state === "off" ? h("span", { class: "tb-btn small", style: { visibility: "hidden" }, attrs: { "aria-hidden": "true" } }, "Use now")
                   : self.btn(h, "Use now", function () { self.useServer(sv); }, "small", busy || !self.isOn()),
                 self.srvMore === sv.name
-                  ? self.btn(h, "Remove " + sv.name, function () { self.srvMore = ""; self.removeServer(sv); }, "small danger", busy)
+                  ? h("span", { class: "tb-srv-ctl" }, [
+                    self.btn(h, "Rename", function () { self.startRename(sv); }, "small", busy),
+                    self.btn(h, "Remove " + sv.name, function () { self.srvMore = ""; self.removeServer(sv); }, "small danger", busy)
+                  ])
                   : self.btn(h, "More", function () { self.srvMore = sv.name; }, "small text", busy)
               ])
             ]);
@@ -1973,9 +2008,9 @@
           // the switching choice, in the servers' own names
           var cur = fo.policy === "always" ? "always:" + fo.server : "prefer";
           var paused = cur === "prefer" && fo.reason === "manual";
-          var preferLabel = ss.length === 2 ? "Prefer " + first + ", use " + ss[1].name + " if " + first + " is down" : "Prefer " + first + ", then the next one in the list that works";
+          var preferLabel = onList.length === 2 ? "Prefer " + first + ", use " + onList[1].name + " if " + first + " is down" : "Prefer " + first + ", then the next one in the list that works";
           var opts = [{ key: "prefer", t: preferLabel, b: "Switches by itself when " + first + " is down, and back when it's up again." }]
-            .concat(ss.map(function (sv) { return { key: "always:" + sv.name, t: "Always use " + sv.name, b: "Never switches by itself, even if " + sv.name + " is down." }; }));
+            .concat(onList.map(function (sv) { return { key: "always:" + sv.name, t: "Always use " + sv.name, b: "Never switches by itself, even if " + sv.name + " is down." }; }));
           var me = this.settings && this.settings.paired_as;
           var ks = !(this.info && this.info.kill_switch === false);
           return this.card(h, "Servers", [
@@ -1993,7 +2028,7 @@
               })),
               paused ? h("div", { class: "tb-alert info", style: { marginTop: "10px", marginBottom: 0, padding: "10px 12px", fontSize: "13px" } }, [h("div", [
                 h("b", "Paused: " + st.active_server + " was picked by hand" + (fo.since ? " at " + fmtHM(fo.since) : "") + ". "),
-                ss[0].state === "standby" ? h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
+                firstSv.state === "standby" ? h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.useServer({ name: first }); } } }, "Go back to automatic (switches to " + first + " now)")
                   : "Automatic switching comes back if " + st.active_server + " stops working, or when you pick " + first + "."])]) : null,
               h("div", { class: "tb-help" }, "How it decides: tailbond checks the standby servers every 10 s with one small packet. It switches when " + first + " hasn't worked for " + fmtDur(fo.switch_after_sec || 15) +
                 ", and comes back once " + first + " has answered for " + fmtDur(fo.failback_after_sec || 120) + ". It watches only whether " + first + " answers tailbond: a slow connection or a website that doesn't load doesn't make it switch.")
@@ -2430,9 +2465,6 @@
               h("div", { class: "tb-actions" }, [this.btn(h, this.busy.paste ? "Pairing…" : "Pair", function () { self.pastePair(); }, "primary", this.busy.paste)])
             ]) : null
           ]));
-          out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Setting up the router that stays at home? ", h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.setRole("server"); } } }, "Make this the home server"), " (you can switch back here)"
-          ]));
           return out;
         },
         joinErrTitle: function (j) {
@@ -2498,9 +2530,6 @@
           out.push(this.rRouterGuide(h));
           out.push(this.rMachines(h, true));
           out.push(this.rUpdates(h), this.rBackup(h));
-          out.push(h("div", { class: "tb-muted tb-small", style: { textAlign: "center", marginBottom: "16px" } }, [
-            "Is this a travel router? ", h("button", { class: "tb-link", attrs: { type: "button" }, on: { click: function () { self.setRole("client"); } } }, "Use it as a travel router instead"), " (you can switch back here)"
-          ]));
           return out;
         },
 
@@ -2608,10 +2637,10 @@
                     this.btn(h, "Change", function () { self.addrEdit = true; self.addrValue = s.public_addr || ""; }, "small text")])),
               steps.indexOf("address") >= 0 ? "Travel routers need a name for your home to reach it from away." : null),
             this.kvRow(h, "Port",
-              "UDP " + (s.port || 443) + ", opened on this router automatically",
+              "UDP " + (s.port || 443) + " (this router's own firewall already allows it)",
               steps.indexOf("health:cgnat") >= 0
                 ? "Your provider keeps travel routers from reaching it (step above)."
-                : "Behind your provider's modem-router? Forward UDP " + (s.port || 443) + " to this router there. Test: turn tailbond on over mobile data; Setup health then reports \"UDP " + (s.port || 443) + " reached from the internet\"."),
+                : "If another router is in front of this one (for example your internet provider's modem-router), it blocks incoming connections: in its settings, add a port forward (also called Virtual server or NAT) for UDP " + (s.port || 443) + " to this router's address on that network, and give this router a fixed address there. tailbond can't do that part. Test: turn tailbond on over mobile data; Setup health then reports \"UDP " + (s.port || 443) + " reached from the internet\"."),
             this.kvRow(h, "Tailscale name", h("span", { class: "tb-mono" }, ts.dns_name || "—"), null),
             this.kvRow(h, "tailbond page password",
               this.pwEdit ? h("div", { class: "tb-row" }, [

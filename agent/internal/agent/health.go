@@ -25,6 +25,7 @@ const (
 	urlFwPorts      = "https://tailscale.com/docs/reference/faq/firewall-ports"
 	urlFirewalls    = "https://tailscale.com/docs/integrations/firewalls"
 	urlDeviceConn   = "https://tailscale.com/docs/reference/device-connectivity"
+	urlBehindCGNAT  = "https://github.com/kaovilai/tailbond/blob/main/docs/behind-cgnat.md"
 	urlSubnetRtrs   = "https://tailscale.com/docs/features/subnet-routers"
 	urlTroubleshoot = "https://tailscale.com/docs/reference/troubleshooting"
 )
@@ -68,6 +69,7 @@ type healthInputs struct {
 	WANIP    string // this machine's own address toward the internet
 	Outside  *outsideSeen
 	Port     int
+	Relayed  bool // server.relayed: reached through a relay, not this machine's own address
 	Route    string
 	ServerTS string // client role: the paired server's tailnet name
 	// server: tagged (no owner), no approvers, no password
@@ -194,7 +196,10 @@ func buildHealth(in healthInputs) healthView {
 	}
 
 	// carrier-grade NAT on the home line: nothing from outside can reach UDP 443
-	if ip, err := netip.ParseAddr(in.WANIP); err == nil {
+	if in.Relayed {
+		add(healthCheck{ID: "cgnat", Status: hOK, Title: "Reached through your relay",
+			Detail: "Devices connect to the relay's address, which forwards UDP " + fmt.Sprint(in.Port) + " here, so this machine's own internet address isn't used."})
+	} else if ip, err := netip.ParseAddr(in.WANIP); err == nil {
 		ip = ip.Unmap()
 		pub := ""
 		if in.Netcheck != nil && in.Netcheck.GlobalV4 != "" {
@@ -208,7 +213,8 @@ func buildHealth(in healthInputs) healthView {
 				Detail: "This machine's internet address " + ip.String() + " is shared by your provider, so travel routers and phones away from home can't reach UDP " + fmt.Sprint(in.Port) + " here. " +
 					"Bonding needs that direct connection; it can't run through Tailscale's relays (they'd make it slower than a single link).",
 				Fix: "Ask your provider for a public IPv4 address (often free or a small monthly fee; say it's for reaching your home from outside). " +
-					"Advanced: a public IPv6 address also works, but only from networks that have IPv6 too (most mobile networks, few hotels).", FixURL: urlDeviceConn})
+					"A public IPv6 address also works (tailbond finds it by itself), but only from networks that have IPv6 too (most mobile networks, few hotels). " +
+					"Without either: put the server on a small VPS, or forward the tunnel port from a VPS to this machine.", FixURL: urlBehindCGNAT})
 		case isPrivate(ip) && pub != "":
 			add(healthCheck{ID: "cgnat", Status: hOK, Title: "Behind your home router (public address " + pub + ")",
 				Detail: "Forward UDP " + fmt.Sprint(in.Port) + " on that router to " + ip.String() + "."})
@@ -318,9 +324,34 @@ func (a *Agent) netcheck() *tailscale.Netcheck {
 	return a.nc.res
 }
 
+// netcheckMaxAge returns the netcheck result, re-running it first (up to
+// 8 s) when it is older than maxAge. Another run in progress isn't waited for.
+func (a *Agent) netcheckMaxAge(maxAge time.Duration) *tailscale.Netcheck {
+	a.nc.mu.Lock()
+	stale := !a.nc.running && time.Since(a.nc.at) > maxAge
+	if stale {
+		a.nc.running = true
+	}
+	a.nc.mu.Unlock()
+	if stale {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		n, err := a.ts.Netcheck(ctx)
+		cancel()
+		a.nc.mu.Lock()
+		if err == nil {
+			a.nc.res = n
+		}
+		a.nc.at, a.nc.running = time.Now(), false
+		a.nc.mu.Unlock()
+	}
+	a.nc.mu.Lock()
+	defer a.nc.mu.Unlock()
+	return a.nc.res
+}
+
 func (a *Agent) hHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	in := healthInputs{Role: a.role, TS: a.ts.Get(r.Context()), Netcheck: a.netcheck(), Port: cfg.Server.Port, Now: time.Now()}
+	in := healthInputs{Role: a.role, TS: a.ts.Get(r.Context()), Netcheck: a.netcheck(), Port: cfg.Server.Port, Relayed: cfg.Server.Relayed, Now: time.Now()}
 	if a.role == config.RoleServer {
 		in.WANIP = outboundIP()
 		if !cfg.Server.NoAdvertiseRoute {

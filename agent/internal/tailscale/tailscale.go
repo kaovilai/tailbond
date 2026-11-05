@@ -417,6 +417,7 @@ type Netcheck struct {
 	IPv4                  bool   `json:"ipv4"`
 	IPv6                  bool   `json:"ipv6"`
 	GlobalV4              string `json:"global_v4,omitempty"`
+	GlobalV6              string `json:"global_v6,omitempty"`
 	MappingVariesByDestIP bool   `json:"mapping_varies_by_dest_ip"` // hard NAT
 	UPnP                  bool   `json:"upnp"`
 	PMP                   bool   `json:"pmp"`
@@ -429,6 +430,7 @@ type netcheckJSON struct {
 	IPv4                  bool
 	IPv6                  bool
 	GlobalV4              string
+	GlobalV6              string
 	MappingVariesByDestIP optBool
 	UPnP                  optBool
 	PMP                   optBool
@@ -452,7 +454,7 @@ func ParseNetcheck(out []byte) (*Netcheck, error) {
 	if err := json.Unmarshal(out, &n); err != nil {
 		return nil, errors.New("parse tailscale netcheck: " + err.Error())
 	}
-	return &Netcheck{UDP: n.UDP, IPv4: n.IPv4, IPv6: n.IPv6, GlobalV4: n.GlobalV4,
+	return &Netcheck{UDP: n.UDP, IPv4: n.IPv4, IPv6: n.IPv6, GlobalV4: n.GlobalV4, GlobalV6: n.GlobalV6,
 		MappingVariesByDestIP: deref(n.MappingVariesByDestIP), UPnP: deref(n.UPnP), PMP: deref(n.PMP), PCP: deref(n.PCP),
 		PreferredDERP: n.PreferredDERP}, nil
 }

@@ -113,6 +113,32 @@ func (m *Machine) switchTo(name string, now time.Time) string {
 	return name
 }
 
+// Rename gives a server a new name and keeps everything known about it: the
+// active tunnel, a manual choice, probe history and a pinned "always" choice.
+func (m *Machine) Rename(from, to string) {
+	if from == to || m.index(from) < 0 || m.index(to) >= 0 {
+		return
+	}
+	m.order[m.index(from)] = to
+	if m.active == from {
+		m.active = to
+	}
+	if m.failingBack == from {
+		m.failingBack = to
+	}
+	if m.p.Pinned == from {
+		m.p.Pinned = to
+	}
+	if p, ok := m.probes[from]; ok {
+		m.probes[to] = p
+		delete(m.probes, from)
+	}
+	if n, ok := m.penalty[from]; ok {
+		m.penalty[to] = n
+		delete(m.penalty, from)
+	}
+}
+
 // SetOrder replaces the server list (reorder, add, remove). It returns the
 // server to switch to when the active one is gone ("" otherwise).
 func (m *Machine) SetOrder(order []string, now time.Time) string {
