@@ -307,9 +307,19 @@ R=/etc/tailbond/state/update-result.json
 res() { jsonfilter -i $R -e "@.$1" 2>/dev/null; }
 nipk() { ls /etc/tailbond/pkg/*.ipk 2>/dev/null | wc -l; }
 export TB_RESTART=/tmp/restart.sh TB_WAS_CONNECTED=0 TB_ROLE=client TB_WAIT=30
-/usr/lib/tailbond/update-ipk $V99 ""
+# The hand-installed router: no rollback copy in the cache, and the new
+# package already sitting there, because the agent downloads it before
+# update-ipk starts. Seeding then pruned the download, opkg failed on a
+# missing file, and the update rolled back — a Flint 3 going 0.1.13 ->
+# 0.1.15 was exactly this. The script drives it, so a missing
+# TB_PENDING forward fails here too.
+rm -rf /etc/tailbond/pkg && mkdir -p /etc/tailbond/pkg
+cp $V99 /etc/tailbond/pkg/ && [ -f /etc/tailbond/pkg/$(basename $V99) ] \
+	&& ok "no rollback copy, the download sits in the pkg dir" || bad "could not stage the download"
+/usr/lib/tailbond/update-ipk /etc/tailbond/pkg/$(basename $V99) ""
+[ -f /etc/tailbond/pkg/$(basename $V99) ] && ok "the download survived seeding" || bad "seeding deleted the package it was installing"
 [ "$(res result)" = ok ] && [ "$(res version)" = 99.0.0-r1 ] && [ "$(res from)" = "$NEWV" ] && [ "$(ver)" = 99.0.0-r1 ] \
-	&& ok "update to 99.0.0-r1: result ok, from $NEWV" || { bad "update-ipk happy path"; cat $R /tmp/tailbond-update.log; }
+	&& ok "update to 99.0.0-r1 from a hand-installed router: result ok, from $NEWV" || { bad "update-ipk happy path"; cat $R /tmp/tailbond-update.log; }
 uclient-fetch -q -O - http://127.0.0.1:8077/api/status | jsonfilter -e '@.role' | grep -qx client && ok "agent answers after the update" || bad "agent down after update"
 [ "$(nipk)" = 2 ] && [ "$(cat /etc/tailbond/pkg/current)" = tailbond_99.0.0-r1_aarch64_cortex-a53.ipk ] \
 	&& [ "$(/usr/lib/tailbond/pkg-cache ipk-version "/etc/tailbond/pkg/$(cat /etc/tailbond/pkg/previous)")" = "$NEWV" ] \
