@@ -456,9 +456,10 @@ say "one click from the menu bar (docs/phone-hub.md): the menu app's call → ta
 # the stand-in phone hub still on 192.168.77.4. The Bluetooth half itself
 # (scan, hello, hotspot.on, hub.on) is CoreBluetooth in the menu app and
 # can only be tried against a real phone.
-swift build --package-path "$ROOT/macos/TailbondMenu" --scratch-path "$WORK/menu-build" -c debug --product tailbond >/dev/null 2>&1
-MENU="$WORK/menu-build/debug/tailbond"
-[ -x "$MENU" ] && ok "the menu bar app built" || bad "the menu app didn't build: $(swift build --package-path "$ROOT/macos/TailbondMenu" --scratch-path "$WORK/menu-build" -c debug --product tailbond 2>&1 | tail -n 3 | tr '\n' ' ')"
+# tailbond.app was built by the job's menu bar step (before this script):
+# the real artifact, not a fresh build under this script's sudo.
+MENU="$ROOT/out/macos/tailbond.app/Contents/MacOS/tailbond"
+[ -x "$MENU" ] && ok "the menu bar app is here: $(basename "$(dirname "$(dirname "$MENU")")")" || bad "no $MENU (the job's menu bar step builds it)"
 # a recognisable original again, both settings (the click uses PAC mode)
 networksetup -setsocksfirewallproxy "$SVC" 10.9.9.9 1080 off
 networksetup -setsocksfirewallproxystate "$SVC" off
