@@ -545,6 +545,14 @@ jobs:
         run: |
           /bin/bash scripts/test-macos-install-helpers.sh   # macOS's own bash 3.2
           scripts/test-macos-install.sh out/macos/tailbond-macos-arm64.tar.gz out/macos/tailbond.rb
+      # The dashboard's "Update now" end to end, the way a Mac gets it: a
+      # fake GitHub release on 127.0.0.1, the agent's download + SHA-256
+      # check, the new bundle's install.sh --update detached from the
+      # LaunchDaemon (it restarts the daemon from under it), the rollback of
+      # a release that doesn't start, install.sh --update alone, and a
+      # refused bad SHA256SUMS (scripts/e2e-macos-update.sh).
+      - name: Update e2e (fake GitHub release, Update now, rollback, install.sh --update, SHA256SUMS)
+        run: scripts/e2e-macos-update.sh
       - uses: actions/upload-artifact@v7
         with:
           name: macos-bundle

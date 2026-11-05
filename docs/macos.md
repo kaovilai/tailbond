@@ -627,8 +627,13 @@ server sees the Mac with 3 paths, traffic crosses all of them, a phone that
 stops drops out within ~4 s while the tunnel keeps working, and the client
 isolation note appears. A second tailbondd on the runner, with its own
 tunnel off, shares `lo0` with the hub: the hub finds it over Bonjour and
-the server sees it as one more path that carries traffic. It also installs the bundle (`install.sh`,
-`--update`, `uninstall.sh`) and the Homebrew formula.
+the server sees it as one more path that carries traffic. It also installs
+the bundle (`install.sh`, `--update`, `uninstall.sh`), runs the update path
+end to end against a fake GitHub release (`scripts/e2e-macos-update.sh`:
+the dashboard's **Update now** with the detached `install.sh --update`
+restarting the LaunchDaemon, the rollback of a release that doesn't start,
+`install.sh --update` alone, a refused bad `SHA256SUMS`), and the Homebrew
+formula.
 
 What that can't cover:
 
