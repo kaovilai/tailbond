@@ -3,7 +3,6 @@ package dev.tailbond.app.ble
 import dev.tailbond.app.share.ProxyServer
 import dev.tailbond.app.share.ShareProtocol
 import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.UUID
 import javax.crypto.Cipher
@@ -93,8 +92,17 @@ object BleProtocol {
         if (MessageDigest.isEqual(got.toByteArray(), authMac(secret, cn, sn, user).toByteArray())) secret else null
     }
 
-    private fun nonce(dir: Byte, ctr: Long): ByteArray =
-        ByteBuffer.allocate(12).put(dir).put(byteArrayOf(0, 0, 0)).putLong(ctr).array()
+    /**
+     * The GCM nonce: direction, three zero bytes, the message counter. Never
+     * repeats under one key: the key is new for every session (both sides'
+     * fresh nonces are in it) and the counter grows with every message.
+     */
+    private fun nonce(dir: Byte, ctr: Long): ByteArray {
+        val n = ByteArray(12)
+        n[0] = dir
+        for (i in 0 until 8) n[4 + i] = (ctr ushr (56 - 8 * i)).toByte()
+        return n
+    }
 
     private fun gcm(mode: Int, key: ByteArray, dir: Byte, ctr: Long): Cipher =
         Cipher.getInstance("AES/GCM/NoPadding").apply {

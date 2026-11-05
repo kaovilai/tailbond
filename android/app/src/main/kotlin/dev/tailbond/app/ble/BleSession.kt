@@ -6,9 +6,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.util.Base64
@@ -60,13 +58,22 @@ class BleSession(
 
     private fun plain(o: JsonObject) = o.toString().toByteArray()
 
+    /** A string field, or null (absent, or not a string: a peer's JSON is never trusted). */
+    private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
     private fun sealed(o: JsonObject): ByteArray = P.seal(key!!, P.TO_MAC, outCtr++, plain(o))
 
     private fun refuse(why: String) = Out(listOf(plain(buildJsonObject {
         put("t", "error"); put("code", P.CODE_AUTH); put("error", why)
     })), close = true)
 
-    fun onMessage(body: ByteArray): Out = if (authed) command(body) else login(body)
+    /** Anything malformed (wrong JSON types included) ends the session, never the app. */
+    fun onMessage(body: ByteArray): Out = try {
+        if (authed) command(body) else login(body)
+    } catch (e: Exception) {
+        log("ble: malformed message: ${e.javaClass.simpleName}")
+        if (authed) Out(emptyList(), close = true) else refuse("malformed message")
+    }
 
     /** A state change to push to a logged-in Mac ({"t":"state",...}); null before login. */
     fun event(fields: Map<String, JsonElement>): ByteArray? =
@@ -78,9 +85,9 @@ class BleSession(
         } catch (_: Exception) {
             return refuse("not JSON")
         }
-        when (o["t"]?.jsonPrimitive?.content) {
+        when (o.str("t")) {
             "hello" -> {
-                val c = o["cn"]?.jsonPrimitive?.content
+                val c = o.str("cn")
                 if (c == null || runCatching { Base64.getDecoder().decode(c).size }.getOrNull() != 16) return refuse("hello without a 16-byte nonce")
                 val me = identity() ?: return refuse("This phone isn't paired with a home server, or has no share key yet")
                 cn = c
@@ -92,8 +99,8 @@ class BleSession(
             "auth" -> {
                 val c = cn
                 val s = sn
-                val u = o["user"]?.jsonPrimitive?.content
-                val m = o["mac"]?.jsonPrimitive?.content
+                val u = o.str("user")
+                val m = o.str("mac")
                 if (c == null || s == null) return refuse("auth before hello")
                 val me = identity() ?: return refuse("not paired")
                 val secret = if (u != null && m != null) me.verify(u, c, s, m) else null
@@ -124,8 +131,8 @@ class BleSession(
         } catch (_: Exception) {
             return Out(emptyList(), close = true)
         }
-        val id = o["id"]?.jsonPrimitive?.longOrNull ?: o["id"]?.jsonPrimitive?.intOrNull?.toLong() ?: 0L
-        val cmd = if (o["t"]?.jsonPrimitive?.content == "cmd") o["cmd"]?.jsonPrimitive?.content else null
+        val id = (o["id"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull ?: 0L
+        val cmd = if (o.str("t") == "cmd") o.str("cmd") else null
         val fields = try {
             when (cmd) {
                 P.HOTSPOT_ON -> control.hotspotOn()
@@ -134,9 +141,11 @@ class BleSession(
                 P.HUB_ON -> control.hubOn()
                 P.HUB_OFF -> control.hubOff()
                 P.STATUS -> control.status()
-                else -> throw Refused(P.CODE_UNKNOWN, "unknown command ${cmd ?: o["t"]?.jsonPrimitive?.content ?: "?"}")
+                else -> throw Refused(P.CODE_UNKNOWN, "unknown command ${cmd ?: o.str("t") ?: "?"}")
             }
-        } catch (r: Refused) {
+        } catch (e: Exception) {
+            // Refused, or something the phone didn't expect: an answer, not a crash
+            val r = e as? Refused ?: Refused(P.CODE_UNKNOWN, "$cmd failed: ${e.javaClass.simpleName}")
             log("ble: $cmd refused: ${r.code} ${r.message}")
             return Out(listOf(sealed(buildJsonObject {
                 put("t", "res"); put("id", id); put("ok", false); put("code", r.code); put("error", r.message ?: r.code)
@@ -179,6 +188,9 @@ class BleServer(private val peer: GattPeer, private val newSession: () -> BleSes
         links.remove(device)
     }
 
+    /** Bluetooth went off: every link is gone. */
+    fun clear() = links.clear()
+
     /** A write to RX. */
     fun write(device: String, piece: ByteArray) {
         val l = links[device] ?: Link(session = newSession()).also { links[device] = it }
@@ -189,7 +201,11 @@ class BleServer(private val peer: GattPeer, private val newSession: () -> BleSes
             return
         }
         for (m in msgs) {
-            val out = l.session.onMessage(m)
+            val out = try {
+                l.session.onMessage(m)
+            } catch (_: Exception) {
+                BleSession.Out(emptyList(), close = true)
+            }
             out.messages.forEach { send(device, l, it) }
             if (out.close) {
                 drop(device)

@@ -251,13 +251,18 @@ What happens, step by step (each failure names its step in the menu):
    refuses, or the network isn't seen yet), tailbondd joins with
    `networksetup -setairportnetwork` as root.
 5. **Find, use:** tailbondd looks for that phone's hub (by its id, from the
-   Bluetooth hello) with the usual discovery, for up to 45 s, and uses it as
+   Bluetooth hello; a hub found only through the hotspot's router counts
+   when it takes the login for that phone's key) with the usual discovery,
+   for up to 45 s. A hub that says it isn't bonded (an iPhone sharing its
+   mobile data) isn't used: pick it in the dashboard instead. It uses the hub as
    the dashboard's **Use** does: the forwarder on 127.0.0.1:1889 and the
    system proxy, with the PAC file (local, home and tailnet names direct).
 6. **Internet:** tailbondd fetches
    `http://connectivitycheck.gstatic.com/generate_204` through the
-   forwarder. If nothing comes back, it stops using the hub, puts the proxy
-   settings back and says so.
+   forwarder, with no redirects, and wants its `204`: a captive portal's
+   page isn't internet. If that fails, it stops using the hub (only the one
+   this click set up, not one picked in the dashboard meanwhile), puts the
+   proxy settings back and says so.
 
 The menu then says **Bonded via phone · Mobile data + Wi-Fi** (the phone's
 bonded links), with the phone's name, battery and path count.
@@ -382,9 +387,9 @@ These are true of any proxy, so they are said in the UI, not only here:
 | Android hub link | `ShareLinkTest` (JVM) | Against the Kotlin sharer over loopback: relay both ways, another server's key refused, unreachable, lost |
 | Android as a Pair & Share hub | CI `android-e2e` | A Go sharer on the host (10.0.2.2:47077) becomes an active relay path of the app's tunnel, and the sharer relays the phone's bytes. Stopping it drops the path, and the tunnel keeps working |
 | iPhone proxy | CI `ios` job, `swift test` | Handshake, the Go vectors, and on macOS curl through the Swift server (SOCKS5 and HTTP CONNECT; wrong password refused) |
-| One click: tailbondd's steps | `go test ./internal/agent -run PhoneConnect` | Every failure names its step and leaves the proxy as it was: no phone, Bluetooth denied (falls back), bad login, hotspot refused, hub refused, Wi-Fi join failed, no hub found, hub up but no internet (proxy put back); the second click restores the proxy |
+| One click: tailbondd's steps | `go test ./internal/agent -run PhoneConnect` | Every failure names its step and leaves the proxy as it was: no phone, Bluetooth denied (falls back), bad login, hotspot refused, hub refused, Wi-Fi join failed, no hub found, an unbonded hub skipped, hub up but no internet or a captive portal (proxy put back, but not a hub the dashboard picked meanwhile); a phone found only through the hotspot's router; the second click restores the proxy |
 | One click: the Bluetooth protocol | `go test ./internal/bleproto`, `BleProtocolTest` (JVM), `PhoneTests` (`swift test`) | The same vectors in Go, Kotlin and Swift: login, phone proof, session key, sealed messages, chunks for MTU 23 and 185 |
-| One click: the phone's side | `BleServerTest` (Robolectric) | A fake GATT peer, fake Shizuku and fake hub: login, every command, chunking, refusals (before login, wrong login, unknown command, replay, Shizuku not running, tethering failed, Android 10, hub not paired) |
+| One click: the phone's side | `BleServerTest` (Robolectric) | A fake GATT peer, fake Shizuku and fake hub: login, every command, chunking, refusals (before login, wrong login, malformed JSON, unknown command, replay, Shizuku not running, tethering failed, Android 10, hub not paired, an unexpected exception) |
 | One click: Mac end to end | CI `macos` job, `scripts/e2e-macos.sh` | See below |
 | One click: the menu | `swift test` (snapshots `menu-07`…`menu-12`) | The words for idle, bonded, failed, no Bluetooth and the app's Bluetooth stage, and the real tailbondd's status from the e2e decoded and rendered |
 

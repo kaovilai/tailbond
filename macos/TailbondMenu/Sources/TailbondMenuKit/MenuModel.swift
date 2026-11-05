@@ -12,7 +12,9 @@ public final class MenuModel: ObservableObject {
     /// tailbondd's status says where it is); nil otherwise.
     @Published public private(set) var phoneStage: String?
     /// the Bluetooth session, kept for hub.off on disconnect
-    private var link: PhoneLink?
+    private var link: PhoneLink? { didSet { phoneLinked = link != nil } }
+    /// a Bluetooth session to the phone is open (it can turn the hotspot off)
+    @Published public private(set) var phoneLinked = false
 
     public let client: AgentClient
     private var poller: Task<Void, Never>?

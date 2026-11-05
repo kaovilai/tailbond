@@ -581,7 +581,12 @@ func (a *Agent) hubDial(ctx context.Context, network, addr string) (net.Conn, er
 
 // stopHub stops using the hub and puts the system proxy back; note says
 // why when it wasn't the user.
-func (a *Agent) stopHub(note string) {
+func (a *Agent) stopHub(note string) { a.stopHubIf(note, nil) }
+
+// stopHubIf is stopHub when ours (nil: any) says the hub in use is the one
+// the caller set up; checked under the operation lock, so a hub picked
+// meanwhile (the dashboard) isn't torn down.
+func (a *Agent) stopHubIf(note string, ours func(*hubUse) bool) {
 	hs := a.phoneHub()
 	if hs == nil {
 		return
@@ -590,6 +595,10 @@ func (a *Agent) stopHub(note string) {
 	defer hs.op.Unlock()
 	a.mu.Lock()
 	u := hs.use
+	if u != nil && ours != nil && !ours(u) {
+		a.mu.Unlock()
+		return
+	}
 	hs.use, hs.note = nil, note
 	a.mu.Unlock()
 	if u == nil {

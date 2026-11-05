@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
@@ -20,8 +21,10 @@ import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -101,6 +104,26 @@ class BleControlService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /** Work on [io]; an exception is logged, never kills the app (and its VPN). */
+    private fun onIo(block: () -> Unit) = io.execute {
+        try {
+            block()
+        } catch (e: Exception) {
+            Log.w(TAG, "ble: ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    /** Bluetooth turned on later: open the GATT server then; off: close it. */
+    private var btWatching = false
+    private val btReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            when (i.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
+                BluetoothAdapter.STATE_ON -> if (gatt == null) open()
+                BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> closeGatt()
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         repo = Repository.get(this)
@@ -147,13 +170,17 @@ class BleControlService : Service() {
             this, NOTIFICATION_ID, notification(getString(R.string.mac_link_waiting)),
             if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0,
         )
+        if (!btWatching) {
+            btWatching = true
+            ContextCompat.registerReceiver(this, btReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        }
         if (gatt == null) open()
         if (!pushing) {
             pushing = true
             // the hub's state, pushed to logged-in Macs
             scope.launch {
                 HubState.live.map { it.status }.distinctUntilChanged().collect { st ->
-                    io.execute { server.push(mapOf("hub" to JsonPrimitive(st.name.lowercase()))) }
+                    onIo { server.push(mapOf("hub" to JsonPrimitive(st.name.lowercase()))) }
                 }
             }
         }
@@ -255,7 +282,7 @@ class BleControlService : Service() {
     private val callback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             val addr = device.address
-            io.execute {
+            onIo {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     devices[addr] = device
                     server.connected(addr)
@@ -270,11 +297,11 @@ class BleControlService : Service() {
         }
 
         override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
-            io.execute { server.mtu(device.address, mtu) }
+            onIo { server.mtu(device.address, mtu) }
         }
 
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
-            io.execute {
+            onIo {
                 sending = false
                 sendNext()
             }
@@ -290,9 +317,17 @@ class BleControlService : Service() {
             }
             if (!ok) return
             val addr = device.address
-            io.execute {
+            onIo {
                 if (preparedWrite) {
-                    prepared.getOrPut(addr) { ByteArrayOutputStream() }.write(value)
+                    // a long write: at most one framed message, pieces in order
+                    val buf = prepared.getOrPut(addr) { ByteArrayOutputStream() }
+                    if (offset != buf.size() || buf.size() + value.size > BleProtocol.MAX_MESSAGE + 2) {
+                        prepared.remove(addr)
+                        server.disconnected(addr)
+                        gatt?.cancelConnection(device)
+                    } else {
+                        buf.write(value)
+                    }
                 } else {
                     server.write(addr, value)
                     refresh()
@@ -303,7 +338,7 @@ class BleControlService : Service() {
         override fun onExecuteWrite(device: BluetoothDevice, requestId: Int, execute: Boolean) {
             gatt?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             val addr = device.address
-            io.execute {
+            onIo {
                 val buf = prepared.remove(addr)
                 if (execute && buf != null) {
                     server.write(addr, buf.toByteArray())
@@ -320,10 +355,27 @@ class BleControlService : Service() {
         }
     }
 
-    private fun stop() {
+    /** The GATT server and advertising off (Bluetooth going off, or stop). */
+    private fun closeGatt() {
         runCatching { getSystemService<BluetoothManager>()?.adapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
-        gatt?.close()
+        runCatching { gatt?.close() }
         gatt = null
+        onIo {
+            devices.clear()
+            prepared.clear()
+            queue.clear()
+            sending = false
+            server.clear()
+        }
+        MacLinkState.set { it.copy(status = MacLinkStatus.NO_BLUETOOTH, macs = emptyList()) }
+    }
+
+    private fun stop() {
+        closeGatt()
+        if (btWatching) {
+            btWatching = false
+            runCatching { unregisterReceiver(btReceiver) }
+        }
         hotspot?.close()
         MacLinkState.set { MacLinkLive(shizuku = it.shizuku) }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -331,7 +383,7 @@ class BleControlService : Service() {
     }
 
     override fun onDestroy() {
-        if (gatt != null) stop()
+        if (gatt != null || btWatching) stop()
         scope.cancel()
         io.shutdownNow()
         super.onDestroy()

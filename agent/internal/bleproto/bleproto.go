@@ -47,6 +47,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -144,7 +145,7 @@ func Verifier(ownKey []byte, now func() time.Time, allowed func(hub string) bool
 			return "", false
 		}
 		exp, err := strconv.ParseUint(e, 10, 64)
-		if err != nil || int64(exp) < now().Unix() {
+		if err != nil || exp > math.MaxInt64 || int64(exp) < now().Unix() {
 			return "", false
 		}
 		if allowed != nil && !allowed(hub) {

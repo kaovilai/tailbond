@@ -230,21 +230,41 @@ func (a *Agent) phoneConnectRun(ctx context.Context, in phoneConnectReq) {
 	if wait == 0 {
 		wait = 45 * time.Second
 	}
+	// found through the hotspot's router, a hub has no id of its own: it is
+	// the phone if it took the login for the phone's key id
+	var phoneLogin *hubLogin
+	if in.Phone != nil {
+		if l, ok := logins[in.Phone.KeyID]; ok {
+			phoneLogin = &l
+		}
+	}
+	isPhone := func(c hubCand) bool {
+		if want != "" && c.ID == want {
+			return true
+		}
+		return c.Via == "router" && phoneLogin != nil && c.user == phoneLogin.user && c.pass == phoneLogin.pass
+	}
 	deadline := time.Now().Add(wait)
 	var cand *hubCand
+	unbonded := false
 	for {
 		found := a.findHubs(ctx, logins)
 		a.mu.Lock()
 		hs.found, hs.asked = found, time.Now()
 		a.mu.Unlock()
 		for i := range found {
-			if want != "" && found[i].ID == want {
-				cand = &found[i]
-				break
+			// a hub that says it isn't bonded (an iPhone: mobile data only)
+			// isn't what this click promises
+			if found[i].Bonded == "0" {
+				unbonded = true
+				continue
 			}
-		}
-		if cand == nil && fallback && len(found) > 0 {
-			cand = &found[0]
+			if isPhone(found[i]) || (fallback && cand == nil) {
+				cand = &found[i]
+				if isPhone(found[i]) {
+					break
+				}
+			}
 		}
 		if cand != nil || time.Now().After(deadline) || ctx.Err() != nil {
 			break
@@ -255,9 +275,12 @@ func (a *Agent) phoneConnectRun(ctx context.Context, in phoneConnectReq) {
 		}
 	}
 	if cand == nil {
-		if fallback {
+		switch {
+		case unbonded && fallback:
+			fail(stepFind, "Only a phone sharing its mobile data, not a bonded connection, answered (an iPhone). To use it anyway, pick it in the dashboard's \"Use a phone's connection\".")
+		case fallback:
 			fail(stepFind, "No phone hub found on this network. "+note+" Turn on the phone's hotspot and Share bonded connection in tailbond, join the hotspot, and click again.")
-		} else {
+		default:
 			fail(stepFind, "On the phone's hotspot, but its phone hub didn't answer. Is Share bonded connection on, and tailbond connected on the phone?")
 		}
 		return
@@ -280,13 +303,17 @@ func (a *Agent) phoneConnectRun(ctx context.Context, in phoneConnectReq) {
 	// internet: a small fetch through the forwarder
 	step(stepInternet)
 	a.mu.Lock()
+	mine := hs.use
 	local := ""
-	if hs.use != nil {
-		local = hs.use.ln.Addr().String()
+	if mine != nil {
+		local = mine.ln.Addr().String()
 	}
 	a.mu.Unlock()
 	if err := a.fetchThrough(ctx, local); err != nil {
-		a.stopHub("")
+		// only the hub this click set up: the dashboard may have picked
+		// another meanwhile
+		hubID := cand.ID
+		a.stopHubIf("", func(u *hubUse) bool { return u == mine && u.cand.ID == hubID })
 		fail(stepInternet, "The phone hub answers, but nothing reaches the internet through it ("+err.Error()+"), so the proxy is off again. Is tailbond connected on the phone?")
 		return
 	}
@@ -313,7 +340,10 @@ func (a *Agent) fetchThrough(ctx context.Context, local string) error {
 	cl := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{
 		DialContext: d.(xproxy.ContextDialer).DialContext,
 		Proxy:       nil,
-	}}
+	},
+		// a captive portal answers with a redirect or its own page: not internet
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
@@ -324,8 +354,10 @@ func (a *Agent) fetchThrough(ctx context.Context, local string) error {
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("%s answered %s", u, resp.Status)
+	// generate_204 answers 204 and nothing else (as captive.ProbesFor);
+	// another check URL (the e2e's token) any 2xx
+	if (strings.HasSuffix(u, "generate_204") && resp.StatusCode != http.StatusNoContent) || resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("%s answered %s (a sign-in page?)", u, resp.Status)
 	}
 	return nil
 }

@@ -153,7 +153,8 @@ public struct MenuContent: View {
                 HStack {
                     Button(p.action) { p.connected ? model.disconnectPhone() : model.connectViaPhone() }
                         .disabled(model.busy)
-                    if p.connected {
+                    // only with a Bluetooth session: without one nothing can reach the phone
+                    if p.connected && model.phoneLinked {
                         Button("…and turn off its hotspot") { model.disconnectPhone(hotspotOff: true) }
                             .disabled(model.busy)
                     }

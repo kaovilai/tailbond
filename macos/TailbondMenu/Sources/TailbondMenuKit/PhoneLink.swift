@@ -66,6 +66,9 @@ public final class PhoneLink: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     private var nextID = 0
     private var lostError: Error?
     private var tried = Set<UUID>()
+    /// each wait's identity: a timer only ends the wait it was set for
+    private var readyGen = 0
+    private var recvGen = 0
     /// {"t":"state",...} pushes from the phone (the hub's state).
     public var onState: (([String: Any]) -> Void)?
 
@@ -81,10 +84,12 @@ public final class PhoneLink: NSObject, CBCentralManagerDelegate, CBPeripheralDe
     private func until(_ seconds: Double, timeout: Error, _ start: @escaping () -> Void) async throws {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             queue.async {
+                self.readyGen += 1
+                let gen = self.readyGen
                 self.ready = c
                 start()
                 self.queue.asyncAfter(deadline: .now() + seconds) {
-                    if let r = self.ready { self.ready = nil; r.resume(throwing: timeout) }
+                    if gen == self.readyGen, let r = self.ready { self.ready = nil; r.resume(throwing: timeout) }
                 }
             }
         }
@@ -102,9 +107,14 @@ public final class PhoneLink: NSObject, CBCentralManagerDelegate, CBPeripheralDe
             queue.async {
                 if let e = self.lostError { c.resume(throwing: e); return }
                 if !self.inbox.isEmpty { c.resume(returning: self.inbox.removeFirst()); return }
+                self.recvGen += 1
+                let gen = self.recvGen
                 self.waiter = c
                 self.queue.asyncAfter(deadline: .now() + seconds) {
-                    if let w = self.waiter { self.waiter = nil; w.resume(throwing: PhoneLinkError.noPhone("The phone stopped answering over Bluetooth")) }
+                    if gen == self.recvGen, let w = self.waiter {
+                        self.waiter = nil
+                        w.resume(throwing: PhoneLinkError.noPhone("The phone stopped answering over Bluetooth"))
+                    }
                 }
             }
         }

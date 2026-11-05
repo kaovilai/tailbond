@@ -190,6 +190,9 @@ class BleServerTest {
             return r
         }
 
+        /** Any JSON, sealed, as a logged-in Mac. */
+        fun sealedRaw(json: String) = write(BleProtocol.seal(key!!, BleProtocol.TO_PHONE, outCtr++, json.toByteArray()))
+
         /** A sealed message sent again (a replay). */
         fun replayLast(c: String) {
             write(BleProtocol.seal(key!!, BleProtocol.TO_PHONE, outCtr - 1, """{"t":"cmd","id":99,"cmd":"$c"}""".toByteArray()))
@@ -274,6 +277,53 @@ class BleServerTest {
         val r = m.read().single()
         assertEquals("error", r.s("t"))
         assertTrue(r.s("error").contains("isn't paired"))
+    }
+
+    /** Wrong JSON types from a peer end its session, never the app. */
+    @Test fun malformedMessagesDropThePeer() {
+        val m = mac()
+        m.write("""{"t":{}}""".toByteArray())
+        assertEquals(BleProtocol.CODE_AUTH, m.read().single().s("code"))
+        assertEquals(listOf(dev), peer.dropped)
+        setUp()
+        val m2 = mac()
+        m2.write("""{"t":"hello","cn":[1,2]}""".toByteArray())
+        assertEquals("error", m2.read().single().s("t"))
+        setUp()
+        val m3 = mac()
+        assertTrue(m3.login().ok())
+        m3.sealedRaw("""{"t":"cmd","id":"x","cmd":{"a":1}}""")
+        val r = m3.read().single()
+        assertFalse(r.ok())
+        assertEquals(BleProtocol.CODE_UNKNOWN, r.s("code"))
+        m3.sealedRaw("[1,2,3]")
+        assertEquals(listOf(dev), peer.dropped)
+        assertEquals(0, hotspot.starts)
+    }
+
+    /** Something the phone didn't expect while serving a command: an answer, not a crash. */
+    @Test fun unexpectedFailureIsAnAnswer() {
+        val m = mac()
+        m.login()
+        hub.live = HubLive()
+        hub.refuse = false
+        hotspot.shizuku = ShizukuStatus.OK
+        val boom = object : HotspotControl by hotspot {
+            override fun apState(): Int = throw IllegalStateException("binder died")
+        }
+        // a session whose hotspot control throws
+        server = BleServer(peer) {
+            BleSession({ Identity("an-1234-hub", "pixel-9", ShareProtocol.keyId(phoneKey), BleProtocol.verifier(phoneKey)) },
+                AppPhoneControl(ctx, boom, hub, sdk = 35, sleep = {}), { n -> ByteArray(n) { 7 } })
+        }
+        server.connected(dev)
+        peer.pieces.clear()
+        val m2 = mac()
+        assertTrue(m2.login().ok())
+        val r = m2.cmd(BleProtocol.HOTSPOT_ON)
+        assertFalse(r.ok())
+        assertTrue(r.s("error"), r.s("error").contains("IllegalStateException"))
+        assertTrue(m2.cmd(BleProtocol.HUB_ON).ok())
     }
 
     @Test fun replayEndsTheSession() {

@@ -271,3 +271,110 @@ func TestWiFiDevice(t *testing.T) {
 		t.Fatal("found Wi-Fi on a Mac without it")
 	}
 }
+
+// Found only through the hotspot's router (no mDNS, no server list), the
+// hub has no id of its own: it is the phone when it took the login for the
+// phone's key id.
+func TestPhoneConnectRouterHub(t *testing.T) {
+	a, _, cands, mu, _ := pcAgent(t)
+	_, hubAddr := fakeHub(t, "home-share-key")
+	setCands(mu, cands)
+	a.hubRouters = func(context.Context) []hubCand {
+		return []hubCand{{ID: "router", Label: "Your phone", Via: "router", addrs: []string{hubAddr}}}
+	}
+	st := connect(t, a, phoneConnectReq{BLE: "ok", Phone: pcPixel(), Joined: true})
+	if st.State != pcBonded || st.Phone != "Pixel 9" {
+		t.Fatalf("router hub: %+v", st)
+	}
+	a.phoneDisconnect()
+	// the phone's key id doesn't match the login the router took: not it
+	p := pcPixel()
+	p.KeyID = "deadbeef"
+	if st := connect(t, a, phoneConnectReq{BLE: "ok", Phone: p, Joined: true}); st.State != pcFailed || st.Step != stepFind {
+		t.Fatalf("another key: %+v", st)
+	}
+}
+
+// A hub that says it isn't bonded (an iPhone: mobile data only) isn't
+// "Bonded via phone".
+func TestPhoneConnectSkipsUnbonded(t *testing.T) {
+	a, fs, cands, mu, _ := pcAgent(t)
+	_, hubAddr := fakeHub(t, "home-share-key")
+	setCands(mu, cands, hubCand{ID: "iphone", Label: "iPhone", Via: "mdns", Bonded: "0", KeyID: kid, addrs: []string{hubAddr}})
+	st := connect(t, a, phoneConnectReq{BLE: "off"})
+	if st.State != pcFailed || st.Step != stepFind || !strings.Contains(st.Error, "not a bonded connection") {
+		t.Fatalf("unbonded: %+v", st)
+	}
+	if fs.log() != "" {
+		t.Fatalf("proxy touched: %s", fs.log())
+	}
+}
+
+// A captive portal's page or redirect isn't internet: generate_204 must
+// answer 204.
+func TestPhoneConnectCaptivePortal(t *testing.T) {
+	for _, code := range []int{http.StatusOK, http.StatusFound} {
+		a, fs, cands, mu, _ := pcAgent(t)
+		_, hubAddr := fakeHub(t, "home-share-key")
+		setCands(mu, cands, hubCand{ID: "pixel-hub", Label: "Pixel", Via: "mdns", KeyID: kid, addrs: []string{hubAddr}})
+		portal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if code == http.StatusFound {
+				http.Redirect(w, r, "/login", code)
+				return
+			}
+			w.Write([]byte("<html>sign in</html>"))
+		}))
+		t.Cleanup(portal.Close)
+		a.pcCheckURL = portal.URL + "/generate_204"
+		st := connect(t, a, phoneConnectReq{BLE: "ok", Phone: pcPixel(), Joined: true})
+		if st.State != pcFailed || st.Step != stepInternet || !strings.HasSuffix(fs.log(), "restore Wi-Fi") {
+			t.Fatalf("portal %d: %+v / %s", code, st, fs.log())
+		}
+	}
+}
+
+// The dashboard picks another phone while the internet check runs: a
+// failed check must not tear that one down.
+func TestPhoneConnectCheckDoesntStopAnotherHub(t *testing.T) {
+	a, _, cands, mu, _ := pcAgent(t)
+	dialing := make(chan struct{}, 1)
+	release := make(chan struct{})
+	slow := &proxy.Server{Auth: proxy.Verifier([]byte("home-share-key"), time.Now, nil),
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			select {
+			case dialing <- struct{}{}:
+			default:
+			}
+			<-release
+			return nil, errors.New("tunnel down")
+		}}
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	t.Cleanup(func() { ln.Close() })
+	go slow.Serve(ln)
+	_, otherAddr := fakeHub(t, "home-share-key")
+	setCands(mu, cands,
+		hubCand{ID: "pixel-hub", Label: "Pixel", Via: "mdns", KeyID: kid, addrs: []string{ln.Addr().String()}},
+		hubCand{ID: "tablet-hub", Label: "Tablet", Via: "mdns", KeyID: kid, addrs: []string{otherAddr}})
+	done := make(chan status.PhoneConnect)
+	go func() { done <- connect(t, a, phoneConnectReq{BLE: "ok", Phone: pcPixel(), Joined: true}) }()
+	select {
+	case <-dialing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the check never reached the hub")
+	}
+	if w := req(t, a, "POST", "/api/phone-hub", lan, "", map[string]any{"use": "tablet-hub"}); w.Code != 200 {
+		t.Fatalf("dashboard switch: %d %s", w.Code, w.Body)
+	}
+	close(release)
+	st := <-done
+	if st.State != pcFailed || st.Step != stepInternet {
+		t.Fatalf("check: %+v", st)
+	}
+	a.mu.Lock()
+	u := a.client.hub.use
+	a.mu.Unlock()
+	if u == nil || u.cand.ID != "tablet-hub" {
+		t.Fatalf("the dashboard's hub was torn down: %+v", u)
+	}
+	a.stopHub("")
+}
