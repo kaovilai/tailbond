@@ -80,6 +80,9 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 - **[Phone hub](docs/phone-hub.md):**
   - An Android phone shares its bonded connection with a laptop through a
     proxy, and the Mac's "Use phone hub" points the system proxy at it.
+  - **One click on the Mac** ("Connect via phone" in the menu bar, macOS):
+    the phone starts its hotspot over Bluetooth and the Mac bonds through
+    it; without Bluetooth the same click uses an already-joined hotspot.
   - Android also bonds nearby phones' shared data itself.
   - On the iPhone this is experimental and not bonded yet.
 - **Setup health:** direct-vs-relayed Tailscale peers, CGNAT detection and port reachability, each with how to fix it.
@@ -151,6 +154,7 @@ November 2026; check their sites for current plans).
 | [Peplink SpeedFusion Connect](https://www.peplink.com/services/products-sfc/) | Per-link control (Always, Backup only), hot failover and duplicated packets for calls, on Peplink routers and apps | Peplink's hosted service is sold as data plans. Self-hosting means Peplink's [FusionHub](https://www.peplink.com/services/software/virtual-appliance-fusionhub/) appliance, which is free for one device and licensed beyond that. tailbond has no plans or licences for any number of devices, and runs on hardware you already have (GL.iNet stock firmware, Fedora, a VPS, a Mac, Android). Peplink is ahead on enterprise hardware and support |
 | [OpenMPTCProuter](https://www.openmptcprouter.com) | Open source, your own VPS, up to 8 WANs, port forwarding and a public IP | Replaces your router's firmware and has no phone or desktop apps. tailbond installs on stock GL.iNet firmware, adds phone and Mac hubs and Pair & Share, and is built around Tailscale. Full comparison: [docs/comparison-openmptcprouter.md](docs/comparison-openmptcprouter.md) |
 | [Tailscale](https://tailscale.com) | Zero-config identity, MagicDNS, a machine list, one-tap simplicity. tailbond's apps copy its layout, and pairing uses your tailnet | Tailscale uses one path at a time and doesn't bond links. tailbond adds the bonding and leaves your tailnet as it is ([coming from Tailscale](docs/coming-from-tailscale.md)) |
+| [untether](https://github.com/ImOstrovskiy/untether) | Instant Hotspot for Android from the Mac's menu bar, over Bluetooth LE and Shizuku, no root — the idea and the code shape for tailbond's "one click" (the BLE control channel, the Shizuku tethering calls, the CoreWLAN join; BSD-3-Clause, credited in [NOTICE](NOTICE)) | untether shares the phone's plain mobile data as a hotspot. tailbond's one click starts the phone's hotspot the same way, but what the Mac gets is the phone's **bonded** tunnel (mobile data, Wi-Fi and nearby phones together) |
 
 Built on:
 

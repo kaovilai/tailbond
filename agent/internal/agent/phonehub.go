@@ -119,6 +119,8 @@ type phoneHubState struct {
 	use   *hubUse
 	note  string
 	asked time.Time
+	// the menu bar's one click (oneclick.go), when it has been used
+	click *clickState
 	// guards useHub/stopHub against each other (not held with a.mu)
 	op sync.Mutex
 }
@@ -199,9 +201,11 @@ func (a *Agent) phoneHubWatcher(ctx context.Context) {
 }
 
 // hubLogin is one way to log in to a phone's proxy: the pass the home
-// server gave this machine (the hub) for one device, as proxy credentials.
+// server gave this machine (the hub) for one device, as proxy credentials,
+// and the same pass as the BLE control channel's key (proxy.BLELogin, the
+// menu bar's one click).
 type hubLogin struct {
-	keyID, user, pass string
+	keyID, user, pass, bleKey string
 }
 
 // hubLogins: this machine's logins, by the phone's key id (Pair & Share's
@@ -216,7 +220,8 @@ func (a *Agent) hubLogins() map[string]hubLogin {
 	out := map[string]hubLogin{}
 	for kid, hp := range a.hubPasses(p) {
 		u, pw := proxy.Credentials(hp.key, p.User, hp.exp)
-		out[kid] = hubLogin{kid, u, pw}
+		_, bk := proxy.BLELogin(hp.key, p.User, hp.exp)
+		out[kid] = hubLogin{kid, u, pw, bk}
 	}
 	return out
 }
@@ -450,6 +455,12 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 	}
 	hs.op.Lock()
 	defer hs.op.Unlock()
+	return a.useHubLocked(ctx, hs, id, pac)
+}
+
+// useHubLocked is useHub with hs.op held (the one click holds it across its
+// steps).
+func (a *Agent) useHubLocked(ctx context.Context, hs *phoneHubState, id string, pac bool) error {
 	logins := a.hubLogins()
 	if len(logins) == 0 {
 		return errors.New("connect to your home server once first: the phone hub's password comes from it")
@@ -492,6 +503,10 @@ func (a *Agent) useHub(ctx context.Context, id string, pac bool) error {
 		// target and the setting change
 		a.mu.Lock()
 		cur.cand, cur.user, cur.pass, cur.missed = *cand, cand.user, cand.pass, 0
+		// a hub picked by hand (the dashboard) ends a one click's say
+		if hs.click != nil && hs.click.hubID != cand.ID {
+			hs.click = nil
+		}
 		a.mu.Unlock()
 		if mode != cur.mode && mode != "manual" {
 			if err := a.applySysProxy(ctx, cur.service, mode, cur.ln.Addr().String()); err != nil {
@@ -583,9 +598,20 @@ func (a *Agent) stopHub(note string) {
 	}
 	hs.op.Lock()
 	defer hs.op.Unlock()
+	a.stopHubLocked(hs, note)
+}
+
+// stopHubLocked is stopHub with hs.op held.
+func (a *Agent) stopHubLocked(hs *phoneHubState, note string) {
 	a.mu.Lock()
 	u := hs.use
 	hs.use, hs.note = nil, note
+	// a one click that was on ends with the same words (the click-off
+	// clears its state before this; this is the hub going away, or a stop
+	// from the dashboard)
+	if hs.click != nil && hs.click.on {
+		hs.click.on, hs.click.step, hs.click.err = false, "gone", note
+	}
 	a.mu.Unlock()
 	if u == nil {
 		return
@@ -601,9 +627,15 @@ func (a *Agent) phoneHubStatus() *status.PhoneHub {
 	if hs == nil {
 		return nil
 	}
+	// the BLE logins (the menu bar's one click) from the same passes;
+	// hubLogins takes a.mu itself, so before we hold it below
+	logins := a.hubLogins()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil}
+	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil, Click: hs.click.clickStatus()}
+	for _, l := range logins {
+		out.Logins = append(out.Logins, status.PhoneHubLogin{KeyID: l.keyID, User: l.user, Key: l.bleKey})
+	}
 	for _, c := range hs.found {
 		out.Found = append(out.Found, status.PhoneHubFound{ID: c.ID, Label: c.Label, Addr: c.Addr, Via: c.Via, Bonded: c.Bonded != "0", Iface: ifaceFor(c.Addr)})
 	}

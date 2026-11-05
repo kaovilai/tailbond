@@ -260,6 +260,7 @@ func TestCredentialVectors(t *testing.T) {
 		PassKey  string `json:"pass_key"` // hex: what the server gives the hub
 		User     string `json:"user"`
 		Pass     string `json:"pass"`
+		BLEKey   string `json:"ble_key"` // the BLE control channel's key (same user)
 	}
 	in := []struct {
 		key, hub string
@@ -269,9 +270,13 @@ func TestCredentialVectors(t *testing.T) {
 	for _, x := range in {
 		pk := share.PassKey([]byte(x.key), x.hub, x.exp)
 		u, p := Credentials(pk, x.hub, x.exp)
-		vs = append(vs, vec{x.key, x.hub, x.exp, hex.EncodeToString(pk), u, p})
+		_, bk := BLELogin(pk, x.hub, x.exp)
+		vs = append(vs, vec{x.key, x.hub, x.exp, hex.EncodeToString(pk), u, p, bk})
 		if !Verifier([]byte(x.key), func() time.Time { return time.Unix(0, 0) }, nil)(u, p) {
 			t.Errorf("%s: the phone doesn't accept its own derivation", x.hub)
+		}
+		if p == bk {
+			t.Errorf("%s: the BLE key and the proxy password are the same", x.hub)
 		}
 	}
 	path := "testdata/vectors.json"

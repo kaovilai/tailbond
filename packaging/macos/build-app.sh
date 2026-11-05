@@ -55,6 +55,8 @@ cat >"$app/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHumanReadableCopyright</key><string>Apache-2.0</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>tailbond connects to your phone over Bluetooth to turn its hotspot on and bond this Mac through it (docs/phone-hub.md, "One click from the Mac").</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>tailbond looks for your phone's hotspot Wi-Fi to join it (macOS needs Location for Wi-Fi names).</string>
 </dict>
 </plist>
 PLIST

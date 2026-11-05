@@ -449,6 +449,55 @@ fi
 wait_for 90 "hub connected again" sh -c "curl -fsS -m 2 http://$API/api/status | jq -e '.state == \"connected\"'" \
   && ok "hub connected again after the restart" || bad "hub not connected after the restart"
 
+say "one click from the menu bar (docs/phone-hub.md): the menu app's call → tailbondd uses the phone hub → the internet through it"
+# A runner has no Bluetooth and no phone to talk to, so this is the click's
+# no-Bluetooth fallback: the same API call the menu bar's switch makes (the
+# menu app's CLI, which is that call without the Bluetooth half), against
+# the stand-in phone hub still on 192.168.77.4. The Bluetooth half itself
+# (scan, hello, hotspot.on, hub.on) is CoreBluetooth in the menu app and
+# can only be tried against a real phone.
+swift build --package-path "$ROOT/macos/TailbondMenu" --scratch-path "$WORK/menu-build" -c debug --product tailbond >/dev/null 2>&1
+MENU="$WORK/menu-build/debug/tailbond"
+[ -x "$MENU" ] && ok "the menu bar app built" || bad "the menu app didn't build: $(swift build --package-path "$ROOT/macos/TailbondMenu" --scratch-path "$WORK/menu-build" -c debug --product tailbond 2>&1 | tail -n 3 | tr '\n' ' ')"
+# a recognisable original again, both settings (the click uses PAC mode)
+networksetup -setsocksfirewallproxy "$SVC" 10.9.9.9 1080 off
+networksetup -setsocksfirewallproxystate "$SVC" off
+networksetup -setautoproxyurl "$SVC" http://10.9.9.9/original.pac
+networksetup -setautoproxystate "$SVC" off
+ORIG="$(socks)"
+PACORIG="$(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')"
+# the token server is tunnel-only, so the click's internet check reaching
+# it proves the SOCKS path end to end; --check points the check at it
+CLICK="$("$MENU" --phone "http://$API" on --check "http://10.77.0.1:8080/token" 2>&1)" \
+  && ok "click on: $CLICK" || bad "click on: $CLICK"
+ST="$(hapi "http://$API/api/status")"
+jq -e '.phone_hub.click.on == true and .phone_hub.click.via == "fallback" and .phone_hub.using.label == "Pixel" and .phone_hub.using.mode == "pac"' <<<"$ST" >/dev/null \
+  && ok "the state the menu bar renders: $(jq -c '.phone_hub.click | {on, via, label}' <<<"$ST") ($(jq -r '.phone_hub.click.error // "no error"' <<<"$ST"))" \
+  || bad "click state: $(jq -c .phone_hub <<<"$ST")"
+PACNOW="$(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')"
+grep -q "URL: http://127.0.0.1:8077/proxy.pac Enabled: Yes" <<<"$PACNOW" \
+  && ok "the system proxy points at the phone hub (PAC): $PACNOW" || bad "after the click: $PACNOW"
+info "no phone status without Bluetooth (the phone's network type and battery come over BLE)"
+CLICK="$("$MENU" --phone "http://$API" off 2>&1)" \
+  && ok "click off: $CLICK" || bad "click off: $CLICK"
+[ "$(socks)" = "$ORIG" ] && [ "$(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')" = "$PACORIG" ] \
+  && ok "click off restored the system proxy: $(socks) / $(networksetup -getautoproxyurl "$SVC" | tr '\n' ' ')" \
+  || bad "after click off: $(socks) / $(networksetup -getautoproxyurl "$SVC" | tr '\n' ' '), want $ORIG / $PACORIG"
+hapi "http://$API/api/status" | jq -e '.phone_hub.click == null and .phone_hub.using == null' >/dev/null \
+  && ok "the click's state is gone, nothing in use" || bad "after click off: $(hapi "http://$API/api/status" | jq -c .phone_hub)"
+# a click with no phone hub around says so (the stand-in withdrawn)
+kill "$PHUB_PID" 2>/dev/null || true; PHUB_PID=""
+set +e
+CLICK="$("$MENU" --phone "http://$API" on --check "http://10.77.0.1:8080/token" 2>&1)"
+RC=$?
+set -e
+[ "$RC" -ne 0 ] && echo "$CLICK" | grep -q "no phone hub was found" \
+  && ok "a click with no hub around fails at the right step: $CLICK" || bad "no-hub click (exit $RC): $CLICK"
+hapi "http://$API/api/status" | jq -e '.phone_hub.click.on == false and .phone_hub.click.step == "proxy"' >/dev/null \
+  && ok "the failed click's state: $(hapi "http://$API/api/status" | jq -c '.phone_hub.click | {on, step}')" \
+  || bad "failed click state: $(hapi "http://$API/api/status" | jq -c .phone_hub.click)"
+[ "$(socks)" = "$ORIG" ] && ok "the failed click left the proxy alone" || bad "the failed click changed the proxy: $(socks)"
+
 say "other VPNs: the real NetBird package, not logged in"
 NB_REAL="$(command -v netbird || ls /opt/homebrew/bin/netbird /usr/local/bin/netbird 2>/dev/null | head -n1 || true)"
 if [ -n "$NB_REAL" ]; then

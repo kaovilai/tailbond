@@ -37,6 +37,7 @@ public struct MenuContent: View {
                 modes
                 if !s.links.isEmpty { section("Connections") { linksList } }
                 if let sh = s.share { section("Share this Mac's connection") { shareBox(sh) } }
+                if let p = s.phone { section("Use a phone's connection") { phoneBox(p) } }
                 if !s.coexist.isEmpty { section("Next to other VPNs") { coexistBox } }
                 section("Updates") { updatesBox }
             }
@@ -152,6 +153,28 @@ public struct MenuContent: View {
             }
             Button(sh.canToggle ? "Sharing settings…" : "Choose a connection…") { openURL(model.client.shareSettings) }
                 .controlSize(.small)
+        }
+    }
+
+    /// The one click (docs/phone-hub.md, "One click from the Mac"): on,
+    /// the phone starts its hotspot and this Mac bonds through it; off,
+    /// back to this Mac's own connection.
+    private func phoneBox(_ p: MenuSummary.Phone) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                Text(p.text).font(.caption).foregroundStyle(p.warn ? Brand.warn : .secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Toggle("", isOn: Binding(get: { p.on }, set: { model.clickPhone($0) }))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .tint(Brand.ok)
+                    .disabled(model.busy || model.clicking)
+                    .accessibilityLabel("Connect via phone")
+            }
+            if model.clicking {
+                Text("Starting the phone's hotspot and bonding through it…").font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 

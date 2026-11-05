@@ -1,0 +1,115 @@
+{
+ "role": "client",
+ "mode": "speed",
+ "state": "connected",
+ "server": "homebox.tail1234.ts.net:443",
+ "tunnel_ip": "10.77.0.3",
+ "uptime_sec": 5400,
+ "totals": {
+  "tx_bps": 1200000,
+  "rx_bps": 23400000,
+  "tx_bytes": 120000000,
+  "rx_bytes": 2400000000
+ },
+ "paths": [
+  {
+   "id": 1,
+   "iface": "en0",
+   "kind": "wifi",
+   "state": "active",
+   "srtt_ms": 38,
+   "min_rtt_ms": 30,
+   "loss_pct": 0.2,
+   "tx_bps": 700000,
+   "rx_bps": 14100000,
+   "tx_bytes": 1,
+   "rx_bytes": 1,
+   "enabled": true,
+   "label": "Wi-Fi"
+  },
+  {
+   "id": 2,
+   "iface": "en7",
+   "kind": "usb",
+   "state": "active",
+   "srtt_ms": 61,
+   "min_rtt_ms": 48,
+   "loss_pct": 0,
+   "tx_bps": 500000,
+   "rx_bps": 9300000,
+   "tx_bytes": 1,
+   "rx_bytes": 1,
+   "enabled": true,
+   "label": "iPhone (USB)"
+  },
+  {
+   "id": 3,
+   "iface": "sh5a1b2c",
+   "kind": "shared-cellular",
+   "state": "standby",
+   "srtt_ms": 0,
+   "min_rtt_ms": 0,
+   "loss_pct": 0,
+   "tx_bps": 0,
+   "rx_bps": 0,
+   "tx_bytes": 0,
+   "rx_bytes": 0,
+   "enabled": true,
+   "label": "Sam's phone"
+  }
+ ],
+ "clients": [],
+ "tailscale": null,
+ "control_api": true,
+ "paired": true,
+ "version": "0.2.0",
+ "protocol": 1,
+ "update": {
+  "current": "0.2.0",
+  "policy": "immediate",
+  "method": "static",
+  "state": "idle"
+ },
+ "platform": "darwin",
+ "phone_hub": {
+  "found": [
+   {
+    "id": "pixel-hub",
+    "label": "Pixel",
+    "addr": "192.168.77.4:1888",
+    "via": "mdns",
+    "bonded": true,
+    "iface": "en0"
+   }
+  ],
+  "using": {
+   "id": "pixel-hub",
+   "label": "Pixel",
+   "addr": "192.168.77.4:1888",
+   "mode": "pac",
+   "bonded": true,
+   "service": "Wi-Fi",
+   "local": "127.0.0.1:1889",
+   "since": "2026-11-05T10:00:00Z",
+   "up_bytes": 42000000,
+   "dn_bytes": 910000000,
+   "conns": 3
+  },
+  "logins": [
+   {
+    "key_id": "a1b2c3d4",
+    "user": "mac/4102444800",
+    "key": "7kceoolvxnekqfq2"
+   }
+  ],
+  "click": {
+   "on": true,
+   "via": "ble",
+   "label": "Pixel",
+   "net": "5G",
+   "battery": 78,
+   "charging": true,
+   "since": "2026-11-05T09:59:50Z"
+  }
+ }
+}

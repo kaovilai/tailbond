@@ -44,6 +44,7 @@ final class SnapshotTests: XCTestCase {
             ("menu-04-not-paired", try fixture("not-paired")),
             ("menu-05-not-running", nil),
             ("menu-06-sharing", try fixture("sharing")),
+            ("menu-07-phone-click", try fixture("phone-click")),
         ]
         for (name, st) in cases {
             for dark in [false, true] {

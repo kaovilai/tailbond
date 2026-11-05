@@ -82,6 +82,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST /api/share", a.hShareSettings)
 	mux.HandleFunc("GET /api/phone-hub", a.hPhoneHub)
 	mux.HandleFunc("POST /api/phone-hub", a.hPhoneHub)
+	mux.HandleFunc("POST /api/phone-hub/click", a.hPhoneClick)
 	mux.HandleFunc("GET /proxy.pac", a.hProxyPAC)
 	mux.HandleFunc("GET /api/coexist", a.hCoexist)
 	mux.HandleFunc("POST /api/coexist", a.hCoexist)

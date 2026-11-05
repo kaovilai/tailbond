@@ -43,6 +43,9 @@ class MainActivity : ComponentActivity() {
         if (VpnService.prepare(this) == null) vm.connect()
     }
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    // the Mac's one click: BLE advertise+connect (the hub service opens its
+    // GATT server again, and says what's missing, when this is refused)
+    private val blePermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
 
     private var tailscaleInstalled by mutableStateOf(false)
 
@@ -250,7 +253,22 @@ class MainActivity : ComponentActivity() {
         override fun pushBackup(passphrase: String) = vm.pushBackup(passphrase)
         override fun dismissBackup() = vm.dismissBackup()
         override fun startShare() = dev.tailbond.app.share.ShareService.start(this@MainActivity)
-        override fun startHub() = dev.tailbond.app.share.HubService.start(this@MainActivity)
+        override fun startHub() {
+            // the Mac's one click reaches this phone over Bluetooth LE:
+            // ask for it once (API 31+), then start; the service itself
+            // degrades to "Bluetooth off" when it isn't given
+            if (Build.VERSION.SDK_INT >= 31 && !resources.configuration.isTelevision() &&
+                ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED
+            ) {
+                blePermission.launch(
+                    arrayOf(
+                        android.Manifest.permission.BLUETOOTH_ADVERTISE,
+                        android.Manifest.permission.BLUETOOTH_CONNECT,
+                    ),
+                )
+            }
+            dev.tailbond.app.share.HubService.start(this@MainActivity)
+        }
         override fun stopHub() = dev.tailbond.app.share.HubService.stop(this@MainActivity)
         override fun stopShare() = dev.tailbond.app.share.ShareService.stop(this@MainActivity)
         override fun setShareMinBattery(pct: Int) = vm.setShareMinBattery(pct)

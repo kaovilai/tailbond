@@ -6,7 +6,8 @@
       "exp": 1793836800,
       "pass_key": "58617c98f9751f56046b281e303a8d5a0d54cbd26b5de8ab9328961bb3f10ee4",
       "user": "mac/1793836800",
-      "pass": "cddfysqm2dpdgyvb"
+      "pass": "cddfysqm2dpdgyvb",
+      "ble_key": "7kceoolvxnekqfq2"
     },
     {
       "share_key": "k",
@@ -14,7 +15,8 @@
       "exp": 1,
       "pass_key": "d6b41cb321f743ffb224ffb811c633a29cc2274346c74a8e933a15bf07ff6218",
       "user": "slate7/1",
-      "pass": "fzwj6j56iss26fjw"
+      "pass": "fzwj6j56iss26fjw",
+      "ble_key": "dvffogy42wh2nkv5"
     },
     {
       "share_key": "a much longer share key, 64 bytes or so, as the server makes it.",
@@ -22,7 +24,8 @@
       "exp": 4102444800,
       "pass_key": "cf5cfccb4efaa0415fdfcf6aa64a48eb6c951c6bb1d77ca87dc02707463a173a",
       "user": "dana-macbook/4102444800",
-      "pass": "aehk4or3u6fzqdqu"
+      "pass": "aehk4or3u6fzqdqu",
+      "ble_key": "tbgvr6dovf6zh7rm"
     }
   ]
 }

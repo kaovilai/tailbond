@@ -192,11 +192,61 @@ public struct PhoneHubInfo: Decodable, Equatable {
             bonded = try c.decodeIfPresent(Bool.self, forKey: .bonded) ?? false
         }
     }
+
+    /// One phone's BLE login (the one click), by the phone's key id.
+    public struct Login: Decodable, Equatable {
+        public var keyId = ""
+        public var user = ""
+        public var key = ""
+        enum CodingKeys: String, CodingKey { case keyId = "key_id", user, key }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            keyId = try c.decodeIfPresent(String.self, forKey: .keyId) ?? ""
+            user = try c.decodeIfPresent(String.self, forKey: .user) ?? ""
+            key = try c.decodeIfPresent(String.self, forKey: .key) ?? ""
+        }
+    }
+
+    /// The menu bar's one click ("Connect via phone"): where it stands.
+    public struct Click: Decodable, Equatable {
+        public var on = false
+        public var via = ""
+        public var label = ""
+        public var net = ""
+        public var battery = 0
+        public var charging = false
+        public var step = ""
+        public var error = ""
+        public var bleStep = ""
+        public var bleError = ""
+        enum CodingKeys: String, CodingKey {
+            case on, via, label, net, battery, charging, step, error
+            case bleStep = "ble_step", bleError = "ble_error"
+        }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            on = try c.decodeIfPresent(Bool.self, forKey: .on) ?? false
+            via = try c.decodeIfPresent(String.self, forKey: .via) ?? ""
+            label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+            net = try c.decodeIfPresent(String.self, forKey: .net) ?? ""
+            battery = try c.decodeIfPresent(Int.self, forKey: .battery) ?? 0
+            charging = try c.decodeIfPresent(Bool.self, forKey: .charging) ?? false
+            step = try c.decodeIfPresent(String.self, forKey: .step) ?? ""
+            error = try c.decodeIfPresent(String.self, forKey: .error) ?? ""
+            bleStep = try c.decodeIfPresent(String.self, forKey: .bleStep) ?? ""
+            bleError = try c.decodeIfPresent(String.self, forKey: .bleError) ?? ""
+        }
+    }
+
     public var using: Use?
-    enum CodingKeys: String, CodingKey { case using }
+    public var logins: [Login] = []
+    public var click: Click?
+    enum CodingKeys: String, CodingKey { case using, logins, click }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         using = try c.decodeIfPresent(Use.self, forKey: .using)
+        logins = try c.decodeIfPresent([Login].self, forKey: .logins) ?? []
+        click = try c.decodeIfPresent(Click.self, forKey: .click)
     }
 }
 

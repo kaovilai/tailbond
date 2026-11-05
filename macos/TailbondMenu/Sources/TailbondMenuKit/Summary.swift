@@ -42,6 +42,9 @@ public struct MenuSummary: Equatable {
     public let connected: Bool
     /// "Share this Mac's connection" (nil: the agent doesn't offer it)
     public let share: Share?
+    /// "Use a phone's connection", the one click (nil: the agent doesn't
+    /// offer it)
+    public let phone: Phone?
 
     public struct Share: Equatable {
         /// the switch's state
@@ -49,6 +52,14 @@ public struct MenuSummary: Equatable {
         /// a connection is picked, so the switch works; otherwise the
         /// dashboard's choices open
         public let canToggle: Bool
+        public let text: String
+        public let warn: Bool
+    }
+
+    /// "Use a phone's connection", the one click (docs/phone-hub.md): the
+    /// switch's state and what it says.
+    public struct Phone: Equatable {
+        public let on: Bool
         public let text: String
         public let warn: Bool
     }
@@ -95,7 +106,7 @@ public struct MenuSummary: Equatable {
             subtitle = unreachable ?? "Nothing answers on 127.0.0.1:8077. Start it: sudo launchctl kickstart -k system/com.tailbond.tailbondd"
             tone = .bad; symbol = "exclamationmark.triangle"; rates = ""; links = []; coexist = []
             workVPNChoice = false; workVPN = ""; workExplain = []; bondedBlocked = ""; update = Line(text: "", warn: false); updatePolicy = ""
-            canInstall = false; crash = nil; connected = false; share = nil
+            canInstall = false; crash = nil; connected = false; share = nil; phone = nil
             return
         }
         let server = s.activeServer.isEmpty ? s.server : s.activeServer
@@ -213,6 +224,49 @@ public struct MenuSummary: Equatable {
         }
         crash = s.crash.isEmpty ? nil : Self.when(s.crash)
         share = s.sharing.map(Self.shareSummary)
+        phone = s.phoneHub.map(Self.phoneSummary)
+    }
+
+    /// What the one click says (docs/phone-hub.md, "One click from the
+    /// Mac"): the words the switch sits next to.
+    public static func phoneSummary(_ ph: PhoneHubInfo) -> Phone {
+        if let c = ph.click {
+            return Phone(on: c.on, text: clickText(c), warn: !c.on)
+        }
+        if let u = ph.using {
+            return Phone(on: true, text: "Using \(u.label.isEmpty ? "a phone" : u.label)'s bonded connection (the dashboard's Use phone hub)", warn: false)
+        }
+        return Phone(on: false, text: ph.logins.isEmpty
+            ? "A phone running tailbond, with Bluetooth, lends this Mac its bonded connection: pair this Mac with the same home server first."
+            : "One click starts a phone's hotspot and bonds this Mac through it (the phone's tailbond → Share bonded connection, or just have it around: Bluetooth finds it).", warn: false)
+    }
+
+    /// The one click's say, from tailbondd's state of it: what went wrong
+    /// at which step, or "Bonded via <phone> · <network>".
+    public static func clickText(_ c: PhoneHubInfo.Click) -> String {
+        if c.on {
+            var t = "Bonded via \(c.label.isEmpty ? "the phone" : c.label)"
+            if !c.net.isEmpty { t += " · \(c.net)" }
+            if c.battery > 0 { t += " · \(c.battery)% battery\(c.charging ? ", charging" : "")" }
+            if c.via == "fallback" {
+                t += c.bleStep.isEmpty
+                    ? " (the phone's hotspot as it was: Bluetooth wasn't tried)"
+                    : " (the phone's hotspot as it was: Bluetooth — \(c.bleError.isEmpty ? c.bleStep : c.bleError))"
+            }
+            return t
+        }
+        var parts: [String] = []
+        if !c.bleStep.isEmpty {
+            parts.append("Bluetooth: \(c.bleError.isEmpty ? c.bleStep : c.bleError).")
+        }
+        switch c.step {
+        case "wifi": parts.append("Couldn't join the phone's hotspot Wi-Fi: \(c.error).")
+        case "proxy": parts.append("\(c.error.isEmpty ? "No phone hub was found." : c.error).")
+        case "internet": parts.append("\(c.error.isEmpty ? "The phone's proxy is up, but the internet through it didn't answer." : c.error).")
+        case "gone": parts.append("\(c.error.isEmpty ? "The phone went away, so the proxy is off again." : c.error).")
+        default: parts.append(c.error.isEmpty ? "It didn't work." : "\(c.error).")
+        }
+        return parts.joined(separator: " ")
     }
 
     /// "1.2 MB", "120 MB", "3.4 GB" (the dashboard's units)
@@ -269,6 +323,7 @@ public struct MenuSummary: Equatable {
         if !update.text.isEmpty { out.append("  \(update.text)") }
         if !updatePolicy.isEmpty { out.append("  Install updates: \(Self.policyLabel(updatePolicy))") }
         if let sh = share { out.append("  \(sh.warn ? "! " : "")Share this Mac's connection: \(sh.on ? "on" : "off"): \(sh.text)") }
+        if let p = phone { out.append("  \(p.warn ? "! " : "")Use a phone's connection: \(p.on ? "on" : "off"): \(p.text)") }
         if let c = crash { out.append("  ! tailbond stopped unexpectedly (\(c)): Report a problem…") }
         return out.joined(separator: "\n")
     }

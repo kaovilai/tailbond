@@ -284,6 +284,14 @@ if wait_for 30 app_is '.hub.status == "READY"'; then
 else
   bad "hub not ready: $(app_status | jq -c '.hub | del(.pass)')"
 fi
+# the Mac's one click (docs/phone-hub.md): the emulator has no Bluetooth
+# and no Shizuku, so both halves must degrade to a clear state, not a crash
+app_is '.hub.ble != "on"' \
+  && ok "the one click's BLE half says the emulator has no Bluetooth: ble=$(app_status | jq -r .hub.ble)" \
+  || bad "ble state: $(app_status | jq -r .hub.ble)"
+app_is '.hub.shizuku != ""' \
+  && ok "the one click's hotspot half says Shizuku isn't running: $(app_status | jq -r .hub.shizuku | cut -c1-60)…" \
+  || bad "shizuku state: $(app_status | jq -r .hub.shizuku)"
 # 1888 = 0x0760 in /proc/net/tcp6 (listening on "::")
 # (informational: the SOCKS5 round trip below is the proof it listens)
 sh_ cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ':0760 .* 0A ' && ok "listening on TCP 1888" || note "TCP 1888 not seen in /proc/net/tcp*"

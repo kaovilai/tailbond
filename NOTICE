@@ -15,6 +15,16 @@ This product includes or builds against third-party software:
 - github.com/quic-go/quic-go (MIT)
 - rsc.io/qr (BSD-3-Clause)
 - golang.org/x/crypto, golang.org/x/net, golang.org/x/sys (BSD-3-Clause)
+- untether (https://github.com/ImOstrovskiy/untether), BSD-3-Clause,
+  Copyright (c) 2026 Oleksii Ostrovskyi: the one click's phone half is
+  adapted from it (Shizuku hotspot control in android/app/src/main/kotlin/
+  dev/tailbond/app/share/TetheringShell.kt and ShizukuTethering.kt, the
+  GATT server shape in BleGattServer.kt, the CoreBluetooth central and
+  CoreWLAN join in macos/TailbondMenu; each file carries the notice). The
+  messages, the login and the framing are tailbond's.
+- Shizuku and Shizuku-API (https://github.com/RikkaApps/Shizuku-API), MIT,
+  a build dependency of the Android app: the one click's hotspot calls run
+  through it, as the shell user.
 - ZXing core (Apache-2.0), AndroidX / Jetpack Compose (Apache-2.0),
   Kotlin (Apache-2.0) and other Android build dependencies listed in
   android/gradle/libs.versions.toml (Apache-2.0 unless noted there)

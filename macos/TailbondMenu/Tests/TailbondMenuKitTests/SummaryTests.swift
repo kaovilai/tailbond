@@ -91,6 +91,50 @@ final class SummaryTests: XCTestCase {
         XCTAssertEqual(MenuSummary.bytes(125_829_120), "120 MB")
     }
 
+
+    /// The one click's words, from tailbondd's state of it (MenuSummary's
+    /// phone summary and clickText; the Go agent's tests check the state
+    /// itself).
+    func testPhoneClick() throws {
+        func status(_ phoneHub: String) throws -> AgentStatus {
+            let json = "{\"role\":\"client\",\"state\":\"connected\",\"paired\":true,\"phone_hub\":\(phoneHub)}"
+            return try JSONDecoder().decode(AgentStatus.self, from: Data(json.utf8))
+        }
+        func click(_ fields: String) -> String {
+            "{\"click\":{\(fields)},\"logins\":[{\"key_id\":\"a1b2c3d4\",\"user\":\"mac/1\",\"key\":\"0123456789abcdef\"}]}"
+        }
+        // on, via Bluetooth: "Bonded via phone · network · battery"
+        var s = MenuSummary(try status(click("\"on\":true,\"via\":\"ble\",\"label\":\"Pixel\",\"net\":\"5G\",\"battery\":78,\"charging\":true")))
+        XCTAssertEqual(s.phone?.on, true)
+        XCTAssertEqual(s.phone?.text, "Bonded via Pixel · 5G · 78% battery, charging")
+        XCTAssertFalse(s.phone!.warn)
+        // on, the fallback: says that Bluetooth didn't
+        s = MenuSummary(try status(click("\"on\":true,\"via\":\"fallback\",\"label\":\"Pixel\",\"net\":\"mobile data\",\"ble_step\":\"scan\",\"ble_error\":\"no phone was found over Bluetooth\"")))
+        XCTAssertEqual(s.phone?.on, true)
+        XCTAssertEqual(s.phone?.text, "Bonded via Pixel · mobile data (the phone's hotspot as it was: Bluetooth — no phone was found over Bluetooth)")
+        // failed at the Wi-Fi join
+        s = MenuSummary(try status(click("\"on\":false,\"via\":\"ble\",\"label\":\"Pixel\",\"step\":\"wifi\",\"error\":\"the hotspot \\\"Pixel\\\" isn't visible\"")))
+        XCTAssertEqual(s.phone?.on, false)
+        XCTAssertEqual(s.phone?.text, "Couldn't join the phone's hotspot Wi-Fi: the hotspot \"Pixel\" isn't visible.")
+        XCTAssertTrue(s.phone!.warn)
+        // failed with no proxy around, after Bluetooth found nothing
+        s = MenuSummary(try status(click("\"on\":false,\"via\":\"fallback\",\"step\":\"proxy\",\"error\":\"no phone hub was found\",\"ble_step\":\"scan\",\"ble_error\":\"no phone was found over Bluetooth\"")))
+        XCTAssertEqual(s.phone?.text, "Bluetooth: no phone was found over Bluetooth. No phone hub was found.")
+        // the phone went away
+        s = MenuSummary(try status(click("\"on\":false,\"via\":\"ble\",\"step\":\"gone\",\"error\":\"Lost the phone hub, so the proxy is off again and this Mac uses its own connection.\"")))
+        XCTAssertTrue(s.phone!.text.hasPrefix("Lost the phone hub"))
+        // nothing clicked yet: the invitation
+        s = MenuSummary(try status("{\"logins\":[{\"key_id\":\"a1b2c3d4\",\"user\":\"mac/1\",\"key\":\"0123456789abcdef\"}]}"))
+        XCTAssertEqual(s.phone?.on, false)
+        XCTAssertTrue(s.phone!.text.contains("One click starts a phone's hotspot"))
+        // the dashboard's use, without a click
+        s = MenuSummary(try status("{\"using\":{\"label\":\"Pixel\",\"bonded\":true}}"))
+        XCTAssertEqual(s.phone?.on, true)
+        XCTAssertTrue(s.phone!.text.hasPrefix("Using Pixel's bonded connection"))
+        // and the text block carries it
+        XCTAssertTrue(MenuSummary(try status(click("\"on\":true,\"via\":\"ble\",\"label\":\"Pixel\",\"net\":\"5G\",\"battery\":78"))).text.contains("Use a phone's connection: on: Bonded via Pixel · 5G · 78% battery"))
+    }
+
     func testWords() {
         XCTAssertEqual(MenuSummary.policyLabel("immediate"), "Right away")
         XCTAssertEqual(MenuSummary.policyLabel("auto"), "Automatic (night)")

@@ -179,6 +179,45 @@ type PhoneHub struct {
 	Note string `json:"note,omitempty"`
 	// Manual: this OS's proxy setting isn't set for you (not macOS).
 	Manual bool `json:"manual,omitempty"`
+	// Logins: this Mac's logins for the phones' BLE control channel, by the
+	// phone's share key id (the menu bar's one click, docs/phone-hub.md
+	// "One click from the Mac"). Empty with no pairing.
+	Logins []PhoneHubLogin `json:"logins,omitempty"`
+	// Click is the menu bar's one click ("Connect via phone"), when it has
+	// been used.
+	Click *PhoneHubClick `json:"click,omitempty"`
+}
+
+// PhoneHubLogin is one phone's BLE control channel login: the same pass as
+// its proxy login, derived with the BLE label, so the two credentials
+// differ (proxy.BLELogin).
+type PhoneHubLogin struct {
+	KeyID string `json:"key_id"`
+	User  string `json:"user"`
+	Key   string `json:"key"`
+}
+
+// PhoneHubClick is where the menu bar's one click stands: what it did, or
+// which step failed and why. Via says how: "ble" (the phone started its
+// hotspot on request) or "fallback" (Bluetooth wasn't available, an
+// already-joined phone hotspot and "Use phone hub" were used instead).
+type PhoneHubClick struct {
+	On       bool   `json:"on"`
+	Via      string `json:"via"`
+	Label    string `json:"label,omitempty"`
+	Net      string `json:"net,omitempty"`     // the phone's network type: 5G, LTE, Wi-Fi…
+	Battery  int    `json:"battery,omitempty"` // 0-100; 0 also unknown
+	Charging bool   `json:"charging,omitempty"`
+	// Step is the step that failed: scan, auth, hotspot, wifi, proxy,
+	// internet (empty while on).
+	Step string `json:"step,omitempty"`
+	// Error says why, in plain words.
+	Error string `json:"error,omitempty"`
+	// BLEStep and BLEError carry why Bluetooth itself didn't work, when the
+	// click fell back because of it.
+	BLEStep  string    `json:"ble_step,omitempty"`
+	BLEError string    `json:"ble_error,omitempty"`
+	Since    time.Time `json:"since"`
 }
 
 // PhoneHubFound is a phone hub that took this machine's password.

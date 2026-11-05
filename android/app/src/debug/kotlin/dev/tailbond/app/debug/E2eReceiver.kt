@@ -112,6 +112,11 @@ class E2eReceiver : BroadcastReceiver() {
                         put("status", hub.status.name)
                         put("up_bytes", hub.upBytes)
                         put("down_bytes", hub.downBytes)
+                        // the Mac's one click: the BLE control channel and the
+                        // hotspot state (the emulator has no Bluetooth: "off")
+                        put("ble", hub.ble)
+                        put("hotspot", hub.hotspot.state)
+                        put("shizuku", hub.hotspot.shizuku)
                         put("clients", buildJsonArray {
                             hub.clients.forEach { c -> add(buildJsonObject { put("addr", c.addr); put("up", c.up); put("down", c.down) }) }
                         })

@@ -97,6 +97,10 @@ type Agent struct {
 	hubRouters func(context.Context) []hubCand
 	hubLocal   string
 	hubRecheck []time.Duration
+	// clickWait: how long the one click waits between hub lookups, and
+	// clickFindFor: how long it keeps looking (tests shrink both)
+	clickWait    func(context.Context) time.Duration
+	clickFindFor time.Duration
 	// other VPNs (coexist.go): test hooks for commands and /etc/resolver
 	cxRun         coexist.Runner
 	cxResolverDir string

@@ -267,10 +267,21 @@ class ProxyServer(private val cfg: Config) {
          * hub: user "<hubId>/<exp>", password the first 16 characters of
          * base32(HMAC-SHA256(pass, "tbp1-proxy")), lower case.
          */
-        fun credentials(pass: ByteArray, hubId: String, exp: Long): Pair<String, String> {
+        fun credentials(pass: ByteArray, hubId: String, exp: Long): Pair<String, String> =
+            derived("tbp1-proxy", pass, hubId, exp)
+
+        /**
+         * The same pass as the Mac's BLE control channel key, its own label
+         * so the two credentials differ (docs/phone-hub.md, "One click from
+         * the Mac"; pinned with the proxy vectors in the Go reference).
+         */
+        fun bleLogin(pass: ByteArray, hubId: String, exp: Long): Pair<String, String> =
+            derived("tbp1-ble", pass, hubId, exp)
+
+        private fun derived(label: String, pass: ByteArray, hubId: String, exp: Long): Pair<String, String> {
             val mac = Mac.getInstance("HmacSHA256")
             mac.init(SecretKeySpec(pass, "HmacSHA256"))
-            val sum = mac.doFinal("tbp1-proxy".toByteArray())
+            val sum = mac.doFinal(label.toByteArray())
             return "$hubId/$exp" to base32(sum).substring(0, 16).lowercase()
         }
 

@@ -136,6 +136,10 @@ bar (no Dock icon) that opens a small window over tailbond's own API
 - **Share this Mac's connection** ([below](#sharing-this-macs-connection)):
   what it shares and with which hub, a switch, and **Sharing settings…**
   (the dashboard's choices).
+- **Use a phone's connection** ([phone-hub.md](phone-hub.md)): the one
+  click, *Connect via phone* — a switch that starts a phone's hotspot over
+  Bluetooth and bonds this Mac through it, or says which step failed.
+  Without Bluetooth it uses an already-joined phone hotspot and says so.
 - **Next to other VPNs** ([below](#using-tailbond-with-netbird-or-another-work-vpn)):
   NetBird or another VPN that's on, whether its traffic goes **Direct** or
   **Bonded** (a switch), work names on its DNS, the Tailscale app, and any

@@ -55,6 +55,49 @@ if let i = args.firstIndex(of: "--status") {
     }
     dispatchMain()
 }
+// the one click without Bluetooth (docs/phone-hub.md, "One click from the
+// Mac"): the menu app's fallback path — an already-joined phone hotspot and
+// "Use phone hub" — driven from a terminal or CI:
+//
+//   tailbond --phone [URL] [on|off] [--check URL]
+//
+// (on by default; --check overrides what the internet check fetches)
+if let i = args.firstIndex(of: "--phone") {
+    var url: URL?
+    var on = true
+    var check: String?
+    var j = i + 1
+    while j < args.count {
+        let a = args[j]
+        if a == "--check", j + 1 < args.count {
+            check = args[j + 1]
+            j += 2
+            continue
+        }
+        if a.hasPrefix("http") { url = URL(string: a) }
+        if a == "off" { on = false }
+        j += 1
+    }
+    let client = url.map { AgentClient(base: $0) } ?? AgentClient()
+    Task.detached {
+        do {
+            var report = AgentClient.ClickReport()
+            report.on = on
+            report.checkUrl = check
+            let ph = try await client.clickPhone(report)
+            let line = ph.click.map { MenuSummary.clickText($0) } ?? "the phone click left no state"
+            print("phone: \(line)")
+            if on {
+                exit(ph.click?.on == true ? 0 : 1)
+            }
+            exit(0)
+        } catch {
+            print("phone: it didn't work: \(error.localizedDescription)")
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
 if args.contains("--version") {
     print(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")
     exit(0)

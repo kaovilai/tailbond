@@ -28,6 +28,7 @@ no tunnel of its own, or whose own connections are poor.
 |---|---|
 | A Mac with tailbond, and a phone with mobile data | Pair & Share: the Mac bonds the phone's data with its own Wi-Fi |
 | A Mac at a hotel, and an Android phone already bonding 5G + the hotel Wi-Fi | **Phone hub**: Mac → phone's hotspot, "Use phone hub" |
+| A Mac, and you want all of that in one click | **One click**: the menu bar's "Connect via phone" (below) starts the phone's hotspot and bonds through it |
 | An iPhone over USB, Personal Hotspot on | **Phone hub** (experimental) or the plain USB path in [macos.md](macos.md) |
 | A device without tailbond (a TV, a games console) | Neither: a [GL.iNet travel router](glinet.md) |
 
@@ -89,6 +90,11 @@ has **Stop sharing**.
   connected, nothing goes out (*Waiting for tailbond to connect*).
 - **Discovery:** NSD advertises `_tailbond-proxy._tcp`. Every minute the
   phone also tells the home server its LAN addresses (`kind: "proxy"`).
+- **For the Mac's one click** (below), the same service also runs a BLE
+  GATT server (`share/BleProto.kt`): the Mac starts this phone's hotspot
+  through Shizuku and turns the proxy on and off over it. Bluetooth off or
+  not allowed, or Shizuku not running, is said in the app — the proxy
+  itself keeps working.
 
 ### Android as a Pair & Share hub
 
@@ -201,6 +207,107 @@ API:
   to stop, or `{"refresh": true}`.
 - `GET /api/status` includes the same object as `phone_hub`.
 
+## One click from the Mac
+
+*"Connect via phone"*, the switch in the Mac's menu bar (macOS only for
+now; Windows is [#28](https://github.com/kaovilai/tailbond/issues/28),
+Linux has no system proxy to set): one click, and the phone in your pocket
+starts its hotspot, the Mac joins it, and the Mac's apps go through the
+phone's bonded tunnel. From click to bonded internet, initiated from the
+Mac — the phone only needs to be around, with tailbond's **Share bonded
+connection** on.
+
+What the click does, and who does it (the halves live where their
+libraries are: Bluetooth and Wi-Fi in the Swift menu bar app, everything
+privileged in tailbondd):
+
+1. **Bluetooth** (the menu bar app, CoreBluetooth; adapted from
+   [untether](https://github.com/ImOstrovskiy/untether)'s approach): scan
+   for the phone, say hello with the key tailbondd derived for it, send
+   `hotspot.on`, then `hub.on`, then `status`.
+   - The phone (Android 11+) starts its **Wi-Fi hotspot through
+     [Shizuku](https://shizuku.rikka.app/)**, which runs the tethering
+     calls as the shell user — no root. **Shizuku must be running on the
+     phone and allowed for tailbond**; without it (or below Android 11)
+     the click says so and the hotspot has to be started by hand once. The
+     hotspot keeps the network Android already has in its settings —
+     tailbond never writes it.
+   - `hub.on` turns the phone's proxy (above) on; `status` says the
+     phone's battery, what carries its tunnel ("mobile data + Wi-Fi") and
+     its bonded path count.
+   - The BLE characteristics need an encrypted, bonded link: **the very
+     first click pairs the Mac with the phone** (a one-time numeric
+     comparison on both screens), and after that the traffic between them
+     — challenge, commands, the hotspot's passphrase — is encrypted.
+2. **Join the hotspot** (the menu bar app, CoreWLAN; needs Location
+   permission for the scan on macOS 14+): the SSID and passphrase came
+   over Bluetooth.
+3. **Use the phone hub** (tailbondd, the dashboard's existing path): find
+   the phone's proxy, start the forwarder on 127.0.0.1:1889, point the
+   system proxy at it (with the PAC file that keeps home, local and
+   Tailscale addresses on the Mac's own network), and **check the internet
+   through it** — one small fetch through the SOCKS proxy. If that doesn't
+   answer, the click undoes itself: the system proxy back exactly as it
+   was, nothing left on.
+4. The menu bar says *"Bonded via Pixel · 5G · 78% battery"*. Click again
+   to disconnect: the phone's proxy goes off over Bluetooth (best effort),
+   the system proxy comes back; **the hotspot is left on** (the phone may
+   be serving others) unless you turn it off on the phone.
+
+**No-Bluetooth fallback:** if Bluetooth can't do its half (not allowed,
+off, no phone found, the phone refused the password, the hotspot couldn't
+start), the same click falls back to what needs no Bluetooth: use an
+already-joined phone hotspot and "Use phone hub". The menu bar says so
+(*"…the phone's hotspot as it was: Bluetooth — no phone was found over
+Bluetooth"*). This is also exactly what `tailbond --phone` (the menu app's
+command line) does, and what the macOS end-to-end test exercises.
+
+**The passwords.** No new key is distributed: the Bluetooth login is the
+same pass the proxy uses (the home server's pass for the phone, Pair &
+Share's), derived with its own label — `base32(HMAC(pass, "tbp1-ble"))`,
+first 16 characters — so the proxy password and the Bluetooth key differ,
+and a leak of one is not the other. The phone checks a challenge-response
+HMAC over it, offline, as it checks the proxy login. A Mac paired with the
+same home server has its passes already; tailbondd hands the menu app the
+key with the hub list (`GET /api/phone-hub`, `logins`).
+
+**The wire** (Android's half is `share/BleProto.kt`, the Mac's
+`TailbondMenuKit/BleFrame.swift` + `PhoneLink.swift`; untether's shape,
+tailbond's messages):
+
+- Service `54424c31-5a1c-4b7e-9f2d-6e8b1d0a3c5f`, characteristics
+  `…3c60` (challenge, read), `…3c61` (command, write), `…3c62` (state,
+  read/notify), all requiring an encrypted link.
+- The challenge is 8 bytes of the phone's share key id (ASCII) + 16 fresh
+  random bytes; hello carries the user (`<hub>/<expiry>`), the proof
+  (`HMAC-SHA256(ble key, challenge)`, hex) and is answered `ok` or
+  refused. Any message before hello, and any unknown command, is refused.
+- Messages are JSON (`{"id":N,"cmd":"…"}`), length-prefixed and chunked to
+  the negotiated ATT MTU (`[flags][data]`, START/END bits, 2-byte
+  big-endian frame length); replies come back on the state characteristic
+  with the same id, and the phone pushes `{"push":"status",…}` when its
+  status changes (at least every 10 s).
+- Commands: `hello`, `hotspot.on` (→ the hotspot's SSID and passphrase),
+  `hotspot.off`, `hotspot.state`, `hub.on`, `hub.off`, `status`.
+
+API (additive; the dashboard's behaviour is unchanged):
+
+- `GET /api/phone-hub` also returns `logins` (the BLE logins, by the
+  phone's share key id) and `click`, the one click's state:
+  `{on, via (ble|fallback), label, net, battery, charging, step, error,
+  ble_step, ble_error, since}` — `step` is the step that failed (`scan`,
+  `auth`, `hotspot`, `wifi`, `proxy`, `internet`), in plain words for the
+  menu bar.
+- `POST /api/phone-hub/click` `{"on": true, "ble": {…}, "wifi": {…}}`
+  runs the click (the menu app reports how its Bluetooth and Wi-Fi halves
+  went; both optional — without them it's the fallback),
+  `{"on": false}` disconnects. `check_url` overrides what the internet
+  check fetches (the end-to-end test points it at its tunnel-only token).
+
+**Not remembered, like the hub choice itself:** after tailbondd stops or
+crashes the system proxy is put back (the restore record) and you click
+again.
+
 ## iPhone (experimental)
 
 **Recommended for an iPhone: USB.** Turn on Personal Hotspot and plug the
@@ -252,8 +359,13 @@ These are true of any proxy, so they are said in the UI, not only here:
 | Proxy protocol, password, refused sources, UDP ASSOCIATE refused, byte counts | `go test ./internal/proxy` | Unit tests, with the vectors |
 | Restore record, service detection, SOCKS and PAC set and put back, part-way failure | `go test ./internal/sysproxy` | Unit tests, with a fake `networksetup` |
 | Discovery, password check, forwarder, a hub that moves, a hub that goes, PAC, startup restore, idle | `go test ./internal/agent -run PhoneHub` | Unit tests, with fake hubs |
+| One click: every failure step (no phone, Bluetooth denied, bad auth, hotspot refused, Wi-Fi join failed, no proxy found, proxy up but no internet), the undo, the fallback, the hub going | `go test ./internal/agent -run PhoneClick` | Unit tests, with fake hubs and reported Bluetooth outcomes (the Bluetooth half itself is Swift) |
 | Mac end to end | CI `macos` job, `scripts/e2e-macos.sh` | See below |
+| One click end to end, without Bluetooth | CI `macos` job, `scripts/e2e-macos.sh` | The menu app's call (`tailbond --phone`, the same API as the switch) → tailbondd uses the stand-in phone hub → the internet check reaches the tunnel-only token through SOCKS → the state the menu bar renders → off restores the system proxy → a click with no hub around fails at the right step |
 | Android proxy: password, sources, upstream hook, UDP ASSOCIATE refused | `ProxyServerTest` (JVM) | Unit tests, with the Go vectors |
+| Android BLE control channel: framing at any MTU, the challenge-response login (right, wrong, expired, stale challenge), every command, refusals before hello, pushes, the BLE key vectors | `BleProtoTest` (JVM) | Unit tests, with a fake transport and fake commands (the GATT server itself needs a phone) |
+| Mac BLE framing and proof | `BleFrameTests` (`swift test`, CI `macos`) | Unit tests, with the Go reference's vectors and the RFC's own |
+| Menu bar words for the click | `SummaryTests` (`swift test`), the `menubar-screens` artifact | Unit tests, and the rendered menu for the connected state (`menu-07-phone-click`) |
 | Android proxy end to end | CI `android-e2e`, `scripts/e2e-android.sh` | On the emulator, through `adb forward`: SOCKS5 and HTTP CONNECT reach a token server that only the tunnel reaches, and it logs the **phone's tunnel address** as the client. A wrong password is refused, and the counters move |
 | Android hub link | `ShareLinkTest` (JVM) | Against the Kotlin sharer over loopback: relay both ways, another server's key refused, unreachable, lost |
 | Android as a Pair & Share hub | CI `android-e2e` | A Go sharer on the host (10.0.2.2:47077) becomes an active relay path of the app's tunnel, and the sharer relays the phone's bytes. Stopping it drops the path, and the tunnel keeps working |
@@ -278,6 +390,16 @@ on the Android emulator.
 
 - a Mac on a real Android hotspot or on iPhone USB tethering, with "Use
   phone hub";
+- the one click's Bluetooth half against a real phone: CoreBluetooth
+  (scan, the pairing prompt, `hello`, `hotspot.on`) and the phone's GATT
+  server can't run in CI — the macOS runners have no Bluetooth and the
+  Android emulator has none either; the protocol both sides carry is what
+  the unit tests pin;
+- the one click's hotspot start through Shizuku on a real phone (the
+  privileged calls are untether's, proven there; tailbond's half is the
+  AIDL and the state around it, unit tested);
+- CoreWLAN joining a real hotspot from the menu bar app (needs Location
+  permission and a phone's Wi-Fi; the e2e covers the click without it);
 - IPv6 link-local discovery against a real phone;
 - NSD between a real phone and a Mac;
 - the Android proxy listening on a real hotspot or USB-tether interface (the

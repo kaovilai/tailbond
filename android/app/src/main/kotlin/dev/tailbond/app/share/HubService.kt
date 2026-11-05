@@ -7,12 +7,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -65,6 +67,10 @@ data class HubLive(
     val downBytes: Long = 0,
     val label: String = "",
     val error: String = "",
+    /** The hotspot for the Mac's one click (state, SSID, why Shizuku isn't usable). */
+    val hotspot: TetheringAp = TetheringAp(),
+    /** The BLE control channel: on, off, denied, unsupported. */
+    val ble: String = "off",
 )
 
 /** In-process phone hub state, written by [HubService], read by the UI. */
@@ -93,17 +99,28 @@ object HubState {
  *   when the tunnel is down nothing goes out at all (fails closed).
  * - Advertised over mDNS as _tailbond-proxy._tcp, and registered with the
  *   home server (kind "proxy") so a Mac that can't see mDNS finds it.
+ *
+ * The Mac's one click ("One click from the Mac", same doc) is served here
+ * too, while the service runs: a BLE GATT server ([BleGattServer],
+ * [BleProto]) the Mac uses to start this phone's hotspot (through Shizuku,
+ * [ShizukuTethering]) and to turn the proxy on and off (hub.on / hub.off
+ * toggle [startProxy]/[stopProxy]; the service itself keeps running).
  */
-class HubService : Service() {
+class HubService : Service(), BleProto.Commands {
     private lateinit var repo: Repository
     private lateinit var cm: ConnectivityManager
     private var proxy: ProxyServer? = null
+    private var proxySocket: ServerSocket? = null
     private var nsd: NsdManager.RegistrationListener? = null
     private var ticker: Thread? = null
     private var lastNotify = 0L
     private var lastRegister = 0L
     private var lastLine = ""
     @Volatile private var running = false
+
+    /** The hotspot control for the Mac's one click (tests replace it). */
+    var tethering: TetheringControl = ShizukuTethering(this)
+    private var ble: BleGattServer? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -123,9 +140,9 @@ class HubService : Service() {
         }
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, notification(HubWords.headline(HubState.live.value.copy(status = HubStatus.READY)), null),
-            if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
+            if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
         )
-        if (!running) startHub()
+        if (!running) start()
         return START_STICKY
     }
 
@@ -135,14 +152,62 @@ class HubService : Service() {
         return p?.name?.takeIf { it.isNotBlank() } ?: p?.user?.takeIf { it.isNotBlank() } ?: Build.MODEL ?: "Android phone"
     }
 
-    private fun startHub() {
+    /** The service starts: the proxy, the hotspot control and the BLE control channel. */
+    private fun start() {
         running = true
         val server = repo.servers.value.firstOrNull()
         val key = repo.shareKey(server?.payload)
         if (server == null || key == null) {
             HubState.set { HubLive(status = HubStatus.NO_KEY, label = label()) }
             notifyNow()
-            return
+        } else {
+            startProxy()
+        }
+        // the one click's halves: Shizuku for the hotspot, BLE for the Mac
+        (tethering as? ShizukuTethering)?.let { t ->
+            t.open()
+            tickerCollect(t)
+        }
+        val proto = BleProto(
+            keyId = { P.keyId((repo.shareKey(repo.servers.value.firstOrNull()?.payload) ?: "").toByteArray(Charsets.UTF_8)) },
+            ownKey = { repo.shareKey(repo.servers.value.firstOrNull()?.payload)?.toByteArray(Charsets.UTF_8) },
+            cmds = this,
+            log = { Log.i(TAG, it) },
+        )
+        val b = BleGattServer(this, proto).also { it.open() }
+        ble = b
+        Log.i(TAG, "hub: service up (proxy ${if (proxy != null) "on" else "waiting for the key"}, ble ${b.state})")
+        ticker = Thread({ tickLoop() }, "hub-tick").apply { isDaemon = true; start() }
+    }
+
+    /** Collects the tethering state into HubLive (the UI and the BLE status). */
+    private fun tickerCollect(t: ShizukuTethering) {
+        Thread({
+            var last: TetheringAp? = null
+            while (running) {
+                val ap = t.live.value
+                if (ap != last) {
+                    last = ap
+                    HubState.set { it.copy(hotspot = ap) }
+                }
+                try {
+                    Thread.sleep(500)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+            }
+        }, "hub-tether").apply { isDaemon = true; start() }
+    }
+
+    /** The proxy half (what "Share bonded connection" was before the one click). */
+    private fun startProxy(): Boolean {
+        if (proxy != null) return true
+        val server = repo.servers.value.firstOrNull()
+        val key = repo.shareKey(server?.payload)
+        if (server == null || key == null) {
+            HubState.set { it.copy(status = HubStatus.NO_KEY, label = label()) }
+            notifyNow()
+            return false
         }
         val ss = try {
             ServerSocket().apply {
@@ -151,9 +216,9 @@ class HubService : Service() {
                 bind(InetSocketAddress(InetAddress.getByName("::"), ProxyServer.DEFAULT_PORT), 64)
             }
         } catch (e: IOException) {
-            HubState.set { HubLive(status = HubStatus.ERROR, label = label(), error = e.message.orEmpty()) }
+            HubState.set { it.copy(status = HubStatus.ERROR, label = label(), error = e.message.orEmpty()) }
             notifyNow()
-            return
+            return false
         }
         val p = ProxyServer(
             ProxyServer.Config(
@@ -166,11 +231,22 @@ class HubService : Service() {
             ),
         )
         proxy = p
+        proxySocket = ss
         Thread({ p.serve(ss) }, "hub-proxy").apply { isDaemon = true; start() }
         registerNsd(key)
-        HubState.set { HubLive(status = status(p), label = label()) }
+        HubState.set { it.copy(status = status(p), label = label()) }
         Log.i(TAG, "hub: proxy on port ${ProxyServer.DEFAULT_PORT}")
-        ticker = Thread({ tickLoop() }, "hub-tick").apply { isDaemon = true; start() }
+        return true
+    }
+
+    private fun stopProxy() {
+        proxy?.stop()
+        proxy = null
+        proxySocket?.let { s -> runCatching { s.close() } }
+        proxySocket = null
+        nsd?.let { l -> try { getSystemService<NsdManager>()?.unregisterService(l) } catch (_: Exception) {} }
+        nsd = null
+        HubState.set { it.copy(status = HubStatus.OFF, clients = emptyList(), upBytes = 0, downBytes = 0, label = label()) }
     }
 
     /** tailbond's own VPN network, when it's connected. */
@@ -259,7 +335,7 @@ class HubService : Service() {
         else -> HubStatus.READY
     }
 
-    /** Once a second: counters, the notification, the home server's list. */
+    /** Once a second: counters, the notification, the home server's list, the BLE push. */
     private fun tickLoop() {
         while (running) {
             try {
@@ -267,10 +343,16 @@ class HubService : Service() {
             } catch (_: InterruptedException) {
                 return
             }
-            val p = proxy ?: continue
-            val clients = p.clients()
-            HubState.set { it.copy(status = status(p), clients = clients, upBytes = p.upBytes, downBytes = p.downBytes) }
-            val line = "hub: up ${p.upBytes} down ${p.downBytes}" + clients.joinToString("") { "; client ${it.addr} conns ${it.conns} up ${it.up} down ${it.down}" }
+            val p = proxy
+            val clients = p?.clients() ?: emptyList()
+            HubState.set {
+                it.copy(
+                    status = if (p == null) it.status else status(p),
+                    clients = clients, upBytes = p?.upBytes ?: 0, downBytes = p?.downBytes ?: 0,
+                    ble = ble?.state ?: "off",
+                )
+            }
+            val line = "hub: up ${p?.upBytes ?: 0} down ${p?.downBytes ?: 0}" + clients.joinToString("") { "; client ${it.addr} conns ${it.conns} up ${it.up} down ${it.down}" }
             if (line != lastLine) {
                 lastLine = line
                 Log.i(TAG, line)
@@ -280,9 +362,19 @@ class HubService : Service() {
                 lastNotify = now
                 notifyNow()
             }
-            if (now - lastRegister > 60_000 && LiveState.live.value.state == ConnState.CONNECTED) {
+            if (now - lastRegister > 60_000 && p != null && LiveState.live.value.state == ConnState.CONNECTED) {
                 lastRegister = now
                 register()
+            }
+            // the Mac's status: pushed when it changes, or as a heartbeat
+            ble?.pushStatus()
+            // Bluetooth's permission may have been granted after the service
+            // started: try the GATT server again
+            val b = ble
+            if (b != null && b.state == "denied" &&
+                (Build.VERSION.SDK_INT < 31 || checkSelfPermission(android.Manifest.permission.BLUETOOTH_ADVERTISE) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+            ) {
+                b.open()
             }
         }
     }
@@ -308,6 +400,77 @@ class HubService : Service() {
         }
     }
 
+    // --- the one click's commands (BleProto.Commands) ---
+
+    override fun hotspotOn(reply: (ssid: String?, pass: String?, error: String?) -> Unit) {
+        tethering.start { ssid, pass, error ->
+            reply(ssid, pass, error)
+            if (error == null) HubState.set { it.copy(hotspot = it.hotspot.copy(state = "on", ssid = ssid.orEmpty(), pass = pass.orEmpty())) }
+        }
+    }
+
+    override fun hotspotOff(reply: (error: String?) -> Unit) {
+        tethering.stop { error ->
+            reply(error)
+            if (error == null) HubState.set { it.copy(hotspot = it.hotspot.copy(state = "off")) }
+        }
+    }
+
+    override fun hotspotState(): BleProto.HotspotState {
+        val ap = tethering.ap()
+        return BleProto.HotspotState(ap.state, ap.ssid)
+    }
+
+    override fun hubSet(on: Boolean, reply: (error: String?) -> Unit) {
+        if (!on) {
+            stopProxy()
+            return reply(null)
+        }
+        if (startProxy()) return reply(null)
+        val l = HubState.live.value
+        reply(
+            when (l.status) {
+                HubStatus.NO_KEY -> "not paired yet: connect to your home server once first"
+                else -> "the proxy couldn't start: ${l.error.ifEmpty { "port ${ProxyServer.DEFAULT_PORT} is in use" }}"
+            },
+        )
+    }
+
+    override fun status(): BleProto.Status {
+        val i = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val battery = if (level >= 0 && scale > 0) level * 100 / scale else 0
+        val charging = i?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+        val live = LiveState.live.value
+        val kinds = linkedMapOf<String, String>()
+        for (p in live.paths) {
+            val k = p.kind ?: continue
+            if (p.status == 1) kinds[k.name] = k.label // mqvpn attached
+        }
+        val net = if (kinds.isEmpty()) live.paths.mapNotNull { it.kind?.label }.distinct().joinToString(" + ")
+        else kinds.values.joinToString(" + ")
+        val ap = tethering.ap()
+        val hub = HubState.live.value
+        return BleProto.Status(
+            battery = battery,
+            charging = charging != 0,
+            net = net,
+            hub = when (hub.status) {
+                HubStatus.OFF -> "off"
+                HubStatus.READY -> "ready"
+                HubStatus.SHARING -> "sharing"
+                HubStatus.NO_TUNNEL -> "no_tunnel"
+                HubStatus.NO_KEY -> "no_key"
+                HubStatus.ERROR -> "error"
+            },
+            paths = live.paths.count { it.status == 1 },
+            hotspot = ap.state,
+            hotspotSsid = ap.ssid,
+            shizuku = ap.shizuku,
+        )
+    }
+
     private fun notifyNow() {
         val l = HubState.live.value
         getSystemService<NotificationManager>()?.notify(NOTIFICATION_ID, notification(HubWords.headline(l), HubWords.detail(l)))
@@ -316,10 +479,10 @@ class HubService : Service() {
     private fun stopHub() {
         running = false
         ticker?.interrupt()
-        proxy?.stop()
-        proxy = null
-        nsd?.let { l -> try { getSystemService<NsdManager>()?.unregisterService(l) } catch (_: Exception) {} }
-        nsd = null
+        ble?.destroy()
+        ble = null
+        (tethering as? ShizukuTethering)?.close()
+        stopProxy()
         HubState.set { HubLive(label = label()) }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()

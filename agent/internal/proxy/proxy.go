@@ -59,6 +59,20 @@ func Credentials(pass []byte, hubID string, exp uint64) (user, password string) 
 	return hubID + "/" + strconv.FormatUint(exp, 10), strings.ToLower(enc[:16])
 }
 
+// BLELogin is the Mac's login for a phone's BLE control channel
+// (docs/phone-hub.md, "One click from the Mac"), from the same pass as
+// Credentials but with its own label, so a leak of one credential is not
+// the other: user "<hubID>/<exp>", key the first 16 characters of
+// base32(HMAC-SHA256(pass, "tbp1-ble")), lower case, no padding. The phone
+// checks a challenge-response HMAC over it (BleVerify on the Android side);
+// pinned by testdata/vectors.json like the proxy credentials.
+func BLELogin(pass []byte, hubID string, exp uint64) (user, key string) {
+	m := hmac.New(sha256.New, pass)
+	m.Write([]byte("tbp1-ble"))
+	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(m.Sum(nil))
+	return hubID + "/" + strconv.FormatUint(exp, 10), strings.ToLower(enc[:16])
+}
+
 // Verifier checks a login on the phone: the pass derived from the phone's
 // own share key (share.PassKey) for the hub and expiry in user, not
 // expired. allowed (optional) limits the hubs, by name.
