@@ -41,9 +41,17 @@ enum WiFiJoiner {
         }
         if !askedForLocation {
             askedForLocation = true
-            // a no-op when already decided; the prompt is asynchronous, and
-            // the scan below says whether it was allowed
-            location.requestWhenInUseAuthorization()
+            if CLLocationManager.authorizationStatus() == .notDetermined {
+                // the first click asks and then waits for the answer, so it
+                // works as soon as the user allows (this runs off the main
+                // actor, in the click's detached task)
+                location.requestWhenInUseAuthorization()
+                let start = Date()
+                while Date().timeIntervalSince(start) < 30 {
+                    if CLLocationManager.authorizationStatus() != .notDetermined { break }
+                    Thread.sleep(forTimeInterval: 0.25)
+                }
+            }
         }
         let networks = try iface.scanForNetworks(withSSID: ssid.data(using: .utf8))
         guard let network = networks.first else { throw JoinError.notVisible(ssid) }
