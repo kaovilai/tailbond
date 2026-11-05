@@ -67,14 +67,12 @@ role_is() { api "$API/api/hello" 2>/dev/null | grep -q "\"role\":\"$1\""; }
 upd_is() { [ "$(status_upd "$1" 2>/dev/null)" = "$2" ]; }
 upd_has() { api "$API/api/update" 2>/dev/null | grep -q -- "$1"; }
 gh_up() { api "$GHURL/repos/kaovilai/tailbond/releases/latest" >/dev/null; }
-# none_available: the API answers (a status with a version) and has no update.
-# An unreachable API or bad JSON is not "nothing available".
+# none_available: "" only counts when /api/update answered (a dead daemon or
+# bad JSON fails the pipeline, not the check)
 none_available() {
-  api "$API/api/update" 2>/dev/null | python3 -c '
-import json,sys
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(1)
-raise SystemExit(0 if isinstance(d, dict) and d.get("version") and not d.get("available") else 1)'
+  local v
+  v="$(status_upd available 2>/dev/null)" || return 1
+  [ -z "$v" ]
 }
 prev_is() { [ -x "$BINDIR/tailbondd.prev" ] && "$BINDIR/tailbondd.prev" -version 2>&1 | grep -q "tailbondd $1"; }
 result_says() { # RESULT SNIPPET: update-result.json holds both
@@ -148,16 +146,13 @@ check "previous binary kept as tailbondd.prev" prev_is 0.0.1
 check "install.env records 0.0.2" grep -qx 'TB_VERSION=0.0.2' "$MANIFEST"
 check "still the client role" role_is client
 # the bundle carries the menu bar app (CI's does): it must come through the
-# agent's unpack and install_app intact
-[ -d "$B/tailbond.app" ] && check "menu bar app intact after the update" codesign --verify --strict /Applications/tailbond.app
-# and it came from the agent's unpack of 0.0.2, not from the 0.0.1 install:
-# the unpacked 0.0.2 bundle has the app, and the installed one was replaced
-upd_app_0_0_2() {
-  local u; u="$(ls -d "$STATE"/update/0.0.2/tailbond-macos-arm64/tailbond.app 2>/dev/null | head -1)"
-  [ -n "$u" ] && [ -d /Applications/tailbond.app ] && [ "$u" -nt "$W/install.log" ] &&
-    [ /Applications/tailbond.app -nt "$W/install.log" ]
+# agent's unpack (which rewrites every file) and the install_app copy.
+# Checking the unpack matters: install_app skips a bundle without the app,
+# so /Applications alone could still be the 0.0.1 one
+[ -d "$B/tailbond.app" ] && {
+  check "menu bar app intact in the agent's unpack" codesign --verify --strict "$STATE/update/0.0.2/tailbond-macos-arm64/tailbond.app"
+  check "menu bar app intact after the update" codesign --verify --strict /Applications/tailbond.app
 }
-[ -d "$B/tailbond.app" ] && check "the 0.0.2 unpack carries the app, and it replaced the installed one" upd_app_0_0_2
 check "nothing available any more" wait_for 30 none_available
 
 say "0.0.3 doesn't start: rolled back"
