@@ -75,6 +75,13 @@ public enum BleFrame {
             } else {
                 buf.append(data)
             }
+            if buf.count > want {
+                // more data than the frame declared: drop it all rather
+                // than grow without bound waiting for an END that never comes
+                buf = Data()
+                want = -1
+                return nil
+            }
             if flags & end != 0 {
                 let payload = buf
                 buf = Data()

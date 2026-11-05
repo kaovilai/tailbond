@@ -491,7 +491,7 @@ set +e
 CLICK="$("$MENU" --phone "http://$API" on --check "http://10.77.0.1:8080/token" 2>&1)"
 RC=$?
 set -e
-[ "$RC" -ne 0 ] && echo "$CLICK" | grep -q "no phone hub was found" \
+[ "$RC" -ne 0 ] && echo "$CLICK" | grep -qi "no phone hub was found" \
   && ok "a click with no hub around fails at the right step: $CLICK" || bad "no-hub click (exit $RC): $CLICK"
 hapi "http://$API/api/status" | jq -e '.phone_hub.click.on == false and .phone_hub.click.step == "proxy"' >/dev/null \
   && ok "the failed click's state: $(hapi "http://$API/api/status" | jq -c '.phone_hub.click | {on, step}')" \

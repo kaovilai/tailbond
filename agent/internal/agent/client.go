@@ -590,7 +590,7 @@ func (a *Agent) clientStatus(ctx context.Context) *status.Status {
 	}
 	a.serversView(st, a.workingFrom(st, now))
 	a.shareStatus(st)
-	st.PhoneHub = a.phoneHubStatus()
+	st.PhoneHub = a.phoneHubStatusFor("")
 	st.Coexist = a.coexistStatus()
 	return st
 }

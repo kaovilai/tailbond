@@ -18,8 +18,9 @@ final class BleFrameTests: XCTestCase {
         let small = BleFrame.chunks(BleFrame.encode(Data("{\"a\":1}".utf8)), mtu: 23)
         XCTAssertEqual(small.count, 1)
         XCTAssertEqual(small[0][small[0].startIndex], 0x03)
-        // this one needs two at MTU 23
-        XCTAssertEqual(BleFrame.chunks(frame, mtu: 23).count, 2)
+        // this one (61 bytes of payload, 63 of frame) needs four at MTU 23
+        // (19 frame bytes fit per chunk: 3 + 19 + 19 + 19 + 3)
+        XCTAssertEqual(BleFrame.chunks(frame, mtu: 23).count, 4)
         // round trip at every MTU that can carry a frame (6 is the floor:
         // ATT's 3 bytes, the flags byte, the 2-byte length)
         for mtu in [23, 512, 185, 7, 6] {

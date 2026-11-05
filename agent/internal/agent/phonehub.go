@@ -623,13 +623,25 @@ func (a *Agent) stopHubLocked(hs *phoneHubState, note string) {
 
 // phoneHubStatus is the dashboard's view.
 func (a *Agent) phoneHubStatus() *status.PhoneHub {
+	return a.phoneHubStatusFor("")
+}
+
+// phoneHubStatusFor is phoneHubStatus for one caller: the BLE logins (the
+// one click's keys) go only to a loopback caller — the menu bar app on
+// this Mac. A dashboard reached over the network (a Linux client's API
+// listens on every interface, and without a dashboard password anyone on
+// the LAN can read it) gets everything else but not the keys.
+func (a *Agent) phoneHubStatusFor(remote string) *status.PhoneHub {
 	hs := a.phoneHub()
 	if hs == nil {
 		return nil
 	}
 	// the BLE logins (the menu bar's one click) from the same passes;
 	// hubLogins takes a.mu itself, so before we hold it below
-	logins := a.hubLogins()
+	var logins map[string]hubLogin
+	if loopbackRemote(remote) {
+		logins = a.hubLogins()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	out := &status.PhoneHub{Note: hs.note, Found: []status.PhoneHubFound{}, Manual: a.sysProxy == nil, Click: hs.click.clickStatus()}
@@ -660,7 +672,7 @@ func (a *Agent) hPhoneHub(w http.ResponseWriter, r *http.Request) {
 	}
 	a.hubAsked()
 	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, a.phoneHubStatus())
+		writeJSON(w, http.StatusOK, a.phoneHubStatusFor(r.RemoteAddr))
 		return
 	}
 	var in struct {
@@ -690,7 +702,7 @@ func (a *Agent) hPhoneHub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, a.phoneHubStatus())
+	writeJSON(w, http.StatusOK, a.phoneHubStatusFor(r.RemoteAddr))
 }
 
 // hProxyPAC is the PAC file for "pac" mode: local, link-local, private and
@@ -723,6 +735,16 @@ function FindProxyForURL(url, host) {
   return "SOCKS5 ` + local + `; SOCKS ` + local + `";
 }
 `
+}
+
+// loopbackRemote: is this caller on this machine (the menu bar app)?
+func loopbackRemote(remote string) bool {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		host = remote
+	}
+	ad, err := netip.ParseAddr(host)
+	return err == nil && ad.Unmap().IsLoopback()
 }
 
 // ifaceFor is the local interface a hub address is reached on: its zone,

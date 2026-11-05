@@ -298,7 +298,11 @@ tailbond's messages):
 API (additive; the dashboard's behaviour is unchanged):
 
 - `GET /api/phone-hub` also returns `logins` (the BLE logins, by the
-  phone's share key id) and `click`, the one click's state:
+  phone's share key id) and `click`, the one click's state. The logins go
+  only to a loopback caller — the menu bar app on this Mac — and never
+  into the shared status snapshot, so a dashboard reached over the network
+  (a Linux client's API listens on every interface) doesn't hand out the
+  keys:
   `{on, via (ble|fallback), label, net, battery, charging, step, error,
   ble_step, ble_error, since}` — `step` is the step that failed (`scan`,
   `auth`, `hotspot`, `wifi`, `proxy`, `internet`), in plain words for the

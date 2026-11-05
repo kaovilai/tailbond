@@ -63,6 +63,9 @@ class BleGattServer(
     private val subscribers = ConcurrentHashMap<String, BluetoothDevice>()
     private val mtu = ConcurrentHashMap<String, Int>()
 
+    /** Long reads in flight, by device (the challenge), and the last frame announced for read-back ("-state"). */
+    private val reads = ConcurrentHashMap<String, ByteArray>()
+
     private val btReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
@@ -132,6 +135,7 @@ class BleGattServer(
         val was = subscribers.keys.toList()
         subscribers.clear()
         mtu.clear()
+        reads.clear()
         for (d in was) proto.deviceGone(d)
         state = "off"
     }
@@ -165,22 +169,30 @@ class BleGattServer(
         )
     }
 
+    /**
+     * One frame per notification, whole ([flags][frame], a single chunk):
+     * Android queues notifications in order, so frames never interleave.
+     * A frame that doesn't fit the ATT MTU is announced with an empty
+     * value — the Mac then reads the characteristic (a long read), which
+     * [callback] serves from [reads] (untether's pattern, kept).
+     */
     private fun notify(device: String, frame: ByteArray) {
         val g = gatt ?: return
         val d = subscribers[device] ?: return
         val ch = g.getService(Ble.SERVICE)?.getCharacteristic(Ble.STATE) ?: return
-        // chunkFrame takes the ATT MTU and leaves room for ATT's 3 bytes
-        // and the flags byte itself
-        for (chunk in BleProto.chunkFrame(frame, mtu[device] ?: 23)) {
-            val payload = chunk.copyOfRange(1, chunk.size)
-            if (Build.VERSION.SDK_INT >= 33) {
-                g.notifyCharacteristicChanged(d, ch, false, payload)
-            } else {
-                @Suppress("DEPRECATION")
-                ch.value = payload
-                @Suppress("DEPRECATION")
-                g.notifyCharacteristicChanged(d, ch, false)
-            }
+        val mtu = mtu[device] ?: 23
+        var value = byteArrayOf(BleProto.CHUNK_WHOLE) + frame // one chunk, flags and all
+        if (value.size > mtu - 3) {
+            reads["$device-state"] = value
+            value = ByteArray(0) // too long to push: the Mac reads it back
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            g.notifyCharacteristicChanged(d, ch, false, value)
+        } else {
+            @Suppress("DEPRECATION")
+            ch.value = value
+            @Suppress("DEPRECATION")
+            g.notifyCharacteristicChanged(d, ch, false)
         }
     }
 
@@ -192,6 +204,7 @@ class BleGattServer(
                 Log.i(TAG, "ble: ${device.address} disconnected")
                 subscribers.remove(device.address)
                 mtu.remove(device.address)
+                reads.keys.removeAll { it == device.address || it.startsWith("${device.address}-") }
                 proto.deviceGone(device.address)
             }
             startAdvertising()
@@ -203,16 +216,22 @@ class BleGattServer(
 
         override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, ch: BluetoothGattCharacteristic) {
             when (ch.uuid) {
-                Ble.CHALLENGE -> {
-                    val value = proto.challenge(device.address)
-                    if (offset > value.size) {
-                        gatt?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, 0, null)
-                    } else {
-                        gatt?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value.copyOfRange(offset, value.size))
-                    }
-                }
-                Ble.STATE -> gatt?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, byteArrayOf()) // read it via notifications
+                // a read at offset 0 starts a (possibly long) read: the
+                // whole value comes from one snapshot, so the blobs of a
+                // read belong together (a fresh challenge per blob would
+                // splice two nonces into one)
+                Ble.CHALLENGE -> serveRead(device, requestId, offset) { proto.challenge(device.address) }
+                Ble.STATE -> serveRead(device, requestId, offset) { reads["${device.address}-state"] ?: byteArrayOf(BleProto.CHUNK_WHOLE, 0, 0) }
                 else -> gatt?.sendResponse(device, requestId, BluetoothGatt.GATT_READ_NOT_PERMITTED, 0, null)
+            }
+        }
+
+        private fun serveRead(device: BluetoothDevice, requestId: Int, offset: Int, value: () -> ByteArray) {
+            val v = if (offset == 0) value().also { reads[device.address] = it } else reads[device.address] ?: value()
+            if (offset > v.size) {
+                gatt?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, 0, null)
+            } else {
+                gatt?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, v.copyOfRange(offset, v.size))
             }
         }
 

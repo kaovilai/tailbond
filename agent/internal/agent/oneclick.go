@@ -136,7 +136,7 @@ func (a *Agent) hPhoneClick(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.clickOff()
 	}
-	writeJSON(w, http.StatusOK, a.phoneHubStatus())
+	writeJSON(w, http.StatusOK, a.phoneHubStatusFor(r.RemoteAddr))
 }
 
 // clickOff: stop using the phone and put the settings back. The hotspot is
@@ -165,15 +165,18 @@ func (a *Agent) clickOn(ctx context.Context, in *clickIn) {
 	hs.op.Lock()
 	defer hs.op.Unlock()
 
-	c := &clickState{on: true, via: "fallback", since: time.Now()}
-	set := func() {
+	// what a click did so far; published (and only then read by the status)
+	// under a.mu, always as a whole — while the click runs, on stays false
+	// so nothing claims a bond that hasn't happened
+	c := &clickState{via: "fallback", since: time.Now()}
+	mutate := func(f func(*clickState)) {
 		a.mu.Lock()
+		f(c)
 		hs.click = c
 		a.mu.Unlock()
 	}
 	fail := func(step, err string) {
-		c.on, c.step, c.err = false, step, err
-		set()
+		mutate(func(c *clickState) { c.on, c.step, c.err = false, step, err })
 		a.Logf("phone click: %s: %s", step, err)
 	}
 	logins := a.hubLogins()
@@ -184,9 +187,11 @@ func (a *Agent) clickOn(ctx context.Context, in *clickIn) {
 
 	// the menu app's halves
 	if in.BLE != nil && in.BLE.State == "ok" {
-		c.via = "ble"
-		c.label, c.net = in.BLE.Label, in.BLE.Net
-		c.battery, c.charging = in.BLE.Battery, in.BLE.Charging
+		mutate(func(c *clickState) {
+			c.via = "ble"
+			c.label, c.net = in.BLE.Label, in.BLE.Net
+			c.battery, c.charging = in.BLE.Battery, in.BLE.Charging
+		})
 		if in.WiFi != nil && !in.WiFi.OK {
 			why := in.WiFi.Error
 			if why == "" {
@@ -200,10 +205,9 @@ func (a *Agent) clickOn(ctx context.Context, in *clickIn) {
 		// Bluetooth didn't work (no phone found, not allowed, refused, no
 		// hotspot): the same click falls back to an already-joined hotspot
 		// and "Use phone hub", saying so.
-		c.bleStep, c.bleErr = in.BLE.Step, in.BLE.Error
+		mutate(func(c *clickState) { c.bleStep, c.bleErr = in.BLE.Step, in.BLE.Error })
 		a.Logf("phone click: Bluetooth didn't work (%s: %s); trying the phone's hotspot as it is", in.BLE.Step, in.BLE.Error)
 	}
-	set()
 
 	// find the phone's proxy; it may take a moment to appear after hub.on
 	var pick *hubCand
@@ -225,6 +229,8 @@ func (a *Agent) clickOn(ctx context.Context, in *clickIn) {
 		a.clickPause(ctx)
 	}
 	if ctx.Err() != nil {
+		// the caller went away mid-click: not a bond
+		fail("proxy", "the click was cancelled before the phone's proxy was found")
 		return
 	}
 	if pick == nil {
@@ -237,7 +243,6 @@ func (a *Agent) clickOn(ctx context.Context, in *clickIn) {
 		fail("proxy", err.Error())
 		return
 	}
-	c.hubID, c.label = pick.ID, pick.Label
 	a.mu.Lock()
 	local := ""
 	if u := hs.use; u != nil {
@@ -256,7 +261,10 @@ func (a *Agent) clickOn(ctx context.Context, in *clickIn) {
 		fail("internet", fmt.Sprintf("the phone's proxy is up, but the internet through it didn't answer (%v)", err))
 		return
 	}
-	set()
+	mutate(func(c *clickState) {
+		c.on = true
+		c.hubID, c.label = pick.ID, pick.Label
+	})
 	a.Logf("phone click: bonded via %s (%s): the internet answers through %s", pick.Label, c.via, local)
 }
 

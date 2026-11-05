@@ -67,17 +67,18 @@ class ShizukuTethering(private val ctx: Context) : TetheringControl {
     private var remote: ITetheringShell? = null
     private var bound = false
     private var closed = false
+    private var askedPermission = false
     /** a start is under way: a failure now is ours, and the done callback waits for the AP */
     private var starting: ((ssid: String?, pass: String?, error: String?) -> Unit)? = null
     private var stopping: ((error: String?) -> Unit)? = null
     private var startTimeout: Runnable? = null
     private var stopTimeout: Runnable? = null
 
-    private val serviceArgs = Shizuku.UserServiceArgs(ComponentName(ctx.packageName, TetheringShell::class.java.name))
+    private val serviceArgs by lazy { Shizuku.UserServiceArgs(ComponentName(ctx.packageName, TetheringShell::class.java.name))
         .daemon(false)
         .processNameSuffix("shell")
         // A new install gets a fresh service process with the new code.
-        .version((ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime / 1000).toInt())
+        .version((ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime / 1000).toInt()) }
 
     private val connection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: android.os.IBinder) {
@@ -136,7 +137,10 @@ class ShizukuTethering(private val ctx: Context) : TetheringControl {
 
     override fun start(onDone: (ssid: String?, pass: String?, error: String?) -> Unit) {
         val why = shizukuProblem()
-        if (why != null) return onDone(null, null, why)
+        if (why != null) {
+            askPermissionOnce()
+            return onDone(null, null, why)
+        }
         val cur = _ap.value
         if (cur.state == "on") {
             readConfig { ssid, pass, err -> onDone(ssid, pass, err) }
@@ -229,6 +233,18 @@ class ShizukuTethering(private val ctx: Context) : TetheringControl {
         return when (s) {
             TetheringShizuku.OK -> null
             else -> words(s)
+        }
+    }
+
+    /**
+     * A command came in without Shizuku's grant: ask for it (the phone's
+     * user sees Shizuku's own dialog; the result listener re-checks). Once
+     * per service run — not a prompt loop.
+     */
+    private fun askPermissionOnce() {
+        if (!askedPermission) {
+            askedPermission = true
+            runCatching { Shizuku.requestPermission(0) }
         }
     }
 

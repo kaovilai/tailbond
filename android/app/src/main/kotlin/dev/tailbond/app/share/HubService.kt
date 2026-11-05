@@ -16,7 +16,9 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -118,9 +120,13 @@ class HubService : Service(), BleProto.Commands {
     private var lastLine = ""
     @Volatile private var running = false
 
-    /** The hotspot control for the Mac's one click (tests replace it). */
-    var tethering: TetheringControl = ShizukuTethering(this)
+    /**
+     * The hotspot control for the Mac's one click (tests replace it).
+     * Built in [onCreate]: Shizuku's binding needs the attached context.
+     */
+    var tethering: TetheringControl? = null
     private var ble: BleGattServer? = null
+    private val main = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -128,6 +134,7 @@ class HubService : Service(), BleProto.Commands {
         super.onCreate()
         repo = Repository.get(this)
         cm = getSystemService()!!
+        if (tethering == null) tethering = ShizukuTethering(this)
         getSystemService<NotificationManager>()?.createNotificationChannel(
             NotificationChannel(CHANNEL, getString(R.string.hub_channel), NotificationManager.IMPORTANCE_LOW),
         )
@@ -142,7 +149,7 @@ class HubService : Service(), BleProto.Commands {
             this, NOTIFICATION_ID, notification(HubWords.headline(HubState.live.value.copy(status = HubStatus.READY)), null),
             if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
         )
-        if (!running) start()
+        if (!running) start() else startProxy() // hub.off turned the proxy off; the switch turns it back on
         return START_STICKY
     }
 
@@ -401,39 +408,48 @@ class HubService : Service(), BleProto.Commands {
     }
 
     // --- the one click's commands (BleProto.Commands) ---
+    // They arrive on Bluetooth's binder threads; the hotspot control keeps
+    // its state on the main thread, so hop there (the replies are
+    // asynchronous either way).
 
     override fun hotspotOn(reply: (ssid: String?, pass: String?, error: String?) -> Unit) {
-        tethering.start { ssid, pass, error ->
-            reply(ssid, pass, error)
-            if (error == null) HubState.set { it.copy(hotspot = it.hotspot.copy(state = "on", ssid = ssid.orEmpty(), pass = pass.orEmpty())) }
+        main.post {
+            tethering?.start { ssid, pass, error ->
+                reply(ssid, pass, error)
+                if (error == null) HubState.set { it.copy(hotspot = it.hotspot.copy(state = "on", ssid = ssid.orEmpty(), pass = pass.orEmpty())) }
+            }
         }
     }
 
     override fun hotspotOff(reply: (error: String?) -> Unit) {
-        tethering.stop { error ->
-            reply(error)
-            if (error == null) HubState.set { it.copy(hotspot = it.hotspot.copy(state = "off")) }
+        main.post {
+            tethering?.stop { error ->
+                reply(error)
+                if (error == null) HubState.set { it.copy(hotspot = it.hotspot.copy(state = "off")) }
+            }
         }
     }
 
     override fun hotspotState(): BleProto.HotspotState {
-        val ap = tethering.ap()
+        val ap = tethering?.ap() ?: TetheringAp()
         return BleProto.HotspotState(ap.state, ap.ssid)
     }
 
     override fun hubSet(on: Boolean, reply: (error: String?) -> Unit) {
-        if (!on) {
-            stopProxy()
-            return reply(null)
+        main.post {
+            if (!on) {
+                stopProxy()
+                return@post reply(null)
+            }
+            if (startProxy()) return@post reply(null)
+            val l = HubState.live.value
+            reply(
+                when (l.status) {
+                    HubStatus.NO_KEY -> "not paired yet: connect to your home server once first"
+                    else -> "the proxy couldn't start: ${l.error.ifEmpty { "port ${ProxyServer.DEFAULT_PORT} is in use" }}"
+                },
+            )
         }
-        if (startProxy()) return reply(null)
-        val l = HubState.live.value
-        reply(
-            when (l.status) {
-                HubStatus.NO_KEY -> "not paired yet: connect to your home server once first"
-                else -> "the proxy couldn't start: ${l.error.ifEmpty { "port ${ProxyServer.DEFAULT_PORT} is in use" }}"
-            },
-        )
     }
 
     override fun status(): BleProto.Status {
@@ -450,7 +466,7 @@ class HubService : Service(), BleProto.Commands {
         }
         val net = if (kinds.isEmpty()) live.paths.mapNotNull { it.kind?.label }.distinct().joinToString(" + ")
         else kinds.values.joinToString(" + ")
-        val ap = tethering.ap()
+        val ap = tethering?.ap() ?: TetheringAp()
         val hub = HubState.live.value
         return BleProto.Status(
             battery = battery,

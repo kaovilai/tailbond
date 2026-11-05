@@ -98,6 +98,12 @@ public struct AgentClient {
         return try JSONDecoder().decode(PhoneHubInfo.self, from: body)
     }
 
+    /// The phone hub list (GET /api/phone-hub), which carries the BLE
+    /// logins to a loopback caller — this app — for the one click.
+    public func phoneHub() async throws -> PhoneHubInfo {
+        try JSONDecoder().decode(PhoneHubInfo.self, from: try await call("GET", "/api/phone-hub"))
+    }
+
     public func setMode(_ m: String) async throws { _ = try await call("POST", "/api/mode", ["mode": m]) }
     public func connect(_ on: Bool) async throws { _ = try await call("POST", on ? "/api/connect" : "/api/disconnect") }
     public func setUpdatePolicy(_ p: String) async throws { _ = try await call("POST", "/api/update/policy", ["policy": p]) }

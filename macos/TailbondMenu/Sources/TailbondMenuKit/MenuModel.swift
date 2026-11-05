@@ -108,7 +108,12 @@ public final class MenuModel: ObservableObject {
         if phoneLink == nil { phoneLink = PhoneLink() }
         guard let link = phoneLink else { return (nil, nil) }
         do {
-            let info = try await link.click(logins: status?.phoneHub?.logins ?? [])
+            // the logins come from the hub list, which carries them only to
+            // a loopback caller — this app
+            let logins = (try? await client.phoneHub())?.logins ?? []
+            let info = try await link.click(logins: logins)
+            let ssid = info.ssid
+            let pass = info.pass
             var ble = AgentClient.ClickReport.BLE()
             ble.state = "ok"
             ble.keyId = info.keyId
@@ -120,7 +125,11 @@ public final class MenuModel: ObservableObject {
             var wifi: AgentClient.ClickReport.WiFi?
             if !info.ssid.isEmpty {
                 do {
-                    try WiFiJoiner.join(ssid: info.ssid, pass: info.pass)
+                    // the join scans and associates: seconds, off the main
+                    // actor so the menu doesn't freeze
+                    try await Task.detached(priority: .userInitiated) {
+                        try WiFiJoiner.join(ssid: ssid, pass: pass)
+                    }.value
                     wifi = AgentClient.ClickReport.WiFi()
                     wifi?.ok = true
                     wifi?.ssid = info.ssid

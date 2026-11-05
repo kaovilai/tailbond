@@ -236,9 +236,13 @@ public struct MenuSummary: Equatable {
         if let u = ph.using {
             return Phone(on: true, text: "Using \(u.label.isEmpty ? "a phone" : u.label)'s bonded connection (the dashboard's Use phone hub)", warn: false)
         }
-        return Phone(on: false, text: ph.logins.isEmpty
-            ? "A phone running tailbond, with Bluetooth, lends this Mac its bonded connection: pair this Mac with the same home server first."
-            : "One click starts a phone's hotspot and bonds this Mac through it (the phone's tailbond → Share bonded connection, or just have it around: Bluetooth finds it).", warn: false)
+        return Phone(on: false, text: "One click starts a phone's hotspot and bonds this Mac through it. The phone needs tailbond's Share bonded connection on (and its hotspot control works through Shizuku).", warn: false)
+    }
+
+    /// tailbondd's errors start lower-case; the menu says them as sentences.
+    private static func sentence(_ error: String, _ fallback: String) -> String {
+        let e = error.isEmpty ? fallback : error
+        return e.prefix(1).uppercased() + e.dropFirst() + (e.hasSuffix(".") ? "" : ".")
     }
 
     /// The one click's say, from tailbondd's state of it: what went wrong
@@ -261,10 +265,10 @@ public struct MenuSummary: Equatable {
         }
         switch c.step {
         case "wifi": parts.append("Couldn't join the phone's hotspot Wi-Fi: \(c.error).")
-        case "proxy": parts.append("\(c.error.isEmpty ? "No phone hub was found." : c.error).")
-        case "internet": parts.append("\(c.error.isEmpty ? "The phone's proxy is up, but the internet through it didn't answer." : c.error).")
-        case "gone": parts.append("\(c.error.isEmpty ? "The phone went away, so the proxy is off again." : c.error).")
-        default: parts.append(c.error.isEmpty ? "It didn't work." : "\(c.error).")
+        case "proxy": parts.append(sentence(c.error, "No phone hub was found."))
+        case "internet": parts.append(sentence(c.error, "The phone's proxy is up, but the internet through it didn't answer."))
+        case "gone": parts.append(sentence(c.error, "The phone went away, so the proxy is off again."))
+        default: parts.append(sentence(c.error, "It didn't work."))
         }
         return parts.joined(separator: " ")
     }

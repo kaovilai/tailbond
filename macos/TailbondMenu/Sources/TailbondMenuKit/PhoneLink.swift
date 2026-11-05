@@ -202,10 +202,14 @@ public final class PhoneLink: NSObject {
             manager = CBCentralManager(delegate: self, queue: queue)
         }
         let m = manager
-        _ = try await wait(
-            for: { if case .managerState = $0 { return true }; return false },
-            timeout: 5, step: "scan", "Bluetooth didn't answer",
-        )
+        // the state event fires once per change; a manager that's already
+        // up (every click after the first) is used as it stands
+        if m?.state == .unknown || m?.state == .resetting {
+            _ = try await wait(
+                for: { if case .managerState = $0 { return true }; return false },
+                timeout: 5, step: "scan", "Bluetooth didn't answer",
+            )
+        }
         switch m?.state {
         case .poweredOn: return
         case .unauthorized: throw PhoneLinkError(step: "scan", message: "Bluetooth isn't allowed for tailbond (System Settings → Privacy & Security → Bluetooth)")
@@ -224,6 +228,8 @@ public final class PhoneLink: NSObject {
         )
         guard case .found(let p) = found else { throw PhoneLinkError(step: "scan", message: "the phone's Bluetooth link is gone") }
         queue.async {
+            self.manager?.stopScan()
+            self.events.removeAll { if case .found = $0 { return true }; return false }
             self.peripheral = p
             p.delegate = self
             self.manager?.connect(p, options: nil)
@@ -352,7 +358,12 @@ extension PhoneLink: CBPeripheralDelegate {
         if characteristic.uuid == Self.challenge {
             emit(.value(characteristic.uuid, data))
         } else if characteristic.uuid == Self.state {
-            // a chunk of a frame: replies and pushes arrive here
+            // a frame longer than the ATT MTU arrives as an empty value:
+            // read the characteristic (CoreBluetooth long-reads it whole)
+            if data.isEmpty {
+                queue.async { self.peripheral?.readValue(for: characteristic) }
+                return
+            }
             guard let payload = reassembly.feed(data) else { return }
             if let obj = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] {
                 if obj["push"] != nil {

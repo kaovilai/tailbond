@@ -41,11 +41,9 @@ enum WiFiJoiner {
         }
         if !askedForLocation {
             askedForLocation = true
-            if CWWiFiClient.shared().authorization() == .notDetermined {
-                location.requestWhenInUseAuthorization()
-                // the prompt is asynchronous; the scan below will say
-                // whether it was allowed, and the click reports that
-            }
+            // a no-op when already decided; the prompt is asynchronous, and
+            // the scan below says whether it was allowed
+            location.requestWhenInUseAuthorization()
         }
         let networks = try iface.scanForNetworks(withSSID: ssid.data(using: .utf8))
         guard let network = networks.first else { throw JoinError.notVisible(ssid) }

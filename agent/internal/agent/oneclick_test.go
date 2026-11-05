@@ -20,6 +20,9 @@ import (
 	"github.com/kaovilai/tailbond/agent/internal/status"
 )
 
+// lo: the menu bar app's loopback origin, the only one the BLE logins go to.
+const lo = "127.0.0.1:9"
+
 // clickAgent: a hubAgent whose one-click waits nothing between hub lookups.
 func clickAgent(t *testing.T) (*Agent, *fakeSysProxy, *[]hubCand, *sync.Mutex) {
 	t.Helper()
@@ -30,10 +33,11 @@ func clickAgent(t *testing.T) (*Agent, *fakeSysProxy, *[]hubCand, *sync.Mutex) {
 	return a, fs, cands, mu
 }
 
-// click posts a one click and returns the phone hub status it got.
+// click posts a one click and returns the phone hub status it got. The
+// menu bar app is a loopback caller (the only one the BLE logins go to).
 func click(t *testing.T, a *Agent, body map[string]any) (int, *status.PhoneHub) {
 	t.Helper()
-	w := req(t, a, "POST", "/api/phone-hub/click", lan, "", body)
+	w := req(t, a, "POST", "/api/phone-hub/click", lo, "", body)
 	var st status.PhoneHub
 	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
 		t.Fatalf("click: %d %s", w.Code, w.Body)
@@ -41,14 +45,21 @@ func click(t *testing.T, a *Agent, body map[string]any) (int, *status.PhoneHub) 
 	return w.Code, &st
 }
 
-func clickStatus(t *testing.T, a *Agent) *status.PhoneHub {
+func clickStatus(t *testing.T, a *Agent, remote ...string) *status.PhoneHub {
 	t.Helper()
-	w := req(t, a, "GET", "/api/phone-hub", lan, "", nil)
+	w := req(t, a, "GET", "/api/phone-hub", firstRemote(remote), "", nil)
 	var st status.PhoneHub
 	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
 		t.Fatalf("status: %d %s", w.Code, w.Body)
 	}
 	return &st
+}
+
+func firstRemote(rs []string) string {
+	if len(rs) > 0 {
+		return rs[0]
+	}
+	return lo
 }
 
 // okServer answers any HTTP request (the internet through the phone).
@@ -113,9 +124,13 @@ func TestPhoneClickConnectsThroughBle(t *testing.T) {
 	if up, _, _ := other.Stats(); up != 0 {
 		t.Fatal("traffic through the other phone's proxy")
 	}
-	// the menu app gets the BLE logins for its half
+	// the menu app (loopback) gets the BLE logins for its half; a LAN
+	// dashboard gets everything else but not the keys
 	if len(st.Logins) != 1 || st.Logins[0].KeyID != kid || st.Logins[0].User == "" || len(st.Logins[0].Key) != 16 {
 		t.Fatalf("logins: %+v", st.Logins)
+	}
+	if lanSt := clickStatus(t, a, lan); len(lanSt.Logins) != 0 {
+		t.Fatalf("a LAN caller must not get the BLE logins: %+v", lanSt.Logins)
 	}
 	if !containsCall(fs.log(), "pac Wi-Fi http://127.0.0.1:8077/proxy.pac") {
 		t.Fatalf("the system proxy wasn't set (PAC): %s", fs.log())

@@ -229,7 +229,7 @@ class BleProto(
 
     private fun send(device: String, frame: ByteArray) = out(device, frame)
 
-    private fun JsonObject.int(k: String): Int? = this[k]?.jsonPrimitive?.intOrNull
+    private fun JsonObject.int(k: String): Int? = (this[k] as? JsonPrimitive)?.intOrNull
 
     private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.content
 
@@ -248,15 +248,19 @@ class BleProto(
                 want = -1
                 if (data.size < 2) return null
                 want = ((data[0].toInt() and 0xff) shl 8) or (data[1].toInt() and 0xff)
-                if (want > MAX_FRAME) {
-                    buf.reset(); want = -1
-                    return null
-                }
+                if (want > MAX_FRAME) return null
                 buf.write(data, 2, data.size - 2)
             } else if (want < 0) {
                 return null // a middle chunk with no start
             } else {
                 buf.write(data)
+            }
+            if (buf.size() > want) {
+                // more data than the frame declared: drop it all rather
+                // than grow without bound waiting for an END that never comes
+                buf.reset()
+                want = -1
+                return null
             }
             if (flags and END != 0) {
                 val payload = buf.toByteArray()
@@ -273,6 +277,9 @@ class BleProto(
         const val MAX_FRAME = 4096
         private const val START = 0x01
         private const val END = 0x02
+
+        /** A whole frame in one chunk: START | END. */
+        const val CHUNK_WHOLE: Byte = (START or END).toByte()
 
         /** the challenge's and the hello nonce's length, bytes */
         const val NONCE = 16
