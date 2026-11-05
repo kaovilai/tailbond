@@ -121,13 +121,14 @@ jobs:
       - name: mqvpn submodule revision
         id: mq
         # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
-        # distro and Homebrew packages it links. image: the runner image, for
-        # builds that link the runner's own libraries.
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
         run: |
           {
             echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
             echo "week=$(date -u +%G-W%V)"
-            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "os=${ImageOS:-unknown}"
           } >> "$GITHUB_OUTPUT"
       # The binaries are cached, not the build tree: a fresh checkout gives
       # every source a new mtime, so a restored tree rebuilt from scratch
@@ -141,7 +142,7 @@ jobs:
             out/native/mqvpn
             out/build/mqvpn-native/src/build/tests/test_cert_pin
             out/build/mqvpn-native/src/build/tests/test_config_bridge
-          key: mqvpn-native-bin-${{ steps.mq.outputs.image }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-native.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
+          key: mqvpn-native-bin-${{ steps.mq.outputs.os }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-native.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Build patched mqvpn
         if: steps.mqbin.outputs.cache-hit != 'true'
         run: scripts/build-mqvpn-native.sh
@@ -188,13 +189,14 @@ jobs:
       - name: mqvpn submodule revision
         id: mq
         # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
-        # distro and Homebrew packages it links. image: the runner image, for
-        # builds that link the runner's own libraries.
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
         run: |
           {
             echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
             echo "week=$(date -u +%G-W%V)"
-            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "os=${ImageOS:-unknown}"
           } >> "$GITHUB_OUTPUT"
       - name: Cache native libs
         uses: actions/cache@v6
@@ -364,13 +366,14 @@ jobs:
       - name: mqvpn submodule revision
         id: mq
         # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
-        # distro and Homebrew packages it links. image: the runner image, for
-        # builds that link the runner's own libraries.
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
         run: |
           {
             echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
             echo "week=$(date -u +%G-W%V)"
-            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "os=${ImageOS:-unknown}"
           } >> "$GITHUB_OUTPUT"
       # The binaries are cached, not the build tree: a fresh checkout gives
       # every source a new mtime, so a restored tree rebuilt from scratch
@@ -414,19 +417,20 @@ jobs:
       - name: mqvpn submodule revision
         id: mq
         # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
-        # distro and Homebrew packages it links. image: the runner image, for
-        # builds that link the runner's own libraries.
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
         run: |
           {
             echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
             echo "week=$(date -u +%G-W%V)"
-            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "os=${ImageOS:-unknown}"
           } >> "$GITHUB_OUTPUT"
       # The binaries are cached, not the build tree: a fresh checkout gives
       # every source a new mtime, so a restored tree rebuilt from scratch
       # anyway. Same inputs (pinned mqvpn, patches, build scripts, week)
       # give the same binary, so a hit skips the build.
-      # The key also names the runner image and Homebrew's libevent (linked
+      # The key also names the macOS release and Homebrew's libevent (linked
       # statically). A hit skips mqvpn's Darwin unit tests too: they ran when
       # this binary was built.
       - name: Homebrew libevent version
@@ -437,7 +441,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: out/macos/mqvpn
-          key: mqvpn-macos-bin-${{ runner.arch }}-${{ steps.mq.outputs.image }}-${{ steps.libevent.outputs.v }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-macos.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
+          key: mqvpn-macos-bin-${{ runner.arch }}-${{ steps.mq.outputs.os }}-${{ steps.libevent.outputs.v }}-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-macos.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
       - name: Build patched mqvpn and run its Darwin unit tests
         if: steps.mqbin.outputs.cache-hit != 'true'
         run: TB_TEST=1 scripts/build-mqvpn-macos.sh
@@ -601,13 +605,14 @@ jobs:
       - name: mqvpn submodule revision
         id: mq
         # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
-        # distro and Homebrew packages it links. image: the runner image, for
-        # builds that link the runner's own libraries.
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
         run: |
           {
             echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
             echo "week=$(date -u +%G-W%V)"
-            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "os=${ImageOS:-unknown}"
           } >> "$GITHUB_OUTPUT"
       # The binaries are cached, not the build tree: a fresh checkout gives
       # every source a new mtime, so a restored tree rebuilt from scratch
@@ -670,13 +675,14 @@ jobs:
       - name: mqvpn submodule revision
         id: mq
         # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
-        # distro and Homebrew packages it links. image: the runner image, for
-        # builds that link the runner's own libraries.
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
         run: |
           {
             echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
             echo "week=$(date -u +%G-W%V)"
-            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "os=${ImageOS:-unknown}"
           } >> "$GITHUB_OUTPUT"
       # The binaries are cached, not the build tree: a fresh checkout gives
       # every source a new mtime, so a restored tree rebuilt from scratch
@@ -711,13 +717,14 @@ jobs:
       - name: mqvpn submodule revision
         id: mq
         # sha: the pinned mqvpn. week: a fresh build at least weekly, for the
-        # distro and Homebrew packages it links. image: the runner image, for
-        # builds that link the runner's own libraries.
+        # distro and Homebrew packages it links. os: the runner's OS release
+        # (ubuntu24, macos26), for builds that link the runner's own libraries;
+        # not the image build, which differs between runners during a rollout.
         run: |
           {
             echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
             echo "week=$(date -u +%G-W%V)"
-            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "os=${ImageOS:-unknown}"
           } >> "$GITHUB_OUTPUT"
       # The binaries are cached, not the build tree: a fresh checkout gives
       # every source a new mtime, so a restored tree rebuilt from scratch
