@@ -992,23 +992,39 @@
       this.timer = setInterval(function () { self.tick(); }, 2000);
       this.slow = setInterval(function () { self.refreshSlow(); }, 15000);
     },
-    // Escape closes a dialog, like a click outside it.
+    // Escape closes a dialog, like a click outside it; Tab stays inside an
+    // open one (aria-modal="true" says the page behind is out of reach).
     mounted: function () {
       var self = this;
       this.$el.addEventListener("keydown", function (e) {
         var m = e.key === "Escape" ? self.$el.querySelector(".tb-modal") : null;
-        if (m) m.click();
+        if (m) { m.click(); return; }
+        if (e.key !== "Tab") return;
+        var d = self.$el.querySelector(".tb-dialog");
+        if (!d) return;
+        var f = Array.prototype.filter.call(
+          d.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'),
+          function (el) { return el.getClientRects().length > 0; });
+        if (!f.length) { e.preventDefault(); d.focus(); return; }
+        var first = f[0], last = f[f.length - 1], a = document.activeElement;
+        if (!d.contains(a)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+        if (e.shiftKey && (a === first || a === d)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
       });
     },
     // A dialog that opens takes the keyboard focus, and gives it back to
     // where it was when it closes.
     updated: function () {
       var d = this.$el.querySelector ? this.$el.querySelector(".tb-dialog") : null;
-      if (d && d !== this.dlgEl) {
-        if (!this.dlgEl) this.dlgBack = document.activeElement;
-        this.dlgEl = d;
+      if (d) {
+        if (d !== this.dlgEl) {
+          if (!this.dlgEl) this.dlgBack = document.activeElement;
+          this.dlgEl = d;
+        }
+        // the dialog re-renders with the page's data (every 2 s): when that
+        // drops focus to <body>, take it back, or the keyboard is stranded
         if (!d.contains(document.activeElement)) { d.setAttribute("tabindex", "-1"); d.focus(); }
-      } else if (!d && this.dlgEl) {
+      } else if (this.dlgEl) {
         var back = this.dlgBack;
         this.dlgEl = this.dlgBack = null;
         if (back && back.focus && document.contains(back)) back.focus();

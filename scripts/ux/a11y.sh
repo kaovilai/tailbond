@@ -13,7 +13,7 @@
 #               GL shell, every fixture state (scripts/ux/glinet/*fixtures.mjs)
 #   luci        the LuCI view (packaging/openwrt/luci), in a minimal LuCI page
 #
-# axe-core on each page and state, plus two checks of its own (keyboard
+# axe-core on each page and state, plus four checks of its own (keyboard
 # reach of clickable things, endless animation under reduced motion). Fails
 # on impact serious or critical; moderate and minor are in the report only.
 # Writes out/ux/a11y/report.json and report.html (or [outdir]) and prints one
@@ -38,7 +38,13 @@ PW="${TAILBOND_UX_NODE:-$HOME/.cache/tailbond-ux}"
 # ports away from a real tailbondd's 8077 on the same machine
 DASH=18277 LAND=18280 CLIENT=18278
 TMP="$(mktemp -d)"
-trap 'kill "${AGENT_PID:-0}" "${CLIENT_PID:-0}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+# stop_pids: kill only PIDs that were set. `kill 0` (the old default) signals
+# the whole process group, which would take the caller down with the test.
+stop_pids() {
+    local pid
+    for pid in "$@"; do [ -n "$pid" ] && kill "$pid" 2>/dev/null || true; done
+}
+trap 'stop_pids "${AGENT_PID:-}" "${CLIENT_PID:-}"; rm -rf "$TMP"' EXIT
 
 if [[ ! -d "$PW/node_modules/playwright" || ! -d "$PW/node_modules/vue" ]]; then
     mkdir -p "$PW"

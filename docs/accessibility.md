@@ -13,13 +13,14 @@ desktop widths. A **serious** or **critical** finding fails the build;
 (dashboard + GL panel, Chromium)*, a required check) starts a throwaway
 server-role and client-role `tailbondd` like the screenshot scripts do,
 then [`scripts/ux/a11y.mjs`](../scripts/ux/a11y.mjs) opens each page and
-runs axe-core (pinned in `a11y.sh`) plus three checks axe doesn't make:
+runs axe-core (pinned in `a11y.sh`) plus four checks axe doesn't make:
 
 | Check | Fails when |
 |---|---|
 | `tb-pointer-only` | something looks clickable (`cursor: pointer`) but a keyboard can't reach it: not a link, button, field, label or `tabindex="0"`, nor inside one |
 | `tb-no-key-handler` | a control that isn't a native one (`role="checkbox"`, `radio`, `switch`, `button`… on a `div` or `span`) gets keyboard focus but has no key handler, so Space and Enter do nothing |
 | `tb-motion` | an endless animation keeps running with **reduce motion** on (every page is opened that way) |
+| `tb-modal-focus` | with a dialog open (`.tb-dialog`, or any `aria-modal` dialog), Tab and Shift+Tab stay inside it: an escaped focus strands a keyboard user behind a dialog they can see |
 
 A self-test page with one of each known problem runs first; if the run stops
 seeing them, it fails instead of passing everything.

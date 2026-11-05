@@ -121,6 +121,7 @@ async function runCheck(surface, name, { vp = 'desktop', scheme = 'light', ua, s
     }, { scope, off });
     const own = await page.evaluate(ownChecks, { scope, off });
     if (!off['tb-no-key-handler']) own.push(...await keyHandlers(page, scope));
+    own.push(...await modalFocus(page, scope));
     r.violations = [...axeV, ...own];
   } catch (e) {
     r.error = String(e && e.message || e).split('\n')[0];
@@ -177,6 +178,28 @@ function ownChecks({ scope, off }) {
   return out;
 }
 
+// tb-modal-focus: with a modal open, Tab and Shift+Tab must stay inside it.
+// An open .tb-dialog (or any aria-modal dialog) says the page behind is out
+// of reach, so focus that escapes into it strands a keyboard user.
+async function modalFocus(page, scope) {
+  const SEL = scope ? `${scope} .tb-dialog, ${scope} [role="dialog"][aria-modal="true"]` : '.tb-dialog, [role="dialog"][aria-modal="true"]';
+  if (!(await page.locator(SEL).count())) return [];
+  const where = () => page.evaluate((sel) => {
+    const d = document.querySelector(sel.split(', ')[0]) || document.querySelector('[role="dialog"][aria-modal="true"]');
+    const a = document.activeElement;
+    return { inside: !!d && d.contains(a), at: a ? (a.tagName.toLowerCase() + (a.className && typeof a.className === 'string' ? '.' + a.className.trim().split(/\s+/)[0] : '')) : 'none' };
+  }, SEL);
+  const nodes = [];
+  for (const [key, label] of [['Tab', 'Tab'], ['Shift+Tab', 'Shift+Tab']]) {
+    for (let i = 1; i <= 24; i++) {
+      await page.keyboard.press(key);
+      const r = await where();
+      if (!r.inside) { nodes.push({ target: 'dialog', html: '', summary: `${label} #${i} left the dialog (focus on ${r.at})` }); break; }
+    }
+  }
+  return nodes.length ? [{ id: 'tb-modal-focus', impact: 'serious', help: 'Keyboard focus stays inside an open dialog', helpUrl: 'https://www.w3.org/WAI/WCAG22/Understanding/focus-not-obscured-minimum.html', nodes }] : [];
+}
+
 // tb-no-key-handler: custom controls with no keydown/keyup/keypress listener
 // of their own. Only the element's own listeners count: the GL view has an
 // Escape handler on its root, which says nothing about Space on a checkbox.
@@ -224,8 +247,9 @@ async function steps(page, act) {
 const SELFTEST = `<!doctype html><html><head><title>self-test</title>
 <style>@keyframes spin { to { transform: rotate(1turn); } } .m { display: inline-block; animation: spin 1s linear infinite; }</style></head>
 <body><main><h1>self-test</h1><img src="data:,"><div style="cursor:pointer" onclick="1">click me</div>
-<span role="checkbox" tabindex="0" aria-checked="false" onclick="1">tick</span><span class="m">*</span></main></body></html>`;
-const EXPECT = ['html-has-lang', 'image-alt', 'tb-pointer-only', 'tb-no-key-handler', 'tb-motion'];
+<span role="checkbox" tabindex="0" aria-checked="false" onclick="1">tick</span><span class="m">*</span>
+<div role="dialog" aria-modal="true"><button autofocus onclick="1">in</button></div><button onclick="1">outside</button></main></body></html>`;
+const EXPECT = ['html-has-lang', 'image-alt', 'tb-pointer-only', 'tb-no-key-handler', 'tb-motion', 'tb-modal-focus'];
 const st = await runCheck('self-test', 'known-problems', { setup: (p) => p.route('http://selftest.test/**', (r) => r.fulfill({ contentType: 'text/html', body: SELFTEST })),
   open: (p) => p.goto('http://selftest.test/') });
 {
