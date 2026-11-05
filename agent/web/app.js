@@ -421,7 +421,9 @@ function renderShareOut(st) {
   if (!box) return;
   const sh = st.sharing;
   box.classList.toggle('hidden', st.role !== 'client' || !sh);
-  if (!sh || box.contains(document.activeElement) && /^(INPUT|SELECT)$/.test(document.activeElement.tagName)) return;
+  if (!sh || box.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  // a focused button is rebuilt like the rest: give the focus to its copy
+  const refocus = box.contains(document.activeElement) ? document.activeElement.dataset.focusKey : undefined;
   const mac = st.platform === 'darwin';
   const self = mac ? 'this Mac' : 'this computer';
   const ifaces = sh.ifaces || [];
@@ -487,6 +489,7 @@ function renderShareOut(st) {
   hubs.addEventListener('input', () => { d.hubs = hubs.value; });
   const field = (text, el, help) => h('label', { class: 'field' }, h('span', { text }), el, help ? h('small', { class: 'muted', text: help }) : null);
   const save = h('button', { class: 'btn primary', type: 'button', text: sh.enabled ? 'Save' : 'Start sharing' });
+  save.dataset.focusKey = 'save';
   save.addEventListener('click', async () => {
     if (!pick.value) { toast('Pick the connection to share.', true); return; }
     const body = { enabled: true, iface: pick.value, label: label.value.trim(), cap_mb: Math.max(0, Math.round(Number(cap.value) || 0)),
@@ -507,6 +510,7 @@ function renderShareOut(st) {
     field('Hubs allowed', hubs, 'Device names on your home server, comma separated. Empty: any device paired with it.'),
     h('div', { class: 'row end' }, save)));
   box.replaceChildren(...kids);
+  if (refocus) box.querySelector(`[data-focus-key="${refocus}"]`)?.focus();
   // the menu bar's "Sharing settings…" opens /#share
   if (location.hash === '#share' && !renderShareOut.shown) { renderShareOut.shown = true; box.scrollIntoView(); }
 }

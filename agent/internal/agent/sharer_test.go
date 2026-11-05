@@ -44,6 +44,8 @@ func TestShareIfaceProblem(t *testing.T) {
 		{"tb0", "198.51.100.1:443", "is a VPN tunnel", true},
 		{"utun4", "198.51.100.1:443", "is a VPN tunnel", true},
 		{"wg0", "198.51.100.1:443", "is a VPN tunnel", true},
+		{"tap0", "198.51.100.1:443", "is a VPN tunnel", true},
+		{"tb1", "198.51.100.1:443", "is a VPN tunnel", true},
 		{"en7", "198.51.100.1:443", "no connection called en7", false},
 		{"en9", "198.51.100.1:443", "isn't connected right now", false},
 		{"lo0", "198.51.100.1:443", "loopback", true},

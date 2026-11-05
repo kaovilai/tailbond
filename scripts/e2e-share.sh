@@ -299,7 +299,9 @@ LB="$(lapi "http://$API/api/status" | jq '[.sharing.hubs[]? | select(.hub == "sl
 lapi "http://$API/api/status" | jq -e '.state == "connected" and ([.paths[] | select(.iface == "eth1" and .state == "active")] | length == 1)' >/dev/null \
   && ok "the laptop's own tunnel still bonds eth1 while sharing it" || bad "laptop: $(lapi "http://$API/api/status" | jq -c '{state, paths: [.paths[] | {iface, state}]}')"
 lapi -X POST -d '{"share_enabled": false}' "http://$API/api/share" >/dev/null
-lap_gone() { ! hapi "http://$API/api/status" | jq -e '.shares[]? | select(.label == "Ethernet from thinkpad" and .state == "ready")' >/dev/null; }
+# gone: the hub answers with a status and lists no ready share by that name
+# (a hub that doesn't answer isn't proof)
+lap_gone() { hapi "http://$API/api/status" | jq -e 'if type == "object" and has("state") then [(.shares // [])[] | select(.label == "Ethernet from thinkpad" and .state == "ready")] | length == 0 else false end' >/dev/null; }
 wait_for 30 "the hub drops the laptop's share" lap_gone \
   && ok "sharing off (share_enabled false): $(lapi "http://$API/api/status" | jq -c '.sharing | {state, iface}'); the hub stopped using it" \
   || bad "hub still uses it: $(hapi "http://$API/api/status" | jq -c .shares)"

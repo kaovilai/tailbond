@@ -949,6 +949,14 @@ func realShareIf(name string) (shareIfFacts, bool) {
 		return shareIfFacts{}, false
 	}
 	f := shareIfFacts{Loopback: ifi.Flags&net.FlagLoopback != 0, Up: ifi.Flags&net.FlagUp != 0}
+	// an Ethernet port stays UP with its address after the cable is pulled:
+	// also need the carrier (netif.Lookup: sysfs on Linux, ifconfig's media
+	// status on macOS)
+	if f.Up && !f.Loopback {
+		if it, ok := netif.Lookup(name); ok && !it.Carrier {
+			f.Up = false
+		}
+	}
 	addrs, _ := ifi.Addrs()
 	for _, ad := range addrs {
 		if n, ok := ad.(*net.IPNet); ok && !n.IP.IsLinkLocalUnicast() && (n.IP.To4() != nil || n.IP.IsGlobalUnicast() || n.IP.IsLoopback()) {
@@ -958,6 +966,9 @@ func realShareIf(name string) (shareIfFacts, bool) {
 	return f, true
 }
 
+// errShareChanged: the connection to share changed while turning it on.
+var errShareChanged = errors.New("the share settings changed meanwhile; check them and try again")
+
 // isTunnelName: tailbond's own tunnel or another VPN's, never shared.
 // tb<N> is tailbond's tunnel on Linux and OpenWrt (config.DefaultTunName is
 // "utun" on macOS), refused on every platform alike.
@@ -965,7 +976,7 @@ func isTunnelName(name string) bool {
 	if name == config.DefaultTunName || isTbTun(name) {
 		return true
 	}
-	for _, p := range []string{"utun", "tun", "wg", "tailscale", "mqvpn", "ipsec"} {
+	for _, p := range []string{"utun", "tun", "tap", "wg", "tailscale", "mqvpn", "ipsec"} {
 		if strings.HasPrefix(name, p) {
 			return true
 		}
@@ -1260,12 +1271,25 @@ func (a *Agent) hShareSettings(w http.ResponseWriter, r *http.Request) {
 			v := *in.UseLocal
 			c.Client.UseLocal = &v
 		}
-		if (in.Share != nil || in.ShareEnabled != nil) && next != nil {
+		switch {
+		case in.Share != nil && next != nil:
 			s := *next
+			c.Client.Share = &s
+		case in.ShareEnabled != nil && c.Client.Share != nil && c.Client.Share.Iface != "":
+			// only the switch: flip it on what's saved now, not on the copy
+			// read above, so a save that landed in between isn't undone
+			if *in.ShareEnabled && (next == nil || c.Client.Share.Iface != next.Iface) {
+				return errShareChanged
+			}
+			s := *c.Client.Share
+			s.Enabled = *in.ShareEnabled
 			c.Client.Share = &s
 		}
 		return nil
-	}); err != nil {
+	}); errors.Is(err, errShareChanged) {
+		httpErr(w, http.StatusConflict, err)
+		return
+	} else if err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}

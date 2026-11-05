@@ -360,7 +360,9 @@ MBB="$(hapi "http://$MAPI/api/status" | jq '[.sharing.hubs[]? | select(.hub == "
 [ "${MBB:-0}" -gt 0 ] && ok "the Mac relayed $MBB bytes for the hub: $(hapi "http://$MAPI/api/status" | jq -c '.sharing | {used_bytes, hubs}')" \
   || bad "no bytes through the Mac's share: $(hapi "http://$MAPI/api/status" | jq -c .sharing)"
 hapi -X POST -d '{"share_enabled": false}' "http://$MAPI/api/share" >/dev/null
-mb_gone() { ! mb_ready; }
+# gone: the hub answers with a status and lists no ready share by that name
+# (a hub that doesn't answer isn't proof)
+mb_gone() { hapi "http://$API/api/status" | jq -e --arg l "$MBL" 'if type == "object" and has("state") then [(.shares // [])[] | select(.label == $l and .state == "ready")] | length == 0 else false end' >/dev/null; }
 wait_for 30 "the hub drops the Mac's share" mb_gone \
   && ok "sharing off: the hub stopped using it" || bad "hub still uses it: $(hapi "http://$API/api/status" | jq -c .shares)"
 kill "$MB_PID" 2>/dev/null || true; wait "$MB_PID" 2>/dev/null || true; MB_PID=""
