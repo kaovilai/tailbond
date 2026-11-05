@@ -36,6 +36,7 @@ public struct MenuContent: View {
             if model.status != nil {
                 modes
                 if !s.links.isEmpty { section("Connections") { linksList } }
+                if let sh = s.share { section("Share this Mac's connection") { shareBox(sh) } }
                 if !s.coexist.isEmpty { section("Next to other VPNs") { coexistBox } }
                 section("Updates") { updatesBox }
             }
@@ -131,6 +132,26 @@ public struct MenuContent: View {
                     Text($0).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+
+    private func shareBox(_ sh: MenuSummary.Share) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                Text(sh.text).font(.caption).foregroundStyle(sh.warn ? Brand.warn : .secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if sh.canToggle {
+                    Toggle("", isOn: Binding(get: { sh.on }, set: { model.setSharing($0) }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .tint(Brand.ok)
+                        .disabled(model.busy)
+                        .accessibilityLabel("Share this Mac's connection")
+                }
+            }
+            Button(sh.canToggle ? "Sharing settings…" : "Choose a connection…") { openURL(model.client.shareSettings) }
+                .controlSize(.small)
         }
     }
 

@@ -63,4 +63,5 @@ public final class MenuModel: ObservableObject {
     public func installUpdate() { act("Installing the update") { try await self.client.installUpdate() } }
     public func setWorkVPN(_ w: String) { act("Changing the work VPN's traffic") { try await self.client.setWorkVPN(w) } }
     public func dismissCrash() { act("Dismissing") { try await self.client.dismissCrash() } }
+    public func setSharing(_ on: Bool) { act(on ? "Sharing this Mac's connection" : "Stopping sharing") { try await self.client.setSharing(on) } }
 }

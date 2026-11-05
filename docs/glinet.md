@@ -424,9 +424,11 @@ the panel sets a password for that page.
 Phones on the Slate 7's Wi-Fi can lend their 5G/LTE to it
 ([pair-and-share.md](pair-and-share.md)): on Android tailbond → Settings →
 **Share my mobile data**; on iPhone the **tailbond Share** app ([ios.md](ios.md)).
-The panel's **Shared by nearby phones** card lists each phone (sharing,
-battery, why it stopped) with **Use mobile data that nearby phones share**;
-each phone also appears under **Internet connections** as *Mobile data from <phone>* with
+A Mac or Linux laptop on its Wi-Fi can lend its other connection, e.g. the
+hotel's Ethernet ([Computers can share too](pair-and-share.md#computers-can-share-too)).
+The panel's **Shared by nearby devices** card lists each one (sharing,
+battery, why it stopped) with **Use connections that nearby devices share**;
+each also appears under **Internet connections** as *Mobile data from <phone>* (or *Ethernet from <computer>*) with
 Use it / Backup only / Off and a data limit, defaulting to the mobile tier
 (kept in reserve by **Save mobile data**).
 

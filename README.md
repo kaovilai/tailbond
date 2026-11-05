@@ -73,7 +73,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 - **Home + VPS failover:** an ordered server list; switches after 15 s of outage and fails back after 2 min healthy.
 - **Bypass rules (router):** chosen websites, devices, addresses or ports go direct or through one chosen link.
 - **Hotel Wi-Fi:** captive-portal detection and sign-in that works with GL.iNet's own repeater Login Mode.
-- **[Pair & Share](docs/pair-and-share.md):** Android phones and iPhones (the free-signed tailbond Share app) lend their mobile data over Wi-Fi to the hub, which bonds it with its own links.
+- **[Pair & Share](docs/pair-and-share.md):** Android phones and iPhones (the free-signed tailbond Share app) lend their mobile data over Wi-Fi to the hub, which bonds it with its own links. A Mac or Linux laptop can lend its Ethernet, a second Wi-Fi adapter or a USB modem the same way.
 - **[Mac as the home server](docs/macos.md#mac-as-home-server):** a Mac that stays at home ends the bonded tunnel, NATs to the internet and your tailnet with its own firewall (pf), and keeps itself awake while serving.
 - **[Mac as the hub](docs/macos.md):** a MacBook bonds its Wi-Fi, an Ethernet or USB-C adapter, an iPhone over USB and nearby phones' shares; a [menu bar app](docs/macos.md#menu-bar) shows the links, other VPNs and updates.
 - **[Next to a work VPN](docs/macos.md#using-tailbond-with-netbird-or-another-work-vpn)** (Mac, Linux client): NetBird, the Tailscale app or another VPN keep their addresses and DNS. tailbond routes only tailnet machines' own addresses and uses split DNS; the work VPN's traffic goes Direct or Bonded.
@@ -96,9 +96,9 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 | Debian, Ubuntu, AlmaLinux / RHEL / Rocky, Fedora (VPS) | Home or backup server | [VPS](docs/vps.md) (`install.sh`, Ansible) | CI-tested |
 | Container: Docker, Podman, Kubernetes | Home or backup server | [Deploy](docs/deploy.md) (`ghcr.io/kaovilai/tailbond`) | CI-tested (Podman, kind) |
 | GL.iNet Slate 7 (GL-BE3600), OpenWrt 23.05+ aarch64 | Travel router (hub) | [GL.iNet](docs/glinet.md) | CI-tested |
-| macOS (Apple silicon) | Hub | [macOS](docs/macos.md) (`install.sh`, Homebrew) | CI-tested |
+| macOS (Apple silicon) | Hub and sharer | [macOS](docs/macos.md) (`install.sh`, Homebrew) | CI-tested (sharing: over `lo0` on the runner, not a real adapter) |
 | macOS (Apple silicon) | Home server | [Mac as home server](docs/macos.md#mac-as-home-server) (`install.sh --role server`) | CI-tested (runner + Linux client VM; not on a real Mac or with a real Tailscale) |
-| Linux laptop | Hub | [VPS guide, `--client`](docs/vps.md#a-linux-laptop-instead-client-role) | CI-tested |
+| Linux laptop | Hub and sharer | [VPS guide, `--client`](docs/vps.md#a-linux-laptop-instead-client-role) | CI-tested |
 | Android 8+ | Phone (bonds itself) and sharer | [Android](docs/android.md) | CI-tested (emulator) |
 | iPhone (iOS 16+) | Sharer (tailbond Share) | [iOS](docs/ios.md) | CI-tested (simulator) |
 

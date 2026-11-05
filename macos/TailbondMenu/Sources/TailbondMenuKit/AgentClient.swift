@@ -47,8 +47,12 @@ public struct AgentClient {
     public func installUpdate() async throws { _ = try await call("POST", "/api/update/install") }
     public func setWorkVPN(_ w: String) async throws { _ = try await call("POST", "/api/coexist", ["work_vpn": w]) }
     public func dismissCrash() async throws { _ = try await call("POST", "/api/report/crash/dismiss") }
+    /// "Share this Mac's connection" on or off, as set up in the dashboard.
+    public func setSharing(_ on: Bool) async throws { _ = try await call("POST", "/api/share", ["share_enabled": on]) }
 
     public var dashboard: URL { base }
     /// The dashboard's Report a problem (docs/reporting.md).
     public var report: URL { URL(string: base.absoluteString + "/#report")! }
+    /// The dashboard's "Share this Mac's connection" choices.
+    public var shareSettings: URL { URL(string: base.absoluteString + "/#share")! }
 }

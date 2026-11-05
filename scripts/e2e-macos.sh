@@ -20,11 +20,18 @@
 #
 # Checks: the server sees the hub with 3 active paths; traffic crosses the
 # tunnel (the token, a 2 MB download; bytes on every path); the dashboard
-# API lists the shares ("Shared by nearby phones") with kind
+# API lists the shares ("Shared by nearby devices") with kind
 # shared-cellular; killing one phone drops its path within ~4 s and the
 # tunnel keeps working; "Use this Mac's connections" off leaves only the
 # phone; a sharer the server lists but the hub can't reach shows the client
 # isolation note.
+#
+# A Mac sharing (docs/pair-and-share.md "Computers can share too"): a second
+# tailbondd on this Mac (client role, paired as "macbook", its own tunnel
+# off) offers its connections, refuses a utun and a missing interface, and
+# shares lo0 (the only way to the VM; IP_BOUND_IF-pinned) on UDP 47078; the
+# hub finds it over Bonjour and bonds it as a third path the server sees,
+# traffic crosses it, and turning it off drops it.
 #
 # Use phone hub (docs/phone-hub.md): a stand-in phone hub (tb-sharesim
 # -proxy: internal/proxy, the reference SOCKS5 server, on 192.168.77.4,
@@ -59,6 +66,7 @@ SHARESIM="${SHARESIM:-$ROOT/out/agent/darwin-arm64/tb-sharesim}"
 DNSSTUB="${DNSSTUB:-$ROOT/out/agent/darwin-arm64/tb-dnsstub}"
 VM="${VM:-$ROOT/out/e2e-vm}"
 API=127.0.0.1:8077   # the hub's dashboard
+MAPI=127.0.0.1:8078  # the Mac sharer's (a second tailbondd)
 SAPI=127.0.0.1:18077 # the server's API, forwarded into the VM
 PORT=4443
 
@@ -73,7 +81,7 @@ for c in qemu-system-aarch64 curl jq nc; do command -v "$c" >/dev/null || { echo
 WORK="$(mktemp -d /tmp/tailbond-e2e-macos.XXXXXX)"
 chmod 755 "$WORK"
 PASS=0 FAIL=0
-QEMU_PID="" HUB_PID="" PIXEL_PID="" IPHONE_PID="" PHUB_PID="" SVC="" DNS_PID="" WG=""
+QEMU_PID="" HUB_PID="" PIXEL_PID="" IPHONE_PID="" PHUB_PID="" MB_PID="" SVC="" DNS_PID="" WG=""
 say()  { printf '\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS + 1)); }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=$((FAIL + 1)); }
@@ -94,7 +102,7 @@ wait_for() { # wait_for <seconds> <description> <command...>
 cleanup() {
   local rc=$?
   if [ -n "${KEEP:-}" ]; then echo "KEEP set: VM, agents and feth0/feth1 left running; work dir $WORK"; return; fi
-  for p in "$HUB_PID" "$PIXEL_PID" "$IPHONE_PID" "$PHUB_PID" "$DNS_PID"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  for p in "$HUB_PID" "$PIXEL_PID" "$IPHONE_PID" "$PHUB_PID" "$MB_PID" "$DNS_PID"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
   rm -f /etc/resolver/corp.example
   [ -n "$WG" ] && { rm -f "/var/run/wireguard/$WG.sock"; pkill -f "wireguard-go utun" 2>/dev/null || true; }
   sleep 2
@@ -110,7 +118,7 @@ cleanup() {
   ifconfig feth1 destroy 2>/dev/null || true
   if [ "$rc" -ne 0 ] || [ "$FAIL" -ne 0 ] || [ -n "${VERBOSE:-}" ]; then
     echo "--- hub agent log (tail) ---"; tail -n 80 "$WORK/hub.log" 2>/dev/null || true
-    for s in pixel iphone phonehub; do echo "--- $s sharer log (tail) ---"; tail -n 20 "$WORK/$s.log" 2>/dev/null || true; done
+    for s in pixel iphone phonehub macbook; do echo "--- $s sharer log (tail) ---"; tail -n 20 "$WORK/$s.log" 2>/dev/null || true; done
     echo "--- server VM console (tail) ---"; grep -av '^\[ *[0-9.]*\] ' "$WORK/vm.console" | tail -n 80 2>/dev/null || true
   fi
   mkdir -p "$ROOT/out/e2e-macos" && cp "$WORK"/*.log "$WORK/vm.console" "$ROOT/out/e2e-macos/" 2>/dev/null || true
@@ -138,8 +146,8 @@ else
   bad "server did not come up: $(curl -sS -m 3 "http://$SAPI/api/status" 2>&1 | head -c 600)"; exit 1
 fi
 pair() { sapi -X POST -d "{\"name\":\"$1\"}" "http://$SAPI/api/clients" | jq -r .uri; }
-HUB_URI="$(pair mac)"; PIXEL_URI="$(pair pixel)"; IPHONE_URI="$(pair iphone)"; ISO_URI="$(pair isolated)"
-[ -n "$HUB_URI" ] && [ "$HUB_URI" != null ] && ok "paired the Mac and three phones" || { bad "pairing failed"; exit 1; }
+HUB_URI="$(pair mac)"; PIXEL_URI="$(pair pixel)"; IPHONE_URI="$(pair iphone)"; ISO_URI="$(pair isolated)"; MB_URI="$(pair macbook)"
+[ -n "$HUB_URI" ] && [ "$HUB_URI" != null ] && ok "paired the Mac, three phones and a second Mac" || { bad "pairing failed"; exit 1; }
 
 say "LAN: feth0 (this Mac, 192.168.77.1) <-> feth1 (the phones, .2 and .3)"
 ifconfig feth0 destroy 2>/dev/null || true; ifconfig feth1 destroy 2>/dev/null || true
@@ -213,7 +221,7 @@ else
   bad "server paths for the Mac: $(sapi "http://$SAPI/api/status" | jq -c '[.clients[] | select(.name == "mac") | .paths[]]')"
 fi
 
-say "dashboard API: Shared by nearby phones, kinds, mqvpn's control API on macOS"
+say "dashboard API: Shared by nearby devices, kinds, mqvpn's control API on macOS"
 ST="$(hapi "http://$API/api/status")"
 jq -e '.control_api == true' <<<"$ST" >/dev/null && ok "per-path stats come from mqvpn's control API (patch 0003)" || bad "no control API: $(jq -c '{control_api, error}' <<<"$ST")"
 jq -e '.platform == "darwin" and .use_local == true and .use_shares == true' <<<"$ST" >/dev/null \
@@ -301,6 +309,61 @@ else
   bad "no isolation note: $(hapi "http://$API/api/status" | jq -c '{shares, share_note}')"
 fi
 hapi "http://$API/api/status" | jq -e '.state == "connected"' >/dev/null && ok "hub still connected" || bad "hub not connected"
+
+say "a Mac sharer: a second tailbondd on this Mac (its own tunnel off) lends lo0 to the hub"
+# lo0 is this Mac's only way to the VM's server (127.0.0.1:4443), so it is
+# the one interface that can be shared here (loopback is allowed only when
+# the pairing's server is on the loopback). The relay's upstream is pinned
+# to it with IP_BOUND_IF, as an Ethernet adapter's would be.
+mkdir -p "$WORK/mb"
+cat >"$WORK/mb/tailbond.json" <<EOF
+{"role": "client", "mqvpn_bin": "$MQVPN", "state_dir": "$WORK/mb", "hooks_dir": "$ROOT/packaging/macos/hooks",
+ "listen": "$MAPI", "mode": "speed", "disable_tailscale": true,
+ "client": {"pairing_uri": "$MB_URI", "disconnected": true, "no_dns": true, "manage_routes": false, "captive_portal_detect": false,
+            "use_shares": false, "coexist": "off", "paths": []}}
+EOF
+"$TAILBONDD" -config "$WORK/mb/tailbond.json" >"$WORK/macbook.log" 2>&1 &
+MB_PID=$!
+if wait_for 30 "the Mac sharer's API" sh -c "curl -fsS -m 2 http://$MAPI/api/status | jq -e '.sharing.state == \"off\" and .platform == \"darwin\"'"; then
+  ok "second tailbondd up, tunnel off: $(hapi "http://$MAPI/api/status" | jq -c '{state, sharing: (.sharing | {state, ifaces: [.ifaces[] | {name, kind, share_label}]})}')"
+else
+  bad "Mac sharer: $(hapi "http://$MAPI/api/status" | jq -c '{state, sharing}')"
+fi
+hapi "http://$MAPI/api/status" | jq -e '[.sharing.ifaces[].name | select(. == "lo0" or startswith("utun"))] | length == 0' >/dev/null \
+  && ok "the choices leave out lo0 and utun*" || bad "choices: $(hapi "http://$MAPI/api/status" | jq -c '[.sharing.ifaces[].name]')"
+for x in utun0 en99; do
+  code="$(curl -sS -m 5 -o "$WORK/refused.json" -w '%{http_code}' -H 'Content-Type: application/json' \
+    -d "{\"share\":{\"enabled\":true,\"iface\":\"$x\"}}" "http://$MAPI/api/share")"
+  [ "$code" = 400 ] && ok "refuses to share $x: $(jq -r .error "$WORK/refused.json")" || bad "sharing $x: HTTP $code $(cat "$WORK/refused.json")"
+done
+hapi -X POST -d '{"share": {"enabled": true, "iface": "lo0", "port": 47078, "allowed_hubs": ["mac"]}}' "http://$MAPI/api/share" >/dev/null \
+  && ok "POST /api/share: lo0 on UDP 47078, for the hub \"mac\"" || bad "could not turn sharing on: $(tail -n 3 "$WORK/macbook.log")"
+if wait_for 20 "the Mac sharing" sh -c "curl -fsS -m 2 http://$MAPI/api/status | jq -e '.sharing.state == \"sharing\"'"; then
+  ok "sharing: $(hapi "http://$MAPI/api/status" | jq -c '.sharing | {iface, label, port, state, note}')"
+else
+  bad "not sharing: $(hapi "http://$MAPI/api/status" | jq -c .sharing)"
+fi
+MBL="$(hapi "http://$MAPI/api/status" | jq -r .sharing.label)"
+mb_ready() { hapi "http://$API/api/status" | jq -e --arg l "$MBL" '.shares[]? | select(.label == $l and .state == "ready")' >/dev/null; }
+if wait_for 60 "the hub bonds the Mac's share" mb_ready; then
+  ok "the hub found it: $(hapi "http://$API/api/status" | jq -c --arg l "$MBL" '.shares[] | select(.label == $l) | {label, via, addr, state, path}')"
+else
+  bad "hub shares: $(hapi "http://$API/api/status" | jq -c '{shares, share_note}')"
+fi
+wait_for 90 "server sees 3 active paths for the Mac" three \
+  && ok "server: the hub bonds lo0, the iPhone and the Mac's share: $(sapi "http://$SAPI/api/status" | jq -c '[.clients[] | select(.name == "mac") | .paths[] | {id, state}]')" \
+  || bad "server paths for the hub: $(sapi "http://$SAPI/api/status" | jq -c '[.clients[] | select(.name == "mac") | .paths[]]')"
+curl -fsS -m 60 -o "$WORK/blob" http://10.77.0.1:8080/blob && [ "$(wc -c <"$WORK/blob")" -ge 2000000 ] \
+  && ok "2 MB through the tunnel" || bad "download through the tunnel failed"
+sleep 3
+MBB="$(hapi "http://$MAPI/api/status" | jq '[.sharing.hubs[]? | select(.hub == "mac") | .up_bytes + .down_bytes] | add // 0')"
+[ "${MBB:-0}" -gt 0 ] && ok "the Mac relayed $MBB bytes for the hub: $(hapi "http://$MAPI/api/status" | jq -c '.sharing | {used_bytes, hubs}')" \
+  || bad "no bytes through the Mac's share: $(hapi "http://$MAPI/api/status" | jq -c .sharing)"
+hapi -X POST -d '{"share_enabled": false}' "http://$MAPI/api/share" >/dev/null
+mb_gone() { ! mb_ready; }
+wait_for 30 "the hub drops the Mac's share" mb_gone \
+  && ok "sharing off: the hub stopped using it" || bad "hub still uses it: $(hapi "http://$API/api/status" | jq -c .shares)"
+kill "$MB_PID" 2>/dev/null || true; wait "$MB_PID" 2>/dev/null || true; MB_PID=""
 
 say "use phone hub: a stand-in hub (SOCKS5, internal/proxy) at 192.168.77.4, upstream through this Mac's tunnel"
 ifconfig feth1 inet 192.168.77.4 netmask 255.255.255.255 alias

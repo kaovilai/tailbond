@@ -19,13 +19,14 @@ public struct AgentStatus: Decodable, Equatable {
     public var update: UpdateInfo?
     public var coexist: CoexistInfo?
     public var phoneHub: PhoneHubInfo?
+    public var sharing: SharingInfo?
     public var crash: String = ""
 
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case role, mode, state, server, tunnelIP = "tunnel_ip", uptimeSec = "uptime_sec", totals, paths, paired, version, error
-        case activeServer = "active_server", update, coexist, phoneHub = "phone_hub", crash
+        case activeServer = "active_server", update, coexist, phoneHub = "phone_hub", sharing, crash
     }
 
     public init(from d: Decoder) throws {
@@ -45,6 +46,7 @@ public struct AgentStatus: Decodable, Equatable {
         update = try c.decodeIfPresent(UpdateInfo.self, forKey: .update)
         coexist = try c.decodeIfPresent(CoexistInfo.self, forKey: .coexist)
         phoneHub = try c.decodeIfPresent(PhoneHubInfo.self, forKey: .phoneHub)
+        sharing = try? c.decodeIfPresent(SharingInfo.self, forKey: .sharing)
         crash = try c.decodeIfPresent(String.self, forKey: .crash) ?? ""
     }
 }
@@ -195,5 +197,51 @@ public struct PhoneHubInfo: Decodable, Equatable {
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         using = try c.decodeIfPresent(Use.self, forKey: .using)
+    }
+}
+
+/// "Share this Mac's connection" (docs/pair-and-share.md "Computers can
+/// share too"): the agent's `sharing`.
+public struct SharingInfo: Decodable, Equatable {
+    public struct Hub: Decodable, Equatable {
+        public var hub = ""
+        public var upBytes: UInt64 = 0, downBytes: UInt64 = 0
+        enum CodingKeys: String, CodingKey { case hub, upBytes = "up_bytes", downBytes = "down_bytes" }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            hub = try c.decodeIfPresent(String.self, forKey: .hub) ?? ""
+            upBytes = try c.decodeIfPresent(UInt64.self, forKey: .upBytes) ?? 0
+            downBytes = try c.decodeIfPresent(UInt64.self, forKey: .downBytes) ?? 0
+        }
+    }
+    public struct Iface: Decodable, Equatable {
+        public var name = "", kind = "", label = ""
+        public var up = false
+        enum CodingKeys: String, CodingKey { case name, kind, label, up }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+            kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? ""
+            label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+            up = try c.decodeIfPresent(Bool.self, forKey: .up) ?? false
+        }
+    }
+    public var enabled = false
+    public var iface = "", label = "", state = "off", error = "", note = ""
+    public var usedBytes: UInt64 = 0
+    public var hubs: [Hub] = []
+    public var ifaces: [Iface] = []
+    enum CodingKeys: String, CodingKey { case enabled, iface, label, state, error, note, usedBytes = "used_bytes", hubs, ifaces }
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        iface = try c.decodeIfPresent(String.self, forKey: .iface) ?? ""
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? "off"
+        error = try c.decodeIfPresent(String.self, forKey: .error) ?? ""
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        usedBytes = try c.decodeIfPresent(UInt64.self, forKey: .usedBytes) ?? 0
+        hubs = try c.decodeIfPresent([Hub].self, forKey: .hubs) ?? []
+        ifaces = try c.decodeIfPresent([Iface].self, forKey: .ifaces) ?? []
     }
 }

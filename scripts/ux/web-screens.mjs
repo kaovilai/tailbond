@@ -176,4 +176,39 @@ if (client) {
     await ctx.close();
   }
 }
+// "Share this Mac's connection" (docs/pair-and-share.md "Computers can share
+// too"): sharing states patched into the client's status; and a hub's
+// "Shared by nearby devices" with a computer's share
+if (client) {
+  const base = await (await fetch(client + 'api/status')).json();
+  const wifi = { id: 1001, iface: 'en0', kind: 'wifi', label: 'Wi-Fi', priority: 'primary', enabled: true, state: 'active',
+    tx_bps: 0, rx_bps: 0, tx_bytes: 0, rx_bytes: 0, srtt_ms: 31 };
+  const ifaces = [{ name: 'en0', kind: 'wifi', label: 'Wi-Fi', up: true, share_label: 'Wi-Fi from tiger-mbp' },
+    { name: 'en5', kind: 'ethernet', label: 'USB 10/100/1000 LAN', up: true, share_label: 'Ethernet from tiger-mbp' }];
+  const off = { enabled: false, iface: '', label: '', port: 47077, state: 'off', used_bytes: 0, hubs: [], ifaces };
+  const on = { ...off, enabled: true, iface: 'en5', label: 'Ethernet from tiger-mbp', state: 'sharing', used_bytes: 131000000,
+    cap_mb: 5000, allowed_hubs: ['slate7'], hubs: [{ hub: 'slate7', addr: '192.168.8.1:52011', up_bytes: 21000000, down_bytes: 110000000 }] };
+  const shared = { id: 1003, iface: 'sh4f3c07', kind: 'shared-cellular', label: 'Ethernet from tiger-mbp', priority: 'secondary', enabled: true,
+    state: 'active', tx_bps: 0, rx_bps: 0, tx_bytes: 21000000, rx_bytes: 110000000, srtt_ms: 12 };
+  const states = {
+    'share-setup': { sharing: off },
+    'share-on': { sharing: on },
+    'share-unplugged': { sharing: { ...on, state: 'error', error: "There's no connection called en5 on this computer right now (unplugged?).", hubs: [], used_bytes: 0 } },
+    'hub-computer-share': { paths: [wifi, shared], sharing: off, shares: [{ id: 'mac-4f3c07aa11', label: 'Ethernet from tiger-mbp', path: 'sh4f3c07',
+      addr: '192.168.8.42:47077', via: 'mdns', state: 'ready', up_bytes: 21000000, down_bytes: 110000000, battery: -1, charging: false }] },
+  };
+  for (const [name, patch] of Object.entries(states)) {
+    const st = { ...base, paired: true, platform: 'darwin', state: 'connected', server: 'homebox.tail1234.ts.net', tunnel_ip: '10.77.0.4',
+      paths: [wifi], use_local: true, use_shares: true, shares: [], ...patch };
+    const ctx = await browser.newContext({ ...desktop, userAgent: uas.mac });
+    const page = await ctx.newPage();
+    await page.route('**/api/status', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify(st) }));
+    await page.route('**/api/events', (r) => r.fulfill({ contentType: 'text/event-stream', body: `data: ${JSON.stringify(st)}\n\n` }));
+    await page.goto(client + (name.startsWith('share') ? '#share' : ''));
+    await page.waitForSelector('#share-out:not(.hidden)');
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `${out}/web-09-mac-${name}.png`, fullPage: true });
+    await ctx.close();
+  }
+}
 await browser.close();

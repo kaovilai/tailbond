@@ -43,6 +43,7 @@ final class SnapshotTests: XCTestCase {
             ("menu-03-crash-update", try fixture("crash-update")),
             ("menu-04-not-paired", try fixture("not-paired")),
             ("menu-05-not-running", nil),
+            ("menu-06-sharing", try fixture("sharing")),
         ]
         for (name, st) in cases {
             for dark in [false, true] {

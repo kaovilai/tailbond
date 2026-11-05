@@ -225,17 +225,25 @@ type Share struct {
 	Charging bool    `json:"charging"`
 }
 
-// Sharing is this machine sharing one of its uplinks.
+// Sharing is this machine (a Mac or Linux client) sharing one of its
+// uplinks with hubs on its LAN. Always sent in the client role, so the
+// dashboard can offer it.
 type Sharing struct {
-	Enabled bool         `json:"enabled"`
-	Iface   string       `json:"iface"`
-	Label   string       `json:"label"`
-	Port    int          `json:"port"`
-	State   string       `json:"state"` // sharing, off, no_key, error
-	Error   string       `json:"error,omitempty"`
-	Used    uint64       `json:"used_bytes"`
-	CapMB   int64        `json:"cap_mb,omitempty"`
-	Hubs    []SharingHub `json:"hubs"`
+	Enabled bool   `json:"enabled"`
+	Iface   string `json:"iface"`
+	// Label is what hubs see: CustomLabel, else "Ethernet from tiger-mbp".
+	Label       string       `json:"label"`
+	CustomLabel string       `json:"custom_label,omitempty"`
+	Port        int          `json:"port"`
+	State       string       `json:"state"`           // sharing, off, no_key, error
+	Error       string       `json:"error,omitempty"` // why not sharing, in plain words
+	Note        string       `json:"note,omitempty"`  // sharing, but hubs may not find it
+	Used        uint64       `json:"used_bytes"`      // this month
+	CapMB       int64        `json:"cap_mb,omitempty"`
+	AllowedHubs []string     `json:"allowed_hubs,omitempty"`
+	Hubs        []SharingHub `json:"hubs"`
+	// Ifaces are this machine's connections that can be shared.
+	Ifaces []SharingIface `json:"ifaces"`
 }
 
 // SharingHub is a hub using this machine's share.
@@ -244,6 +252,16 @@ type SharingHub struct {
 	Addr    string `json:"addr"`
 	UpBytes uint64 `json:"up_bytes"`
 	DnBytes uint64 `json:"down_bytes"`
+}
+
+// SharingIface is a connection this machine could share.
+type SharingIface struct {
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`            // ethernet, wifi, cellular, usb, unknown
+	Label string `json:"label,omitempty"` // "Wi-Fi", "USB 10/100/1000 LAN"
+	Up    bool   `json:"up"`              // connected now
+	// ShareLabel is what hubs see by default: "Ethernet from tiger-mbp".
+	ShareLabel string `json:"share_label"`
 }
 
 // Update is the status of auto-updates on this machine.

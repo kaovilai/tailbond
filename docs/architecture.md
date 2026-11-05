@@ -853,8 +853,9 @@ few platform pieces behind build tags:
 ## Pair & Share
 
 User guide and design: [pair-and-share.md](pair-and-share.md). A **sharer**
-(Android app, iOS tailbond Share, or tailbondd with `client.share`) lends its
-cellular uplink to a **hub** (tailbondd client role) on its LAN. Reference
+(Android app, iOS tailbond Share, or tailbondd on a Mac or Linux with
+`client.share`) lends one uplink (cellular; on a computer any interface but
+a tunnel or the loopback) to a **hub** (tailbondd client role) on its LAN. Reference
 implementation: `agent/internal/share` (Go); Android `share/ShareProtocol.kt`
 and iOS `TailbondShareKit` follow it byte for byte
 (`agent/internal/share/testdata/vectors.json`, checked by all three).
@@ -918,7 +919,7 @@ sharers it holds a pass for (by `k`). The hub browses with a
 legacy-unicast query on each LAN interface (not `tb0`, not the shared
 uplink). Server registry, client token required (also over the tunnel):
 
-- `POST /api/shares` `{"id","label","key_id","lan":["192.168.8.23"],"port":47077,"kind":"android|ios|linux"}`
+- `POST /api/shares` `{"id","label","key_id","lan":["192.168.8.23"],"port":47077,"kind":"android|ios|linux|macos"}`
   → `{"ok":true}`. The server sets `key_id` (the caller's) and `client`.
   Entries expire after 3 minutes, or when the device is removed; sharers
   refresh every minute while connected. Private/link-local IPv4 only, up to 8 addresses,
@@ -926,11 +927,26 @@ uplink). Server registry, client token required (also over the tunnel):
 - `GET /api/shares` → `{"key","key_id","passes":[{"key_id","key","exp"}],"sharers":[{"id","label","key_id","client","lan","port","kind","seen"}]}`:
   `key`, `key_id` and `passes` (hex) only to a client token, for that device.
   On the client role it returns this hub's view: `{"shares","note","sharing"}`.
-- `POST /api/share` (client role): `{"use_shares": bool}`, `{"use_local": bool}` and/or
-  `{"share": {"enabled","iface","port","label","cap_mb","allowed_hubs"}}`.
+- `POST /api/share` (client role): `{"use_shares": bool}`, `{"use_local": bool}`,
+  `{"share": {"enabled","iface","port","label","cap_mb","allowed_hubs"}}` (replaces
+  this machine's share settings; 400 for a tunnel, the loopback unless the
+  pairing's server is on it, or an interface that isn't there) and/or
+  `{"share_enabled": bool}` (on/off, keeping the rest; 400 when no interface is set).
+
+**A computer's share** (`client.share`, `shares.go`): the relay listens on
+UDP `port` (47077) on every address; its upstream to the pairing's server is
+pinned to `iface` (`internal/sockbind`); it advertises over mDNS and
+registers (`kind` `linux` or `macos`) on every LAN interface but `iface` and
+the tunnel. It needs the pairing and its share key, not the machine's own
+tunnel (registering does). Each round (10 s, at once after `POST
+/api/share`) it stops while `iface` is missing, down or without an address,
+and starts again when it's back. Its default label is `"<Kind> from <device
+name>"` (`Ethernet`, `Wi-Fi`, `Mobile data`, `USB tethering`, else the
+interface name). The shared interface stays in the machine's own path set
+when its path settings say so: sharing doesn't take it away.
 
 **Hub paths.** Each sharer becomes path `sh` + hex(sha256(id))[:6], kind
-`shared-cellular`, label `"<label> (shared)"` (phones already send `"Mobile data from <name>"`, kept as is); default priority secondary
+`shared-cellular` (any sharer, phone or computer), label `"<label> (shared)"` (a label with " from " already says what it is, `"Mobile data from <name>"`, `"Ethernet from <name>"`: kept as is); default priority secondary
 (like cellular), settings and data caps keyed by that name, usage from the
 link's counters. It is in the path set only while its session is open (a
 relay path whose link is gone, e.g. `use_shares` turned off, restarts mqvpn
@@ -947,7 +963,13 @@ there are delivered as the server's.
 connections"), `platform` (`linux` | `darwin`), `share_note` (client isolation: *"This Wi-Fi blocks devices from talking to
 each other; sharing isn't available here."*), and `sharing`
 `{enabled,iface,label,port,state,error,used_bytes,cap_mb,hubs[]}` for this
-machine's own share.
+machine's own share, always sent in the client role:
+`{enabled,iface,label,custom_label,port,state,error,note,used_bytes,cap_mb,allowed_hubs,hubs[],ifaces[]}`
+(state: off, sharing, no_key, error; `error` and `note` in plain words, e.g.
+*There's no connection called en5 on this computer right now (unplugged?)*,
+*UDP port 47077 is in use by another program*; `hubs[]`
+`{hub,addr,up_bytes,down_bytes}`; `ifaces[]` the interfaces it could share,
+`{name,kind,label,up,share_label}`).
 
 ## Phone hub
 

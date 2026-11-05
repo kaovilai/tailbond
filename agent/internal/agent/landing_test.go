@@ -227,7 +227,7 @@ func TestLandingSectionsPerPlatform(t *testing.T) {
 		"sudo ./tailbond-macos-arm64/install.sh", "brew install local/tailbond/tailbond",
 		"releases/latest/download/tailbond.rb", "xattr -dr com.apple.quarantine",
 		`href="https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz"`,
-		"iPhone (USB)", "Shared by nearby phones",
+		"iPhone (USB)", "Shared by nearby devices",
 		"install.sh --client", "dnf copr enable kaovilai/tailbond",
 		"tailbond Share", "7 days", "SideStore", "docs/ios.md",
 		`<script src="/landing.js"></script>`,

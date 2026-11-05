@@ -131,7 +131,11 @@ bar (no Dock icon) that opens a small window over tailbond's own API
   switch.
 - **Mode**: Fastest, Smooth calls and video, Most reliable, Save mobile data.
 - **Connections**: each link (Wi-Fi, Ethernet, an iPhone over USB, a
-  nearby phone's share) with its delay and speed, standby, or what's wrong.
+  nearby phone's or computer's share) with its delay and speed, standby, or
+  what's wrong.
+- **Share this Mac's connection** ([below](#sharing-this-macs-connection)):
+  what it shares and with which hub, a switch, and **Sharing settings…**
+  (the dashboard's choices).
 - **Next to other VPNs** ([below](#using-tailbond-with-netbird-or-another-work-vpn)):
   NetBird or another VPN that's on, whether its traffic goes **Direct** or
   **Bonded** (a switch), work names on its DNS, the Tailscale app, and any
@@ -197,12 +201,33 @@ Phones on the **same Wi-Fi as the Mac** can lend their 5G/LTE
 - iPhone: **tailbond Share** → **Share mobile data** (keep it open on the
   screen, [ios.md](ios.md)).
 
-They show up under **Shared by nearby phones**, each as a connection
-labelled e.g. *Pixel's 5G (shared)*, kind `shared-cellular`. The Mac finds
-them with Bonjour (mDNS, `_tailbond-share._udp`) and through the home
-server's list. A phone that stops answering for 3.5 s is dropped from the
-bond at once and comes back when it does. The switch next to **Shared by
-nearby phones** turns them all off.
+They show up under **Shared by nearby devices**, each as a connection
+labelled e.g. *Pixel's 5G (shared)* or *Mobile data from sam-pixel*, kind
+`shared-cellular`. Another Mac or a Linux laptop sharing its connection
+shows up there too, e.g. *Ethernet from tiger-mbp*. The Mac finds them with
+Bonjour (mDNS, `_tailbond-share._udp`) and through the home server's list.
+A share that stops answering for 3.5 s is dropped from the bond at once and
+comes back when it does. The switch next to **Shared by nearby devices**
+turns them all off.
+
+### Sharing this Mac's connection
+
+The Mac can be the one that lends ([Pair & Share](pair-and-share.md#computers-can-share-too)).
+At a hotel: the Mac is on the travel router's Wi-Fi and the room has an
+Ethernet cable. Plug it in, then on tailbond's page → **Share this Mac's
+connection** → pick *USB 10/100/1000 LAN (en5)* (or whatever the adapter
+is called) → **Start sharing**. The travel router bonds it as *Ethernet from
+<this Mac's name>*. The menu bar shows who uses it and how much, and its
+switch turns sharing off and on.
+
+- Pick a connection the hub isn't on: sharing the Wi-Fi you share with the
+  travel router only loops its traffic back through it.
+- tailbond on the Mac doesn't have to be on. If it is, the Mac keeps using
+  the Ethernet itself too; set it to **Off** under Connections to leave it
+  to the router.
+- The relay's traffic is pinned to that adapter (`IP_BOUND_IF`) and goes
+  only to your home server. tailbond listens on UDP 47077 on the Mac's
+  other networks; the kill switch blocks this, as it blocks phones' shares.
 
 ### Using a phone's bonded connection (phone hub)
 
@@ -600,7 +625,9 @@ interface path and two phones' shares (the reference relay, on a
 fake-Ethernet LAN) to a tailbond server in a small Linux VM under QEMU. The
 server sees the Mac with 3 paths, traffic crosses all of them, a phone that
 stops drops out within ~4 s while the tunnel keeps working, and the client
-isolation note appears. It also installs the bundle (`install.sh`,
+isolation note appears. A second tailbondd on the runner, with its own
+tunnel off, shares `lo0` with the hub: the hub finds it over Bonjour and
+the server sees it as one more path that carries traffic. It also installs the bundle (`install.sh`,
 `--update`, `uninstall.sh`) and the Homebrew formula.
 
 What that can't cover:
@@ -610,7 +637,9 @@ What that can't cover:
   forwarding on 127.0.0.1, so the hub's IP_BOUND_IF-pinned path is pinned to
   the loopback interface. Wi-Fi, Ethernet adapters and an iPhone over USB
   as separate paths, and pulling one out, are not tested on a real Mac yet
-  (mqvpn's Darwin layer is the same as upstream's there).
+  (mqvpn's Darwin layer is the same as upstream's there). The same goes for
+  sharing: CI shares `lo0`, not an Ethernet adapter, and the Mac's own
+  tunnel is off while it does (one mqvpn per Mac).
 - **`manage_routes` and DNS** are off in the CI run: routing the runner's own
   traffic through the tunnel would cut it off from GitHub. mqvpn's Darwin
   routing, DNS and kill switch are covered by its unit tests only.
