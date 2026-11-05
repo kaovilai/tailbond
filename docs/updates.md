@@ -98,14 +98,26 @@ Pre-releases (`v1.2.3-beta.1`) are never offered.
   (`logread -e tailbond-update`).
 - **A development build from before v0.1.3 can't update itself.** A build
   with no version to compare (a commit hash like `8051e4f`, or a CI artifact)
-  shows the new release, and every press answers *no newer release found*.
-  Release builds always could, `v0.1.2` included, because they have a version
-  to compare. **Update now** can't help either — on a server it is the same
-  call, refused the same way. Install once by hand: on a router
-  `opkg install --force-reinstall tailbond.ipk` ([steps](glinet.md#install-without-ssh)),
-  on a server or a Mac `sudo /usr/local/lib/tailbond/install.sh --update`,
-  which downloads and installs without asking the agent. After that the panel
-  and the dashboard update it like any other.
+  shows the new release, and **Update now** answers *no newer release found*
+  every time — the install call refuses it before anything runs. **Check now**
+  still works, and keeps showing the release. Release builds always could
+  update themselves, `v0.1.2` included, because they have a version to
+  compare.
+
+  Install once by hand instead, with the package or the installer itself:
+  - **Router**: install the package you downloaded (the file name carries the
+    router's architecture, so use the one from the
+    [download steps](glinet.md#install-without-ssh)):
+    `opkg install --force-reinstall tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk`
+  - **Linux bundle**: the installer that is already installed and knows this
+    machine, `sudo /usr/local/lib/tailbond/install.sh --update`. With a
+    custom `--prefix P` it lives at `P/lib/tailbond/install.sh`.
+  - **Mac bundle**: the same script at
+    `/usr/local/lib/tailbond/install.sh`. **Homebrew** installs no such
+    script: use its own steps in [macos.md](macos.md#updates).
+
+  None of these ask the agent, so the old version check is out of the way.
+  After one of them the panel and the dashboard update it like any other.
 - Devices drop for a few seconds while their server restarts. Update the home
   server first, then routers and phones (the server's dashboard lists devices
   that are behind).
