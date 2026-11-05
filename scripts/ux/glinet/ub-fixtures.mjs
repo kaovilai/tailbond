@@ -107,10 +107,16 @@ glStates['s01-flint-devices-out-of-date'] = flint(upd({ current: '0.2.0', ...wen
 // address yet, so the steps show and the row list renders under them — the
 // blocks whose layout the rows are read in.
 glStates['s03-flint-setup-rows'] = (() => {
+  // every answer comes from the shell's `api` map, so the overrides go there
+  // (a top-level `ts` is ignored) — Tailscale off and the address unconfirmed,
+  // which is what makes the card read "Finish setting up" and show the steps
   const fx = flint(upd({ current: '0.2.0', ...went }));
-  const noTs = { ...fx, ts: { ...fx.ts, running: false, installed: true, dns_name: '' } };
-  const api = { ...noTs.api, 'GET /api/settings': { ...noTs.api['GET /api/settings'], effective_public_addr: '', public_addr: '', password_set: false } };
-  return { ...noTs, api };
+  const api = {
+    ...fx.api,
+    'GET /api/tailscale': { ...fx.api['GET /api/tailscale'], running: false, dns_name: '', routes_approved: false },
+    'GET /api/settings': { ...fx.api['GET /api/settings'], public_addr: '', effective_public_addr: '', public_addr_guessed: true, password_set: false },
+  };
+  return { ...fx, api };
 })();
 
 // steps: {text} clicks the first element with that text, {click} a selector,

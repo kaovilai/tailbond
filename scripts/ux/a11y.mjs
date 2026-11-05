@@ -120,6 +120,12 @@ async function runCheck(surface, name, { vp = 'desktop', scheme = 'light', ua, s
         nodes: v.nodes.map((n) => ({ target: n.target.join(' '), html: n.html.slice(0, 400), summary: n.failureSummary })) }));
     }, { scope, off });
     const own = await page.evaluate(ownChecks, { scope, off });
+    // TB_A11Y_TEXT=<selector>: print what that element says (debugging a
+    // screenshot is slower than reading the text it shows)
+    if (process.env.TB_A11Y_TEXT) {
+      const txt = (await page.locator(process.env.TB_A11Y_TEXT).first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+      console.log(`  text ${id}: ${txt.slice(0, 400)}`);
+    }
     if (!off['tb-no-key-handler']) own.push(...await keyHandlers(page, scope));
     own.push(...await modalFocus(page, scope));
     r.violations = [...axeV, ...own];
