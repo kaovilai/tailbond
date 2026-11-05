@@ -149,7 +149,7 @@ type ShareConfig struct {
 	Enabled bool   `json:"enabled"`
 	Iface   string `json:"iface"`
 	Port    int    `json:"port,omitempty"`  // UDP, default 47077
-	Label   string `json:"label,omitempty"` // default "<hostname>'s <iface>"
+	Label   string `json:"label,omitempty"` // default "Ethernet from <this device's name>"
 	CapMB   int64  `json:"cap_mb,omitempty"`
 	// Hub names (their pairing's client name) that may use it; empty = any
 	// device paired with the same server.

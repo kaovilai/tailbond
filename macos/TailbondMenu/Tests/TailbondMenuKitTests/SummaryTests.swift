@@ -64,6 +64,33 @@ final class SummaryTests: XCTestCase {
         XCTAssertEqual(u.tone, .bad)
     }
 
+    /// "Share this Mac's connection": sharing with a hub, off, not set up,
+    /// an error; no `sharing` (an older agent): no section.
+    func testSharing() throws {
+        let s = MenuSummary(try fixture("sharing"))
+        XCTAssertEqual(s.share, MenuSummary.Share(on: true, canToggle: true,
+            text: "Sharing USB 10/100/1000 LAN (en5) with slate7: 120 MB", warn: false))
+        XCTAssertTrue(s.text.contains("Share this Mac's connection: on: Sharing USB 10/100/1000 LAN (en5) with slate7: 120 MB"), s.text)
+        XCTAssertNil(MenuSummary(try fixture("connected")).share)
+
+        func with(_ sharing: String) throws -> MenuSummary.Share? {
+            let json = "{\"role\":\"client\",\"platform\":\"darwin\",\"sharing\":\(sharing)}"
+            return MenuSummary(try JSONDecoder().decode(AgentStatus.self, from: Data(json.utf8))).share
+        }
+        let ifaces = #"[{"name":"en5","kind":"ethernet","label":"","up":true,"share_label":"Ethernet from tiger-mbp"}]"#
+        XCTAssertEqual(try with(#"{"enabled":false,"iface":"","state":"off","hubs":[],"ifaces":[]}"#),
+            MenuSummary.Share(on: false, canToggle: false, text: "Lend this Mac's other connection (the hotel's Ethernet, a USB modem) to your travel router: choose it in the dashboard.", warn: false))
+        XCTAssertEqual(try with(#"{"enabled":false,"iface":"en5","state":"off","hubs":[],"ifaces":"# + ifaces + "}"),
+            MenuSummary.Share(on: false, canToggle: true, text: "Off. Turn it on to lend Ethernet (en5) to nearby hubs.", warn: false))
+        XCTAssertEqual(try with(#"{"enabled":true,"iface":"en5","state":"sharing","hubs":[],"note":"This computer isn't on any other network.","ifaces":"# + ifaces + "}"),
+            MenuSummary.Share(on: true, canToggle: true, text: "Sharing Ethernet (en5): no hub is using it yet. This computer isn't on any other network.", warn: true))
+        XCTAssertEqual(try with(#"{"enabled":true,"iface":"en7","state":"error","error":"There's no connection called en7 on this computer right now (unplugged?).","hubs":[],"ifaces":[]}"#),
+            MenuSummary.Share(on: true, canToggle: true, text: "There's no connection called en7 on this computer right now (unplugged?).", warn: true))
+        XCTAssertEqual(MenuSummary.bytes(512), "512 B")
+        XCTAssertEqual(MenuSummary.bytes(1_572_864), "1.5 MB")
+        XCTAssertEqual(MenuSummary.bytes(125_829_120), "120 MB")
+    }
+
     func testWords() {
         XCTAssertEqual(MenuSummary.policyLabel("immediate"), "Right away")
         XCTAssertEqual(MenuSummary.policyLabel("auto"), "Automatic (night)")
@@ -84,10 +111,13 @@ final class SummaryTests: XCTestCase {
         try await c.setMode("redundant")
         try await c.setUpdatePolicy("auto")
         try await c.setWorkVPN("bonded")
+        try await c.setSharing(true)
         XCTAssertEqual(StubAgent.seen, [
             "GET /api/status", "POST /api/mode {\"mode\":\"redundant\"}", "POST /api/update/policy {\"policy\":\"auto\"}", "POST /api/coexist {\"work_vpn\":\"bonded\"}",
+            "POST /api/share {\"share_enabled\":true}",
         ])
         XCTAssertEqual(c.report.absoluteString, "http://127.0.0.1:8077/#report")
+        XCTAssertEqual(c.shareSettings.absoluteString, "http://127.0.0.1:8077/#share")
     }
 }
 

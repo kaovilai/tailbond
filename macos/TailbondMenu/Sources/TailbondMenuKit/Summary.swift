@@ -40,6 +40,18 @@ public struct MenuSummary: Equatable {
     public let canInstall: Bool
     public let crash: String?
     public let connected: Bool
+    /// "Share this Mac's connection" (nil: the agent doesn't offer it)
+    public let share: Share?
+
+    public struct Share: Equatable {
+        /// the switch's state
+        public let on: Bool
+        /// a connection is picked, so the switch works; otherwise the
+        /// dashboard's choices open
+        public let canToggle: Bool
+        public let text: String
+        public let warn: Bool
+    }
 
     public struct Choice: Hashable {
         public let wire: String
@@ -64,7 +76,7 @@ public struct MenuSummary: Equatable {
         case "ethernet": return "Ethernet"
         case "usb": return "iPhone or phone (USB)"
         case "cellular": return "Mobile data"
-        case "shared-cellular": return "Shared by a nearby phone"
+        case "shared-cellular": return "Shared by a nearby device"
         default: return "Connection"
         }
     }
@@ -83,7 +95,7 @@ public struct MenuSummary: Equatable {
             subtitle = unreachable ?? "Nothing answers on 127.0.0.1:8077. Start it: sudo launchctl kickstart -k system/com.tailbond.tailbondd"
             tone = .bad; symbol = "exclamationmark.triangle"; rates = ""; links = []; coexist = []
             workVPNChoice = false; workVPN = ""; workExplain = []; bondedBlocked = ""; update = Line(text: "", warn: false); updatePolicy = ""
-            canInstall = false; crash = nil; connected = false
+            canInstall = false; crash = nil; connected = false; share = nil
             return
         }
         let server = s.activeServer.isEmpty ? s.server : s.activeServer
@@ -113,7 +125,8 @@ public struct MenuSummary: Equatable {
         rates = connected ? "↓ \(Self.rate(s.totals.rxBps))  ↑ \(Self.rate(s.totals.txBps))" : ""
         links = s.paths.map { p in
             var name = p.label.isEmpty ? Self.kindLabel(p.kind) : p.label
-            if p.kind == "shared-cellular" && !p.label.isEmpty { name += ", mobile data it shares" }
+            // "Ethernet from tiger-mbp", "Mobile data from sam-pixel" say what they are
+            if p.kind == "shared-cellular" && !p.label.isEmpty && !p.label.contains(" from ") { name += ", mobile data it shares" }
             var detail: String
             var tone: Tone
             if !p.enabled {
@@ -199,6 +212,41 @@ public struct MenuSummary: Equatable {
             update = Line(text: "tailbond \(cur) is up to date", warn: false)
         }
         crash = s.crash.isEmpty ? nil : Self.when(s.crash)
+        share = s.sharing.map(Self.shareSummary)
+    }
+
+    /// "1.2 MB", "120 MB", "3.4 GB" (the dashboard's units)
+    public static func bytes(_ b: UInt64) -> String {
+        var v = Double(b)
+        var i = 0
+        let units = ["B", "KB", "MB", "GB", "TB"]
+        while v >= 1024 && i < units.count - 1 { v /= 1024; i += 1 }
+        if i == 0 { return "\(b) B" }
+        return String(format: v >= 100 ? "%.0f" : "%.1f", v) + " " + units[i]
+    }
+
+    static func shareSummary(_ sh: SharingInfo) -> Share {
+        let i = sh.ifaces.first { $0.name == sh.iface }
+        let word = i.map { $0.label.isEmpty ? kindLabel($0.kind) : $0.label } ?? ""
+        let name = sh.iface.isEmpty ? "" : (word.isEmpty ? sh.iface : "\(word) (\(sh.iface))")
+        if sh.iface.isEmpty {
+            return Share(on: false, canToggle: false, text: "Lend this Mac's other connection (the hotel's Ethernet, a USB modem) to your travel router: choose it in the dashboard.", warn: false)
+        }
+        if !sh.enabled {
+            return Share(on: false, canToggle: true, text: "Off. Turn it on to lend \(name) to nearby hubs.", warn: false)
+        }
+        switch sh.state {
+        case "sharing":
+            let total = sh.hubs.reduce(UInt64(0)) { $0 + $1.upBytes + $1.downBytes }
+            var t = sh.hubs.isEmpty ? "Sharing \(name): no hub is using it yet" :
+                "Sharing \(name) with \(sh.hubs.map(\.hub).joined(separator: " and ")): \(bytes(total))"
+            if !sh.note.isEmpty { t += ". " + sh.note }
+            return Share(on: true, canToggle: true, text: t, warn: !sh.note.isEmpty)
+        case "no_key", "error":
+            return Share(on: true, canToggle: true, text: sh.error.isEmpty ? "Not sharing \(name)" : sh.error, warn: true)
+        default:
+            return Share(on: true, canToggle: true, text: "Starting to share \(name)…", warn: false)
+        }
     }
 
     /// An RFC 3339 time as the Mac shows dates ("Nov 4, 2026 at 6:51 AM").
@@ -220,6 +268,7 @@ public struct MenuSummary: Equatable {
         for l in coexist { out.append("  \(l.warn ? "! " : "")\(l.text)") }
         if !update.text.isEmpty { out.append("  \(update.text)") }
         if !updatePolicy.isEmpty { out.append("  Install updates: \(Self.policyLabel(updatePolicy))") }
+        if let sh = share { out.append("  \(sh.warn ? "! " : "")Share this Mac's connection: \(sh.on ? "on" : "off"): \(sh.text)") }
         if let c = crash { out.append("  ! tailbond stopped unexpectedly (\(c)): Report a problem…") }
         return out.joined(separator: "\n")
     }

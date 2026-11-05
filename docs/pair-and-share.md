@@ -3,14 +3,17 @@
 Add your phones' mobile data to the travel router's bond, like Speedify's
 Pair & Share. Your Android phone, your partner's Android phone and your iPhone
 each lend their 5G/LTE over the hotel Wi-Fi to the **hub**, which bonds them
-with its own Wi-Fi and Ethernet in one tunnel to your home server.
+with its own Wi-Fi and Ethernet in one tunnel to your home server. A Mac or
+Linux laptop can lend one of its connections the same way
+([below](#computers-can-share-too)).
 
 - **Hub** (bonds): the travel router (GL.iNet Slate 7 or another OpenWrt
   router running tailbond in the client role), a Mac ([macos.md](macos.md)),
   or a Linux laptop running tailbondd in the client role.
 - **Sharer** (lends): tailbond on Android (**Share my mobile data**), the
-  **tailbond Share** app on iPhone ([ios.md](ios.md)), or a Linux machine with
-  an LTE dongle (`client.share`, below).
+  **tailbond Share** app on iPhone ([ios.md](ios.md)), or a Mac or Linux
+  computer (**Share this computer's connection**, below): its Ethernet, a
+  second Wi-Fi adapter, a USB LTE modem.
 
 Only devices paired with the **same home server** can share with each other.
 Removing a device on the home server (Clients → remove) also ends its sharing,
@@ -27,7 +30,7 @@ both ways, within two days at most.
    open on the screen (iOS pauses it otherwise; plug the phone in). Limits you
    change apply at once.
 4. Within a few seconds each phone shows up in the GL panel (VPN → tailbond)
-   under **Shared by nearby phones**, and as a connection labelled e.g.
+   under **Shared by nearby devices**, and as a connection labelled e.g.
    *Mobile data from sam-pixel* under **Internet connections**, with the
    usual **Use it / Backup only / Off** and a monthly data limit.
 
@@ -55,10 +58,31 @@ WAN: tailbond bonds it with no app on the phone. An iPhone over USB shows as
 port on a Mac); Android shows as Tethering. USB
 also charges the phone, and works where hotel Wi-Fi isolates devices.
 
-## A Linux machine sharing its uplink
+## Computers can share too
 
-A laptop with an LTE dongle (or any Linux box) can be a sharer. In its
-`tailbond.json` (client role, paired with the same server):
+A Mac or a Linux laptop running tailbond can lend one of its own connections
+to a hub, the way a phone lends its mobile data. At a hotel, say: the Mac is
+on the travel router's Wi-Fi, and the room also has an Ethernet cable. Plug
+the cable into the Mac and share the Ethernet: the travel router bonds it as
+one more connection, next to the hotel Wi-Fi it repeats. A Linux laptop with
+two Wi-Fi adapters can share the second one (joined to another network), or
+an LTE dongle.
+
+On a Mac (tailbond's page, or the menu bar → **Sharing settings…**):
+
+1. Join the **hub's network** (the travel router's Wi-Fi) as usual.
+2. Connections tab → **Share this Mac's connection**.
+3. **Connection to share**: the one the hub isn't on, e.g. *USB 10/100/1000
+   LAN (en5)* for the hotel's cable. Optionally a name (default *Ethernet
+   from tiger-mbp*: the kind of connection and this Mac's name on your home
+   server), a monthly limit, and which hubs may use it (device names on the
+   home server; empty means any of them).
+4. **Start sharing**. The card then says which hubs use it and how much
+   they've sent. The menu bar's **Share this Mac's connection** switch turns
+   it off and on again.
+
+On Linux: the same card on tailbond's page (`http://127.0.0.1:8077`), or in
+`tailbond.json` (client role):
 
 ```json
 "client": {
@@ -66,15 +90,46 @@ A laptop with an LTE dongle (or any Linux box) can be a sharer. In its
 }
 ```
 
-or `POST /api/share {"share": {...}}`. It relays over `iface` only
-(`SO_BINDTODEVICE`), advertises itself over mDNS and registers with the home
-server while connected. `"use_shares": false` stops a client from using
-other devices' shares.
+or `POST /api/share {"share": {...}}`. `{"share_enabled": false}` turns it
+off and keeps the choices.
+
+The hub lists it under **Shared by nearby devices** as *Ethernet from
+tiger-mbp* (a name you give it shows as *ThinkPad LTE (shared)*), with the
+usual Use it / Backup only / Off and data limit.
+
+**Which connection to pick.** One the hub doesn't already have. Sharing the
+Wi-Fi the computer shares with the hub only sends the hub's traffic back
+through the hub. tailbond never advertises a share on the connection it
+lends, so a hub must reach the computer over another network: if the
+computer is on no other network, the card says so.
+
+**Good to know:**
+
+- The computer doesn't need its own tunnel on: sharing works with tailbond
+  off (**Off** in the menu bar). It needs the pairing and its share key,
+  which pairings carry. Pairings made before they did fetch it the first
+  time tailbond connects (*Waiting for your home server's share key*).
+- If tailbond is on there too, it keeps bonding the shared connection for
+  the computer itself: sharing doesn't take it away. To leave it to the hub
+  alone, set that connection to **Off** in the computer's own Connections.
+- The relay's traffic leaves through the shared connection only
+  (`SO_BINDTODEVICE` on Linux, `IP_BOUND_IF` on macOS), whatever the
+  default route is, and goes only to your home server.
+- tailbond refuses its own tunnel (`tb0`, `utun…`), other VPN tunnels and the
+  loopback. A connection that's unplugged or not connected yet waits: the
+  card says *en5 isn't connected right now* and sharing starts when it is.
+- It listens on UDP port 47077. If another program holds it, the card says
+  so (`"port"` picks another).
+- **Hotel Wi-Fi that keeps devices apart** blocks this as it blocks phones:
+  the computer and the hub must be on a network where devices can reach
+  each other (the travel router's own Wi-Fi or its LAN ports). The **kill
+  switch** (`client.kill_switch`) blocks the LAN, so sharing doesn't work
+  with it on.
 
 ## How it works
 
 ```
- iPhone / Android / Linux (sharer)                      hub (travel router, laptop)
+ iPhone / Android / Mac / Linux (sharer)                hub (travel router, laptop)
  ┌──────────────────────────┐   LAN (Wi-Fi)   ┌──────────────────────────────────┐
  │ relay  UDP :47077  ◄─────┼─────────────────┼── share.Link  ◄── mqvpn relay path│
  │   │ HMAC session         │  DATA frames    │   127.0.0.1:port   sh3fa2c1@…     │
@@ -162,10 +217,17 @@ it never bonds a share.
   put a hub on the emulator's virtual Wi-Fi, so the Android relay's traffic is
   covered by unit tests over loopback (the same frames as Go, pinned by
   `agent/internal/share/testdata/vectors.json`). The full hub ↔ sharer ↔
-  server path runs in `scripts/e2e-share.sh` with the Linux sharer, and in
-  `scripts/e2e-macos.sh` with a Mac hub bonding two sharers (the reference
-  relay, `agent/cmd/tb-sharesim`) on a macOS runner.
+  server path runs in `scripts/e2e-share.sh` with two tailbondd sharers in
+  network namespaces (a "phone" sharing wwan0, and a laptop sharing its
+  hotel Ethernet while its default route is the hub's Wi-Fi: the server
+  sees the relay arrive from the Ethernet's address), and in
+  `scripts/e2e-macos.sh` with a Mac hub bonding two reference relays
+  (`agent/cmd/tb-sharesim`) and a second tailbondd on the same Mac sharing
+  `lo0` (the only interface that reaches the CI server VM).
 - Not yet run on real phones and routers: Android's behaviour with
   `bindSocket`/`protect` while our own VPN runs, iOS Local Network
   permission prompts and Bonjour on real Wi-Fi, GL firmware's firewall with
-  LAN-side UDP to the router, a Mac hub on a real Wi-Fi network.
+  LAN-side UDP to the router, a Mac hub on a real Wi-Fi network, a Mac
+  sharing a real Ethernet adapter (CI shares `lo0`; the pinning is the same
+  `IP_BOUND_IF` call as mqvpn's own paths), and macOS's application firewall
+  with tailbondd's UDP 47077.

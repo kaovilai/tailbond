@@ -35,6 +35,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
@@ -237,6 +238,7 @@ type hubLink struct {
 type shareState struct {
 	links map[string]*hubLink // by sharer id
 	note  string
+	kick  chan struct{} // run a round now (settings changed)
 
 	sharer       *share.Sharer
 	sharerCancel context.CancelFunc
@@ -244,6 +246,7 @@ type shareState struct {
 	sharerErr    string
 	sharerID     string
 	sharerLabel  string
+	sharerNote   string
 	lastReg      time.Time
 	// the server's list from the last round (phone hubs use it too)
 	reg *sharesView
@@ -261,7 +264,22 @@ type shareCacheEntry struct {
 	Passes []sharePass `json:"passes,omitempty"`
 }
 
-func newShareState() *shareState { return &shareState{links: map[string]*hubLink{}} }
+func newShareState() *shareState {
+	return &shareState{links: map[string]*hubLink{}, kick: make(chan struct{}, 1)}
+}
+
+// kickShares runs the next share round now, not in up to 10 s.
+func (a *Agent) kickShares() {
+	a.mu.Lock()
+	ss := a.client.share
+	a.mu.Unlock()
+	if ss != nil {
+		select {
+		case ss.kick <- struct{}{}:
+		default:
+		}
+	}
+}
 
 // sharePathName is the path name for a sharer: short, stable, a valid
 // interface-like label.
@@ -415,6 +433,9 @@ func (a *Agent) serverAPI(ctx context.Context, method, path string, body any) ([
 func (a *Agent) shareWatcher(ctx context.Context) {
 	t := time.NewTimer(3 * time.Second)
 	defer t.Stop()
+	a.mu.Lock()
+	kick := a.client.share.kick
+	a.mu.Unlock()
 	for {
 		select {
 		case <-ctx.Done():
@@ -429,6 +450,8 @@ func (a *Agent) shareWatcher(ctx context.Context) {
 			a.mu.Unlock()
 			return
 		case <-t.C:
+		case <-kick:
+			t.Stop() // (Go 1.23+ timers: no stale tick after Stop)
 		}
 		a.shareRound(ctx)
 		t.Reset(shareRound)
@@ -523,7 +546,9 @@ func (a *Agent) runHub(ctx context.Context, cfg *config.Config, p *pairing.Paylo
 			continue // another server's, or a removed device's
 		}
 		hl := ss.links[f.ID]
-		if hl != nil && hl.found.Addr.String() != f.Addr.String() && (f.Via == "mdns" || !hl.mdns) {
+		// a working link stays put: a sharer on several of our networks (a
+		// computer on the hub's Wi-Fi and Ethernet) answers on each of them
+		if hl != nil && hl.found.Addr.String() != f.Addr.String() && (f.Via == "mdns" || !hl.mdns) && hl.link.Status().State != share.StateReady {
 			// moved: new link, same local port so mqvpn's path stays valid
 			port := hl.link.Local().Port
 			hl.cancel()
@@ -687,10 +712,10 @@ func shareLabel(hl *hubLink, st share.LinkStatus) string {
 		l = hl.found.Label
 	}
 	if l == "" {
-		l = "Nearby phone"
+		l = "Nearby device"
 	}
-	if strings.HasPrefix(l, "Mobile data from ") {
-		return l // already says what it is
+	if strings.Contains(l, " from ") {
+		return l // already says what it is: "Mobile data from sam-pixel", "Ethernet from tiger-mbp"
 	}
 	return l + " (shared)"
 }
@@ -799,24 +824,39 @@ func (a *Agent) shareStatus(st *status.Status) {
 	use, local := cfg.Client.SharesUsed(), cfg.Client.LocalUsed()
 	st.UseShares, st.UseLocal = &use, &local
 	st.Platform = goruntime.GOOS
+	user := ""
+	if a.client.payload != nil {
+		user = a.client.payload.User
+	}
+	sh := &status.Sharing{State: "off", Port: share.DefaultPort, Hubs: []status.SharingHub{}, Ifaces: a.shareCandidatesLocked(user)}
 	if sc := cfg.Client.Share; sc != nil {
-		sh := &status.Sharing{Enabled: sc.Enabled, Iface: sc.Iface, Label: ss.sharerLabel, Port: sharePort(sc), CapMB: sc.CapMB, Hubs: []status.SharingHub{}, State: "off"}
+		sh.Enabled, sh.Iface, sh.CustomLabel, sh.Port, sh.CapMB, sh.AllowedHubs = sc.Enabled, sc.Iface, sc.Label, sharePort(sc), sc.CapMB, sc.AllowedHubs
+		if sc.Iface != "" {
+			sh.Label = a.sharerLabelLocked(sc, user)
+		}
 		switch {
 		case !sc.Enabled:
 		case ss.sharerErr != "":
 			sh.State, sh.Error = "error", ss.sharerErr
+			if ss.sharerErr == errNoShareKey {
+				sh.State = "no_key"
+			}
 		case ss.sharer != nil:
-			sh.State = "sharing"
+			sh.State, sh.Label, sh.Note = "sharing", ss.sharerLabel, ss.sharerNote
 			sh.Used = ss.sharer.Used()
 			for _, h := range ss.sharer.Sessions() {
 				sh.Hubs = append(sh.Hubs, status.SharingHub{Hub: h.HubID, Addr: h.Addr, UpBytes: h.Up, DnBytes: h.Down})
 			}
 		}
-		st.Sharing = sh
 	}
+	st.Sharing = sh
 }
 
-// ---- sharer (Linux) ----
+// ---- sharer (a Mac or Linux client lending one of its uplinks) ----
+
+// errNoShareKey: a pairing made before pairings carried the share key gets
+// it from the home server, through the tunnel.
+const errNoShareKey = "Waiting for your home server's share key: turn tailbond on here once so it can fetch it."
 
 func sharePort(sc *config.ShareConfig) int {
 	if sc.Port > 0 {
@@ -825,42 +865,242 @@ func sharePort(sc *config.ShareConfig) int {
 	return share.DefaultPort
 }
 
-// runSharer starts, restarts or stops this machine's own share.
+// sharerKind is what this machine registers as with the home server. Hubs
+// skip only "proxy" entries (phone hubs); this one says what lends it.
+func sharerKind() string {
+	if goruntime.GOOS == "darwin" {
+		return "macos"
+	}
+	return "linux"
+}
+
+// shareNouns name a connection by its kind in the default label.
+var shareNouns = map[string]string{
+	netif.KindEthernet: "Ethernet", netif.KindWifi: "Wi-Fi", netif.KindCellular: "Mobile data", netif.KindUSB: "USB tethering",
+}
+
+// defaultShareLabel is what hubs call a computer's share unless it has a
+// label: "Ethernet from tiger-mbp", like a phone's "Mobile data from
+// sam-pixel". name is this device's name on the home server.
+func defaultShareLabel(kind, iface, name string) string {
+	noun := shareNouns[kind]
+	if noun == "" {
+		noun = iface
+	}
+	if name == "" {
+		h, _ := os.Hostname()
+		name, _, _ = strings.Cut(h, ".")
+	}
+	l := noun + " from " + name
+	if len(l) > share.MaxIDLen {
+		l = strings.ToValidUTF8(l[:share.MaxIDLen], "")
+	}
+	return l
+}
+
+// sharerLabelLocked is what hubs see for sc, the interface's kind from the
+// last discovery. Caller holds a.mu.
+func (a *Agent) sharerLabelLocked(sc *config.ShareConfig, user string) string {
+	if sc.Label != "" {
+		return sc.Label
+	}
+	return defaultShareLabel(a.client.ifs[sc.Iface].Kind, sc.Iface, user)
+}
+
+// sharerLabel is sharerLabelLocked, asking the OS about an interface
+// discovery skipped.
+func (a *Agent) sharerLabel(sc *config.ShareConfig, user string) string {
+	a.mu.Lock()
+	_, known := a.client.ifs[sc.Iface]
+	l := a.sharerLabelLocked(sc, user)
+	a.mu.Unlock()
+	if sc.Label == "" && !known && a.lookupIf != nil {
+		if it, ok := a.lookupIf(sc.Iface); ok {
+			l = defaultShareLabel(it.Kind, sc.Iface, user)
+		}
+	}
+	return l
+}
+
+// shareCandidatesLocked: this machine's connections that can be shared,
+// from the last discovery. Caller holds a.mu.
+func (a *Agent) shareCandidatesLocked(user string) []status.SharingIface {
+	out := []status.SharingIface{}
+	for _, name := range slices.Sorted(maps.Keys(a.client.ifs)) {
+		it := a.client.ifs[name]
+		if it.Kind == netif.KindShared || isTunnelName(name) || name == "lo" || name == "lo0" {
+			continue
+		}
+		out = append(out, status.SharingIface{Name: name, Kind: it.Kind, Label: it.Label, Up: it.Usable(), ShareLabel: defaultShareLabel(it.Kind, name, user)})
+	}
+	return out
+}
+
+// shareIfFacts is what the sharer checks about the interface it lends.
+type shareIfFacts struct {
+	Loopback bool
+	Up       bool
+	Addr     bool // an IPv4 (not link-local) or global IPv6 address
+}
+
+func realShareIf(name string) (shareIfFacts, bool) {
+	ifi, err := net.InterfaceByName(name)
+	if err != nil {
+		return shareIfFacts{}, false
+	}
+	f := shareIfFacts{Loopback: ifi.Flags&net.FlagLoopback != 0, Up: ifi.Flags&net.FlagUp != 0}
+	// an Ethernet port stays UP with its address after the cable is pulled:
+	// also need the carrier (netif.Lookup: sysfs on Linux, ifconfig's media
+	// status on macOS)
+	if f.Up && !f.Loopback {
+		if it, ok := netif.Lookup(name); ok && !it.Carrier {
+			f.Up = false
+		}
+	}
+	addrs, _ := ifi.Addrs()
+	for _, ad := range addrs {
+		if n, ok := ad.(*net.IPNet); ok && !n.IP.IsLinkLocalUnicast() && (n.IP.To4() != nil || n.IP.IsGlobalUnicast() || n.IP.IsLoopback()) {
+			f.Addr = true
+		}
+	}
+	return f, true
+}
+
+// errShareChanged: the connection to share changed while turning it on.
+var errShareChanged = errors.New("the share settings changed meanwhile; check them and try again")
+
+// isTunnelName: tailbond's own tunnel or another VPN's, never shared.
+// tb<N> is tailbond's tunnel on Linux and OpenWrt (config.DefaultTunName is
+// "utun" on macOS), refused on every platform alike.
+func isTunnelName(name string) bool {
+	if name == config.DefaultTunName || isTbTun(name) {
+		return true
+	}
+	for _, p := range []string{"utun", "tun", "tap", "wg", "tailscale", "mqvpn", "ipsec"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTbTun: "tb" and one or more digits.
+func isTbTun(name string) bool {
+	if len(name) < 3 || !strings.HasPrefix(name, "tb") {
+		return false
+	}
+	for _, c := range name[2:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// loopbackServer: the pairing's server is on this machine's loopback (a
+// server in a local VM, as in scripts/e2e-macos.sh), so the loopback
+// interface does reach it.
+func loopbackServer(server string) bool {
+	host, _, err := net.SplitHostPort(server)
+	if err != nil {
+		host = server
+	}
+	ip, err := netip.ParseAddr(host)
+	return host == "localhost" || err == nil && ip.IsLoopback()
+}
+
+// shareIfaceProblem says why iface can't be shared now ("" when it can).
+// fixed: it never can (the API refuses it); otherwise it may later
+// (plugged in, connected).
+func shareIfaceProblem(iface, server string, look func(string) (shareIfFacts, bool)) (problem string, fixed bool) {
+	if isTunnelName(iface) {
+		return iface + " is a VPN tunnel, not an internet connection: pick Ethernet, Wi-Fi or a USB adapter.", true
+	}
+	f, ok := look(iface)
+	switch {
+	case !ok:
+		return "There's no connection called " + iface + " on this computer right now (unplugged?).", false
+	case f.Loopback && !loopbackServer(server):
+		return iface + " is this computer's loopback, not an internet connection.", true
+	case !f.Up || !f.Addr:
+		return iface + " isn't connected right now; sharing starts when it is.", false
+	}
+	return "", false
+}
+
+// checkShareIface is what POST /api/share refuses: an interface that isn't
+// there, a tunnel, the loopback.
+func (a *Agent) checkShareIface(iface string) error {
+	a.mu.Lock()
+	p := a.client.payload
+	a.mu.Unlock()
+	server := ""
+	if p != nil {
+		server = p.Server
+	}
+	if _, ok := a.shareIf(iface); !ok && !isTunnelName(iface) {
+		return fmt.Errorf("there's no connection called %s on this computer", iface)
+	}
+	if msg, fixed := shareIfaceProblem(iface, server, a.shareIf); fixed {
+		return errors.New(msg)
+	}
+	return nil
+}
+
+// runSharer starts, restarts or stops this machine's own share. The share
+// doesn't need this machine's own tunnel: only the pairing and its share
+// key (registering with the home server does, so hubs off mDNS find it).
 func (a *Agent) runSharer(ctx context.Context, cfg *config.Config, p *pairing.Payload, key []byte, ready bool) {
 	sc := cfg.Client.Share
-	a.mu.Lock()
-	ss := a.client.share
-	a.mu.Unlock()
-	want := sc != nil && sc.Enabled && sc.Iface != "" && p != nil && len(key) > 0
+	on := sc != nil && sc.Enabled
+	problem := ""
+	switch {
+	case !on:
+	case sc.Iface == "":
+		problem = "Pick the connection to share."
+	case p == nil:
+		problem = "Pair this computer with your home server first."
+	case len(key) == 0:
+		problem = errNoShareKey
+	default:
+		problem, _ = shareIfaceProblem(sc.Iface, p.Server, a.shareIf)
+	}
+	want := on && problem == ""
 	sig := ""
 	if want {
 		sig = strings.Join([]string{sc.Iface, fmt.Sprint(sharePort(sc)), sc.Label, fmt.Sprint(sc.CapMB), strings.Join(sc.AllowedHubs, ","), string(key), p.Server, time.Now().Format("2006-01")}, "|")
 	}
 	a.mu.Lock()
+	ss := a.client.share
 	if ss.sharerSig != sig {
 		if ss.sharerCancel != nil {
 			ss.sharerCancel()
 		}
-		ss.sharer, ss.sharerCancel, ss.sharerSig, ss.sharerErr = nil, nil, "", ""
+		ss.sharer, ss.sharerCancel, ss.sharerSig, ss.sharerErr, ss.sharerNote = nil, nil, "", "", ""
+	}
+	if !want {
+		ss.sharerErr = problem
 	}
 	running := ss.sharer != nil
 	a.mu.Unlock()
-	if sc != nil && sc.Enabled && len(key) == 0 {
-		a.mu.Lock()
-		ss.sharerErr = "waiting for the home server's share key (connect once)"
-		a.mu.Unlock()
-	}
 	if !want {
 		return
 	}
 	if !running {
-		a.startSharer(ctx, cfg, sc, p, key, sig)
+		a.startSharer(ctx, sc, p, key, sig)
+	}
+	// hubs find the share on this machine's other networks (the hub's
+	// Wi-Fi), never on the uplink it lends
+	ifaces := share.MulticastIfaces(config.DefaultTunName, sc.Iface)
+	note := ""
+	if len(ifaces) == 0 {
+		note = "This computer isn't on any other network, so no hub can find it: join the hub's Wi-Fi (or plug into its LAN) too."
 	}
 	a.mu.Lock()
+	ss.sharerNote = note
 	sh, last := ss.sharer, ss.lastReg
 	a.mu.Unlock()
 	if sh != nil && ready && time.Since(last) > shareRegEvery {
-		ifaces := share.MulticastIfaces(config.DefaultTunName, sc.Iface)
 		var lan []string
 		for _, ifi := range ifaces {
 			addrs, _ := ifi.Addrs()
@@ -871,7 +1111,7 @@ func (a *Agent) runSharer(ctx context.Context, cfg *config.Config, p *pairing.Pa
 			}
 		}
 		a.mu.Lock()
-		body := regSharer{ID: ss.sharerID, Label: ss.sharerLabel, KeyID: share.KeyID(key), LAN: lan, Port: sharePort(sc), Kind: "linux"}
+		body := regSharer{ID: ss.sharerID, Label: ss.sharerLabel, KeyID: share.KeyID(key), LAN: lan, Port: sharePort(sc), Kind: sharerKind()}
 		a.mu.Unlock()
 		if _, err := a.serverAPI(ctx, http.MethodPost, "/api/shares", body); err == nil {
 			a.mu.Lock()
@@ -881,13 +1121,14 @@ func (a *Agent) runSharer(ctx context.Context, cfg *config.Config, p *pairing.Pa
 	}
 }
 
-func (a *Agent) startSharer(ctx context.Context, cfg *config.Config, sc *config.ShareConfig, p *pairing.Payload, key []byte, sig string) {
+func (a *Agent) startSharer(ctx context.Context, sc *config.ShareConfig, p *pairing.Payload, key []byte, sig string) {
 	host, _ := os.Hostname()
-	id := "lx-" + hex.EncodeToString(func() []byte { h := sha256.Sum256([]byte(host + "/" + p.User + "/" + sc.Iface)); return h[:5] }())
-	label := sc.Label
-	if label == "" {
-		label = host + "'s " + sc.Iface
+	prefix := "lx-"
+	if goruntime.GOOS == "darwin" {
+		prefix = "mac-"
 	}
+	id := prefix + hex.EncodeToString(func() []byte { h := sha256.Sum256([]byte(host + "/" + p.User + "/" + sc.Iface)); return h[:5] }())
+	label := a.sharerLabel(sc, p.User)
 	a.mu.Lock()
 	cs := a.client
 	usedKey := "shared:" + sc.Iface
@@ -898,6 +1139,8 @@ func (a *Agent) startSharer(ctx context.Context, cfg *config.Config, sc *config.
 		ID: id, Label: label, Key: key, Server: p.Server,
 		CapBytes: uint64(max(sc.CapMB, 0)) << 20, UsedBytes: used, AllowedHubs: sc.AllowedHubs,
 		Dial: func(ctx context.Context, server string) (net.Conn, error) {
+			// the upstream leaves through the shared interface only
+			// (SO_BINDTODEVICE, IP_BOUND_IF), whatever the default route
 			d := net.Dialer{Control: sockbind.Control(iface)}
 			return d.DialContext(ctx, "udp", server)
 		},
@@ -911,14 +1154,20 @@ func (a *Agent) startSharer(ctx context.Context, cfg *config.Config, sc *config.
 	}
 	conn, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", sharePort(sc)))
 	if err != nil {
+		msg := err.Error()
+		if errors.Is(err, syscall.EADDRINUSE) {
+			msg = fmt.Sprintf("UDP port %d is in use by another program: pick another port for sharing.", sharePort(sc))
+		}
 		a.mu.Lock()
-		cs.share.sharerErr = err.Error()
+		cs.share.sharerErr = msg
 		a.mu.Unlock()
 		return
 	}
 	sctx, cancel := context.WithCancel(ctx)
+	// stopping frees the port at once: a restart (new settings) binds it again
+	stop := func() { cancel(); _ = conn.Close() }
 	a.mu.Lock()
-	cs.share.sharer, cs.share.sharerCancel, cs.share.sharerSig, cs.share.sharerErr = sh, cancel, sig, ""
+	cs.share.sharer, cs.share.sharerCancel, cs.share.sharerSig, cs.share.sharerErr = sh, stop, sig, ""
 	cs.share.sharerID, cs.share.sharerLabel, cs.share.lastReg = id, label, time.Time{}
 	a.mu.Unlock()
 	go func() { _ = sh.Serve(sctx, conn) }()
@@ -955,29 +1204,61 @@ func (a *Agent) startSharer(ctx context.Context, cfg *config.Config, sc *config.
 	a.Logf("share: sharing %s as %q on UDP %d", iface, label, sharePort(sc))
 }
 
-// hShareSettings: client role — POST {"use_shares":bool} and/or
-// {"share":{enabled, iface, label, cap_mb, allowed_hubs}}.
+// hShareSettings: client role — POST {"use_shares":bool}, {"use_local":bool},
+// {"share":{enabled, iface, label, cap_mb, allowed_hubs, port}} (replaces
+// this machine's share settings) and/or {"share_enabled":bool} (turns the
+// share on or off as set up).
 func (a *Agent) hShareSettings(w http.ResponseWriter, r *http.Request) {
 	if a.role != config.RoleClient {
 		httpErr(w, http.StatusNotFound, errNotFound)
 		return
 	}
 	var in struct {
-		UseShares *bool               `json:"use_shares"`
-		UseLocal  *bool               `json:"use_local"`
-		Share     *config.ShareConfig `json:"share"`
+		UseShares    *bool               `json:"use_shares"`
+		UseLocal     *bool               `json:"use_local"`
+		Share        *config.ShareConfig `json:"share"`
+		ShareEnabled *bool               `json:"share_enabled"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	next := a.store.Get().Client.Share
 	if in.Share != nil {
-		if in.Share.Enabled && in.Share.Iface == "" {
+		s := *in.Share
+		s.Iface, s.Label = strings.TrimSpace(s.Iface), strings.TrimSpace(s.Label)
+		var hubs []string
+		for _, h := range s.AllowedHubs {
+			if h = strings.TrimSpace(h); h != "" && !slices.Contains(hubs, h) {
+				hubs = append(hubs, h)
+			}
+		}
+		s.AllowedHubs = hubs
+		if s.Enabled && s.Iface == "" {
 			httpErr(w, http.StatusBadRequest, errors.New("pick the connection to share"))
 			return
 		}
-		if in.Share.CapMB < 0 || len(in.Share.Label) > share.MaxIDLen || in.Share.Port < 0 || in.Share.Port > 65535 {
+		if s.CapMB < 0 || len(s.Label) > share.MaxIDLen || s.Port < 0 || s.Port > 65535 || len(s.AllowedHubs) > 32 {
 			httpErr(w, http.StatusBadRequest, errors.New("bad share settings"))
+			return
+		}
+		next = &s
+	}
+	if in.ShareEnabled != nil {
+		if next == nil || next.Iface == "" {
+			if *in.ShareEnabled {
+				httpErr(w, http.StatusBadRequest, errors.New("pick the connection to share first (dashboard: Share this computer's connection)"))
+				return
+			}
+		} else {
+			s := *next
+			s.Enabled = *in.ShareEnabled
+			next = &s
+		}
+	}
+	if next != nil && next.Enabled && (in.Share != nil || in.ShareEnabled != nil) {
+		if err := a.checkShareIface(next.Iface); err != nil {
+			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
 	}
@@ -990,17 +1271,33 @@ func (a *Agent) hShareSettings(w http.ResponseWriter, r *http.Request) {
 			v := *in.UseLocal
 			c.Client.UseLocal = &v
 		}
-		if in.Share != nil {
-			s := *in.Share
+		switch {
+		case in.Share != nil && next != nil:
+			s := *next
+			c.Client.Share = &s
+		case in.ShareEnabled != nil && c.Client.Share != nil && c.Client.Share.Iface != "":
+			// only the switch: flip it on what's saved now, not on the copy
+			// read above, so a save that landed in between isn't undone
+			if *in.ShareEnabled && (next == nil || c.Client.Share.Iface != next.Iface) {
+				return errShareChanged
+			}
+			s := *c.Client.Share
+			s.Enabled = *in.ShareEnabled
 			c.Client.Share = &s
 		}
 		return nil
-	}); err != nil {
+	}); errors.Is(err, errShareChanged) {
+		httpErr(w, http.StatusConflict, err)
+		return
+	} else if err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
 	if in.UseLocal != nil || in.UseShares != nil {
 		a.reconcilePaths(true)
+	}
+	if in.Share != nil || in.ShareEnabled != nil {
+		a.kickShares()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

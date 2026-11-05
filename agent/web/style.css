@@ -438,6 +438,11 @@ input.num { width: 5.5em; flex: none !important; min-width: 0 !important; }
 .banner.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--text); border-left: 3px solid var(--ok); }
 #phone-hub .btn.small { padding: 4px 10px; font-size: 13px; }
 #phone-hub .share-row { align-items: center; }
+/* Share this computer's connection */
+#share-out .share-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 16px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+#share-out .share-form .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+#share-out .share-form .row.end { grid-column: 1 / -1; }
+#share-out .banner { margin: 8px 0; }
 
 /* Report a problem (docs/reporting.md) */
 .ub-dialog .notice { background: color-mix(in srgb, var(--accent, #0D9488) 8%, var(--card)); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; }

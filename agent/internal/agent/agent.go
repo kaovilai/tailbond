@@ -86,7 +86,10 @@ type Agent struct {
 	listIfs func() ([]netif.Iface, error)
 	// lookupIf describes an interface a path setting names (tests leave it nil).
 	lookupIf func(string) (netif.Iface, bool)
-	wc       whoisCache // admin requests from the tailnet: who sent them
+	// shareIf says whether the interface this machine shares is there and
+	// connected (shares.go; tests stub it).
+	shareIf func(string) (shareIfFacts, bool)
+	wc      whoisCache // admin requests from the tailnet: who sent them
 	// phone hub (phonehub.go): the OS proxy setting (nil: not set for
 	// you), and test hooks for discovery and the forwarder's address
 	sysProxy   systemProxy
@@ -184,6 +187,7 @@ func New(store *config.Store, opts Options) *Agent {
 	a.glRead = glrepeater.Read
 	a.listIfs = netif.Discover
 	a.lookupIf = netif.Lookup
+	a.shareIf = realShareIf
 	a.hooks = &hooks.Runner{Dir: cfg.HooksDir, Log: a.logs.Add}
 	mqvpnBin := cfg.MqvpnBin
 	a.sup = supervisor.New(supervisor.Spec{

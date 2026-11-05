@@ -23,10 +23,10 @@
   ];
 
   // GL's own names for its WAN types (Internet page).
-  var KIND_LABEL = { ethernet: "Ethernet", wifi: "Repeater", usb: "Tethering", cellular: "Cellular", "shared-cellular": "Shared by a phone", unknown: "Connection" };
+  var KIND_LABEL = { ethernet: "Ethernet", wifi: "Repeater", usb: "Tethering", cellular: "Cellular", "shared-cellular": "Shared by a nearby device", unknown: "Connection" };
   // Short nouns for the one-line status.
-  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "USB tethering (phone)", cellular: "Cellular", "shared-cellular": "a phone's shared data", unknown: "a connection" };
-  // a phone's share is named by its own label ("Pixel 8's mobile data")
+  var KIND_NOUN = { ethernet: "Ethernet", wifi: "Repeater (Wi-Fi)", usb: "USB tethering (phone)", cellular: "Cellular", "shared-cellular": "a nearby device's shared connection", unknown: "a connection" };
+  // a share is named by its own label ("Mobile data from sam-pixel", "Ethernet from tiger-mbp")
   function nounOf(w) { return w.kind === "shared-cellular" ? String(w.label || "").replace(/ \(shared\)$/, "") : (KIND_NOUN[w.kind] || w.label); }
   var KIND_ORDER = { ethernet: 0, wifi: 1, usb: 2, cellular: 3, "shared-cellular": 4, unknown: 5 };
   var NOT_CONNECTED_FIX = {
@@ -34,7 +34,7 @@
     wifi: "Join a Wi-Fi network in INTERNET → Repeater. It's used automatically once connected.",
     usb: "Plug in your phone with a USB cable and turn on USB tethering on the phone. It's used automatically once connected.",
     cellular: "Insert a SIM card or plug in the modem, then check INTERNET → Cellular. It's used automatically once connected.",
-    "shared-cellular": "The phone stopped sharing, left this Wi-Fi, or its battery or data limit stopped it. Turn sharing on again on the phone.",
+    "shared-cellular": "The phone or computer stopped sharing, left this Wi-Fi, or its battery or data limit stopped it. Turn sharing on again on it.",
     unknown: "Set it up on the INTERNET page. It's used automatically once connected."
   };
 
@@ -1687,7 +1687,7 @@
           ]);
         },
 
-        // Pair & Share: phones on this router's Wi-Fi lending their mobile data
+        // Pair & Share: phones and computers on this router's Wi-Fi lending their mobile data or other connection
         rShares: function (h) {
           var self = this, st = this.st || {}, shares = A(st.shares), useOn = st.use_shares !== false;
           var STATE = { ready: ["ok", "Sharing"], connecting: ["", "Connecting…"], refused: ["warn", "Paused"], unreachable: ["err", "Can't reach it"], lost: ["err", "Not answering"] };
@@ -1706,16 +1706,16 @@
           });
           var body = [
             h("div", { class: "tb-muted", style: { marginBottom: "10px", lineHeight: 1.5 } },
-              "A phone connected to this router's own Wi-Fi (not the hotel's) can lend its mobile data, and tailbond adds it to the bond like another SIM. On Android: tailbond → Settings → Share my mobile data. On iPhone: the tailbond Share app → Share mobile data, and keep the app open on screen. Each phone shows up above as a connection with the same Use it / Backup only / Off choice and data limit.")
+              "A phone connected to this router's own Wi-Fi (not the hotel's) can lend its mobile data, and tailbond adds it to the bond like another SIM. On Android: tailbond → Settings → Share my mobile data. On iPhone: the tailbond Share app → Share mobile data, and keep the app open on screen. A Mac or Linux laptop on this Wi-Fi can lend its other connection (the hotel's Ethernet, a USB modem) the same way: its tailbond page → Share this computer's connection. Each one shows up above as a connection with the same Use it / Backup only / Off choice and data limit.")
           ];
           if (st.share_note) body.push(this.alert(h, "warn", st.share_note, "Devices here can't reach each other, so phones can't share. Use USB tethering instead: plug the phone into the router."));
-          body = body.concat(rows.length ? rows : [h("div", { class: "tb-muted tb-small" }, useOn ? "No phone is sharing right now." : "Off: phones' shared data isn't used.")]);
+          body = body.concat(rows.length ? rows : [h("div", { class: "tb-muted tb-small" }, useOn ? "Nothing nearby is sharing right now." : "Off: nearby devices' shared connections aren't used.")]);
           body.push(h("div", { class: "tb-row", style: { marginTop: "12px", borderTop: "1px solid #ebeef5", paddingTop: "12px" } }, [
-            h("div", { class: "tb-grow" }, [h("div", "Use mobile data that nearby phones share"),
-              h("div", { class: "tb-muted tb-small" }, "Only phones paired with your home server can share with this router.")]),
-            this.sw(h, useOn, function () { self.run("use-shares", api("POST", "/api/share", { use_shares: !useOn }), useOn ? "Phones' shared data not used" : "Using phones' shared data"); }, false, this.busy["use-shares"], "Use nearby phones' shared data")
+            h("div", { class: "tb-grow" }, [h("div", "Use connections that nearby devices share"),
+              h("div", { class: "tb-muted tb-small" }, "Only phones and computers paired with your home server can share with this router.")]),
+            this.sw(h, useOn, function () { self.run("use-shares", api("POST", "/api/share", { use_shares: !useOn }), useOn ? "Nearby devices' shares not used" : "Using nearby devices' shares"); }, false, this.busy["use-shares"], "Use nearby devices' shared connections")
           ]));
-          return this.card(h, "Shared by nearby phones", body);
+          return this.card(h, "Shared by nearby devices", body);
         },
 
         rWan: function (h, w) {

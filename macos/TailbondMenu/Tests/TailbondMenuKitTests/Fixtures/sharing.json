@@ -1,0 +1,13 @@
+{"role":"client","mode":"speed","state":"disconnected","server":"homebox.tail1234.ts.net:443","tunnel_ip":"","uptime_sec":0,
+ "totals":{"tx_bps":0,"rx_bps":0,"tx_bytes":0,"rx_bytes":0},
+ "paths":[
+  {"id":1,"iface":"en0","kind":"wifi","state":"standby","srtt_ms":0,"min_rtt_ms":0,"loss_pct":0,"tx_bps":0,"rx_bps":0,"tx_bytes":0,"rx_bytes":0,"enabled":true,"label":"Wi-Fi"}
+ ],
+ "clients":[],"tailscale":null,"control_api":false,"paired":true,"version":"0.2.0","protocol":1,
+ "update":{"current":"0.2.0","policy":"immediate","method":"static","state":"idle"},
+ "use_shares":true,"use_local":true,
+ "sharing":{"enabled":true,"iface":"en5","label":"Ethernet from tiger-mbp","port":47077,"state":"sharing","used_bytes":125829120,
+  "hubs":[{"hub":"slate7","addr":"192.168.8.1:52011","up_bytes":20971520,"down_bytes":104857600}],
+  "ifaces":[{"name":"en0","kind":"wifi","label":"Wi-Fi","up":true,"share_label":"Wi-Fi from tiger-mbp"},
+            {"name":"en5","kind":"ethernet","label":"USB 10/100/1000 LAN","up":true,"share_label":"Ethernet from tiger-mbp"}]},
+ "platform":"darwin"}

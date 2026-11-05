@@ -4,7 +4,7 @@
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const HISTORY = 60;
-const KIND_LABEL = { wifi: 'Wi-Fi', cellular: 'Cellular', ethernet: 'Ethernet', usb: 'USB tether', 'shared-cellular': 'Shared by a phone', unknown: 'Link' };
+const KIND_LABEL = { wifi: 'Wi-Fi', cellular: 'Cellular', ethernet: 'Ethernet', usb: 'USB tether', 'shared-cellular': 'Shared by a nearby device', unknown: 'Link' };
 
 const state = {
   status: null,
@@ -334,6 +334,7 @@ function renderClientPaths(st) {
   syncChildren($('#paths'), els);
   renderLocalHead(st);
   renderShares(st);
+  renderShareOut(st);
   renderPhoneHub(st);
   renderCoexist(st);
   const empty = $('#paths-empty');
@@ -387,14 +388,15 @@ function renderLocalHead(st) {
   box.classList.toggle('hidden', st.role !== 'client' || !mac);
 }
 
-// Pair & Share: phones on this machine's network lending their mobile data
+// Pair & Share: phones and computers on this machine's network lending
+// their mobile data, Ethernet or Wi-Fi
 function renderShares(st) {
   const box = $('#shares');
   if (!box) return;
   if (box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   const shares = st.shares || [];
-  const kids = [h('div', { class: 'row between' }, h('h3', { text: 'Shared by nearby phones' }),
-    sectionToggle('use_shares', st.use_shares !== false, "Use phones' shared data"))];
+  const kids = [h('div', { class: 'row between' }, h('h3', { text: 'Shared by nearby devices' }),
+    sectionToggle('use_shares', st.use_shares !== false, "Use nearby devices' shared connections"))];
   if (st.share_note) kids.push(h('div', { class: 'banner warn', text: st.share_note }));
   const words = { ready: 'Sharing', connecting: 'Connecting…', refused: 'Stopped', unreachable: "Can't reach it", lost: 'Stopped answering' };
   for (const s of shares) {
@@ -404,9 +406,113 @@ function renderShares(st) {
     bits.push(s.via === 'server' ? 'listed by the home server' : 'found on this network');
     kids.push(h('div', { class: 'share-row' }, h('b', { text: s.label }), h('span', { class: 'muted small', text: ' · ' + bits.join(' · ') })));
   }
-  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: phones' shared data isn't used." : 'No phone is sharing. On Android: tailbond → Settings → Sharing → Share my mobile data. On iPhone: tailbond Share → Share mobile data (a cable is better: plug the iPhone in with Personal Hotspot on).' }));
+  if (!shares.length) kids.push(h('p', { class: 'muted small', text: st.use_shares === false ? "Off: nearby devices' shared connections aren't used." : "Nothing nearby is sharing. On Android: tailbond → Settings → Sharing → Share my mobile data. On iPhone: tailbond Share → Share mobile data (a cable is better: plug the iPhone in with Personal Hotspot on). On a Mac or Linux laptop: its tailbond page → Share this computer's connection." }));
   box.replaceChildren(...kids);
   box.classList.toggle('hidden', st.role !== 'client');
+}
+
+// Share this computer's connection (docs/pair-and-share.md "Computers can
+// share too"): lend one of this machine's uplinks (hotel Ethernet, a second
+// Wi-Fi adapter, a USB modem) to a hub on its LAN. POST /api/share
+// {share: {...}} saves the choices, {share_enabled} turns it on or off.
+const shareDraft = {}; // what's typed but not saved yet, kept across renders
+function renderShareOut(st) {
+  const box = $('#share-out');
+  if (!box) return;
+  const sh = st.sharing;
+  box.classList.toggle('hidden', st.role !== 'client' || !sh);
+  if (!sh || box.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  // a focused button is rebuilt like the rest: give the focus to its copy
+  const refocus = box.contains(document.activeElement) ? document.activeElement.dataset.focusKey : undefined;
+  const mac = st.platform === 'darwin';
+  const self = mac ? 'this Mac' : 'this computer';
+  const ifaces = sh.ifaces || [];
+  const ifName = (i) => `${i.label || KIND_LABEL[i.kind] || 'Connection'} (${i.name})`;
+  const cur = ifaces.find((i) => i.name === sh.iface);
+  const on = h('input', { type: 'checkbox', 'aria-label': `Share ${self}'s connection` });
+  on.checked = sh.enabled;
+  on.addEventListener('change', async () => {
+    if (on.checked && !sh.iface) {
+      on.checked = false;
+      toast('Pick the connection to share, then Start sharing.', true);
+      return;
+    }
+    on.disabled = true;
+    try {
+      await api('POST', '/api/share', { share_enabled: on.checked });
+      toast(on.checked ? `Sharing ${cur ? ifName(cur) : sh.iface}` : 'Sharing stopped');
+      pollOnce();
+    } catch (e) {
+      on.checked = !on.checked;
+      toast(e.message, true);
+    } finally {
+      on.disabled = false;
+    }
+  });
+  const kids = [h('div', { class: 'row between' }, h('h3', { text: `Share ${self}'s connection` }),
+    h('label', { class: 'toggle', title: 'Share it' }, on, h('span')))];
+  kids.push(h('p', { class: 'muted small', text: `Lend one of ${self}'s connections (the hotel's Ethernet, a second Wi-Fi adapter, a USB modem) to your travel router or another laptop paired with your home server. It bonds it as one more connection, like a phone's mobile data. ${mac ? 'This Mac' : 'This computer'} must also be on the hub's network (its Wi-Fi), and tailbond here doesn't have to be on.` }));
+  // where it stands
+  if (sh.enabled) {
+    if (sh.state === 'sharing') {
+      const used = `${fmtBytes(sh.used_bytes)} shared this month${sh.cap_mb ? ` of ${fmtBytes(sh.cap_mb * 1048576)}` : ''}`;
+      kids.push(h('div', { class: 'banner ok' }, h('b', { text: `Sharing ${cur ? ifName(cur) : sh.iface} as "${sh.label}"` }), h('div', { class: 'small', text: used })));
+      for (const hb of sh.hubs || []) {
+        kids.push(h('div', { class: 'share-row' }, h('b', { text: hb.hub }), h('span', { class: 'muted small', text: ` · using it · ${fmtBytes(hb.up_bytes)} up, ${fmtBytes(hb.down_bytes)} down` })));
+      }
+      if (!(sh.hubs || []).length) kids.push(h('p', { class: 'muted small', text: 'No hub is using it yet. A hub paired with the same home server finds it within a few seconds when both are on the same network.' }));
+      if (sh.note) kids.push(h('div', { class: 'banner warn', text: sh.note }));
+    } else if (sh.error) {
+      kids.push(h('div', { class: 'banner warn', text: sh.error }));
+    }
+  }
+  // the choices
+  const d = shareDraft;
+  const pick = h('select', { 'aria-label': 'Connection to share' });
+  pick.append(h('option', { value: '', text: ifaces.length ? 'Pick a connection…' : 'No connection found' }));
+  const names = ifaces.map((i) => i.name);
+  if (sh.iface && !names.includes(sh.iface)) pick.append(h('option', { value: sh.iface, text: `${sh.iface} (not here now)` }));
+  for (const i of ifaces) pick.append(h('option', { value: i.name, text: ifName(i) + (i.up ? '' : ' · not connected') }));
+  pick.value = d.iface ?? sh.iface ?? '';
+  const label = h('input', { type: 'text', maxlength: '64', 'aria-label': 'Name hubs see' });
+  label.value = d.label ?? sh.custom_label ?? '';
+  const hint = () => { const i = ifaces.find((x) => x.name === pick.value); label.placeholder = i ? i.share_label : sh.label || ''; };
+  hint();
+  const cap = h('input', { type: 'number', min: '0', step: '100', class: 'num', 'aria-label': 'Monthly limit in MB' });
+  cap.value = d.cap ?? String(sh.cap_mb || 0);
+  const hubs = h('input', { type: 'text', 'aria-label': 'Hubs allowed' });
+  hubs.value = d.hubs ?? (sh.allowed_hubs || []).join(', ');
+  hubs.placeholder = 'any device paired with your home server';
+  pick.addEventListener('change', () => { d.iface = pick.value; hint(); });
+  label.addEventListener('input', () => { d.label = label.value; });
+  cap.addEventListener('input', () => { d.cap = cap.value; });
+  hubs.addEventListener('input', () => { d.hubs = hubs.value; });
+  const field = (text, el, help) => h('label', { class: 'field' }, h('span', { text }), el, help ? h('small', { class: 'muted', text: help }) : null);
+  const save = h('button', { class: 'btn primary', type: 'button', text: sh.enabled ? 'Save' : 'Start sharing' });
+  save.dataset.focusKey = 'save';
+  save.addEventListener('click', async () => {
+    if (!pick.value) { toast('Pick the connection to share.', true); return; }
+    const body = { enabled: true, iface: pick.value, label: label.value.trim(), cap_mb: Math.max(0, Math.round(Number(cap.value) || 0)),
+      allowed_hubs: hubs.value.split(',').map((x) => x.trim()).filter(Boolean) };
+    if (sh.port && sh.port !== 47077) body.port = sh.port;
+    save.disabled = true;
+    try {
+      await api('POST', '/api/share', { share: body });
+      for (const k of Object.keys(d)) delete d[k];
+      toast(`Sharing ${pick.value}`);
+      pollOnce();
+    } catch (e) { toast(e.message, true); } finally { save.disabled = false; }
+  });
+  kids.push(h('div', { class: 'share-form' },
+    field('Connection to share', pick, `Pick one the hub isn't on: the hotel's Ethernet while ${self} is on the travel router's Wi-Fi, or a second Wi-Fi adapter. ${mac ? 'This Mac' : 'It'} keeps using it too.`),
+    field('Name hubs see', label, 'Leave it empty for the name shown.'),
+    field('Monthly limit (MB)', cap, '0: no limit. What hubs use counts here, on top of their own limits.'),
+    field('Hubs allowed', hubs, 'Device names on your home server, comma separated. Empty: any device paired with it.'),
+    h('div', { class: 'row end' }, save)));
+  box.replaceChildren(...kids);
+  if (refocus) box.querySelector(`[data-focus-key="${refocus}"]`)?.focus();
+  // the menu bar's "Sharing settings…" opens /#share
+  if (location.hash === '#share' && !renderShareOut.shown) { renderShareOut.shown = true; box.scrollIntoView(); }
 }
 
 // Use phone hub (docs/phone-hub.md): a phone sharing its bonded connection

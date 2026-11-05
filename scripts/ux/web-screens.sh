@@ -11,6 +11,8 @@
 #            ask homebox" (/?ask=…: Setup, the server's name filled in);
 #   web-08   the Mac's "Use a phone's bonded connection" card: a phone found,
 #            none, in use, lost (phone_hub states patched into its status).
+#   web-09   the Mac's "Share this Mac's connection" card (to set up, sharing
+#            with a hub, unplugged) and a hub listing a computer's share.
 #
 #   scripts/ux/web-screens.sh [outdir]
 #
