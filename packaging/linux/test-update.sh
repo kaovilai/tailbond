@@ -127,11 +127,15 @@ check "install.env back to 0.0.2" grep -qx 'TB_VERSION=0.0.2' /etc/tailbond/inst
 
 say "install.sh --update on its own (downloads the latest)"
 publish 0.0.4
-TB_API_URL=http://127.0.0.1:8099 /usr/local/lib/tailbond/install.sh --update >"$W/u4.log" 2>&1
+rc4=0
+TB_API_URL=http://127.0.0.1:8099 /usr/local/lib/tailbond/install.sh --update >"$W/u4.log" 2>&1 || rc4=$?
 check "install.sh --update: 0.0.4 running" wait_for 20 is_version 0.0.4
 check "it said so" grep -q 'tailbond 0.0.4 is running' "$W/u4.log"
-TB_API_URL=http://127.0.0.1:8099 /usr/local/lib/tailbond/install.sh --update >"$W/u4b.log" 2>&1
+check "install.sh --update: exit 0" [ "$rc4" = 0 ]
+rc4b=0
+TB_API_URL=http://127.0.0.1:8099 /usr/local/lib/tailbond/install.sh --update >"$W/u4b.log" 2>&1 || rc4b=$?
 check "again: already installed" grep -q 'installed already' "$W/u4b.log"
+check "again: exit 0" [ "$rc4b" = 0 ]
 
 say "a release that doesn't match SHA256SUMS is refused"
 publish 0.0.5 BAD

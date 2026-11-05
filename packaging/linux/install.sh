@@ -274,13 +274,15 @@ fetch() {
 }
 # fetch_release: download and check the release bundle; sets BUNDLE
 fetch_release() {
-    local repo tag api rel arch name url sums want got tmp
+    local repo tag api rel arch name url sums want got
     repo="${OPT_REPO:-$(sed -n 's/.*"repo": *"\([^"]*\)".*/\1/p' "$CONF" 2>/dev/null | head -1)}"
     repo="${repo#https://github.com/}"; repo="${repo%.git}"; repo="${repo%/}"; repo="${repo:-kaovilai/tailbond}"
     tag="$OPT_UVERSION"; [ -z "$tag" ] || tag="v${tag#v}"
     api="$TB_API_URL/repos/$repo/releases/${tag:+tags/$tag}"; [ -n "$tag" ] || api="${api}latest"
+    # not local: the EXIT trap runs after this function returns, where a
+    # local would already be unset (set -u: "tmp: unbound variable")
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/tailbond-update.XXXXXX")"
-    trap 'rm -rf "$tmp"' EXIT
+    trap 'rm -rf "${tmp:-}"' EXIT
     fetch "$api" "$tmp/release.json" || die "can't read $api"
     rel="$(tr -d '\n' <"$tmp/release.json")"
     tag="$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' <<<"$rel")"
