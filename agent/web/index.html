@@ -40,10 +40,10 @@
 <header class="topbar">
   <div class="brand">
     <div>
-      <picture>
+      <h1><picture>
         <source srcset="wordmark-dark.svg" media="(prefers-color-scheme: dark)">
         <img class="wordmark" src="wordmark-light.svg" alt="tailbond" width="138" height="34">
-      </picture>
+      </picture></h1>
       <div class="brand-sub" id="subtitle">connecting…</div>
     </div>
   </div>
@@ -113,12 +113,12 @@
     <div class="banner hidden" id="error-banner"></div>
   </section>
 
-  <section class="modes" data-role="client" role="radiogroup" aria-label="Bonding mode" id="modes">
+  <div class="modes" data-role="client" role="radiogroup" aria-label="Bonding mode" id="modes">
     <button role="radio" data-mode="speed" title="speed"><svg class="ico"><use href="#i-speed"/></svg><span><b>Fastest</b><small>All links together</small></span></button>
     <button role="radio" data-mode="streaming" title="streaming"><svg class="ico"><use href="#i-streaming"/></svg><span><b>Smooth calls</b><small>Calls and video stay up</small></span></button>
     <button role="radio" data-mode="redundant" title="redundant"><svg class="ico"><use href="#i-redundant"/></svg><span><b>Most reliable</b><small>Every packet twice</small></span></button>
     <button role="radio" data-mode="failover" title="failover"><svg class="ico"><use href="#i-failover"/></svg><span><b>Save mobile data</b><small>Backup only on failure</small></span></button>
-  </section>
+  </div>
 
   <div class="banner hidden" id="health-banner"></div>
   <div class="banner upd-banner hidden" id="upd-banner"></div>
@@ -146,7 +146,7 @@
     <div class="card warn addr-step hidden" id="addr-warning"></div>
     <div class="card health hidden" id="health"></div>
     <form class="card" id="pw-form">
-      <h3>Who can approve and add devices</h3>
+      <h2>Who can approve and add devices</h2>
       <p class="muted small" id="pw-state">Anyone who can open this page (people on your Tailscale account, and anyone you share this machine with).</p>
       <label class="field" for="approvers"><span id="approvers-label">Also allowed to approve (Tailscale logins, comma separated)</span>
         <div class="row">
@@ -160,7 +160,7 @@
         </div></label>
     </form>
     <div class="card invite phone-install" id="phone-install">
-      <h3>Add an Android phone</h3>
+      <h2>Add an Android phone</h2>
       <div class="phone-install-body">
         <div class="qr qr-small" id="landing-qr"></div>
         <div class="grow">
@@ -172,7 +172,7 @@
       </div>
     </div>
     <div class="card router-guide">
-      <h3>Add a GL.iNet travel router (recommended)</h3>
+      <h2>Add a GL.iNet travel router (recommended)</h2>
       <ol class="muted">
         <li><span id="ipk-yes" class="hidden"><a class="btn small" href="/tailbond-glinet.ipk" download>Download the router package</a> to this computer.</span><span id="ipk-no">Get the router package (the file ending in <b>_neon-vfpv4.ipk</b>) from whoever set up tailbond.</span></li>
         <li>On the travel router's admin page: <b>SYSTEM → Advanced Settings → Go To LuCI</b>, then <b>System → Software → Upload Package…</b>, pick the file, <b>Install</b>.</li>
@@ -181,7 +181,7 @@
     </div>
     <form class="card add-client" id="add-client">
       <div>
-        <h3>Add a device with a code (no Tailscale on it)</h3>
+        <h2>Add a device with a code (no Tailscale on it)</h2>
         <p class="muted">Routers and phones on your Tailscale account don't need this: they ask to connect and show up at the top of this page. For others: each gets its own key. In the tailbond app tap <b>Scan code from your home server</b>, or paste the link on the router's tailbond page (Other ways to connect).</p>
       </div>
       <div class="row">
@@ -194,7 +194,7 @@
 
   <section class="tab hidden" id="tab-setup">
     <div class="card" id="ask-card">
-      <h3>Ask your home server</h3>
+      <h2>Ask your home server</h2>
       <p class="muted">With Tailscale on, type your home server's Tailscale name (like <b>homebox</b>). This machine asks it to connect; whoever runs the server taps <b>Approve</b> on its page.</p>
       <form id="ask-form" class="row">
         <input id="ask-server" placeholder="homebox" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Home server's Tailscale name">
@@ -203,7 +203,7 @@
       <div id="ask-status" class="small" role="status"></div>
     </div>
     <div class="card">
-      <h3>Or paste a pairing link</h3>
+      <h2>Or paste a pairing link</h2>
       <p class="muted">On the server's dashboard open <b>Clients → Add</b>, then paste the <code>tailbond://pair</code> link here or scan its QR code.</p>
       <form id="pair-form">
         <textarea id="pair-uri" rows="3" placeholder="tailbond://pair?d=…" spellcheck="false"></textarea>
@@ -229,7 +229,7 @@
 
   <section class="tab hidden" id="tab-logs">
     <div class="card logs-card">
-      <div class="row between"><h3>Logs</h3><div class="row"><button class="btn" type="button" id="logs-report">Report a problem</button><label class="check"><input type="checkbox" id="logs-follow" checked> follow</label></div></div>
+      <div class="row between"><h2>Logs</h2><div class="row"><button class="btn" type="button" id="logs-report">Report a problem</button><label class="check"><input type="checkbox" id="logs-follow" checked> follow</label></div></div>
       <pre id="logs" class="logs"></pre>
     </div>
   </section>
@@ -239,9 +239,9 @@
 
 <dialog id="qr-dialog">
   <form method="dialog" class="dialog-inner">
-    <h3 id="qr-title">Pair device</h3>
+    <h2 id="qr-title">Pair device</h2>
     <div class="qr" id="qr-box"></div>
-    <div class="uri-row"><input id="qr-uri" readonly><button class="btn icon" type="button" id="qr-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
+    <div class="uri-row"><input id="qr-uri" readonly aria-label="Pairing link"><button class="btn icon" type="button" id="qr-copy" title="Copy link"><svg class="ico sm"><use href="#i-copy"/></svg></button></div>
     <p class="muted small">This link contains the device's key. Share it only with that device.</p>
     <div class="row end"><button class="btn primary" value="close">Done</button></div>
   </form>
@@ -249,7 +249,7 @@
 
 <dialog id="owner-dialog">
   <form method="dialog" class="dialog-inner">
-    <h3>This is the home server's own page</h3>
+    <h2>This is the home server's own page</h2>
     <p>It's only for <b id="owner-who"></b>, whose Tailscale account this server belongs to (or whoever has its password).</p>
     <p class="muted">Want tailbond on your phone? <a id="owner-get" href="/get">Open the phone page</a>: it has the app, and your phone asks to connect from there.</p>
     <div class="row end"><button class="btn primary" value="close">OK</button></div>
@@ -258,8 +258,8 @@
 
 <dialog id="login-dialog">
   <form class="dialog-inner" id="login-form">
-    <h3>tailbond</h3>
-    <p class="muted">Enter the dashboard password.</p>
+    <h2>tailbond</h2>
+    <p class="muted"><label for="login-pw">Enter the dashboard password.</label></p>
     <input type="password" id="login-pw" autocomplete="current-password" required>
     <div class="error small" id="login-err"></div>
     <div class="row end"><button class="btn primary" type="submit">Sign in</button></div>

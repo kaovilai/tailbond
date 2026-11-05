@@ -38,6 +38,8 @@
 }
 
 * { box-sizing: border-box; }
+/* for screen readers only */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 html, body { margin: 0; }
 body {
   font: 15px/1.45 var(--tb-font-sans);
@@ -47,7 +49,7 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 main { max-width: 1080px; margin: 0 auto; padding: 0 16px 32px; }
-h3 { margin: 0 0 6px; font-size: 16px; }
+h2 { margin: 0 0 6px; font-size: 16px; }
 code { font-family: var(--mono); font-size: .92em; }
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
@@ -70,6 +72,7 @@ code { font-family: var(--mono); font-size: .92em; }
 }
 .brand { display: flex; gap: 10px; align-items: center; }
 .brand img { border-radius: 8px; }
+.brand h1 { margin: 0; font-size: inherit; line-height: 0; }
 .brand .wordmark { height: 34px; width: auto; border-radius: 0; display: block; }
 .brand-name { font-weight: 700; letter-spacing: -.01em; }
 .brand-sub { font-size: 12.5px; color: var(--muted); max-width: 52vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -116,22 +119,25 @@ code { font-family: var(--mono); font-size: .92em; }
   background: var(--card-2); color: var(--muted); border: 1px solid var(--line); text-transform: capitalize;
 }
 .state-chip::before, .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.s-connected, .s-active { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: transparent; }
-.s-connecting, .s-pending { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: transparent; }
+/* status colours are for dots and tints; the words are those colours taken
+   toward --text, so 12px text on the tint stays over 4.5:1 (scripts/ux/a11y.sh) */
+.s-connected, .s-active { color: color-mix(in srgb, var(--ok) 80%, var(--text)); background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: transparent; }
+.s-connecting, .s-pending { color: color-mix(in srgb, var(--warn) 80%, var(--text)); background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: transparent; }
 .s-connecting::before, .s-pending::before { animation: pulse 1.2s infinite; }
-.s-error, .s-failed { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: transparent; }
-.s-standby { color: var(--down); background: color-mix(in srgb, var(--down) 12%, transparent); border-color: transparent; }
+.s-error, .s-failed { color: color-mix(in srgb, var(--bad) 80%, var(--text)); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: transparent; }
+.s-standby { color: color-mix(in srgb, var(--down-text) 80%, var(--text)); background: color-mix(in srgb, var(--down) 12%, transparent); border-color: transparent; }
 .s-disconnected, .s-off { color: var(--idle); }
 @keyframes pulse { 50% { opacity: .3; } }
 
 .banner { margin: 8px 0 6px; padding: 10px 12px; border-radius: 10px; font-size: 13.5px;
-  background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+  background: color-mix(in srgb, var(--bad) 12%, transparent); color: color-mix(in srgb, var(--bad) 80%, var(--text)); }
+.banner a { color: color-mix(in srgb, var(--accent) 80%, var(--text)); }
 /* speed tips are advice, not errors; blocking setup problems stay red */
 #health-banner { background: color-mix(in srgb, var(--warn) 14%, transparent); color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
-#health-banner.blocking { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+#health-banner.blocking { background: color-mix(in srgb, var(--bad) 12%, transparent); color: color-mix(in srgb, var(--bad) 80%, var(--text)); }
 /* update news at the top; red only when an update failed */
 .upd-banner { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
-.upd-banner.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+.upd-banner.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); color: color-mix(in srgb, var(--bad) 80%, var(--text)); }
 .addr-step ol { margin: 6px 0; padding-left: 20px; }
 .addr-step li { margin: 4px 0; }
 
@@ -327,7 +333,8 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
   .hero-meta dl { gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; animation: none !important; }
+  /* pseudo-elements too: the pending chips' dot pulses in ::before */
+  *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 
 /* pending pair requests (server role) */
@@ -358,8 +365,8 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
 .ub-card { margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
 .ub-head { display: flex; align-items: center; gap: 12px; }
 .ub-head .grow { flex: 1; min-width: 0; }
-.ub-head h3 { margin: 0; }
-.ub-card h4 { margin: 0 0 6px; font-size: 14px; }
+.ub-head h2 { margin: 0; }
+.ub-card h3 { margin: 0 0 6px; font-size: 14px; }
 .ub-card p { margin: 4px 0; }
 .ub-card .row { margin-top: 8px; }
 .ub-now { display: flex; flex-direction: column; gap: 2px; }
@@ -395,8 +402,8 @@ dialog::backdrop { background: rgba(2, 6, 23, .55); backdrop-filter: blur(3px); 
 /* long dialogs scroll; their buttons stay in view */
 .ub-dialog .dialog-inner > .row.end:last-child { position: sticky; bottom: -20px; margin: 0 -20px -20px; padding: 12px 20px 20px; background: var(--card); border-top: 1px solid var(--line); }
 .ub-dialog p { margin: 0; }
-.ub-dialog h3 { margin: 0; }
-.ub-dialog h4 { margin: 4px 0 0; font-size: 14px; }
+.ub-dialog h2 { margin: 0; }
+.ub-dialog h3 { margin: 4px 0 0; font-size: 14px; }
 .ub-dialog .field, .ub-card .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .ub-dialog label.btn { align-self: flex-start; }
 .ub-pass { display: flex; flex-direction: column; gap: 6px; }
@@ -428,9 +435,9 @@ input.num { width: 5.5em; flex: none !important; min-width: 0 !important; }
 
 .shares { margin-top: 12px; }
 .local-head { margin-bottom: 12px; }
-.local-head h3, .shares .row h3 { margin: 0; font-size: 15px; }
+.local-head h2, .shares .row h2 { margin: 0; font-size: 15px; }
 .local-head p { margin: 6px 0 0; }
-.shares h3 { margin: 0 0 8px; font-size: 15px; }
+.shares h2 { margin: 0 0 8px; font-size: 15px; }
 .share-row { padding: 6px 0; border-top: 1px solid var(--line); }
 #tab-setup .card + .card { margin-top: 12px; }
 /* Use phone hub (docs/phone-hub.md) */
