@@ -148,9 +148,9 @@ line's upload — the bond can't exceed either.
 
 The MTU needs care, and the numbers are not the intuitive ones. mqvpn sizes its
 QUIC packets from `PathMTU` (1400 bytes when unset), which yields a ~1382-byte
-tunnel MTU; WireGuard on the VPS adds 80 bytes, so a default setup wants ~1480
-bytes on the VPS's own uplink. A normal 1500-byte path carries that, and a
-standard `wg0` (MTU 1420) carries the 1400-byte packets themselves, so **the
+tunnel MTU. WireGuard adds 60 bytes over IPv4 (20 IP + 8 UDP + 32 WG), so
+a default setup wants ~1490 bytes end to end. A normal 1500-byte path carries it,
+and a standard `wg0` (MTU 1420) carries the 1400-byte packets themselves, so **the
 default usually needs no change**. If the VPS's uplink is smaller (PPPoE, some
 cloud paths) packets stall or the tunnel reconnects:
 
@@ -191,7 +191,8 @@ reach the VPS is still a path that's down.
 prefer the relay over putting the server on a VPS. With the relay, the VPS
 forwards the tunnel port and nothing else: the bond still terminates on your
 home server, so the internet sees your home address, your home upload is the
-ceiling, and the VPS carries only WireGuard-encrypted packets it cannot read.
+ceiling, and the VPS carries your packets, but the tunnel already encrypts them: it sees
+addresses and timing, not the traffic.
 With a server on a VPS (option 3) every site instead sees the VPS, which is
 often not what a "home server" is for.
 

@@ -48,7 +48,9 @@ only where it is needed least.
    `tailscale ping <server>` three to five times each. Phones can't run the CLI
    — the Tailscale app has no shell — so either use the app's own connection
    details for that device, or tether a laptop to the phone and ping from the
-   laptop, which exercises the same cellular path.
+   laptop. Tethering is a proxy, not the same test: Android adds its own NAT
+   hop, which can flip the result either way, so confirm on the router itself
+   before rejecting the design.
 3. Record direct vs `via DERP` and the RTT for each.
 
 If the cellular paths are DERP-only, the flagship case is gone; stop there and
@@ -157,9 +159,10 @@ shrinking, in one of three shapes:
    and it adapts when a hotel's path is worse; it needs both ends and it probes.
 3. **IPv6 inside the tunnel** — requires room for a complete 1280-byte packet,
    so `PathMTU` must be at least **1378**, or **1386** with reorder enabled.
-   `tailscale0` at 1280 cannot carry that: the client closes the connection and
-   the server refuses to start with *"IPv6 requires an inner MTU of at least
-   1280"*. Raising `tailscale0` (via `TS_DEBUG_MTU` or `ip link set`) puts
+   `tailscale0` at 1280 cannot carry that, and the failure is not one clean
+   rejection: a *configured* `PathMTU` below 1378 is refused at server startup,
+   while at runtime the path drops the oversized packets and the client closes
+   with *"IPv6 requires an inner MTU of at least 1280"*. Raising `tailscale0` (via `TS_DEBUG_MTU` or `ip link set`) puts
    ~1466-byte WireGuard packets on the underlay and exceeds Tailscale's tested
    safe wire MTU of 1360, so **treat IPv6 as out of scope for this design**.
 
