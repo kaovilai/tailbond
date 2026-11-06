@@ -120,6 +120,30 @@ func TestHealthTailscaleOffAndClientRole(t *testing.T) {
 	}
 }
 
+// With a relay every client arrives from the relay's private address: reaching
+// the server at all proves the forwarding, so the port check confirms.
+func TestNoteOutsideThroughRelay(t *testing.T) {
+	a := pairServer(t)
+	if _, err := a.store.Update(func(c *config.Config) error { c.Server.Relayed = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	// a device at home also dials the relay's public address, so it counts too
+	a.noteOutside([]status.Client{{Name: "slate7", Connected: true, Endpoint: "10.200.0.1:61000"}})
+	if a.outside == nil || a.outside.Name != "slate7" {
+		t.Fatalf("relay-fronted client not counted: %+v", a.outside)
+	}
+	in := healthInputs{Role: config.RoleServer, TS: tsInfo(t, homeStatus(), "10.66.0.0/24"), Route: "10.66.0.0/24", Port: 443,
+		Netcheck: &tailscale.Netcheck{UDP: true}, WANIP: "100.72.3.4", Relayed: true, Outside: a.outside, Now: time.Now()}
+	if c := check(t, buildHealth(in), "port"); c.Status != hOK || c.Title != "UDP 443 reached through your relay" {
+		t.Fatalf("%+v", c)
+	}
+	// nothing connected yet: say so, in relay terms
+	in.Outside = nil
+	if c := check(t, buildHealth(in), "port"); c.Status != hUnknown || c.Title != "UDP 443: not confirmed through your relay yet" {
+		t.Fatalf("%+v", c)
+	}
+}
+
 func TestNoteOutside(t *testing.T) {
 	a := pairServer(t)
 	a.noteOutside([]status.Client{{Name: "lan", Connected: true, Endpoint: "192.168.1.5:5000"}, {Name: "cg", Connected: true, Endpoint: "100.80.0.1:5000"}})

@@ -227,8 +227,16 @@ func buildHealth(in healthInputs) healthView {
 	}
 
 	if o := in.Outside; o != nil {
-		add(healthCheck{ID: "port", Status: hOK, Title: fmt.Sprintf("UDP %d reached from the internet", in.Port),
-			Detail: fmt.Sprintf("%s connected from %s, %s.", o.Name, o.IP, ago(in.Now.Sub(o.At)))})
+		if in.Relayed {
+			add(healthCheck{ID: "port", Status: hOK, Title: fmt.Sprintf("UDP %d reached through your relay", in.Port),
+				Detail: fmt.Sprintf("%s connected through the relay, %s: its forwarding works. Every device arrives from the relay, so its address here is the relay's.", o.Name, ago(in.Now.Sub(o.At)))})
+		} else {
+			add(healthCheck{ID: "port", Status: hOK, Title: fmt.Sprintf("UDP %d reached from the internet", in.Port),
+				Detail: fmt.Sprintf("%s connected from %s, %s.", o.Name, o.IP, ago(in.Now.Sub(o.At)))})
+		}
+	} else if in.Relayed {
+		add(healthCheck{ID: "port", Status: hUnknown, Title: fmt.Sprintf("UDP %d: not confirmed through your relay yet", in.Port),
+			Detail: "The first device that connects from away confirms it, and every device arrives from the relay, so its address here is the relay's. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute."})
 	} else {
 		add(healthCheck{ID: "port", Status: hUnknown, Title: fmt.Sprintf("UDP %d: not confirmed from outside yet", in.Port),
 			Detail: "It can't be checked from inside your network; the first device that connects from away confirms it. Test it now: a phone with tailbond, Wi-Fi off (on mobile data), confirms it within a minute."})
@@ -273,8 +281,14 @@ func ago(d time.Duration) string {
 	return fmt.Sprintf("%d days ago", int(d.Hours()/24))
 }
 
-// noteOutside remembers a client that connected from a public address.
+// noteOutside remembers a client that connected from a public address. With
+// server.relayed every client dials the relay's public address and arrives from
+// the relay's private tunnel address (it masquerades), so no source looks
+// public: any connected client then counts, because a device reaching this
+// server at all proves the relay forwards the port — including a device at home,
+// which also goes out through the relay.
 func (a *Agent) noteOutside(clients []status.Client) {
+	relayed := a.store.Get().Server.Relayed
 	for _, c := range clients {
 		if !c.Connected || c.Endpoint == "" {
 			continue
@@ -289,7 +303,9 @@ func (a *Agent) noteOutside(clients []status.Client) {
 		}
 		ip = ip.Unmap()
 		if isPrivate(ip) || cgnat.Contains(ip) || ip.IsUnspecified() {
-			continue
+			if !relayed {
+				continue
+			}
 		}
 		a.mu.Lock()
 		a.outside = &outsideSeen{Name: c.Name, IP: ip.String(), At: time.Now()}

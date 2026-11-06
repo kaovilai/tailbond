@@ -16,8 +16,18 @@ The ways out, simplest first:
 | 1 | A public IPv4 from your provider | A call or a small fee | Works, nothing to set up |
 | 2 | Public IPv6 | IPv6 on the home line | Works; detected by itself |
 | 3 | The server on a VPS | A small VPS | Works with what's there |
-| 4 | Home server, tunnel port relayed through a VPS | A small VPS and WireGuard | Works in principle; recipe below, `server.relayed` |
+| 4 | Home server, tunnel port relayed through a VPS | A small VPS and WireGuard | **Recommended for CGNAT today**; design below, `server.relayed`, works without tailbond changes |
 | 5 | Hole punching between the devices and the home server | Changes to mqvpn | Not implemented |
+| 6 | One `tailscaled` per internet connection, each tun an mqvpn path | Network namespaces on the router, N+1 tailnet devices | Researched, not built; [design note](design-tailscaled-per-connection.md) — deferred in favour of 4 |
+
+**Which way.** Ask the provider for a public address first (1): it is free or
+cheap and changes nothing else. If that fails, IPv6 (2) needs no work when the
+home line has it. Only then choose between a server on a VPS (3) and the relay
+(4): the relay keeps the server, its pairings and its state where they are,
+and needs no tailbond changes, so it is the default answer. The per-connection
+Tailscale design (6) solves the same problem without a VPS but adds a
+namespace, a device and a relayed-path problem per WAN; the research is in the
+[design note](design-tailscaled-per-connection.md), and it is deferred.
 
 ## 1 and 2: a public address
 
@@ -65,16 +75,22 @@ your Tailscale machines (including one at home) through it.
 
 The home server opens a WireGuard tunnel **out** to a VPS (outbound traffic
 passes carrier-grade NAT), and the VPS forwards the tunnel port into it.
-Devices connect to the VPS's address; the home server answers. Internet
-traffic still leaves from home.
+Devices connect to the VPS's address; the home server answers. Internet traffic
+still leaves from home, through the bond, with your home IP.
 
-This is a recipe, not a tested feature: tailbond doesn't install or manage the
-relay. Example addresses: `10.200.0.1` (VPS) and `10.200.0.2` (home) on a
-`wg0` between them; replace `eth0` with the VPS's internet interface and
-`203.0.113.10` with its public address.
+This is the recommended way out of CGNAT short of getting a public address. It
+needs no tailbond code: the relay is a WireGuard tunnel plus forwarding rules
+on a box you rent. tailbond doesn't install or manage it. Example addresses:
+`10.200.0.1` (VPS) and `10.200.0.2` (home) on a `wg0` between them; `eth0` is
+the VPS's internet interface and `203.0.113.10` its public address.
 
-**On the VPS** (WireGuard set up as usual, `PersistentKeepalive` on the home
-side; allow UDP 443 in the provider's firewall too):
+**On the VPS.** WireGuard between the two ends as usual, with
+`PersistentKeepalive = 25` on the home side (the home end starts the tunnel, so
+the mapping stays open) and **`ListenPort = 51820`, not 443**: the rules below
+redirect every UDP 443 packet that arrives on `eth0`, which would swallow
+WireGuard's own handshakes and leave the relay unable to come up. Open 51820 in
+the provider's firewall as well as 443 — a cloud security group that drops
+either looks exactly like a broken relay. Then forward the tunnel port:
 
 ```sh
 sysctl -w net.ipv4.ip_forward=1
@@ -85,13 +101,13 @@ iptables -A FORWARD -i wg0 -o eth0 -m conntrack --ctstate ESTABLISHED,RELATED -j
 ```
 
 The `MASQUERADE` rule makes replies come back through `wg0` with no policy
-routing at home. The cost: the home server sees every device as the VPS, so
-its logs don't show real addresses.
+routing at home.
 
-**At home:** allow UDP 443 **in** on the WireGuard interface (tailbond's
-firewall rules cover the `wan` zone or the default route's zone only: add the
-interface to a zone that allows UDP 443, or a rule of your own). Then, in
-`/etc/tailbond/tailbond.json` `server` (GL.iNet UCI: `config server`):
+**At home.** Allow UDP 443 **in** on the WireGuard interface: tailbond's own
+firewall rules cover the `wan` zone, or the default route's zone, only. Either
+put `wg0` in a zone that allows UDP 443 or add the rule yourself. Then point
+tailbond at the relay in `/etc/tailbond/tailbond.json` `server` (GL.iNet UCI:
+`config server`):
 
 ```json
 "public_addr": "203.0.113.10:443",
@@ -103,12 +119,128 @@ option public_addr '203.0.113.10:443'
 option relayed '1'
 ```
 
-`relayed` makes Setup health stop checking the home line's own address. Devices
-already paired fetch the new address over Tailscale by themselves.
+`relayed` makes Setup health stop checking the home line's own address, which
+can never pass behind CGNAT, and changes the port check's wording: a device
+will arrive from the relay's private address, so "reached from the internet"
+isn't a thing it can see — the first device that connects through the relay
+confirms **UDP 443 reached through your relay** instead.
 
-Know before you rely on it: every packet takes the detour through the VPS,
-so latency and the usable bandwidth are bounded by the VPS and by home's
-upload. If large packets stall, lower the WireGuard `MTU`.
+Devices re-learn the new address on their own schedule, not instantly. Routers,
+Macs and Linux boxes fetch their refreshed pairing from the server's Tailscale
+name every 6 hours, and immediately once every server has been unreachable for
+about 2 minutes. **Phones don't do that in the background**: the app re-asks when
+it is open (the server re-issues the same credential), or you scan the pairing
+link again. A phone that keeps trying the old address after you switch to a
+relay is expected — open the app, or re-scan.
+
+**Verify it.** Opening the dashboard proves nothing on its own — it is a
+Tailscale HTTP request, not a tunnel client. What confirms the relay is a
+**paired device actually connecting and passing traffic**: put one on mobile
+data (Wi-Fi off) and let it connect, then read the dashboard's Setup tab from
+there (it should say *UDP 443 reached through your relay*), watch
+`conntrack -L -p udp --dport 443` on the VPS, and confirm a download works. On the
+VPS, `conntrack -L -p udp --dport 443` shows the flow, and
+`tcpdump -ni wg0 udp port 443` shows it arriving at the home end.
+
+**Sizing and MTU.** Every packet takes the detour, so throughput is bounded by
+the VPS's bandwidth (its egress is billed on most providers) and by the home
+line's upload — the bond can't exceed either.
+
+The MTU needs care, and the numbers are not the intuitive ones. mqvpn sizes its
+QUIC packets from `PathMTU` (1400 bytes when unset), which yields a ~1382-byte
+tunnel MTU. WireGuard adds 60 bytes over IPv4 (20 IP + 8 UDP + 32 WG), so
+a default setup wants ~1490 bytes end to end. A normal 1500-byte path carries it,
+and a standard `wg0` (MTU 1420) carries the 1400-byte packets themselves, so **the
+default usually needs no change**. If the VPS's uplink is smaller (PPPoE, some
+cloud paths) packets stall or the tunnel reconnects:
+
+- **tailbond can only lower the client's cap today.** `client.mtu` (default
+  1280) caps the tunnel MTU; mqvpn accepts 0 or 1280–9000 and rejects anything
+  smaller, so 1280 is the floor, not a fine adjustment. On a GL.iNet / OpenWrt
+  router set `option mtu '1280'` in `config client`; on a Linux or Mac bundle
+  set `"mtu": 1280` in the `client` section of `/etc/tailbond/tailbond.json`.
+  Do **not** edit the generated `mqvpn.conf`: tailbond rewrites it at every
+  start.
+- **The server's side is fixed.** The server renders no `MTU` and no
+  `PathMTU`, so its TUN stays at mqvpn's 1382 and it answers oversized packets
+  with ICMP "packet too big" so the *senders* on your LAN shrink. That is not a
+  substitute for fixing the outer path.
+- **The real knob is `PathMTU`, and tailbond doesn't expose it yet** (a gap
+  worth an issue). Until it does, the durable workaround is on the VPS: keep
+  `wg0`'s MTU at or above the inner packet size and make sure the VPS's own
+  uplink carries WireGuard's overhead — lower the *VPS's* WireGuard MTU only if
+  its underlay is the smaller hop, never the tailbond tunnel's.
+
+None of this changes the IPv6 rule: an IPv6 tunnel needs room for a complete
+1280-byte packet, so a path that can't carry ~1378 bytes end to end can't do
+IPv6 inside the bond at all.
+
+**What it costs you.** The home server sees every device as the VPS, so its
+logs, its per-device data accounting and its "who is connected" view lose the
+real addresses (pairing and approval still work — they run over Tailscale,
+which is unaffected). The VPS is a single point of failure and a monthly cost
+(a few dollars; more if the traffic is heavy). And it is a detour: a direct
+public address, if you can get one, is always better.
+
+**What it does not fix.** The relay only carries the tunnel port. Nothing else
+on the home server becomes reachable from the internet, and the bond's paths
+still all end at the VPS — the relay is one address, so a path that can't
+reach the VPS is still a path that's down.
+
+**Where the traffic exits — the relay keeps it at home.** This is the reason to
+prefer the relay over putting the server on a VPS. With the relay, the VPS
+forwards the tunnel port and nothing else: the bond still terminates on your
+home server, so the internet sees your home address, your home upload is the
+ceiling, and the VPS carries your packets, but the tunnel already encrypts them: it sees
+addresses and timing, not the traffic.
+With a server on a VPS (option 3) every site instead sees the VPS, which is
+often not what a "home server" is for.
+
+| Way | Bond terminates on | Internet sees |
+|---|---|---|
+| 3: server on a VPS | the VPS | the VPS's address |
+| 4: relay | your home server | **your home address** |
+| 6: one tailscaled per connection | your home server | your home address |
+
+Two settings can quietly turn the relay into an exit node, and neither is
+needed:
+
+- **Do not set the VPS as a Tailscale exit node**, and do not enable an exit
+  node on the home server "to make the relay work". Tailscale exit nodes move
+  a device's traffic to the node's own internet line; with the relay the
+  traffic already leaves from home, through the bond, and an exit node would
+  route around it.
+- **Do not route the home server's default route through the WireGuard
+  interface.** Only the inbound DNAT needs the tunnel; a default route over
+  `wg0` sends every packet your server originates to the VPS first, so anything
+  the server fetches would leave from the VPS. The four rules above touch
+  `PREROUTING` for the tunnel port, `POSTROUTING` for that one destination, and
+  `FORWARD` between the two interfaces — no default route.
+
+**Verify it in one command.** From a device paired through the bond, fetch an
+address echo service: `curl -s https://icanhazip.com` must print your **home**
+line's public address, not the VPS's. Do it with the VPS's own address handy
+to compare. If it prints the VPS, the home server's default route or an exit
+node is involved — find it before relying on the setup.
+
+**The variant to avoid: a VPS that terminates the bond and forwards egress
+home.** The other way to get "public edge, home exit" is to run the mqvpn
+server on the VPS (accepting bound paths), then send all of its egress through
+WireGuard to a home box that NATs it out — or, equivalently, to make home a
+Tailscale exit node for the VPS. It works, and it is worse than the relay on
+every axis that matters:
+
+- every byte crosses the internet twice (device → VPS → home → internet), so
+  latency is the sum of both legs;
+- the ceiling becomes the **home line's upload**, which now carries all user
+  traffic *and* the extra hop, where the relay caps only the tunnel's
+  throughput;
+- it needs mqvpn on the VPS (another machine to run, patch and monitor) plus a
+  second NAT, and the home box must stay reachable from the VPS at all times;
+- the VPS does see plaintext after terminating the bond, which the relay never
+  does.
+
+The relay already gives you home egress without any of that.
 
 ## 5: hole punching
 
@@ -121,4 +253,4 @@ a new mapping per destination (common on mobile networks) defeats it.
 [RFC 5128](https://www.rfc-editor.org/rfc/rfc5128.html) describes the
 limits, and a [measurement of IPFS hole punching](https://arxiv.org/abs/2604.12484)
 saw about 83% success against port-restricted cone NATs and about 40%
-against symmetric ones. Use 1 to 4.
+against symmetric ones. Use 1 to 4; option 6 is researched but deferred.
