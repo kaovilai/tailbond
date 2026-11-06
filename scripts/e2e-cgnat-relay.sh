@@ -33,7 +33,16 @@ ok() { printf '  PASS %s\n' "$*"; PASS=$((PASS + 1)); }
 bad() { printf '  FAIL %s\n' "$*"; FAIL=$((FAIL + 1)); }
 say() { printf '==> %s\n' "$*"; }
 cleanup() {
-	for n in $NS_CLI $NS_VPS $NS_CG $NS_HOME; do ip netns del "$n" 2>/dev/null || true; done
+	# deleting a netns does not stop the processes in it: kill this run's
+	# agents and listeners first, or they linger and hold the namespace alive
+	for n in $NS_CLI $NS_VPS $NS_CG $NS_HOME; do
+		ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null || true
+	done
+	sleep 1
+	for n in $NS_CLI $NS_VPS $NS_CG $NS_HOME; do
+		ip netns pids "$n" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+		ip netns del "$n" 2>/dev/null || true
+	done
 	rm -rf "$W"
 }
 trap cleanup EXIT
@@ -61,14 +70,33 @@ ip -n $NS_HOME route add default via 100.64.0.1
 
 say "the carrier blocks inbound (that is the CGNAT the relay exists for)"
 ip netns exec $NS_CG sysctl -qw net.ipv4.ip_forward=1
+ip netns exec $NS_VPS sysctl -qw net.ipv4.ip_forward=1
 ip netns exec $NS_CG iptables -t nat -A POSTROUTING -o cg1 -s 100.64.0.0/24 -j MASQUERADE
 ip netns exec $NS_CG iptables -A FORWARD -i cg2 -o cg1 -j ACCEPT
 ip netns exec $NS_CG iptables -A FORWARD -i cg1 -o cg2 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+# something to probe: the check only means anything against a live listener
+cat >"$W/listen.py" <<PY
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", int(sys.argv[1]))); s.listen(8); s.settimeout(30)
+while True:
+    try: c, _ = s.accept()
+    except socket.timeout: break
+    c.send(b"ok"); c.close()
+PY
+ip netns exec $NS_HOME python3 "$W/listen.py" 8077 &
+LISTEN=$!
+sleep 1
+# positive control: with no inbound filter, the carrier forwards to home
+ip netns exec $NS_CLI timeout 3 bash -c ': >/dev/tcp/100.64.0.2/8077' 2>/dev/null \
+	&& ok "the path to home works before the carrier filters it" || bad "no path to home at all"
 ip netns exec $NS_CG iptables -A FORWARD -i cg1 -o cg2 -j DROP
 ip netns exec $NS_CG iptables -A FORWARD -i cg2 -o cg2 -j DROP
 ip netns exec $NS_CLI timeout 3 nc -zu -w1 100.64.0.2 443 >/dev/null 2>&1
 ! ip netns exec $NS_CLI timeout 3 bash -c ': >/dev/tcp/100.64.0.2/8077' 2>/dev/null \
 	&& ok "home is unreachable from the internet" || bad "home answered directly"
+kill "$LISTEN" 2>/dev/null || true
+wait "$LISTEN" 2>/dev/null || true
 ip netns exec $NS_CLI ping -c1 -W1 203.0.113.10 >/dev/null && ok "the VPS is reachable" || bad "no route to the VPS"
 
 say "WireGuard: home dials out to the VPS on 51820 (never 443, the DNAT owns it)"
@@ -89,7 +117,6 @@ hs=$(ip netns exec $NS_VPS wg show wg0 latest-handshakes | awk '{print $2}')
 [ "${hs:-0}" != 0 ] && ok "handshake over UDP 51820 (through the carrier NAT)" || bad "no WireGuard handshake"
 
 say "the VPS forwards udp/443 into home over wg0"
-ip netns exec $NS_VPS sysctl -qw net.ipv4.ip_forward=1
 ip netns exec $NS_VPS iptables -t nat -A PREROUTING -i vps1 -p udp --dport 443 -j DNAT --to-destination 10.200.0.2:443
 ip netns exec $NS_VPS iptables -t nat -A POSTROUTING -o wg0 -p udp -d 10.200.0.2 --dport 443 -j MASQUERADE
 ip netns exec $NS_VPS iptables -A FORWARD -i vps1 -o wg0 -p udp -d 10.200.0.2 --dport 443 -j ACCEPT
