@@ -76,6 +76,16 @@ jobs:
           fi
           echo "last=${last:-none} next=$next"
           echo "tag=$next" >> "$GITHUB_OUTPUT"
+          # A docs-only merge cuts no release: CI skipped the heavy jobs for it,
+          # so a tag would build and publish a full release for a text change.
+          # The next merge that touches code carries the docs along.
+          if [ -n "$last" ] && [ "${{ github.event_name }}" != workflow_dispatch ]; then
+            changed=$(git diff --name-only "$last..HEAD")
+            if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE '^(docs/.*|[^/]*\.(md|txt)|LICENSE|NOTICE)$'; then
+              echo "docs-only since $last: no release"
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+            fi
+          fi
       - name: Tag and start the release build
         if: steps.v.outputs.skip != '1'
         env:
