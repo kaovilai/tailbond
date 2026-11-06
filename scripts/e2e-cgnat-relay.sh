@@ -115,7 +115,7 @@ ip netns exec $NS_HOME curl -fsS -m 3 http://127.0.0.1:8077/api/hello | grep -q 
 say "a device pairs and connects to the VPS address (never to home)"
 sapi() { ip netns exec $NS_HOME curl -fsS -m 5 "$@"; }
 URI="$(sapi -X POST -H 'Content-Type: application/json' -d '{"name":"phone"}' http://127.0.0.1:8077/api/clients | jq -r .uri)"
-[ "${#URI}" -gt 40 ] && ok "pairing issued" || bad "no pairing: $URI"
+[ "${#URI}" -gt 40 ] && ok "pairing issued" || bad "no pairing (got ${#URI} chars, expected a tailbond:// URI)"
 mkdir -p "$W/cli/state"
 cat >"$W/cli/tailbond.json" <<JSON
 {"role": "client", "mqvpn_bin": "${MQVPN:-/usr/bin/mqvpn}", "state_dir": "$W/cli/state", "hooks_dir": "$W/hooks",
