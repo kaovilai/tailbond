@@ -248,6 +248,14 @@ uci set tailbond.client.mtu=1340 && uci commit tailbond
 uci delete tailbond.client.mtu && uci commit tailbond
 /usr/lib/tailbond/render-config --force
 [ -z "$(jsonfilter -i $J -e '@.client.mtu' 2>/dev/null)" ] && ok "no mtu set: mqvpn's default" || bad "mtu left behind"
+uci set tailbond.client.mtu=1200 && uci commit tailbond
+if /usr/lib/tailbond/render-config --force 2>/tmp/mtu-err.txt; then
+	bad "client.mtu=1200 accepted (mqvpn would ignore it)"
+else
+	ok "client.mtu below 1280 is refused: $(head -1 /tmp/mtu-err.txt)"
+fi
+uci delete tailbond.client.mtu && uci commit tailbond
+/usr/lib/tailbond/render-config --force
 [ "$(jsonfilter -i $J -e '@.client.bypass_mark_mask')" = 0x07000000 ] && ok "bypass_mark_mask from UCI" || bad "mark mask"
 uci add tailbond bypass >/dev/null && uci set tailbond.@bypass[-1].kind=port && uci set tailbond.@bypass[-1].match=udp/4500 \
 	&& uci set tailbond.@bypass[-1].target=wan && uci set tailbond.@bypass[-1].wan=wwan && uci commit tailbond

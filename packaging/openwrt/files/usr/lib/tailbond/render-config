@@ -211,7 +211,21 @@ render() {
 	# a relayed setup on a 1280-underlay uplink is where this matters.
 	local mtu
 	mtu="$(cfg client.mtu)"
-	[ -n "$mtu" ] && json_add_int mtu "$mtu"
+	if [ -n "$mtu" ]; then
+		case "$mtu" in
+		0) ;;
+		*[!0-9]*)
+			echo "tailbond: client.mtu must be a number (got $mtu)" >&2; return 1 ;;
+		*)
+			# mqvpn accepts 0 or 1280-9000. A smaller value is ignored by it, so
+			# the cap the user asked for silently disappears.
+			if [ "$mtu" -lt 1280 ]; then
+				echo "tailbond: client.mtu is the tunnel MTU, 1280 or more (got $mtu); leave it unset for mqvpn's default" >&2
+				return 1
+			fi
+			json_add_int mtu "$mtu" ;;
+		esac
+	fi
 	local urls
 	urls="$(cfg client.captive_probe_url)"
 	if [ -n "$urls" ]; then
