@@ -240,6 +240,14 @@ J=/etc/tailbond/tailbond.json
 	&& [ "$(jsonfilter -i $J -e '@.client.failover.failback_after_sec')" = 300 ] && ok "servers + failover kept" || { bad "servers"; cat $J; }
 [ "$(jsonfilter -i $J -e '@.client.bypass[0].match')" = bank.example ] && [ "$(jsonfilter -i $J -e '@.client.bypass[1].target')" = tunnel ] \
 	&& ok "panel bypass rules kept" || bad "bypass kept"
+# the tunnel MTU is a UCI option; without it a relayed router can't shrink the
+# tunnel under a 1280-byte uplink path.
+uci set tailbond.client.mtu=1340 && uci commit tailbond
+/usr/lib/tailbond/render-config --force
+[ "$(jsonfilter -i $J -e '@.client.mtu')" = 1340 ] && ok "client.mtu reaches the config" || bad "mtu dropped: $(jsonfilter -i $J -e '@.client')"
+uci delete tailbond.client.mtu && uci commit tailbond
+/usr/lib/tailbond/render-config --force
+[ -z "$(jsonfilter -i $J -e '@.client.mtu' 2>/dev/null)" ] && ok "no mtu set: mqvpn's default" || bad "mtu left behind"
 [ "$(jsonfilter -i $J -e '@.client.bypass_mark_mask')" = 0x07000000 ] && ok "bypass_mark_mask from UCI" || bad "mark mask"
 uci add tailbond bypass >/dev/null && uci set tailbond.@bypass[-1].kind=port && uci set tailbond.@bypass[-1].match=udp/4500 \
 	&& uci set tailbond.@bypass[-1].target=wan && uci set tailbond.@bypass[-1].wan=wwan && uci commit tailbond

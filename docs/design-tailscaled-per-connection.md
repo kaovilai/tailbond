@@ -44,9 +44,11 @@ only where it is needed least.
 ## The experiment that decides it (about an hour, no code)
 
 1. On the server: `tailscale netcheck --json`, record `MappingVariesByDestIP`.
-2. From a node on the Wi-Fi/Ethernet side, and from a node on cellular (a phone
-   with Tailscale, or a laptop tethered to one): `tailscale ping <server>` three
-   to five times each per WAN type.
+2. From a node on the Wi-Fi/Ethernet side, and from a node on cellular,
+   `tailscale ping <server>` three to five times each. Phones can't run the CLI
+   — the Tailscale app has no shell — so either use the app's own connection
+   details for that device, or tether a laptop to the phone and ping from the
+   laptop, which exercises the same cellular path.
 3. Record direct vs `via DERP` and the RTT for each.
 
 If the cellular paths are DERP-only, the flagship case is gone; stop there and
@@ -86,8 +88,42 @@ and mqvpn reaches the server by literal `100.y`, so MagicDNS isn't needed.
 In the main namespace, mqvpn runs once with the pairing's server address set to
 the server's `100.y`, one path per veth, and per-path metric routes
 (`ip route add 100.y/32 via 10.99.N.2 dev tbvN metric N`) so the FIB-match gate
-passes for that device. Masquerade each veth subnet out its WAN — tailbond
-already builds per-WAN tables for bypass rules.
+passes for that device.
+
+Getting each veth's traffic out of the **right** WAN is explicit work, not
+something the existing tables do for you: tailbond's per-WAN tables are keyed by
+fwmark (`packaging/openwrt/hooks/bypass-apply`), and a packet arriving from a
+netns carries no mark. Per WAN, add a source-based rule and table, plus SNAT
+bound to that interface:
+
+```sh
+ip rule add from 10.99.N.0/30 lookup tbwanN priority 1000+N
+ip route add default via <WAN N gateway> dev <WAN N device> table tbwanN
+iptables -t nat -A POSTROUTING -s 10.99.N.0/30 -o <WAN N device> -j MASQUERADE
+```
+
+The veth end in the main namespace needs a route back into the namespace
+(`ip route add 10.99.N.0/30 dev tbvN`), and the WAN device must not be a member
+of a zone that drops unmanaged forwarding.
+
+**Keep the paths from falling back onto each other.** A `lookup` rule whose
+table has no matching route continues to the next rule and ends at `main`, so a
+per-WAN table that loses its default (link down, DHCP lease gone, uplink
+switched to a different WAN) quietly sends that path out another WAN — the bond
+then has two paths on one uplink and none on the intended one, and nothing in
+the UI says so. Give every per-WAN table a blackhole default with a worse
+metric, so a missing route drops instead of leaking:
+
+```sh
+ip route add blackhole default table tbwanN metric 1000
+```
+
+Then a path whose WAN is down fails to send, which is what a path is supposed
+to do. The same rule applies to the namespace side: its only route is the veth,
+so it cannot pick another uplink by accident. When a WAN is DHCP or a repeater
+uplink, its gateway and device change: the rules must be rewritten from the
+same events that reconfigure that uplink, which is where most of this design's
+maintenance cost sits.
 
 **The SNAT inside each namespace is not cosmetic.** WireGuard's cryptokey
 routing drops a packet whose source isn't in the peer's AllowedIPs, so a packet
@@ -103,26 +139,42 @@ opens only the WAN zone), and an MTU/PathMTU setting.
 ## MTU: the concrete engineering blocker
 
 `tailscale0` is 1280 by default. With DF set the largest IPv4 UDP payload it
-carries is 1252 bytes; WireGuard's worst case adds 80. That leaves an mqvpn
-inner of 1182 (1174 with the reorder header) — **below mqvpn's 1280 floor**, so
-mqvpn refuses, and IPv6 is impossible (`IPv6 requires an inner MTU of at least
-1280`). Three shapes exist:
+carries is 1252 bytes; WireGuard's worst case adds 80. mqvpn's own defaults are
+larger than that — `PathMTU` unset means 1400-byte QUIC packets, which yield a
+~1382-byte tunnel MTU — so on a tailnet path the outer packets are what need
+shrinking, in one of three shapes:
 
-1. **IPv4-only inner at 1182** — set `PathMTU=1280` on both ends, leave `MTU`
-   unset so mqvpn's auto value follows it, drop `Subnet6` for these
-   deployments. Clean, no fragmentation, about 14.5% less payload than a
-   1500-uplink bond. The recommended shape if this is ever built.
-2. **IPv6 with fragmentation** — today's config (no `PathMTU`): mqvpn
-   negotiates ~1382-byte QUIC packets and `tailscale0` fragments every
-   full-size one, with GSO falling back. Works, costs throughput and CPU.
-3. **Raise `tailscale0` to ~1386** so a 1280 inner fits — needs `TS_DEBUG_MTU`
-   or `ip link set`, puts ~1466-byte WireGuard packets on the underlay, and
-   exceeds Tailscale's tested safe wire MTU of 1360.
+1. **IPv4-only, sized to fit** — set `PathMTU = 1280` on both ends. mqvpn then
+   emits 1216-byte QUIC packets and derives an inner MTU near 1198, under the
+   path's 1252, so nothing fragments. mqvpn accepts a configured `PathMTU` of
+   1280 (its validator takes 0 or 1280–9000), and an **IPv4-only** tunnel may
+   run below 1280 — that is documented behaviour, not a workaround. Drop
+   `Subnet6` for these deployments. The cost is roughly 14.5% less payload than
+   a 1500-uplink bond. This is the shape to build.
+2. **IPv4-only with `PMTUD = true` on both ends** — mqvpn starts at the size
+   that gives a 1280 inner, steps down to QUIC's 1200-byte minimum if the path
+   is smaller, and searches upward. Same outcome without hard-coding a number,
+   and it adapts when a hotel's path is worse; it needs both ends and it probes.
+3. **IPv6 inside the tunnel** — requires room for a complete 1280-byte packet,
+   so `PathMTU` must be at least **1378**, or **1386** with reorder enabled.
+   `tailscale0` at 1280 cannot carry that: the client closes the connection and
+   the server refuses to start with *"IPv6 requires an inner MTU of at least
+   1280"*. Raising `tailscale0` (via `TS_DEBUG_MTU` or `ip link set`) puts
+   ~1466-byte WireGuard packets on the underlay and exceeds Tailscale's tested
+   safe wire MTU of 1360, so **treat IPv6 as out of scope for this design**.
+
+Two corrections worth keeping in mind, because both were wrong in the first
+draft of this note: mqvpn's 1280 floor applies to the *configured* `MTU` and
+`PathMTU`, not to what a connection negotiates (IPv4-only can end up below it);
+and the server's TUN MTU does **not** follow `PathMTU` — the server sets its TUN
+once at startup (1382 by default, or its configured `MTU`) and answers oversized
+packets with ICMP "packet too big" so the inner senders shrink.
 
 `PathMTU` is connection-wide, so a bond mixing a 1500-underlay direct path with
-1280 tailnet paths is sized for the smaller. Tailbond writes no `PathMTU`
-anywhere today; adding it to `mqconf.Client` and `mqconf.Server` is required
-either way.
+1280 tailnet paths is sized for the smaller. Tailbond writes no `PathMTU` and no
+`PMTUD` anywhere today, and its client `MTU` (default 1280) is only a cap that
+cannot go below the validator's floor; adding `PathMTU`/`PMTUD` to
+`mqconf.Client` and `mqconf.Server` is required for shape 1 or 2.
 
 ## Costs
 

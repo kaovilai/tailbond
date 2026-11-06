@@ -207,6 +207,11 @@ render() {
 	# Routing, NAT and the kill switch belong to the OpenWrt hooks.
 	json_add_boolean manage_routes 0
 	json_add_boolean captive_portal_detect "$(bool "$(cfg_or client.captive_portal_detect 1)")"
+	# Tunnel MTU (agent/internal/config Client.MTU). Unset means mqvpn's default;
+	# a relayed setup on a 1280-underlay uplink is where this matters.
+	local mtu
+	mtu="$(cfg client.mtu)"
+	[ -n "$mtu" ] && json_add_int mtu "$mtu"
 	local urls
 	urls="$(cfg client.captive_probe_url)"
 	if [ -n "$urls" ]; then

@@ -86,9 +86,11 @@ the VPS's internet interface and `203.0.113.10` its public address.
 
 **On the VPS.** WireGuard between the two ends as usual, with
 `PersistentKeepalive = 25` on the home side (the home end starts the tunnel, so
-the mapping stays open). Then forward the tunnel port, and allow UDP 443 in the
-provider's own firewall as well — a cloud security group that drops it looks
-exactly like a broken relay:
+the mapping stays open) and **`ListenPort = 51820`, not 443**: the rules below
+redirect every UDP 443 packet that arrives on `eth0`, which would swallow
+WireGuard's own handshakes and leave the relay unable to come up. Open 51820 in
+the provider's firewall as well as 443 — a cloud security group that drops
+either looks exactly like a broken relay. Then forward the tunnel port:
 
 ```sh
 sysctl -w net.ipv4.ip_forward=1
@@ -118,22 +120,60 @@ option relayed '1'
 ```
 
 `relayed` makes Setup health stop checking the home line's own address, which
-can never pass behind CGNAT. Devices already paired fetch the new address over
-Tailscale by themselves; a new device pairs as usual.
+can never pass behind CGNAT, and changes the port check's wording: a device
+will arrive from the relay's private address, so "reached from the internet"
+isn't a thing it can see — the first device that connects through the relay
+confirms **UDP 443 reached through your relay** instead.
 
-**Verify it.** From outside the home network, with a phone on mobile data
-(Wi-Fi off), open the dashboard's Setup tab: it should show the tunnel port
-reachable, and a paired device should connect with the VPS as its peer. On the
+Devices re-learn the new address on their own schedule, not instantly. Routers,
+Macs and Linux boxes fetch their refreshed pairing from the server's Tailscale
+name every 6 hours, and immediately once every server has been unreachable for
+about 2 minutes. **Phones don't do that in the background**: the app re-asks when
+it is open (the server re-issues the same credential), or you scan the pairing
+link again. A phone that keeps trying the old address after you switch to a
+relay is expected — open the app, or re-scan.
+
+**Verify it.** Opening the dashboard proves nothing on its own — it is a
+Tailscale HTTP request, not a tunnel client. What confirms the relay is a
+**paired device actually connecting and passing traffic**: put one on mobile
+data (Wi-Fi off) and let it connect, then read the dashboard's Setup tab from
+there (it should say *UDP 443 reached through your relay*), watch
+`conntrack -L -p udp --dport 443` on the VPS, and confirm a download works. On the
 VPS, `conntrack -L -p udp --dport 443` shows the flow, and
 `tcpdump -ni wg0 udp port 443` shows it arriving at the home end.
 
 **Sizing and MTU.** Every packet takes the detour, so throughput is bounded by
 the VPS's bandwidth (its egress is billed on most providers) and by the home
-line's upload — the bond can't exceed either. WireGuard's overhead sits on top
-of the tunnel's own: if large packets stall or the dashboard shows reconnects,
-lower `MTU` in the mqvpn config on both ends (1382 → 1340 is the first thing to
-try for a `wg0` with MTU 1420), and lower the WireGuard `MTU` on the VPS side
-if the underlay is PPPoE.
+line's upload — the bond can't exceed either.
+
+The MTU needs care, and the numbers are not the intuitive ones. mqvpn sizes its
+QUIC packets from `PathMTU` (1400 bytes when unset), which yields a ~1382-byte
+tunnel MTU; WireGuard on the VPS adds 80 bytes, so a default setup wants ~1480
+bytes on the VPS's own uplink. A normal 1500-byte path carries that, and a
+standard `wg0` (MTU 1420) carries the 1400-byte packets themselves, so **the
+default usually needs no change**. If the VPS's uplink is smaller (PPPoE, some
+cloud paths) packets stall or the tunnel reconnects:
+
+- **tailbond can only lower the client's cap today.** `client.mtu` (default
+  1280) caps the tunnel MTU; mqvpn accepts 0 or 1280–9000 and rejects anything
+  smaller, so 1280 is the floor, not a fine adjustment. On a GL.iNet / OpenWrt
+  router set `option mtu '1280'` in `config client`; on a Linux or Mac bundle
+  set `"mtu": 1280` in the `client` section of `/etc/tailbond/tailbond.json`.
+  Do **not** edit the generated `mqvpn.conf`: tailbond rewrites it at every
+  start.
+- **The server's side is fixed.** The server renders no `MTU` and no
+  `PathMTU`, so its TUN stays at mqvpn's 1382 and it answers oversized packets
+  with ICMP "packet too big" so the *senders* on your LAN shrink. That is not a
+  substitute for fixing the outer path.
+- **The real knob is `PathMTU`, and tailbond doesn't expose it yet** (a gap
+  worth an issue). Until it does, the durable workaround is on the VPS: keep
+  `wg0`'s MTU at or above the inner packet size and make sure the VPS's own
+  uplink carries WireGuard's overhead — lower the *VPS's* WireGuard MTU only if
+  its underlay is the smaller hop, never the tailbond tunnel's.
+
+None of this changes the IPv6 rule: an IPv6 tunnel needs room for a complete
+1280-byte packet, so a path that can't carry ~1378 bytes end to end can't do
+IPv6 inside the bond at all.
 
 **What it costs you.** The home server sees every device as the VPS, so its
 logs, its per-device data accounting and its "who is connected" view lose the
