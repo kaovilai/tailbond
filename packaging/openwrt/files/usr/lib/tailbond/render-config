@@ -223,6 +223,12 @@ render() {
 				echo "tailbond: client.mtu is the tunnel MTU, 1280 or more (got $mtu); leave it unset for mqvpn's default" >&2
 				return 1
 			fi
+			max=9000
+			[ "$(keep main.mode @.mode speed)" = speed ] && max=8992
+			if [ "$mtu" -gt "$max" ]; then
+				echo "tailbond: client.mtu is at most $max here (got $mtu)" >&2
+				return 1
+			fi
 			json_add_int mtu "$mtu" ;;
 		esac
 	fi

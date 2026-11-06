@@ -254,6 +254,16 @@ if /usr/lib/tailbond/render-config --force 2>/tmp/mtu-err.txt; then
 else
 	ok "client.mtu below 1280 is refused: $(head -1 /tmp/mtu-err.txt)"
 fi
+uci set tailbond.client.mtu=8993 && uci commit tailbond
+if /usr/lib/tailbond/render-config --force 2>/dev/null; then
+	bad "mtu 8993 accepted in Speed (mqconf would send 9001)"
+else
+	ok "mtu above the Speed limit is refused"
+fi
+uci set tailbond.client.mtu=8992 && uci commit tailbond
+/usr/lib/tailbond/render-config --force &&
+	[ "$(jsonfilter -i /etc/tailbond/tailbond.json -e '@.client.mtu')" = 8992 ] &&
+	ok "mtu at the Speed limit is accepted" || bad "mtu 8992"
 uci delete tailbond.client.mtu && uci commit tailbond
 /usr/lib/tailbond/render-config --force
 [ "$(jsonfilter -i $J -e '@.client.bypass_mark_mask')" = 0x07000000 ] && ok "bypass_mark_mask from UCI" || bad "mark mask"
