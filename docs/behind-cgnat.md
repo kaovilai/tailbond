@@ -147,6 +147,60 @@ on the home server becomes reachable from the internet, and the bond's paths
 still all end at the VPS — the relay is one address, so a path that can't
 reach the VPS is still a path that's down.
 
+**Where the traffic exits — the relay keeps it at home.** This is the reason to
+prefer the relay over putting the server on a VPS. With the relay, the VPS
+forwards the tunnel port and nothing else: the bond still terminates on your
+home server, so the internet sees your home address, your home upload is the
+ceiling, and the VPS carries only WireGuard-encrypted packets it cannot read.
+With a server on a VPS (option 3) every site instead sees the VPS, which is
+often not what a "home server" is for.
+
+| Way | Bond terminates on | Internet sees |
+|---|---|---|
+| 3: server on a VPS | the VPS | the VPS's address |
+| 4: relay | your home server | **your home address** |
+| 6: one tailscaled per connection | your home server | your home address |
+
+Two settings can quietly turn the relay into an exit node, and neither is
+needed:
+
+- **Do not set the VPS as a Tailscale exit node**, and do not enable an exit
+  node on the home server "to make the relay work". Tailscale exit nodes move
+  a device's traffic to the node's own internet line; with the relay the
+  traffic already leaves from home, through the bond, and an exit node would
+  route around it.
+- **Do not route the home server's default route through the WireGuard
+  interface.** Only the inbound DNAT needs the tunnel; a default route over
+  `wg0` sends every packet your server originates to the VPS first, so anything
+  the server fetches would leave from the VPS. The four rules above touch
+  `PREROUTING` for the tunnel port, `POSTROUTING` for that one destination, and
+  `FORWARD` between the two interfaces — no default route.
+
+**Verify it in one command.** From a device paired through the bond, fetch an
+address echo service: `curl -s https://icanhazip.com` must print your **home**
+line's public address, not the VPS's. Do it with the VPS's own address handy
+to compare. If it prints the VPS, the home server's default route or an exit
+node is involved — find it before relying on the setup.
+
+**The variant to avoid: a VPS that terminates the bond and forwards egress
+home.** The other way to get "public edge, home exit" is to run the mqvpn
+server on the VPS (accepting bound paths), then send all of its egress through
+WireGuard to a home box that NATs it out — or, equivalently, to make home a
+Tailscale exit node for the VPS. It works, and it is worse than the relay on
+every axis that matters:
+
+- every byte crosses the internet twice (device → VPS → home → internet), so
+  latency is the sum of both legs;
+- the ceiling becomes the **home line's upload**, which now carries all user
+  traffic *and* the extra hop, where the relay caps only the tunnel's
+  throughput;
+- it needs mqvpn on the VPS (another machine to run, patch and monitor) plus a
+  second NAT, and the home box must stay reachable from the VPS at all times;
+- the VPS does see plaintext after terminating the bond, which the relay never
+  does.
+
+The relay already gives you home egress without any of that.
+
 ## 5: hole punching
 
 The server could open NAT mappings toward each device path before the device
