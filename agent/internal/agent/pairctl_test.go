@@ -348,6 +348,33 @@ func TestPairingCancelAfterSentRequestCleansRegistration(t *testing.T) {
 	}
 }
 
+// A DELETE whose caller gives up (here: before even being sent) must
+// still revoke the credential: the stored user is removed either way,
+// and a credential that stays usable until mqvpn restarts is exactly
+// what removal exists to prevent.
+func TestRemoveClientCanceledCallerStillRevokes(t *testing.T) {
+	f := newFakeCtl(t)
+	f.startAfter(0)
+	f.waitBound(t)
+	srv := pairServerCtl(t, f.addr)
+
+	if _, err := srv.addClient(context.Background(), "pixel"); err != nil {
+		t.Fatalf("addClient: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := srv.removeClient(ctx, "pixel"); err != nil {
+		t.Fatalf("removeClient with a canceled caller: %v", err)
+	}
+	cmds := f.commands()
+	if len(cmds) != 2 || cmds[0] != "add_user" || cmds[1] != "remove_user" {
+		t.Fatalf("control API saw %v, want add_user then remove_user", cmds)
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 0 {
+		t.Fatalf("store users %+v", got)
+	}
+}
+
 // With mqvpn simply absent, pairing proceeds: the config render carries
 // the user when mqvpn (re)starts, and the tunnel port is down with it.
 func TestPairingProceedsWithoutMqvpn(t *testing.T) {

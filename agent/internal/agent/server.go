@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/netip"
 	"os"
@@ -564,24 +565,19 @@ func (a *Agent) addClient(ctx context.Context, name string) (*pairResult, error)
 
 // addClientNode registers a client; nodeID is the Tailscale node that asked
 // for it (pair requests), "" otherwise.
-// userLock returns the per-name mutex serializing pairing and removal:
+// userLock returns the mutex serializing pairing and removal for a name:
 // mqvpn's control API adds and removes users by name, so a same-name
 // pairing running concurrently with a removal or a stale cleanup could
 // revoke a credential the other just issued, or register a key the
 // other had just deleted. Holding it for a whole operation makes the
-// check-then-remove cleanups atomic against same-name work.
+// check-then-remove cleanups atomic against same-name work. The lock is
+// one of a fixed number of hash shards: a name always maps to the same
+// lock, distinct names occasionally share one (they merely serialize
+// together), and no per-name state is ever allocated or retained.
 func (a *Agent) userLock(name string) *sync.Mutex {
-	a.userMu.Lock()
-	defer a.userMu.Unlock()
-	if a.userLocks == nil {
-		a.userLocks = make(map[string]*sync.Mutex)
-	}
-	m := a.userLocks[name]
-	if m == nil {
-		m = &sync.Mutex{}
-		a.userLocks[name] = m
-	}
-	return m
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	return &a.userLocks[h.Sum32()%uint32(len(a.userLocks))]
 }
 
 func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairResult, error) {
@@ -769,7 +765,10 @@ func (a *Agent) removeClient(ctx context.Context, name string) error {
 	if !found {
 		return errNotFound
 	}
-	if err := a.ctl.RemoveUser(ctx, name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
+	// WithoutCancel: a DELETE whose caller gave up while waiting for the
+	// lock has still removed the stored user -- the revocation must go
+	// out, or the credential stays usable until mqvpn restarts
+	if err := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
 		a.Logf("remove_user %s: %v", name, err)
 	}
 	a.dropSharers(name)

@@ -47,9 +47,11 @@ type Agent struct {
 	// per-client-name serialization for pairing and removal: mqvpn's
 	// control API adds and removes users by name, so a same-name
 	// pairing, removal or cleanup running concurrently can revoke a
-	// credential another just issued (server.go, userLock)
-	userMu    sync.Mutex
-	userLocks map[string]*sync.Mutex
+	// credential another just issued (server.go, userLock). A fixed
+	// number of hash shards: same name -> same lock always, two names
+	// may share a lock (harmless over-serialization), and nothing is
+	// allocated per name, so churn cannot grow it.
+	userLocks [64]sync.Mutex
 	ctl       *mqctl.Client
 	ts        *tailscale.CLI
 	hooks     *hooks.Runner
