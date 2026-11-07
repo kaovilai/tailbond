@@ -588,13 +588,24 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 		switch {
 		case ctx.Err() != nil:
 			// The caller is gone (request canceled, phone gave up): the
-			// URI would never be delivered, and mqvpn never saw the key
-			// (the retry was still waiting), so free the name instead of
+			// URI would never be delivered, so free the name instead of
 			// leaving a credential nothing can authenticate with. First
 			// case: a cancel that coincides with another failure is still
 			// a cancel.
 			a.Logf("add_user %s: caller gone during the retry (%v)", name, ctx.Err())
-			return nil, fmt.Errorf("pairing for client %q was abandoned: %w%s", name, ctx.Err(), a.rollbackClient(name, key))
+			rolled := a.rollbackClient(name, key)
+			// ctx.Err() alone does not prove the request was never sent:
+			// mqctl uses the context only for dialing, and an answer lost
+			// after mqvpn served the add leaves a live registration for a
+			// credential nobody holds. Take the key back out unless a
+			// replacement owns the name now. WithoutCancel: the cleanup
+			// must not die with the caller it is cleaning up after.
+			if !storeHasName(a.store.Get(), name) {
+				if rerr := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); rerr != nil && !errors.Is(rerr, mqctl.ErrUnavailable) {
+					a.Logf("remove_user %s (caller gone): %v", name, rerr)
+				}
+			}
+			return nil, fmt.Errorf("pairing for client %q was abandoned: %w%s", name, ctx.Err(), rolled)
 		case errors.Is(err, mqctl.ErrUnavailable):
 			// mqvpn is down or predates the control API: the config render
 			// carries the user when it (re)starts, and the tunnel port is
@@ -627,7 +638,8 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 		// credential, remove_user works by name, and removing now would
 		// take the replacement's registration out with this one's.
 		if !storeHasName(a.store.Get(), name) {
-			if err := a.ctl.RemoveUser(ctx, name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
+			// WithoutCancel: the pairing's own caller may be gone too
+			if err := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
 				a.Logf("remove_user %s (deleted during pairing): %v", name, err)
 			}
 		}

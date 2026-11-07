@@ -105,17 +105,18 @@ func (f *fakeCtl) serve(c net.Conn) {
 	}
 	noRespond := f.noRespond
 	delay := time.Duration(0)
-	if len(f.got) == 1 {
+	isFirst := len(f.got) == 1
+	if isFirst {
 		delay = f.delayFirst
 	}
 	f.mu.Unlock()
-	if noRespond {
-		return // the answer never comes: the caller reads EOF
-	}
 	if delay > 0 {
-		// the registration is made (this request is served) but the
-		// caller has not seen the answer yet
+		// the request is served (a registration is made) but the caller
+		// has not seen the answer yet
 		time.Sleep(delay)
+	}
+	if noRespond && isFirst {
+		return // the answer never comes: the caller reads EOF or a timeout
 	}
 	resp := map[string]any{"ok": !fail}
 	if fail {
@@ -334,6 +335,42 @@ func TestPairingCallerGoneDuringRetry(t *testing.T) {
 	addUserRetry = 30 * time.Millisecond
 	if _, err := srv.addClient(context.Background(), "pixel"); err != nil {
 		t.Fatalf("re-pair after abandonment: %v", err)
+	}
+}
+
+// A cancel after the add_user was sent and served must still clean the
+// registration: mqctl uses the context only for dialing, so the answer
+// failing (here: a read timeout past mqctl's own deadline) does not mean
+// mqvpn never registered the key.
+func TestPairingCancelAfterSentRequestCleansRegistration(t *testing.T) {
+	f := newFakeCtl(t)
+	f.noRespond = true
+	f.delayFirst = 2500 * time.Millisecond // past mqctl's 2 s read deadline
+	f.startAfter(0)
+	f.waitBound(t)
+	srv := pairServerCtl(t, f.addr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := srv.addClient(ctx, "pixel")
+	if err == nil || !strings.Contains(err.Error(), "abandoned") {
+		t.Fatalf("addClient: %v", err)
+	}
+	// the rollback takes the key back out of mqvpn even though the caller
+	// is long gone
+	deadline := time.Now().Add(5 * time.Second)
+	var cmds []string
+	for time.Now().Before(deadline) {
+		if cmds = f.commands(); len(cmds) >= 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(cmds) < 2 || cmds[0] != "add_user" || cmds[1] != "remove_user" {
+		t.Fatalf("control API saw %v, want add_user then remove_user", cmds)
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 0 {
+		t.Fatalf("store users %+v", got)
 	}
 }
 
