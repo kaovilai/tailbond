@@ -622,7 +622,28 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 	} else {
 		a.Logf("client %s added", name)
 	}
+	// A delete may have landed while the retry waited for the control
+	// socket: removeClient then cleared the store but could not reach
+	// mqvpn either, and the retry just registered the revoked key. Check
+	// the credential is still ours before handing out its URI, and take
+	// the key back out of mqvpn if it isn't.
+	if !storeHasUser(a.store.Get(), name, key) {
+		if err := a.ctl.RemoveUser(ctx, name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
+			a.Logf("remove_user %s (deleted during pairing): %v", name, err)
+		}
+		return nil, fmt.Errorf("client %q was removed while pairing", name)
+	}
 	return a.pairingFor(u)
+}
+
+// storeHasUser: the exact credential (name and key) is in the config.
+func storeHasUser(c *config.Config, name, key string) bool {
+	for _, x := range c.Server.Users {
+		if x.Name == name && x.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // addUserToMqvpn registers the user with the running mqvpn. The HTTP API

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -199,6 +200,53 @@ func TestPairingKeepsClientOnUnclearControlAnswer(t *testing.T) {
 		t.Fatal("no pairing URI")
 	}
 	if got := srv.store.Get().Server.Users; len(got) != 1 || got[0].Name != "pixel" {
+		t.Fatalf("store users %+v", got)
+	}
+}
+
+// A delete that lands while the retry waits for the control socket must
+// cancel the pairing: no URI for a revoked client, and a key the retry
+// registered in mqvpn anyway is taken back out.
+func TestPairingDeletedDuringRetry(t *testing.T) {
+	f := newFakeCtl(t)
+	f.startAfter(700 * time.Millisecond)
+	srv := pairServerCtl(t, f.addr)
+	addUserRetry = 5 * time.Second
+	defer func() { addUserRetry = 30 * time.Millisecond }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := srv.addClient(context.Background(), "pixel")
+		errCh <- err
+	}()
+	// the delete lands mid-retry, while the control socket is still down
+	time.Sleep(200 * time.Millisecond)
+	if err := srv.removeClient(context.Background(), "pixel"); err != nil {
+		t.Fatalf("removeClient: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "removed while pairing") {
+			t.Fatalf("addClient during delete: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("addClient never returned")
+	}
+	cmds := f.commands()
+	has := func(want string) bool {
+		for _, c := range cmds {
+			if c == want {
+				return true
+			}
+		}
+		return false
+	}
+	// the retry registered the key once the socket came up; the check
+	// then removed it again
+	if !has("add_user") || !has("remove_user") {
+		t.Fatalf("control API saw %v, want add_user then remove_user", cmds)
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 0 {
 		t.Fatalf("store users %+v", got)
 	}
 }
