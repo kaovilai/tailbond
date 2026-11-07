@@ -583,9 +583,21 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 	}); err != nil {
 		return nil, err
 	}
-	if err := a.ctl.AddUser(ctx, name, key); err != nil {
-		if !errors.Is(err, mqctl.ErrUnavailable) {
+	if err := a.addUserToMqvpn(ctx, name, key); err != nil {
+		if errors.Is(err, mqctl.ErrUnavailable) {
+			// mqvpn is down or predates the control API: the config render
+			// carries the user when it (re)starts, and the tunnel port is
+			// down with it, so nothing connects in the meantime. Say so.
+			a.Logf("add_user %s: mqvpn control API unavailable; client takes effect when mqvpn (re)starts", name)
+		} else {
+			// mqvpn heard us and refused: the URI would never authenticate.
+			// Roll the entry back rather than hand it out (and block the name).
 			a.Logf("add_user %s: %v", name, err)
+			a.store.Update(func(c *config.Config) error {
+				c.Server.Users = rmUser(c.Server.Users, name)
+				return nil
+			})
+			return nil, fmt.Errorf("mqvpn did not accept client %q: %w", name, err)
 		}
 	} else {
 		a.Logf("client %s added", name)
@@ -593,18 +605,49 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 	return a.pairingFor(u)
 }
 
+// addUserToMqvpn registers the user with the running mqvpn. The HTTP API
+// can accept a pairing before mqvpn's control socket has bound (the
+// supervisor starts mqvpn asynchronously), so an "unavailable" control API
+// is retried for a few seconds first. Found by the CGNAT relay e2e: a
+// pairing that landed in that window issued a URI whose every connection
+// the server rejected with "authentication failed: invalid or missing PSK".
+var addUserRetry = 5 * time.Second
+
+func (a *Agent) addUserToMqvpn(ctx context.Context, name, key string) error {
+	deadline := time.Now().Add(addUserRetry)
+	for {
+		err := a.ctl.AddUser(ctx, name, key)
+		if err == nil || !errors.Is(err, mqctl.ErrUnavailable) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// rmUser returns users without name, in place where possible.
+func rmUser(users []config.User, name string) []config.User {
+	out := users[:0]
+	for _, x := range users {
+		if x.Name != name {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
 func (a *Agent) removeClient(ctx context.Context, name string) error {
 	found := false
 	if _, err := a.store.Update(func(c *config.Config) error {
-		out := c.Server.Users[:0]
-		for _, x := range c.Server.Users {
-			if x.Name == name {
-				found = true
-				continue
-			}
-			out = append(out, x)
-		}
-		c.Server.Users = out
+		before := len(c.Server.Users)
+		c.Server.Users = rmUser(c.Server.Users, name)
+		found = len(c.Server.Users) != before
 		return nil
 	}); err != nil {
 		return err

@@ -1,0 +1,173 @@
+package agent
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"net"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/kaovilai/tailbond/agent/internal/config"
+)
+
+// pairing hits mqvpn's control API, which no test runs: keep the
+// unavailable-retry window short so the suite doesn't pay for it.
+func TestMain(m *testing.M) {
+	addUserRetry = 30 * time.Millisecond
+	m.Run()
+}
+
+// fakeCtl is a stand-in for mqvpn's JSON control API (docs/control-api.md):
+// one newline-terminated request per TCP connection, one JSON response.
+// The port is reserved at construction and the listener only comes up when
+// startAfter fires, modelling mqvpn whose control socket binds after the
+// agent's HTTP API.
+type fakeCtl struct {
+	mu       sync.Mutex
+	addr     string
+	failNext int // respond with an error to the next N requests
+	got      []string
+	up       bool
+	ln       net.Listener
+}
+
+func newFakeCtl(t *testing.T) *fakeCtl {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeCtl{addr: ln.Addr().String()}
+	ln.Close()
+	return f
+}
+
+func (f *fakeCtl) startAfter(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		ln, err := net.Listen("tcp", f.addr)
+		if err != nil {
+			return
+		}
+		f.mu.Lock()
+		f.ln = ln
+		f.up = true
+		f.mu.Unlock()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			f.serve(c)
+		}
+	}()
+}
+
+func (f *fakeCtl) serve(c net.Conn) {
+	defer c.Close()
+	line, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		return
+	}
+	var req map[string]any
+	_ = json.Unmarshal([]byte(line), &req)
+	f.mu.Lock()
+	f.got = append(f.got, req["cmd"].(string))
+	errStr := ""
+	if f.failNext > 0 {
+		f.failNext--
+		errStr = "too many clients"
+	}
+	f.mu.Unlock()
+	resp := map[string]any{"ok": errStr == ""}
+	if errStr != "" {
+		resp["error"] = errStr
+	}
+	b, _ := json.Marshal(resp)
+	_, _ = c.Write(append(b, '\n'))
+}
+
+func (f *fakeCtl) commands() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.got...)
+}
+
+// pairServerCtl is pairServer pointed at a chosen control address.
+func pairServerCtl(t *testing.T, ctlAddr string) *Agent {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Role = config.RoleServer
+	cfg.DisableTailscale = true
+	cfg.StateDir = t.TempDir()
+	cfg.Server.PublicAddr = "home.example.net"
+	cfg.ControlAddr = ctlAddr
+	cfg.ApplyDefaults()
+	a := New(config.NewStore(filepath.Join(t.TempDir(), "tailbond.json"), cfg), Options{Version: "test"})
+	a.whois = whoisStub
+	return a
+}
+
+// Pairing must survive the control socket binding late: the agent's HTTP
+// API is up before mqvpn finishes starting, and the retry has to bridge
+// that gap or the URI it hands out can never authenticate (the CGNAT relay
+// e2e caught this as a CI flake: every connection rejected with "invalid
+// or missing PSK").
+func TestPairingWaitsForMqvpnControlAPI(t *testing.T) {
+	f := newFakeCtl(t)
+	f.startAfter(300 * time.Millisecond)
+	srv := pairServerCtl(t, f.addr)
+	addUserRetry = 5 * time.Second
+	defer func() { addUserRetry = 30 * time.Millisecond }()
+
+	res, err := srv.addClient(context.Background(), "pixel")
+	if err != nil {
+		t.Fatalf("addClient during control-API startup: %v", err)
+	}
+	if res.Name != "pixel" || res.URI == "" {
+		t.Fatalf("pairing result %+v", res)
+	}
+	cmds := f.commands()
+	if len(cmds) == 0 || cmds[0] != "add_user" {
+		t.Fatalf("control API saw %v, want add_user", cmds)
+	}
+}
+
+// A definitive refusal must fail the pairing and roll the entry back,
+// instead of handing out a URI mqvpn will never authenticate.
+func TestPairingFailsWhenMqvpnRefuses(t *testing.T) {
+	f := newFakeCtl(t)
+	f.failNext = 1 // refuse the first add, accept the re-pair
+	f.startAfter(0)
+	srv := pairServerCtl(t, f.addr)
+
+	if _, err := srv.addClient(context.Background(), "pixel"); err == nil {
+		t.Fatal("addClient succeeded despite mqvpn refusing the user")
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 0 {
+		t.Fatalf("store kept the refused user: %+v", got)
+	}
+	// the name is free again
+	if _, err := srv.addClient(context.Background(), "pixel"); err != nil {
+		t.Fatalf("re-pair after rollback: %v", err)
+	}
+}
+
+// With mqvpn simply absent, pairing proceeds: the config render carries
+// the user when mqvpn (re)starts, and the tunnel port is down with it.
+func TestPairingProceedsWithoutMqvpn(t *testing.T) {
+	srv := pairServerCtl(t, "127.0.0.1:1") // nothing listens
+	res, err := srv.addClient(context.Background(), "pixel")
+	if err != nil {
+		t.Fatalf("addClient without mqvpn: %v", err)
+	}
+	if res.URI == "" {
+		t.Fatal("no pairing URI")
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 1 || got[0].Name != "pixel" {
+		t.Fatalf("store users %+v", got)
+	}
+}
