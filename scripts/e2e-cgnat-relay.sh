@@ -32,6 +32,9 @@ PASS=0 FAIL=0
 ok() { printf '  PASS %s\n' "$*"; PASS=$((PASS + 1)); }
 bad() { printf '  FAIL %s\n' "$*"; FAIL=$((FAIL + 1)); }
 say() { printf '==> %s\n' "$*"; }
+# tail a log for CI output with pairing URIs (credentials) redacted: the
+# agent does not log them today, but these dumps must never become the leak
+dumplog() { tail -n "${2:-10}" "$1" | sed 's#tailbond://[A-Za-z0-9._?=&%+-]*#tailbond://[redacted]#g'; }
 cleanup() {
 	# deleting a netns does not stop the processes in it: kill this run's
 	# agents and listeners first, or they linger and hold the namespace alive
@@ -137,7 +140,7 @@ for _ in $(seq 1 20); do
 	sleep 1
 done
 ip netns exec $NS_HOME curl -fsS -m 3 http://127.0.0.1:8077/api/hello | grep -q '"role":"server"' \
-	&& ok "the agent answers on its own machine" || { bad "agent did not come up"; tail -5 "$W/srv.log"; }
+	&& ok "the agent answers on its own machine" || { bad "agent did not come up"; dumplog "$W/srv.log" 5; }
 
 say "a device pairs and connects to the VPS address (never to home)"
 sapi() { ip netns exec $NS_HOME curl -fsS -m 5 "$@"; }
@@ -160,7 +163,7 @@ for _ in $(seq 1 75); do
 done
 ip netns exec $NS_CLI curl -fsS -m 3 http://127.0.0.1:8078/api/status | jq -e '.state == "connected"' >/dev/null \
 	&& ok "the client is connected through the relay" \
-	|| { bad "client did not connect"; tail -12 "$W/cli.log"; echo "--- server log:"; tail -15 "$W/srv.log"; }
+	|| { bad "client did not connect"; dumplog "$W/cli.log" 12; echo "--- server log:"; dumplog "$W/srv.log" 15; }
 
 say "Setup health knows it is a relay, not a broken port"
 sleep 2
