@@ -26,12 +26,13 @@ func TestMain(m *testing.M) {
 // startAfter fires, modelling mqvpn whose control socket binds after the
 // agent's HTTP API.
 type fakeCtl struct {
-	mu       sync.Mutex
-	addr     string
-	failNext int // respond with an error to the next N requests
-	got      []string
-	up       bool
-	ln       net.Listener
+	mu        sync.Mutex
+	addr      string
+	failNext  int  // respond with an error to the next N requests
+	noRespond bool // accept, read, close: an answer that never comes
+	got       []string
+	up        bool
+	ln        net.Listener
 }
 
 func newFakeCtl(t *testing.T) *fakeCtl {
@@ -66,6 +67,24 @@ func (f *fakeCtl) startAfter(delay time.Duration) {
 	}()
 }
 
+// waitBound blocks until the listener is up: a test that wants a refused
+// answer must not race the bind, or the first attempt reads as a dial
+// failure instead of the refusal it is there to exercise.
+func (f *fakeCtl) waitBound(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		up := f.up
+		f.mu.Unlock()
+		if up {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("fake control API never started")
+}
+
 func (f *fakeCtl) serve(c net.Conn) {
 	defer c.Close()
 	line, err := bufio.NewReader(c).ReadString('\n')
@@ -74,17 +93,22 @@ func (f *fakeCtl) serve(c net.Conn) {
 	}
 	var req map[string]any
 	_ = json.Unmarshal([]byte(line), &req)
+	cmd, _ := req["cmd"].(string)
 	f.mu.Lock()
-	f.got = append(f.got, req["cmd"].(string))
-	errStr := ""
+	f.got = append(f.got, cmd)
+	fail := false
 	if f.failNext > 0 {
 		f.failNext--
-		errStr = "too many clients"
+		fail = true
 	}
+	noRespond := f.noRespond
 	f.mu.Unlock()
-	resp := map[string]any{"ok": errStr == ""}
-	if errStr != "" {
-		resp["error"] = errStr
+	if noRespond {
+		return // the answer never comes: the caller reads EOF
+	}
+	resp := map[string]any{"ok": !fail}
+	if fail {
+		resp["error"] = "too many clients"
 	}
 	b, _ := json.Marshal(resp)
 	_, _ = c.Write(append(b, '\n'))
@@ -142,6 +166,7 @@ func TestPairingFailsWhenMqvpnRefuses(t *testing.T) {
 	f := newFakeCtl(t)
 	f.failNext = 1 // refuse the first add, accept the re-pair
 	f.startAfter(0)
+	f.waitBound(t)
 	srv := pairServerCtl(t, f.addr)
 
 	if _, err := srv.addClient(context.Background(), "pixel"); err == nil {
@@ -153,6 +178,28 @@ func TestPairingFailsWhenMqvpnRefuses(t *testing.T) {
 	// the name is free again
 	if _, err := srv.addClient(context.Background(), "pixel"); err != nil {
 		t.Fatalf("re-pair after rollback: %v", err)
+	}
+}
+
+// A control API that accepts the request but never answers is not a
+// refusal: mqvpn may have registered the user, so the credential stays
+// (deleting a possibly-working one is worse than one that may be dead).
+func TestPairingKeepsClientOnUnclearControlAnswer(t *testing.T) {
+	f := newFakeCtl(t)
+	f.noRespond = true
+	f.startAfter(0)
+	f.waitBound(t)
+	srv := pairServerCtl(t, f.addr)
+
+	res, err := srv.addClient(context.Background(), "pixel")
+	if err != nil {
+		t.Fatalf("addClient with an unclear control answer: %v", err)
+	}
+	if res.URI == "" {
+		t.Fatal("no pairing URI")
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 1 || got[0].Name != "pixel" {
+		t.Fatalf("store users %+v", got)
 	}
 }
 

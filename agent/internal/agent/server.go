@@ -584,20 +584,40 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 		return nil, err
 	}
 	if err := a.addUserToMqvpn(ctx, name, key); err != nil {
-		if errors.Is(err, mqctl.ErrUnavailable) {
+		var apiErr *mqctl.APIError
+		switch {
+		case errors.Is(err, mqctl.ErrUnavailable):
 			// mqvpn is down or predates the control API: the config render
 			// carries the user when it (re)starts, and the tunnel port is
 			// down with it, so nothing connects in the meantime. Say so.
 			a.Logf("add_user %s: mqvpn control API unavailable; client takes effect when mqvpn (re)starts", name)
-		} else {
+		case errors.As(err, &apiErr):
 			// mqvpn heard us and refused: the URI would never authenticate.
-			// Roll the entry back rather than hand it out (and block the name).
+			// Roll the entry back rather than hand it out (and block the
+			// name). Only this request's credential: a concurrent pairing
+			// may have re-used the name with its own key.
 			a.Logf("add_user %s: %v", name, err)
-			a.store.Update(func(c *config.Config) error {
-				c.Server.Users = rmUser(c.Server.Users, name)
+			rolled := ""
+			if _, uerr := a.store.Update(func(c *config.Config) error {
+				users := c.Server.Users[:0]
+				for _, x := range c.Server.Users {
+					if x.Name != name || x.Key != key {
+						users = append(users, x)
+					}
+				}
+				c.Server.Users = users
 				return nil
-			})
-			return nil, fmt.Errorf("mqvpn did not accept client %q: %w", name, err)
+			}); uerr != nil {
+				a.Logf("add_user %s: rollback failed, the refused client stays in the store: %v", name, uerr)
+				rolled = " (rollback failed: " + uerr.Error() + ")"
+			}
+			return nil, fmt.Errorf("mqvpn did not accept client %q: %v%s", name, err, rolled)
+		default:
+			// A transport failure the control API never answered: mqvpn may
+			// have registered the user, so keep the credential rather than
+			// delete a possibly-working one. If it didn't, removing the
+			// client and pairing again fixes it.
+			a.Logf("add_user %s: control API answered unclearly (%v); keeping the client", name, err)
 		}
 	} else {
 		a.Logf("client %s added", name)
