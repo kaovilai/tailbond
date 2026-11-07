@@ -9,9 +9,11 @@
 # script in /etc/tailbond/pkg/reinstall and one line in /etc/rc.local that
 # runs it in the background at every boot:
 #
-#   reinstall boot    package installed: nothing to do. Missing: install
-#                     the cached ipk (/etc/tailbond/pkg/current), else
-#                     download that version's ipk from the GitHub release
+#   reinstall boot    package installed and intact: nothing to do. Missing,
+#                     or half-installed (opkg's record kept, the files not:
+#                     seen after a GL.iNet 4.9.0 firmware upgrade, issue
+#                     #49): install the cached ipk (/etc/tailbond/pkg/current),
+#                     else download that version's ipk from the GitHub release
 #                     (the latest release's when nothing names one), checked
 #                     against the release's SHA256SUMS; retry for up to 20
 #                     minutes (the network may come up later). At most once
@@ -33,7 +35,14 @@ TRIES="${TB_TRIES:-40}"
 PAUSE="${TB_PAUSE:-30}"
 
 log() { logger -t tailbond-reinstall "$*" 2>/dev/null; echo "$*" >&2; }
-installed() { [ -f "$INFO" ] && [ -x /usr/bin/tailbondd ]; }
+# Not only opkg's record: a firmware upgrade was seen keeping the record
+# and /usr/bin/tailbondd while dropping /usr/lib/tailbond and
+# /usr/share/tailbond (issue #49) -- half-installed, exactly the state
+# this script exists to repair. render-config is the file the init
+# script cannot run without, and it only ever comes from the package.
+installed() {
+	[ -f "$INFO" ] && [ -x /usr/bin/tailbondd ] && [ -x /usr/lib/tailbond/render-config ]
+}
 
 installed && exit 0
 case "${1:-boot}" in
@@ -142,7 +151,7 @@ result() { # VERSION
 		mv -f "$STATE/update-result.json.tmp" "$STATE/update-result.json"
 }
 
-log "tailbond is not installed (firmware upgrade?): reinstalling"
+log "tailbond is missing or half-installed (firmware upgrade?): reinstalling"
 i=0
 updated=0
 while [ "$i" -lt "$TRIES" ]; do
@@ -151,7 +160,14 @@ while [ "$i" -lt "$TRIES" ]; do
 	ipk="$(cached)"
 	[ -n "$ipk" ] || ipk="$(from_github)"
 	if [ -n "$ipk" ]; then
-		if opkg install "$ipk" >/tmp/tailbond-reinstall.log 2>&1 && installed; then
+		# Half-installed: opkg's record is there, so a plain install is a
+		# no-op ("already installed"). --force-reinstall removes the
+		# package first, which runs the removal scripts -- postrm's
+		# delayed cache purge is guarded (it only fires if the package is
+		# not back), and postinst re-adds the rc.local line.
+		set -- install
+		[ -f "$INFO" ] && set -- install --force-reinstall
+		if opkg "$@" "$ipk" >/tmp/tailbond-reinstall.log 2>&1 && installed; then
 			result "$(ipk_version "$ipk")"
 			log "reinstalled $(basename "$ipk"); settings kept"
 			exit 0

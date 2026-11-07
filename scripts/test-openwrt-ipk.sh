@@ -139,6 +139,10 @@ gzip -dc /www/views/gl-sdk4-ui-tailbond.common.js.gz | grep -q 'name: "tailbond"
 [ -x /etc/tailbond/pkg/reinstall ] && [ "$(grep -c '# tailbond-reinstall$' /etc/rc.local)" = 1 ] \
 	&& [ "$(grep -n '# tailbond-reinstall$' /etc/rc.local | cut -d: -f1)" -lt "$(grep -n '^exit 0' /etc/rc.local | head -1 | cut -d: -f1)" ] \
 	&& ok "reinstall script kept in /etc/tailbond/pkg, one rc.local line before 'exit 0'" || { bad "reinstall hook"; cat /etc/rc.local; }
+tar -xzOf /t/tailbond.ipk ./control.tar.gz | tar -tzf - 2>/dev/null | grep -qx ./preinst \
+	&& ok "the package ships a preinst" || bad "no preinst in the package"
+tar -xzOf /t/tailbond.ipk ./control.tar.gz | tar -xzOf - ./preinst 2>/dev/null | grep -q '/usr/lib/tailbond/hooks' \
+	&& ok "preinst creates the package's directories (GL 4.9.0, issue #49)" || bad "preinst does not create the directories"
 [ -f /lib/upgrade/tailbond.sh ] && [ -x /usr/lib/tailbond/update-ipk ] && ok "sysupgrade hook and update-ipk installed" || bad "update files"
 [ "$(uci -q get tailbond.main.enabled)" = 1 ] && ok "enabled by default" || bad "not enabled"
 [ "$(uci -q get tailbond.main.role)" = client ] && ok "role client on a Slate 7 (GL-BE3600)" || bad "role $(uci -q get tailbond.main.role)"
@@ -401,6 +405,36 @@ flash /tmp/conffiles
 mkdir -p /tmp/tailbond-reinstall.ran # this boot's run already happened
 /etc/tailbond/pkg/reinstall boot
 [ ! -f /usr/lib/opkg/info/tailbond.control ] && ok "at most once per boot" || bad "ran twice in one boot"
+
+echo "== half-installed after the upgrade (issue #49): opkg's record kept, the files gone"
+# The GL.iNet 4.9.0 upgrade kept opkg's record and /usr/bin/tailbondd but
+# dropped /usr/lib/tailbond and /usr/share/tailbond: opkg says installed,
+# nothing runs, and a plain `opkg install` is a no-op. The boot hook must
+# notice (a file, not only the record) and force-reinstall from the cache.
+# reinstall_running: rc.local's line and the init script both background
+# the repair; the next section must not race its opkg for the lock.
+reinstall_running() { grep -la '/etc/tailbond/pkg/reinstall' /proc/[0-9]*/cmdline 2>/dev/null | grep -q .; }
+opkg install $V99 >/tmp/half.log 2>&1 # the package back, as the boot hook left it
+rm -rf /usr/lib/tailbond /usr/share/tailbond /tmp/tailbond-reinstall.ran
+[ -f /usr/lib/opkg/info/tailbond.control ] && [ -x /usr/bin/tailbondd ] && [ ! -e /usr/lib/tailbond/render-config ] \
+	&& ok "half-installed: record and tailbondd kept, render-config gone" || { bad "half-install setup"; cat /tmp/half.log; }
+sh /etc/rc.local
+i=0; while [ $i -lt 120 ] && { reinstall_running || [ ! -x /usr/lib/tailbond/render-config ]; }; do sleep 1; i=$((i+1)); done
+[ -x /usr/lib/tailbond/render-config ] && [ -x /usr/lib/tailbond/pkg-cache ] && [ -f /usr/share/tailbond/nginx-tailbond.conf ] \
+	&& ok "the boot hook force-reinstalled the half-installed package" || { bad "half-install repair"; cat /tmp/tailbond-reinstall.log; }
+[ "$(uci -q get tailbond.main.keep_test)" = kept ] && ok "settings kept through the repair" || bad "settings lost in the repair"
+
+echo "== the init script repairs a half-installed package instead of only failing (issue #49)"
+rm -rf /usr/lib/tailbond /usr/share/tailbond
+/etc/init.d/tailbond start >/tmp/half-start.log 2>&1
+grep -q 'half-installed' /tmp/half-start.log \
+	&& ok "init start reports half-installed and kicks the cached reinstall" || { bad "init self-repair"; cat /tmp/half-start.log; }
+i=0; while [ $i -lt 120 ] && { reinstall_running || [ ! -x /usr/lib/tailbond/render-config ]; }; do sleep 1; i=$((i+1)); done
+[ -x /usr/lib/tailbond/render-config ] \
+	&& ok "the init script's reinstall put the files back" || { bad "init repair"; cat /tmp/tailbond-reinstall.log; cat /tmp/half-start.log; }
+# back to the flashed state the next section starts from, with no repair
+# in flight to fight for opkg's lock
+flash /tmp/conffiles
 
 echo "== reinstall from the GitHub release when the cached ipk is gone"
 if opkg install uhttpd >/dev/null 2>&1; then
