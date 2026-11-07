@@ -151,12 +151,16 @@ cat >"$W/cli/tailbond.json" <<JSON
             "no_dns": true, "manage_routes": false}}
 JSON
 ip netns exec $NS_CLI "$TAILBONDD" -config "$W/cli/tailbond.json" >"$W/cli.log" 2>&1 &
-for _ in $(seq 1 40); do
+# 75 s: mqvpn's reconnect backoff reaches 24 s by attempt 4, and a retry
+# that lands just past a 40 s window reads as "did not connect" while the
+# client is on its way back
+for _ in $(seq 1 75); do
 	ip netns exec $NS_CLI curl -fsS -m 2 http://127.0.0.1:8078/api/status 2>/dev/null | jq -e '.state == "connected"' >/dev/null 2>&1 && break
 	sleep 1
 done
 ip netns exec $NS_CLI curl -fsS -m 3 http://127.0.0.1:8078/api/status | jq -e '.state == "connected"' >/dev/null \
-	&& ok "the client is connected through the relay" || { bad "client did not connect"; tail -8 "$W/cli.log"; }
+	&& ok "the client is connected through the relay" \
+	|| { bad "client did not connect"; tail -12 "$W/cli.log"; echo "--- server log:"; tail -15 "$W/srv.log"; }
 
 say "Setup health knows it is a relay, not a broken port"
 sleep 2
