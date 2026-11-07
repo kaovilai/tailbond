@@ -33,16 +33,20 @@ ok() { printf '  PASS %s\n' "$*"; PASS=$((PASS + 1)); }
 bad() { printf '  FAIL %s\n' "$*"; FAIL=$((FAIL + 1)); }
 say() { printf '==> %s\n' "$*"; }
 # tail a log for CI output with pairing URIs (credentials) redacted: the
-# agent does not log them today, but these dumps must never become the leak
-dumplog() { tail -n "${2:-10}" "$1" | sed 's#tailbond://[A-Za-z0-9._?=&%+-]*#tailbond://[redacted]#g'; }
+# agent does not log them today, but these dumps must never become the leak.
+# Redact to the end of the token: a charset allowlist would stop at the
+# first character it didn't list and print the rest of the credential.
+dumplog() { tail -n "${2:-10}" "$1" | sed 's#tailbond://[^[:space:]]*#tailbond://[redacted]#g'; }
 cleanup() {
 	# deleting a netns does not stop the processes in it: kill this run's
-	# agents and listeners first, or they linger and hold the namespace alive
-	for n in $NS_CLI $NS_VPS $NS_CG $NS_HOME; do
+	# agents and listeners first, or they linger and hold the namespace alive.
+	# Only namespaces this run created ($MADE): if a name already existed the
+	# add failed and the namespace, and everything in it, is someone else's.
+	for n in $MADE; do
 		ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null || true
 	done
 	sleep 1
-	for n in $NS_CLI $NS_VPS $NS_CG $NS_HOME; do
+	for n in $MADE; do
 		ip netns pids "$n" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 		ip netns del "$n" 2>/dev/null || true
 	done
@@ -51,7 +55,13 @@ cleanup() {
 trap cleanup EXIT
 
 say "namespaces and links"
-for n in $NS_CLI $NS_VPS $NS_CG $NS_HOME; do ip netns add "$n"; done
+MADE="" # the namespaces this run created; cleanup only touches these
+for n in $NS_CLI $NS_VPS $NS_CG $NS_HOME; do
+	# an && list would shield the failure from set -e and silently run inside
+	# whatever already owns the name, so refuse instead
+	ip netns add "$n" || { echo "namespace $n already exists; remove it first: ip netns del $n" >&2; exit 1; }
+	MADE="$MADE $n"
+done
 link() { # A B IFACE_A IFACE_B
 	ip link add "$3" netns "$1" type veth peer name "$4" netns "$2"
 	ip -n "$1" link set "$3" up; ip -n "$2" link set "$4" up
