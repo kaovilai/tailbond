@@ -413,7 +413,10 @@ echo "== half-installed after the upgrade (issue #49): opkg's record kept, the f
 # notice (a file, not only the record) and force-reinstall from the cache.
 # reinstall_running: rc.local's line and the init script both background
 # the repair; the next section must not race its opkg for the lock.
-reinstall_running() { grep -la '/etc/tailbond/pkg/reinstall' /proc/[0-9]*/cmdline 2>/dev/null | grep -q .; }
+# The bracket in the pattern keeps the grep from matching its own command
+# line (which contains the pattern text), which would pin both waits
+# below to their full 120 s.
+reinstall_running() { grep -la '/etc/tailbond/pkg/re[i]nstall' /proc/[0-9]*/cmdline 2>/dev/null | grep -q .; }
 opkg install $V99 >/tmp/half.log 2>&1 # the package back, as the boot hook left it
 rm -rf /usr/lib/tailbond /usr/share/tailbond /tmp/tailbond-reinstall.ran
 [ -f /usr/lib/opkg/info/tailbond.control ] && [ -x /usr/bin/tailbondd ] && [ ! -e /usr/lib/tailbond/render-config ] \
