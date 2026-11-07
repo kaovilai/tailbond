@@ -25,7 +25,66 @@ env:
   VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
 
 jobs:
+  # Docs-only changes skip the heavy jobs below: a README edit shouldn't spend
+  # 30 jobs, a macOS runner and a full mqvpn build. A skipped job reports as
+  # successful, so the required checks still pass. A tag always builds — a
+  # release needs its artifacts — and so does anything touching code, the site,
+  # workflows or packaging.
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.which.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Docs-only?
+        id: which
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          code=true
+          case "$REF" in
+            refs/tags/*) ;;                 # a tag always builds: a release needs its artifacts
+            *)
+              if [ "$EVENT" = pull_request ] || [ "$EVENT" = push ]; then
+                files=""
+                if [ -n "${BASE//0/}" ]; then  # an all-zero "before" is a new branch
+                  files=$(git diff --no-renames --name-only "$BASE...$HEAD" 2>/dev/null || echo CODE)
+                else
+                  files=$(git diff --no-renames --name-only "$HEAD^" "$HEAD" 2>/dev/null || echo CODE)
+                fi
+                # docs: anything under docs/, or markdown/text anywhere in the
+                # tree (a README next to its code is still a text change).
+                # CMakeLists.txt is a build input despite the .txt name.
+                # A per-file loop, not a grep pipeline: grep -q exits early,
+                # printf takes SIGPIPE under pipefail, and the inverted
+                # failure would read a code change as docs-only.
+                if [ -n "$files" ]; then
+                  code=false
+                  while IFS= read -r f; do
+                    case "$f" in
+                    *CMakeLists.txt) code=true; break ;;
+                    ""|docs/*|*.md|*.txt|LICENSE|NOTICE|*/LICENSE|*/NOTICE) ;;
+                    *) code=true; break ;;
+                    esac
+                  done <<< "$files"
+                fi
+              fi
+              ;;
+          esac
+          echo "docs-only: $code=false means the heavy jobs are skipped"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+
   agent:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Agent (Go tests + builds)
     runs-on: ubuntu-24.04
     steps:
@@ -64,6 +123,8 @@ jobs:
           if-no-files-found: error
 
   shellcheck:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: ShellCheck
     runs-on: ubuntu-24.04
     env:
@@ -105,7 +166,8 @@ jobs:
   e2e:
     name: End-to-end (netns, patched mqvpn)
     runs-on: ubuntu-24.04
-    needs: agent
+    needs: [changes, agent]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -165,6 +227,8 @@ jobs:
         run: MB=100 MQVPN="$PWD/out/native/mqvpn" TAILBONDD="$PWD/out/agent/linux-amd64/tailbondd" scripts/measure-server-mem.sh
 
   android:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Android APK
     runs-on: ubuntu-24.04
     outputs:
@@ -298,7 +362,8 @@ jobs:
   android-e2e:
     name: Android emulator end-to-end
     runs-on: ubuntu-24.04
-    needs: [agent, android, mqvpn-x86_64]
+    needs: [changes, agent, android, mqvpn-x86_64]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -356,7 +421,8 @@ jobs:
   android-tv:
     name: Android TV emulator (remote only)
     runs-on: ubuntu-24.04
-    needs: android
+    needs: [changes, android]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -393,6 +459,8 @@ jobs:
   # initramfs) with the static mqvpn and tailbondd in the server role
   # (scripts/e2e-macos/build-server-vm.sh). Native arm64: no qemu-user.
   macos-e2e-server:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: macOS e2e server VM image (Linux arm64)
     runs-on: ubuntu-24.04-arm
     steps:
@@ -447,7 +515,8 @@ jobs:
   macos:
     name: macOS client (mqvpn, tailbondd, e2e)
     runs-on: macos-latest
-    needs: macos-e2e-server
+    needs: [changes, macos-e2e-server]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
@@ -569,7 +638,8 @@ jobs:
   macos-server:
     name: macOS server (e2e, Linux client in a VM)
     runs-on: macos-latest
-    needs: [macos, macos-e2e-server]
+    needs: [changes, macos, macos-e2e-server]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -598,6 +668,8 @@ jobs:
   # tests on macOS and on an iOS simulator, and an unsigned simulator build
   # of the app. No signing, no App Store.
   ios:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: iOS tailbond Share (simulator)
     runs-on: macos-15
     timeout-minutes: 30
@@ -628,7 +700,8 @@ jobs:
     # Native arm64 runner: static musl mqvpn builds in an arm64 Alpine
     # container and the OpenWrt install test runs without qemu.
     runs-on: ubuntu-24.04-arm
-    needs: android
+    needs: [changes, android]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -706,6 +779,8 @@ jobs:
   # fails on serious or critical. Same job (a required check), same
   # Chromium image; the job's name stays so the required check keeps matching.
   report-ux:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Report a problem (dashboard + GL panel, Chromium)
     runs-on: ubuntu-24.04
     steps:
@@ -733,6 +808,8 @@ jobs:
           if-no-files-found: ignore
 
   mqvpn-x86_64:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Static x86_64 mqvpn (musl)
     runs-on: ubuntu-24.04
     steps:
@@ -773,6 +850,8 @@ jobs:
   # The aarch64 Linux bundle's mqvpn (a VPS or Linux laptop on arm64);
   # native arm64 runner, same cache as job "openwrt".
   mqvpn-aarch64:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Static aarch64 mqvpn (musl)
     runs-on: ubuntu-24.04-arm
     steps:
@@ -816,7 +895,8 @@ jobs:
   linux-bundle:
     name: Generic Linux bundle (VPS)
     runs-on: ubuntu-24.04
-    needs: [agent, mqvpn-x86_64, mqvpn-aarch64]
+    needs: [changes, agent, mqvpn-x86_64, mqvpn-aarch64]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -849,7 +929,8 @@ jobs:
   vps-install:
     name: VPS install (${{ matrix.image }})
     runs-on: ubuntu-24.04
-    needs: linux-bundle
+    needs: [changes, linux-bundle]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -909,7 +990,8 @@ jobs:
   oci-image:
     name: Server image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    needs: linux-bundle
+    needs: [changes, linux-bundle]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -965,7 +1047,8 @@ jobs:
   kubernetes:
     name: Kubernetes (kubeconform, kind e2e)
     runs-on: ubuntu-24.04
-    needs: [linux-bundle, oci-image]
+    needs: [changes, linux-bundle, oci-image]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     env:
       KUBECONFORM_VERSION: v0.8.0
@@ -1012,6 +1095,8 @@ jobs:
           kubectl -n tailbond describe pod || true
 
   ansible:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Ansible role lint
     runs-on: ubuntu-24.04
     steps:
@@ -1026,7 +1111,8 @@ jobs:
   rpm:
     name: Fedora RPM
     runs-on: ubuntu-24.04
-    needs: android
+    needs: [changes, android]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     container: registry.fedoraproject.org/fedora:44
     steps:
       - name: Build deps
@@ -1092,8 +1178,8 @@ jobs:
 
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, shellcheck, e2e, android, android-e2e, android-tv, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, oci-image, kubernetes, macos-e2e-server, macos, macos-server]
+    if: ${{ needs.changes.outputs.code == 'true' && (startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, agent, shellcheck, e2e, android, android-e2e, android-tv, ios, ansible, report-ux, mqvpn-x86_64, mqvpn-aarch64, openwrt, rpm, linux-bundle, vps-install, oci-image, kubernetes, macos-e2e-server, macos, macos-server]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1178,8 +1264,8 @@ jobs:
 
   copr:
     name: COPR build (Fedora)
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: release
+    if: ${{ needs.changes.outputs.code == 'true' && (startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, release]
     runs-on: ubuntu-24.04
     env:
       # secret COPR_CONFIG: the ~/.config/copr file from
@@ -1211,9 +1297,9 @@ jobs:
   # job sbom-publish then attaches and attests.
   sbom:
     name: SBOM (SPDX + CycloneDX, checked)
-    needs: [release, agent, android, openwrt, rpm, linux-bundle, macos]
+    needs: [changes, release, agent, android, openwrt, rpm, linux-bundle, macos]
     # "release" is skipped except on v* tags: run anyway, but not after a failure
-    if: ${{ !cancelled() && !failure() }}
+    if: ${{ needs.changes.outputs.code == 'true' && (!cancelled() && !failure()) }}
     runs-on: ubuntu-24.04
     env:
       SYFT_VERSION: v1.56.0
@@ -1355,8 +1441,8 @@ jobs:
   # with gh attestation verify FILE -R OWNER/REPO --predicate-type https://spdx.dev/Document
   sbom-publish:
     name: SBOM (attach to the release, attest)
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [release, sbom]
+    if: ${{ needs.changes.outputs.code == 'true' && (startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, release, sbom]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1402,8 +1488,8 @@ jobs:
   # which feeds dependency review only.
   dependency-snapshot:
     name: Dependency graph (submit the SBOM)
-    if: ${{ !cancelled() && needs.sbom.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
-    needs: [release, sbom]
+    if: ${{ needs.changes.outputs.code == 'true' && (!cancelled() && needs.sbom.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) }}
+    needs: [changes, release, sbom]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1425,8 +1511,8 @@ jobs:
   # vX.Y.Z that job release pushed (not for pre-releases).
   image-tags:
     name: Server image tags (X.Y, latest)
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
-    needs: release
+    if: ${{ needs.changes.outputs.code == 'true' && (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')) }}
+    needs: [changes, release]
     runs-on: ubuntu-24.04
     permissions:
       packages: write
