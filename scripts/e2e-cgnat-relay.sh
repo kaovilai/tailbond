@@ -14,8 +14,7 @@
 # Checks: the home server is unreachable directly; WireGuard comes up on 51820
 # (not 443, which the DNAT owns); the relayed port carries the tunnel; the
 # server's health says "reached through your relay"; and traffic through the
-# tunnel leaves from home's line, not the VPS's.
-#
+# tunnel leaves from home's line, not the VPS's.#
 #   scripts/e2e-cgnat-relay.sh
 set -euo pipefail
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"
@@ -159,9 +158,19 @@ ip netns exec $NS_HOME curl -fsS -m 3 http://127.0.0.1:8077/api/hello | grep -q 
 	&& ok "the agent answers on its own machine" || { bad "agent did not come up"; dumplog "$W/srv.log" 5; }
 
 say "a device pairs and connects to the VPS address (never to home)"
-sapi() { ip netns exec $NS_HOME curl -fsS -m 5 "$@"; }
+sapi() { ip netns exec $NS_HOME curl -fsS -m 12 "$@"; }
+# regression check: the agent's HTTP API can be up before mqvpn's control
+# socket binds; a pairing handed out in that gap never authenticates. Hold
+# the control port closed for the first two seconds of pairing and require
+# the agent to bridge it (retry) rather than issue a dead URI.
+ip netns exec $NS_HOME iptables -A OUTPUT -o lo -p tcp --dport 9077 -j REJECT
+( sleep 2; ip netns exec $NS_HOME iptables -D OUTPUT -o lo -p tcp --dport 9077 -j REJECT ) 2>/dev/null &
 URI="$(sapi -X POST -H 'Content-Type: application/json' -d '{"name":"phone"}' http://127.0.0.1:8077/api/clients | jq -r .uri)"
 [ "${#URI}" -gt 40 ] && ok "pairing issued" || bad "no pairing (got ${#URI} chars, expected a tailbond:// URI)"
+sleep 1
+grep -q 'client phone added' "$W/srv.log" \
+	&& ok "the user reached the running mqvpn despite the late control socket" \
+	|| bad "pairing never reached mqvpn (dead URI risk)"
 mkdir -p "$W/cli/state"
 cat >"$W/cli/tailbond.json" <<JSON
 {"role": "client", "mqvpn_bin": "${MQVPN:-/usr/bin/mqvpn}", "state_dir": "$W/cli/state", "hooks_dir": "$W/hooks",

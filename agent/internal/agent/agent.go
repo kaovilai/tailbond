@@ -44,11 +44,19 @@ type Agent struct {
 	store *config.Store
 	logs  *supervisor.Ring
 	sup   *supervisor.Supervisor
-	ctl   *mqctl.Client
-	ts    *tailscale.CLI
-	hooks *hooks.Runner
-	rater *status.Rater
-	role  string
+	// per-client-name serialization for pairing and removal: mqvpn's
+	// control API adds and removes users by name, so a same-name
+	// pairing, removal or cleanup running concurrently can revoke a
+	// credential another just issued (server.go, userLock). A fixed
+	// number of hash shards: same name -> same lock always, two names
+	// may share a lock (harmless over-serialization), and nothing is
+	// allocated per name, so churn cannot grow it.
+	userLocks [64]sync.Mutex
+	ctl       *mqctl.Client
+	ts        *tailscale.CLI
+	hooks     *hooks.Runner
+	rater     *status.Rater
+	role      string
 
 	hookq chan func()
 	// hookMu: one hook at a time, also while drainHooks runs the queue at

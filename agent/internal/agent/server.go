@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/netip"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
@@ -563,10 +565,30 @@ func (a *Agent) addClient(ctx context.Context, name string) (*pairResult, error)
 
 // addClientNode registers a client; nodeID is the Tailscale node that asked
 // for it (pair requests), "" otherwise.
+// userLock returns the mutex serializing pairing and removal for a name:
+// mqvpn's control API adds and removes users by name, so a same-name
+// pairing running concurrently with a removal or a stale cleanup could
+// revoke a credential the other just issued, or register a key the
+// other had just deleted. Holding it for a whole operation makes the
+// check-then-remove cleanups atomic against same-name work. The lock is
+// one of a fixed number of hash shards: a name always maps to the same
+// lock, distinct names occasionally share one (they merely serialize
+// together), and no per-name state is ever allocated or retained.
+func (a *Agent) userLock(name string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	return &a.userLocks[h.Sum32()%uint32(len(a.userLocks))]
+}
+
 func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairResult, error) {
 	if !mqconf.ValidUserName(name) {
 		return nil, errors.New("name must be 1-63 characters: letters, digits, '.', '_' or '-'")
 	}
+	// whole-operation: the retry may hold this for addUserRetry while it
+	// waits out mqvpn's control socket, draining a same-name delete
+	lock := a.userLock(name)
+	lock.Lock()
+	defer lock.Unlock()
 	key, err := genKey()
 	if err != nil {
 		return nil, err
@@ -583,28 +605,159 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 	}); err != nil {
 		return nil, err
 	}
-	if err := a.ctl.AddUser(ctx, name, key); err != nil {
-		if !errors.Is(err, mqctl.ErrUnavailable) {
+	if err := a.addUserToMqvpn(ctx, name, key); err != nil {
+		var apiErr *mqctl.APIError
+		switch {
+		case ctx.Err() != nil:
+			// The caller is gone (request canceled, phone gave up): the
+			// URI would never be delivered, so free the name instead of
+			// leaving a credential nothing can authenticate with. First
+			// case: a cancel that coincides with another failure is still
+			// a cancel.
+			a.Logf("add_user %s: caller gone during the retry (%v)", name, ctx.Err())
+			rolled := a.rollbackClient(name, key)
+			// ctx.Err() alone does not prove the request was never sent:
+			// mqctl uses the context only for dialing, and an answer lost
+			// after mqvpn served the add leaves a live registration for a
+			// credential nobody holds. Take the key back out unless a
+			// replacement owns the name now. WithoutCancel: the cleanup
+			// must not die with the caller it is cleaning up after.
+			if !storeHasName(a.store.Get(), name) {
+				if rerr := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); rerr != nil && !errors.Is(rerr, mqctl.ErrUnavailable) {
+					a.Logf("remove_user %s (caller gone): %v", name, rerr)
+				}
+			}
+			return nil, fmt.Errorf("pairing for client %q was abandoned: %w%s", name, ctx.Err(), rolled)
+		case errors.Is(err, mqctl.ErrUnavailable):
+			// mqvpn is down or predates the control API: the config render
+			// carries the user when it (re)starts, and the tunnel port is
+			// down with it, so nothing connects in the meantime. Say so.
+			a.Logf("add_user %s: mqvpn control API unavailable; client takes effect when mqvpn (re)starts", name)
+		case errors.As(err, &apiErr):
+			// mqvpn heard us and refused: the URI would never authenticate.
+			// Roll the entry back rather than hand it out (and block the
+			// name).
 			a.Logf("add_user %s: %v", name, err)
+			return nil, fmt.Errorf("mqvpn did not accept client %q: %v%s", name, err, a.rollbackClient(name, key))
+		default:
+			// A transport failure the control API never answered: mqvpn may
+			// have registered the user, so keep the credential rather than
+			// delete a possibly-working one. If it didn't, removing the
+			// client and pairing again fixes it.
+			a.Logf("add_user %s: control API answered unclearly (%v); keeping the client", name, err)
 		}
 	} else {
 		a.Logf("client %s added", name)
 	}
+	// A delete may have landed while the retry waited for the control
+	// socket: removeClient then cleared the store but could not reach
+	// mqvpn either, and the retry just registered the revoked key. Check
+	// the credential is still ours before handing out its URI, and take
+	// the key back out of mqvpn if it isn't.
+	if !storeHasUser(a.store.Get(), name, key) {
+		// Deleted while pairing. Clean mqvpn only when no user of this
+		// name is left: a delete plus re-pair may have replaced the
+		// credential, remove_user works by name, and removing now would
+		// take the replacement's registration out with this one's.
+		if !storeHasName(a.store.Get(), name) {
+			// WithoutCancel: the pairing's own caller may be gone too
+			if err := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
+				a.Logf("remove_user %s (deleted during pairing): %v", name, err)
+			}
+		}
+		return nil, fmt.Errorf("client %q was removed while pairing", name)
+	}
 	return a.pairingFor(u)
 }
 
-func (a *Agent) removeClient(ctx context.Context, name string) error {
-	found := false
-	if _, err := a.store.Update(func(c *config.Config) error {
-		out := c.Server.Users[:0]
+// storeHasName: any user of this name is in the config.
+func storeHasName(c *config.Config, name string) bool {
+	for _, x := range c.Server.Users {
+		if x.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// storeHasUser: the exact credential (name and key) is in the config.
+func storeHasUser(c *config.Config, name, key string) bool {
+	for _, x := range c.Server.Users {
+		if x.Name == name && x.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// rollbackClient removes this request's credential — name and key, so a
+// concurrent re-pair of the same name keeps its own — and returns an
+// error suffix describing the outcome ("" when the rollback held).
+func (a *Agent) rollbackClient(name, key string) string {
+	if _, uerr := a.store.Update(func(c *config.Config) error {
+		users := c.Server.Users[:0]
 		for _, x := range c.Server.Users {
-			if x.Name == name {
-				found = true
-				continue
+			if x.Name != name || x.Key != key {
+				users = append(users, x)
 			}
+		}
+		c.Server.Users = users
+		return nil
+	}); uerr != nil {
+		a.Logf("add_user %s: rollback failed, the client stays in the store: %v", name, uerr)
+		return " (rollback failed: " + uerr.Error() + ")"
+	}
+	return ""
+}
+
+// addUserToMqvpn registers the user with the running mqvpn. The HTTP API
+// can accept a pairing before mqvpn's control socket has bound (the
+// supervisor starts mqvpn asynchronously), so an "unavailable" control API
+// is retried for a few seconds first. Found by the CGNAT relay e2e: a
+// pairing that landed in that window issued a URI whose every connection
+// the server rejected with "authentication failed: invalid or missing PSK".
+var addUserRetry = 5 * time.Second
+
+func (a *Agent) addUserToMqvpn(ctx context.Context, name, key string) error {
+	deadline := time.Now().Add(addUserRetry)
+	for {
+		err := a.ctl.AddUser(ctx, name, key)
+		if err == nil || !errors.Is(err, mqctl.ErrUnavailable) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// rmUser returns users without name, in place where possible.
+func rmUser(users []config.User, name string) []config.User {
+	out := users[:0]
+	for _, x := range users {
+		if x.Name != name {
 			out = append(out, x)
 		}
-		c.Server.Users = out
+	}
+	return out
+}
+
+func (a *Agent) removeClient(ctx context.Context, name string) error {
+	// whole-operation, same as addClientNode: the store removal and the
+	// mqvpn removal must not interleave with a same-name pairing
+	lock := a.userLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+	found := false
+	if _, err := a.store.Update(func(c *config.Config) error {
+		before := len(c.Server.Users)
+		c.Server.Users = rmUser(c.Server.Users, name)
+		found = len(c.Server.Users) != before
 		return nil
 	}); err != nil {
 		return err
@@ -612,7 +765,10 @@ func (a *Agent) removeClient(ctx context.Context, name string) error {
 	if !found {
 		return errNotFound
 	}
-	if err := a.ctl.RemoveUser(ctx, name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
+	// WithoutCancel: a DELETE whose caller gave up while waiting for the
+	// lock has still removed the stored user -- the revocation must go
+	// out, or the credential stays usable until mqvpn restarts
+	if err := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
 		a.Logf("remove_user %s: %v", name, err)
 	}
 	a.dropSharers(name)
