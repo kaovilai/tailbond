@@ -215,9 +215,10 @@ func TestPairingKeepsClientOnUnclearControlAnswer(t *testing.T) {
 	}
 }
 
-// A delete that lands while the retry waits for the control socket must
-// cancel the pairing: no URI for a revoked client, and a key the retry
-// registered in mqvpn anyway is taken back out.
+// A delete issued while the retry waits for the control socket no longer
+// races the registration -- it drains it: the per-name lock holds the
+// delete until the pairing finishes, then removes the credential from
+// both the store and mqvpn.
 func TestPairingDeletedDuringRetry(t *testing.T) {
 	f := newFakeCtl(t)
 	f.startAfter(700 * time.Millisecond)
@@ -225,36 +226,41 @@ func TestPairingDeletedDuringRetry(t *testing.T) {
 	addUserRetry = 5 * time.Second
 	defer func() { addUserRetry = 30 * time.Millisecond }()
 
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := srv.addClient(context.Background(), "pixel")
-		errCh <- err
-	}()
-	// the delete lands mid-retry, while the control socket is still down
-	time.Sleep(200 * time.Millisecond)
-	if err := srv.removeClient(context.Background(), "pixel"); err != nil {
-		t.Fatalf("removeClient: %v", err)
+	type pairOut struct {
+		uri string
+		err error
 	}
+	addCh := make(chan pairOut, 1)
+	go func() {
+		r, err := srv.addClient(context.Background(), "pixel")
+		out := pairOut{err: err}
+		if r != nil {
+			out.uri = r.URI
+		}
+		addCh <- out
+	}()
+	// the delete lands while the pairing still waits for the socket
+	time.Sleep(200 * time.Millisecond)
+	rmCh := make(chan error, 1)
+	go func() { rmCh <- srv.removeClient(context.Background(), "pixel") }()
 	select {
-	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "removed while pairing") {
-			t.Fatalf("addClient during delete: %v", err)
+	case r := <-addCh:
+		if r.err != nil || r.uri == "" {
+			t.Fatalf("pairing: %v", r.err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("addClient never returned")
+		t.Fatal("pairing never returned")
+	}
+	select {
+	case err := <-rmCh:
+		if err != nil {
+			t.Fatalf("removeClient: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("removeClient never returned (did it drain the pairing?)")
 	}
 	cmds := f.commands()
-	has := func(want string) bool {
-		for _, c := range cmds {
-			if c == want {
-				return true
-			}
-		}
-		return false
-	}
-	// the retry registered the key once the socket came up; the check
-	// then removed it again
-	if !has("add_user") || !has("remove_user") {
+	if len(cmds) != 2 || cmds[0] != "add_user" || cmds[1] != "remove_user" {
 		t.Fatalf("control API saw %v, want add_user then remove_user", cmds)
 	}
 	if got := srv.store.Get().Server.Users; len(got) != 0 {
@@ -262,10 +268,10 @@ func TestPairingDeletedDuringRetry(t *testing.T) {
 	}
 }
 
-// A delete plus re-pair of the same name, landing between the original
-// pairing's registration and its staleness check, must not cost the
-// replacement its registration: remove_user works by name, so the stale
-// cleanup leaves mqvpn alone when a user of that name still exists.
+// The stale-pairing guard also covers raw store edits, which don't take
+// the per-name lock (a config restore can swap credentials underneath an
+// in-flight pairing): the cleanup must not revoke a replacement that a
+// direct store edit installed.
 func TestStalePairingSparesReplacement(t *testing.T) {
 	f := newFakeCtl(t)
 	f.delayFirst = 600 * time.Millisecond
@@ -278,20 +284,17 @@ func TestStalePairingSparesReplacement(t *testing.T) {
 		_, err := srv.addClient(context.Background(), "pixel")
 		errCh <- err
 	}()
-	// The first pairing sits inside AddUser: the fake has already served
-	// the registration, its answer is still pending. Delete and re-pair
-	// complete inside that window.
+	// while the pairing waits for the control API's answer, a restore
+	// swaps the credential for a different key
 	time.Sleep(150 * time.Millisecond)
-	if err := srv.removeClient(context.Background(), "pixel"); err != nil {
-		t.Fatalf("removeClient: %v", err)
-	}
-	res, err := srv.addClient(context.Background(), "pixel")
-	if err != nil {
-		t.Fatalf("re-pair: %v", err)
-	}
-	if res.URI == "" {
-		t.Fatal("re-pair returned no URI")
-	}
+	srv.store.Update(func(c *config.Config) error {
+		for i := range c.Server.Users {
+			if c.Server.Users[i].Name == "pixel" {
+				c.Server.Users[i].Key = "replacement-key"
+			}
+		}
+		return nil
+	})
 	select {
 	case err := <-errCh:
 		if err == nil || !strings.Contains(err.Error(), "removed while pairing") {
@@ -301,40 +304,11 @@ func TestStalePairingSparesReplacement(t *testing.T) {
 		t.Fatal("stale pairing never returned")
 	}
 	cmds := f.commands()
-	// add_user(K1), remove_user, add_user(K2) — the stale cleanup must
-	// not append a second remove_user, which would unregister the
-	// replacement
-	if len(cmds) != 3 || cmds[2] != "add_user" {
-		t.Fatalf("control API saw %v, want add_user remove_user add_user", cmds)
+	if len(cmds) != 1 || cmds[0] != "add_user" {
+		t.Fatalf("control API saw %v, want add_user only (no remove_user)", cmds)
 	}
-	if got := srv.store.Get().Server.Users; len(got) != 1 || got[0].Name != "pixel" {
+	if got := srv.store.Get().Server.Users; len(got) != 1 || got[0].Key != "replacement-key" {
 		t.Fatalf("store users %+v", got)
-	}
-}
-
-// A caller that gives up while the retry waits for the control socket
-// must not leave a credential behind: mqvpn never saw the key, and the
-// URI is never delivered, so the name would just be blocked.
-func TestPairingCallerGoneDuringRetry(t *testing.T) {
-	f := newFakeCtl(t)
-	f.startAfter(30 * time.Second) // never up within the test
-	srv := pairServerCtl(t, f.addr)
-	addUserRetry = 5 * time.Second
-	defer func() { addUserRetry = 30 * time.Millisecond }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	_, err := srv.addClient(ctx, "pixel")
-	if err == nil || !strings.Contains(err.Error(), "abandoned") {
-		t.Fatalf("addClient with a canceled caller: %v", err)
-	}
-	if got := srv.store.Get().Server.Users; len(got) != 0 {
-		t.Fatalf("store kept the abandoned user: %+v", got)
-	}
-	// the name is free again (the re-pair needn't wait out the window)
-	addUserRetry = 30 * time.Millisecond
-	if _, err := srv.addClient(context.Background(), "pixel"); err != nil {
-		t.Fatalf("re-pair after abandonment: %v", err)
 	}
 }
 

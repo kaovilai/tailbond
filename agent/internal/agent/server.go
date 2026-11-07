@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kaovilai/tailbond/agent/internal/config"
@@ -563,10 +564,35 @@ func (a *Agent) addClient(ctx context.Context, name string) (*pairResult, error)
 
 // addClientNode registers a client; nodeID is the Tailscale node that asked
 // for it (pair requests), "" otherwise.
+// userLock returns the per-name mutex serializing pairing and removal:
+// mqvpn's control API adds and removes users by name, so a same-name
+// pairing running concurrently with a removal or a stale cleanup could
+// revoke a credential the other just issued, or register a key the
+// other had just deleted. Holding it for a whole operation makes the
+// check-then-remove cleanups atomic against same-name work.
+func (a *Agent) userLock(name string) *sync.Mutex {
+	a.userMu.Lock()
+	defer a.userMu.Unlock()
+	if a.userLocks == nil {
+		a.userLocks = make(map[string]*sync.Mutex)
+	}
+	m := a.userLocks[name]
+	if m == nil {
+		m = &sync.Mutex{}
+		a.userLocks[name] = m
+	}
+	return m
+}
+
 func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairResult, error) {
 	if !mqconf.ValidUserName(name) {
 		return nil, errors.New("name must be 1-63 characters: letters, digits, '.', '_' or '-'")
 	}
+	// whole-operation: the retry may hold this for addUserRetry while it
+	// waits out mqvpn's control socket, draining a same-name delete
+	lock := a.userLock(name)
+	lock.Lock()
+	defer lock.Unlock()
 	key, err := genKey()
 	if err != nil {
 		return nil, err
@@ -726,6 +752,11 @@ func rmUser(users []config.User, name string) []config.User {
 }
 
 func (a *Agent) removeClient(ctx context.Context, name string) error {
+	// whole-operation, same as addClientNode: the store removal and the
+	// mqvpn removal must not interleave with a same-name pairing
+	lock := a.userLock(name)
+	lock.Lock()
+	defer lock.Unlock()
 	found := false
 	if _, err := a.store.Update(func(c *config.Config) error {
 		before := len(c.Server.Users)
