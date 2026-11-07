@@ -628,12 +628,28 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 	// the credential is still ours before handing out its URI, and take
 	// the key back out of mqvpn if it isn't.
 	if !storeHasUser(a.store.Get(), name, key) {
-		if err := a.ctl.RemoveUser(ctx, name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
-			a.Logf("remove_user %s (deleted during pairing): %v", name, err)
+		// Deleted while pairing. Clean mqvpn only when no user of this
+		// name is left: a delete plus re-pair may have replaced the
+		// credential, remove_user works by name, and removing now would
+		// take the replacement's registration out with this one's.
+		if !storeHasName(a.store.Get(), name) {
+			if err := a.ctl.RemoveUser(ctx, name); err != nil && !errors.Is(err, mqctl.ErrUnavailable) {
+				a.Logf("remove_user %s (deleted during pairing): %v", name, err)
+			}
 		}
 		return nil, fmt.Errorf("client %q was removed while pairing", name)
 	}
 	return a.pairingFor(u)
+}
+
+// storeHasName: any user of this name is in the config.
+func storeHasName(c *config.Config, name string) bool {
+	for _, x := range c.Server.Users {
+		if x.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // storeHasUser: the exact credential (name and key) is in the config.

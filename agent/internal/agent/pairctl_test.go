@@ -27,13 +27,14 @@ func TestMain(m *testing.M) {
 // startAfter fires, modelling mqvpn whose control socket binds after the
 // agent's HTTP API.
 type fakeCtl struct {
-	mu        sync.Mutex
-	addr      string
-	failNext  int  // respond with an error to the next N requests
-	noRespond bool // accept, read, close: an answer that never comes
-	got       []string
-	up        bool
-	ln        net.Listener
+	mu         sync.Mutex
+	addr       string
+	failNext   int           // respond with an error to the next N requests
+	noRespond  bool          // accept, read, close: an answer that never comes
+	delayFirst time.Duration // hold the first response, after reading it
+	got        []string
+	up         bool
+	ln         net.Listener
 }
 
 func newFakeCtl(t *testing.T) *fakeCtl {
@@ -63,7 +64,7 @@ func (f *fakeCtl) startAfter(delay time.Duration) {
 			if err != nil {
 				return
 			}
-			f.serve(c)
+			go f.serve(c) // one delayed answer must not block the others
 		}
 	}()
 }
@@ -103,9 +104,18 @@ func (f *fakeCtl) serve(c net.Conn) {
 		fail = true
 	}
 	noRespond := f.noRespond
+	delay := time.Duration(0)
+	if len(f.got) == 1 {
+		delay = f.delayFirst
+	}
 	f.mu.Unlock()
 	if noRespond {
 		return // the answer never comes: the caller reads EOF
+	}
+	if delay > 0 {
+		// the registration is made (this request is served) but the
+		// caller has not seen the answer yet
+		time.Sleep(delay)
 	}
 	resp := map[string]any{"ok": !fail}
 	if fail {
@@ -247,6 +257,56 @@ func TestPairingDeletedDuringRetry(t *testing.T) {
 		t.Fatalf("control API saw %v, want add_user then remove_user", cmds)
 	}
 	if got := srv.store.Get().Server.Users; len(got) != 0 {
+		t.Fatalf("store users %+v", got)
+	}
+}
+
+// A delete plus re-pair of the same name, landing between the original
+// pairing's registration and its staleness check, must not cost the
+// replacement its registration: remove_user works by name, so the stale
+// cleanup leaves mqvpn alone when a user of that name still exists.
+func TestStalePairingSparesReplacement(t *testing.T) {
+	f := newFakeCtl(t)
+	f.delayFirst = 600 * time.Millisecond
+	f.startAfter(0)
+	f.waitBound(t)
+	srv := pairServerCtl(t, f.addr)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := srv.addClient(context.Background(), "pixel")
+		errCh <- err
+	}()
+	// The first pairing sits inside AddUser: the fake has already served
+	// the registration, its answer is still pending. Delete and re-pair
+	// complete inside that window.
+	time.Sleep(150 * time.Millisecond)
+	if err := srv.removeClient(context.Background(), "pixel"); err != nil {
+		t.Fatalf("removeClient: %v", err)
+	}
+	res, err := srv.addClient(context.Background(), "pixel")
+	if err != nil {
+		t.Fatalf("re-pair: %v", err)
+	}
+	if res.URI == "" {
+		t.Fatal("re-pair returned no URI")
+	}
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "removed while pairing") {
+			t.Fatalf("stale pairing: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("stale pairing never returned")
+	}
+	cmds := f.commands()
+	// add_user(K1), remove_user, add_user(K2) — the stale cleanup must
+	// not append a second remove_user, which would unregister the
+	// replacement
+	if len(cmds) != 3 || cmds[2] != "add_user" {
+		t.Fatalf("control API saw %v, want add_user remove_user add_user", cmds)
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 1 || got[0].Name != "pixel" {
 		t.Fatalf("store users %+v", got)
 	}
 }
