@@ -45,7 +45,13 @@ cleanup() {
 	for n in $MADE; do
 		ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null || true
 	done
-	sleep 1
+	# bounded graceful wait: give the agents time to run their shutdown
+	# hooks (mqvpn teardown) before the SIGKILL below, up to 10 s
+	for _ in $(seq 1 10); do
+		left="$(for n in $MADE; do ip netns pids "$n" 2>/dev/null; done | wc -l)"
+		[ "$left" -eq 0 ] && break
+		sleep 1
+	done
 	for n in $MADE; do
 		ip netns pids "$n" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 		ip netns del "$n" 2>/dev/null || true
