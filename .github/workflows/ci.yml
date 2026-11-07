@@ -55,13 +55,25 @@ jobs:
               if [ "$EVENT" = pull_request ] || [ "$EVENT" = push ]; then
                 files=""
                 if [ -n "${BASE//0/}" ]; then  # an all-zero "before" is a new branch
-                  files=$(git diff --name-only "$BASE...$HEAD" 2>/dev/null || echo CODE)
+                  files=$(git diff --no-renames --name-only "$BASE...$HEAD" 2>/dev/null || echo CODE)
                 else
-                  files=$(git diff --name-only "$HEAD^" "$HEAD" 2>/dev/null || echo CODE)
+                  files=$(git diff --no-renames --name-only "$HEAD^" "$HEAD" 2>/dev/null || echo CODE)
                 fi
-                # docs: anything under docs/, or a text file anywhere else
-                if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(docs/.*|[^/]*\.(md|txt)|LICENSE|NOTICE)$'; then
+                # docs: anything under docs/, or markdown/text anywhere in the
+                # tree (a README next to its code is still a text change).
+                # CMakeLists.txt is a build input despite the .txt name.
+                # A per-file loop, not a grep pipeline: grep -q exits early,
+                # printf takes SIGPIPE under pipefail, and the inverted
+                # failure would read a code change as docs-only.
+                if [ -n "$files" ]; then
                   code=false
+                  while IFS= read -r f; do
+                    case "$f" in
+                    *CMakeLists.txt) code=true; break ;;
+                    ""|docs/*|*.md|*.txt|LICENSE|NOTICE|*/LICENSE|*/NOTICE) ;;
+                    *) code=true; break ;;
+                    esac
+                  done <<< "$files"
                 fi
               fi
               ;;
