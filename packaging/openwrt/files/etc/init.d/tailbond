@@ -25,6 +25,17 @@ start_service() {
 		echo "tailbond is turned off (VPN -> tailbond in the admin panel)"
 		return 0
 	}
+	if [ ! -x /usr/lib/tailbond/render-config ]; then
+		# Half-installed after a firmware upgrade (issue #49): opkg's
+		# record and /usr/bin/tailbondd survived, the files under
+		# /usr/lib/tailbond did not. Repair from the cached package
+		# instead of only failing -- its postinst restarts this service.
+		# The kept copy in /etc/tailbond/pkg, because /usr/lib may be
+		# part of what's gone.
+		echo "tailbond is half-installed (no /usr/lib/tailbond/render-config); reinstalling from the cached package (logread -e tailbond-reinstall)" >&2
+		[ -x /etc/tailbond/pkg/reinstall ] && /etc/tailbond/pkg/reinstall now >/dev/null 2>&1 &
+		return 1
+	fi
 	/usr/lib/tailbond/render-config || return 1
 	mkdir -p "$(uci -q get tailbond.main.state_dir || echo /etc/tailbond/state)"
 

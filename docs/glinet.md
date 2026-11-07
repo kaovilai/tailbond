@@ -509,9 +509,26 @@ So the package leaves itself a way back:
 | File (kept) | What it does |
 |---|---|
 | `/etc/tailbond/pkg/tailbond_<version>_<arch>.ipk`, `current` | the installed package (and the previous one, for rollbacks) |
-| `/etc/tailbond/pkg/reinstall` | installs that package if tailbond is missing; else downloads that version from the GitHub release (checked against `SHA256SUMS`); retries for 20 minutes; at most once per boot |
+| `/etc/tailbond/pkg/reinstall` | installs that package if tailbond is missing **or half-installed** (it checks a file, not only opkg's record); else downloads that version from the GitHub release (checked against `SHA256SUMS`); retries for 20 minutes; at most once per boot |
 | one line in `/etc/rc.local` (`# tailbond-reinstall`) | runs it in the background at boot |
 | `/lib/upgrade/tailbond.sh` (not kept, runs before the flash) | saves the running package if the cache is empty and adds these files to the keep list |
+
+One GL.iNet 4.9.0 beta was seen keeping opkg's record and
+`/usr/bin/tailbondd` while dropping `/usr/lib/tailbond/` and
+`/usr/share/tailbond/` — tailbond half-installed, and `opkg install
+--force-reinstall` could not even extract the files back, because that
+opkg does not create the package's directories ([issue #49]). The boot
+hook now notices the missing files and force-reinstalls from the cache,
+the package's `preinst` creates its directories before extraction, and
+`/etc/init.d/tailbond start` repairs instead of only failing. Fixing one
+by hand:
+
+```sh
+opkg files tailbond | grep '^/' | while read f; do mkdir -p "$(dirname "$f")"; done
+opkg install --force-reinstall /etc/tailbond/pkg/tailbond_<version>_<arch>.ipk
+```
+
+[issue #49]: https://github.com/kaovilai/tailbond/issues/49
 
 After the upgrade, `logread -e tailbond-reinstall` shows what happened, and
 the panel says "reinstalled after a firmware upgrade". Removing the package
