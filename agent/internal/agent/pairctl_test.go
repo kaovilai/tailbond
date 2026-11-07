@@ -311,6 +311,32 @@ func TestStalePairingSparesReplacement(t *testing.T) {
 	}
 }
 
+// A caller that gives up while the retry waits for the control socket
+// must not leave a credential behind: mqvpn never saw the key, and the
+// URI is never delivered, so the name would just be blocked.
+func TestPairingCallerGoneDuringRetry(t *testing.T) {
+	f := newFakeCtl(t)
+	f.startAfter(30 * time.Second) // never up within the test
+	srv := pairServerCtl(t, f.addr)
+	addUserRetry = 5 * time.Second
+	defer func() { addUserRetry = 30 * time.Millisecond }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := srv.addClient(ctx, "pixel")
+	if err == nil || !strings.Contains(err.Error(), "abandoned") {
+		t.Fatalf("addClient with a canceled caller: %v", err)
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 0 {
+		t.Fatalf("store kept the abandoned user: %+v", got)
+	}
+	// the name is free again (the re-pair needn't wait out the window)
+	addUserRetry = 30 * time.Millisecond
+	if _, err := srv.addClient(context.Background(), "pixel"); err != nil {
+		t.Fatalf("re-pair after abandonment: %v", err)
+	}
+}
+
 // With mqvpn simply absent, pairing proceeds: the config render carries
 // the user when mqvpn (re)starts, and the tunnel port is down with it.
 func TestPairingProceedsWithoutMqvpn(t *testing.T) {

@@ -586,6 +586,15 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 	if err := a.addUserToMqvpn(ctx, name, key); err != nil {
 		var apiErr *mqctl.APIError
 		switch {
+		case ctx.Err() != nil:
+			// The caller is gone (request canceled, phone gave up): the
+			// URI would never be delivered, and mqvpn never saw the key
+			// (the retry was still waiting), so free the name instead of
+			// leaving a credential nothing can authenticate with. First
+			// case: a cancel that coincides with another failure is still
+			// a cancel.
+			a.Logf("add_user %s: caller gone during the retry (%v)", name, ctx.Err())
+			return nil, fmt.Errorf("pairing for client %q was abandoned: %w%s", name, ctx.Err(), a.rollbackClient(name, key))
 		case errors.Is(err, mqctl.ErrUnavailable):
 			// mqvpn is down or predates the control API: the config render
 			// carries the user when it (re)starts, and the tunnel port is
@@ -594,24 +603,9 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 		case errors.As(err, &apiErr):
 			// mqvpn heard us and refused: the URI would never authenticate.
 			// Roll the entry back rather than hand it out (and block the
-			// name). Only this request's credential: a concurrent pairing
-			// may have re-used the name with its own key.
+			// name).
 			a.Logf("add_user %s: %v", name, err)
-			rolled := ""
-			if _, uerr := a.store.Update(func(c *config.Config) error {
-				users := c.Server.Users[:0]
-				for _, x := range c.Server.Users {
-					if x.Name != name || x.Key != key {
-						users = append(users, x)
-					}
-				}
-				c.Server.Users = users
-				return nil
-			}); uerr != nil {
-				a.Logf("add_user %s: rollback failed, the refused client stays in the store: %v", name, uerr)
-				rolled = " (rollback failed: " + uerr.Error() + ")"
-			}
-			return nil, fmt.Errorf("mqvpn did not accept client %q: %v%s", name, err, rolled)
+			return nil, fmt.Errorf("mqvpn did not accept client %q: %v%s", name, err, a.rollbackClient(name, key))
 		default:
 			// A transport failure the control API never answered: mqvpn may
 			// have registered the user, so keep the credential rather than
@@ -660,6 +654,26 @@ func storeHasUser(c *config.Config, name, key string) bool {
 		}
 	}
 	return false
+}
+
+// rollbackClient removes this request's credential — name and key, so a
+// concurrent re-pair of the same name keeps its own — and returns an
+// error suffix describing the outcome ("" when the rollback held).
+func (a *Agent) rollbackClient(name, key string) string {
+	if _, uerr := a.store.Update(func(c *config.Config) error {
+		users := c.Server.Users[:0]
+		for _, x := range c.Server.Users {
+			if x.Name != name || x.Key != key {
+				users = append(users, x)
+			}
+		}
+		c.Server.Users = users
+		return nil
+	}); uerr != nil {
+		a.Logf("add_user %s: rollback failed, the client stays in the store: %v", name, uerr)
+		return " (rollback failed: " + uerr.Error() + ")"
+	}
+	return ""
 }
 
 // addUserToMqvpn registers the user with the running mqvpn. The HTTP API
