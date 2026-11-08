@@ -60,7 +60,7 @@ WAN, phones can't).
 |---|---|---|
 | control client (TS2021 noise login, netmap, key rotation) | yes | what makes the instance a distinct tailnet node with its own `100.x`; control is per-node, so N identities means N control connections — this cannot be collapsed |
 | magicsock (STUN, disco, hole punching, DERP client) | yes | the entire point; deeply coupled to control |
-| WireGuard + tun | yes | kernel WG does the crypto; the tun is what mqvpn's paths bind to |
+| WireGuard + tun | yes | wireguard-go does the crypto in userspace even with a kernel tun (the tun is just the interface — the parent note's AEAD numbers are wireguard-go's); the tun is what mqvpn's paths bind to |
 | routes/ACL application, netfilter, MagicDNS, localapi, SSH, health/metrics, userspace netstack | no | roughly the difference between `tailscaled` and a splice |
 
 The kept parts are the heart of `tailscaled`; the discarded parts are the
@@ -86,20 +86,26 @@ to the single mqvpn — with the N daemons replaced by one process:
  └──────────────────────────────────────────┘
 ```
 
-The hard part is not the engines, it is **which namespace each engine's
-sockets live in**. Go creates sockets on arbitrary threads, so a process
-cannot `setns()` its way into N namespaces naively. `tailscaled` itself solved
-this for containers: `tailscale.com/net/netns` wires a *control function*
-into every dial/listen, which sets `SO_MARK` (or setns on a locked thread) at
-socket creation. A deconstruction would give each engine its own control
-function — per-engine mark, or per-engine setns — and route accordingly:
+The hard part is not the engines, it is **steering each engine's sockets
+out the right WAN**. Go creates sockets on arbitrary threads, and a Go
+control hook (`net.Dialer.Control`) runs *after* socket creation, so a
+namespace cannot be chosen there — sockets belong to the namespace they
+were created in. `tailscaled` itself does not setns at all: verified at
+v1.104.5, `tailscale.com/net/netns`'s Linux control functions set
+`SO_MARK` (or `SO_BINDTODEVICE`) — `setsockopt` calls, valid at that
+point. A deconstruction gives each engine its own control function and
+routes accordingly:
 
-- **Per-engine `SO_MARK` + policy routing** in the main namespace: simplest,
-  but the marks must not collide with tailbond's own fwmark-keyed per-WAN
-  tables (`packaging/openwrt/hooks/bypass-apply`); reserve a range.
-- **Per-engine setns** via the same control hooks: keeps the parent note's
-  clean namespace isolation, but depends on `net/netns` internals that are
-  exactly the no-promise surface the treadmill is about.
+- **Per-engine `SO_BINDTODEVICE`** to WAN N's interface: the same knob
+  mqvpn uses for its paths; no mark space to collide in, but every WAN
+  must be an interface in the main namespace.
+- **Per-engine `SO_MARK` + policy routing**: the marks must not collide
+  with tailbond's own fwmark-keyed per-WAN tables
+  (`packaging/openwrt/hooks/bypass-apply`); reserve a range.
+
+Both keep all engines in one namespace; the parent note's per-WAN
+namespace isolation is *not* available to a single process, which is
+itself a reason to stay with separate stock daemons.
 
 Either way the parent note's blackhole-default per-WAN tables stay: a table
 that loses its default must drop, not leak onto another WAN (two paths on one
@@ -121,8 +127,12 @@ forever" is not available.
 - **The harness**: a local [headscale](https://github.com/juanfont/headscale)
   control server inside the CI job (the same double this note's numbers were
   measured against): `minitsd` joins, gets its `100.x`, punches to a peer
-  across namespaces, under the synthetic symmetric-NAT rules
-  `scripts/e2e-cgnat-relay.sh` already models.
+  across namespaces. `scripts/e2e-cgnat-relay.sh` models an inbound-filtering
+  carrier (MASQUERADE plus drop-unsolicited), not endpoint-dependent
+  mapping — plain MASQUERADE preserves the source port across
+  destinations, so it is not a symmetric NAT. Punch assertions under
+  symmetric rules are new harness work: `SNAT --random-fully` per flow
+  gives the destination-dependent ports.
 - **The canary**: headscale tracks the client protocol but is not Tailscale's
   production coordination server. A small periodic job logs one real node
   into the real tailnet with a `TS_AUTHKEY` secret — same style as the
@@ -140,7 +150,7 @@ Each row: how it breaks, what catches it, what doesn't.
 | 2 | **Behavioral drift behind a stable API**: punch heuristics, disco, netmap field semantics change | harness assertions (join, address, punch under synthetic NAT) | punch *success rate* on real cellular; DERP fallback character |
 | 3 | **Control-protocol drift** (Tailscale's server side): production coordination requires newer protocol while headscale still accepts ours | the canary job | the harness (headscale is not production) |
 | 4 | **Headscale-vs-production divergence**: green harness, broken login | the canary (if it overlaps) | anything short of a real login |
-| 5 | **Socket steering regressions**: a `net/netns` or Go runtime change lands an engine's sockets in the wrong namespace — two paths on one WAN, silently | blackhole defaults turn it into a dropped path; harness's per-path source-address assertions | the wrong-namespace failure when the leaked WAN still routes |
+| 5 | **Socket steering regressions**: a `net/netns` or Go runtime change breaks per-engine `SO_BINDTODEVICE`/`SO_MARK` steering — an engine's traffic leaves the wrong WAN, two paths on one uplink, silently | blackhole defaults turn it into a dropped path; harness's per-path source-address assertions | the mis-steered failure when the wrong WAN still routes |
 | 6 | **fwmark collision**: per-engine marks overlap tailbond's per-WAN tables | harness routing assertions; explicit reserved range | nothing, if unreserved |
 | 7 | **GC coupling**: one engine's pressure throttles all engines sharing the runtime; `GOMEMLIMIT` tuning becomes a whole-process compromise | load tests | idle measurements like this note's |
 | 8 | **tun/netns lifecycle races** on engine restart inside one process | restart-under-load in the harness | rare interleavings |
@@ -154,8 +164,11 @@ can.
 
 - **tsnet as the engine**: today's tsnet doc even advertises "multiple
   independent Tailscale nodes within a single binary" — but it is gVisor
-  userspace netstack, TCP-shaped, no kernel tun, and the parent issue measured
-  the userspace path at 92.9% burst loss. mqvpn needs the real tun.
+  userspace netstack with no kernel tun, and mqvpn's paths need a real tun
+  to bind. (The parent note's 92.9% burst loss was measured on mqvpn over
+  a SOCKS5 UDP-ASSOCIATE relay, not on tsnet's data path — evidence that
+  userspace-relayed datagrams hurt that shape, not a tsnet measurement;
+  the tun requirement is the reason, not the number.)
 - **Collapsing the N control connections into one**: separate node identities
   are the feature (one `100.x` source per path); control is per-node.
 - **A general-purpose "mini-tailscale"**: the splice should carry only what
