@@ -181,10 +181,14 @@ cannot go below the validator's floor; adding `PathMTU`/`PMTUD` to
 
 ## Costs
 
-- **Memory.** ~11–80 MB private per connected instance (34 MB RSS idle, 107 MB
-  for a loaded service instance with a 365 MB lifetime GC peak). Three fit a
-  1 GB router; four to five risk the OOM killer. Both the Slate 7 and the
-  Brume 2 have 1 GB; a 512 MB model would cap at two.
+- **Memory.** Config-dependent: ~11–80 MB private per *loaded* connected
+  instance (34 MB RSS idle on a full router setup, 107 MB for a loaded
+  service instance with a 365 MB lifetime GC peak). But a *minimal* per-WAN
+  instance — no DNS, no routes, the only thing this design needs — measured
+  9.3 MB at tailscale v1.104.5 (4.5 MB with `GOMEMLIMIT=6MiB`), with amd64
+  and arm64 at parity in Go runtime terms; see
+  [design-minitsd.md](design-minitsd.md). With that number three paths cost
+  ~14–28 MB, well within a 512 MB router.
 - **CPU is not the limit.** The shipped `x/crypto` AEAD does ~0.77–0.87 Gbit/s
   per measured core at 1280-byte packets; roughly 15% of a core per 100 Mbit/s
   of path traffic, ~27% more on a Slate 7's slower core.
