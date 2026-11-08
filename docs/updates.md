@@ -95,7 +95,10 @@ Pre-releases (`v1.2.3-beta.1`) are never offered.
   doesn't match is refused.
 - **GL router**: `opkg install` of the release's package; if the agent
   doesn't answer within 90 seconds, the previous package goes back
-  (`logread -e tailbond-update`).
+  (`logread -e tailbond-update`). On OpenWrt 25.12+ (apk) the same flow
+  installs the `.apk` ([glinet.md](glinet.md#openwrt-2512-and-apk)); a
+  hand-installed apk router has no rollback copy until its first update
+  has run.
 - **A development build from before v0.1.3 can't update itself.** A build
   with no version to compare (a commit hash like `8051e4f`, or a CI artifact)
   shows the new release, and **Update now** answers *no newer release found*
@@ -109,6 +112,9 @@ Pre-releases (`v1.2.3-beta.1`) are never offered.
     router's architecture, so use the one from the
     [download steps](glinet.md#install-without-ssh)):
     `opkg install --force-reinstall tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk`
+    (OpenWrt 25.12+: `apk add --allow-untrusted tailbond-openwrt-aarch64_cortex-a53.apk`
+    and then the `sed` on `/etc/apk/world` from the
+    [download steps](glinet.md#openwrt-2512-and-apk))
   - **Linux bundle**: the installer that is already installed and knows this
     machine, `sudo /usr/local/lib/tailbond/install.sh --update`. With a
     custom `--prefix P` it lives at `P/lib/tailbond/install.sh`.

@@ -290,8 +290,9 @@ type Update struct {
 	NotesURL  string `json:"notes_url,omitempty"` // the release page (changelog)
 	Policy    string `json:"policy"`              // immediate | auto | notify | off
 	Repo      string `json:"repo,omitempty"`
-	// Method: static (install.sh bundle) | opkg (OpenWrt) | dnf (RPM: dnf
-	// upgrade) | none; one-click install for static and opkg
+	// Method: static (install.sh bundle) | opkg (OpenWrt) | apk (OpenWrt
+	// 25.12+) | dnf (RPM: dnf upgrade) | none; one-click install for
+	// static, opkg and apk
 	Method     string     `json:"method"`
 	State      string     `json:"state"` // idle | checking | downloading | installing | failed | rolled_back | off
 	LastCheck  *time.Time `json:"last_check,omitempty"`

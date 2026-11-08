@@ -23,7 +23,8 @@ Stock GL firmware only accepts the `aarch64_cortex-a53_neon-vfpv4` package;
 plain OpenWrt 23.05/24.10 aarch64_cortex-a53 builds take the
 `aarch64_cortex-a53` one. Both contain the same static binaries. The ipk is
 a gzipped ustar tar (GL's opkg reportedly crashes on ar-format ipks:
-[Wattline notes][wl]).
+[Wattline notes][wl]). OpenWrt 25.12 and newer replaced opkg with apk and
+installs a `.apk` package instead ([below](#openwrt-2512-and-apk)).
 
 ## Install without SSH
 
@@ -33,6 +34,8 @@ a gzipped ustar tar (GL's opkg reportedly crashes on ar-format ipks:
   [tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk)
 - Plain OpenWrt 23.05/24.10 aarch64:
   [tailbond-openwrt-aarch64_cortex-a53.ipk](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-openwrt-aarch64_cortex-a53.ipk)
+- Plain OpenWrt 25.12+ aarch64 (apk):
+  [tailbond-openwrt-aarch64_cortex-a53.apk](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-openwrt-aarch64_cortex-a53.apk)
 
 To check a download against the release's `SHA256SUMS` (on a computer):
 
@@ -156,6 +159,50 @@ source: add the key again (step 1). Removing tailbond also removes its key. The 
 it under **Manage Sources**. Until then, GL's list update reports a
 failed signature check for it.
 
+## OpenWrt 25.12 and apk
+
+OpenWrt 25.12 replaced opkg with **apk** (the Alpine package keeper) —
+24.10 and 23.05, and GL.iNet's stock firmware, keep opkg and the `.ipk`.
+The same package ships as an `.apk` for 25.12+ routers
+(`aarch64_cortex-a53`, plain OpenWrt on this hardware):
+
+```sh
+wget -O /tmp/tailbond.apk https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-openwrt-aarch64_cortex-a53.apk
+apk add --allow-untrusted /tmp/tailbond.apk
+# apk pins the file's content hash in /etc/apk/world when installing a
+# file, which would block every later upgrade; name the package plainly:
+sed -i 's/^tailbond[><=].*/tailbond/' /etc/apk/world
+```
+
+Then configure it as on GL firmware (**Services → tailbond** in LuCI; the
+GL panel is GL firmware's). Everything the package ships is the same as
+the ipk's, including the config surviving upgrades (`/etc/config/tailbond`
+is a conffile through `/lib/apk/packages/tailbond.conffiles`: a changed
+config is kept, the new default lands next to it as `.apk-new`), the
+boot-time reinstall after a firmware upgrade, and the agent's updates with
+rollback. One gap: on an apk system the agent can't rebuild its own
+package for the rollback copy (`GET /tailbond-glinet.ipk` reads opkg's
+file list), so a hand-installed router updates without a rollback copy the
+first time; every update after that keeps one.
+
+**An apk feed can't live on GitHub Releases**: apk does not follow
+redirects, and every Releases URL redirects
+([openwrt/openwrt#17180](https://github.com/openwrt/openwrt/issues/17180)).
+`scripts/release/apk-feed.sh` builds a signed feed (an EC P-256 key,
+`scripts/release/gen-apk-key.sh`; the key the packages ship lets a router
+that installed one trust it) for a server that answers directly — GitHub
+Pages, a VPS. Until that is hosted, install by hand and update from the
+panel or the release.
+
+Both the per-push CI (pinned image) and a weekly run against the newest
+25.12 rootfs image ([openwrt-latest.yml]; the README's *OpenWrt latest*
+badge) install the apk in a container and run the same checks as the 23.05
+test: panel files, the agent, the /rpc backend, bypass rules, render-config,
+updates with rollback, firmware-upgrade reinstall, the half-installed
+repair, and the signed feed with its rejections.
+
+[openwrt-latest.yml]: https://github.com/kaovilai/tailbond/actions/workflows/openwrt-latest.yml
+
 ## Build from source
 
 For contributors (podman; the router needs no SDK):
@@ -165,6 +212,8 @@ scripts/build-mqvpn-aarch64-musl.sh      # static mqvpn → out/aarch64/mqvpn
 packaging/openwrt/build-ipk.sh           # tailbondd (arm64) + both .ipk files → out/ipk/
                                          # (carries out/android/tailbond-debug.apk or TAILBOND_APK when present)
 scripts/test-openwrt-ipk.sh              # emulated OpenWrt 23.05 arm64 install test (podman)
+packaging/openwrt/build-apk.sh           # the same package as an .apk (OpenWrt 25.12+) → out/apk/
+scripts/test-openwrt-apk.sh              # emulated OpenWrt 25.12 arm64 (apk) install test (podman)
 ```
 
 `out/ipk/` gets `tailbond_<version>_aarch64_cortex-a53_neon-vfpv4.ipk` (GL
@@ -560,6 +609,12 @@ Config: `/etc/config/tailbond`, rendered to `/etc/tailbond/tailbond.json`.
   answers `status`/`api`/`info` against the running agent and refuses
   `/api/login` and path escapes, the agent rebuilds its own package, clean
   uninstall.
+- Emulated OpenWrt 25.12 arm64 (`scripts/test-openwrt-apk.sh`; per push on
+  the pinned 25.12.6 image, weekly on the rolling tag): the apk package
+  installs, conffiles survive upgrades (`.apk-new`), the world pin a file
+  install leaves is normalized, updates with rollback, the firmware-upgrade
+  reinstall, the half-installed repair, the GitHub-release fallback, and
+  the signed apk feed with its rejections.
 - `scripts/e2e-netns.sh`: pairing over Tailscale with fake `tailscale`
   CLIs, captive portals (own probe, mocked GL repeater with Login Mode, the
   real portal hooks against a stub uci).

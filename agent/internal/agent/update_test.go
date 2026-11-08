@@ -126,12 +126,16 @@ func (g *fakeGitHub) publish(t *testing.T, version string) {
 		"tailbond_" + version + "-r1_aarch64_cortex-a53_neon-vfpv4.ipk": []byte("ipk neon"),
 		"tailbond-openwrt-aarch64_cortex-a53.ipk":                       []byte("ipk a53 stable"),
 		"tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk":             []byte("ipk neon stable"),
+		"tailbond_" + version + "-r1_aarch64_cortex-a53.apk":            []byte("apk a53"),
+		"tailbond-openwrt-aarch64_cortex-a53.apk":                       []byte("apk a53 stable"),
 	}
 }
 
 // The router updater downloads the stable asset name and caches it under
-// the versioned one (update-ipk and reinstall read the version from it).
-func TestIPKForStableNames(t *testing.T) {
+// the versioned one (update-ipk and reinstall read the version from it):
+// the .ipk for opkg (23.05, 24.10, GL.iNet stock), the .apk for OpenWrt
+// 25.12+.
+func TestPkgForStableNames(t *testing.T) {
 	as := func(names ...string) *update.Release {
 		r := &update.Release{Version: "1.2.0"}
 		for _, n := range names {
@@ -140,21 +144,29 @@ func TestIPKForStableNames(t *testing.T) {
 		return r
 	}
 	for _, c := range []struct {
+		ext               string
 		rel               *update.Release
 		archs             []string
 		wantName, wantLoc string
 	}{
-		{as("tailbond_1.2.0-r1_aarch64_cortex-a53.ipk", "tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53"},
+		{"ipk", as("tailbond_1.2.0-r1_aarch64_cortex-a53.ipk", "tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53"},
 			"tailbond-openwrt-aarch64_cortex-a53.ipk", "tailbond_1.2.0-r1_aarch64_cortex-a53.ipk"},
-		{as("tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk", "tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53_neon-vfpv4", "aarch64_cortex-a53"},
+		{"ipk", as("tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk", "tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53_neon-vfpv4", "aarch64_cortex-a53"},
 			"tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk", "tailbond_1.2.0-r1_aarch64_cortex-a53_neon-vfpv4.ipk"},
-		{as("tailbond_1.2.0-r2_aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53"},
+		{"ipk", as("tailbond_1.2.0-r2_aarch64_cortex-a53.ipk"), []string{"aarch64_cortex-a53"},
 			"tailbond_1.2.0-r2_aarch64_cortex-a53.ipk", "tailbond_1.2.0-r2_aarch64_cortex-a53.ipk"},
-		{as("tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_generic"}, "", ""},
+		{"ipk", as("tailbond-openwrt-aarch64_cortex-a53.ipk"), []string{"aarch64_generic"}, "", ""},
+		{"apk", as("tailbond_1.2.0-r1_aarch64_cortex-a53.apk", "tailbond-openwrt-aarch64_cortex-a53.apk"), []string{"aarch64_cortex-a53"},
+			"tailbond-openwrt-aarch64_cortex-a53.apk", "tailbond_1.2.0-r1_aarch64_cortex-a53.apk"},
+		{"apk", as("tailbond_1.2.0-r2_aarch64_cortex-a53.apk"), []string{"aarch64_generic", "aarch64_cortex-a53"},
+			"tailbond_1.2.0-r2_aarch64_cortex-a53.apk", "tailbond_1.2.0-r2_aarch64_cortex-a53.apk"},
+		// an apk router gets no ipk, an opkg router no apk: only this
+		// architecture's own format matches
+		{"apk", as("tailbond-openwrt-aarch64_cortex-a53.ipk", "tailbond-openwrt-aarch64_cortex-a53.apk"), []string{"aarch64_generic"}, "", ""},
 	} {
-		a, loc, ok := ipkFor(c.rel, c.archs)
+		a, loc, ok := pkgFor(c.rel, c.archs, c.ext)
 		if a.Name != c.wantName || loc != c.wantLoc || ok != (c.wantName != "") {
-			t.Errorf("%v %v: got %q %q %v, want %q %q", c.rel.Assets, c.archs, a.Name, loc, ok, c.wantName, c.wantLoc)
+			t.Errorf("%v %v %s: got %q %q %v, want %q %q", c.rel.Assets, c.archs, c.ext, a.Name, loc, ok, c.wantName, c.wantLoc)
 		}
 	}
 }
@@ -342,6 +354,31 @@ func TestUpdateIPKAndResult(t *testing.T) {
 	a.updateTick(ctx, true, true)
 	if len(*calls) != 1 {
 		t.Fatal("Update now didn't retry it")
+	}
+}
+
+// The same update flow on OpenWrt 25.12+ (apk): the release's .apk is
+// picked, cached under the versioned name, and update-ipk (apk-aware)
+// runs with it.
+func TestUpdateApk(t *testing.T) {
+	ctx := context.Background()
+	g := newFakeGitHub(t, "0.2.0")
+	a, calls := updAgent(t, g, methodApk)
+	a.upd.pkgDir = t.TempDir()
+	a.upd.ipkCmd = "/usr/lib/tailbond/update-ipk"
+	os.WriteFile(filepath.Join(a.upd.pkgDir, "tailbond_0.1.0-r1_aarch64_cortex-a53.apk"), []byte("old"), 0o644)
+	os.WriteFile(filepath.Join(a.upd.pkgDir, "current"), []byte("tailbond_0.1.0-r1_aarch64_cortex-a53.apk\n"), 0o644)
+	a.updateTick(ctx, true, true)
+	if len(*calls) != 1 {
+		t.Fatalf("no install: %+v", a.updateView())
+	}
+	c := (*calls)[0]
+	want := []string{filepath.Join(a.upd.pkgDir, "tailbond_0.2.0-r1_aarch64_cortex-a53.apk"), filepath.Join(a.upd.pkgDir, "tailbond_0.1.0-r1_aarch64_cortex-a53.apk")}
+	if c.name != a.upd.ipkCmd || strings.Join(c.args, " ") != strings.Join(want, " ") || !strings.Contains(strings.Join(c.env, " "), "TB_ROLE=server") {
+		t.Fatalf("ran %+v", c)
+	}
+	if b, _ := os.ReadFile(want[0]); string(b) != "apk a53 stable" {
+		t.Fatal("apk content")
 	}
 }
 

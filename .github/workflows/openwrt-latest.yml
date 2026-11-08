@@ -1,0 +1,66 @@
+name: OpenWrt latest
+
+# The "runs on the latest OpenWrt" badge (README): weekly, the apk install
+# test (scripts/test-openwrt-apk.sh) runs against the newest OpenWrt 25.12
+# rootfs image — the rolling armsr-armv8-openwrt-25.12 tag follows its
+# point releases. ci.yml runs the same test per push on the pinned point
+# release; this workflow catches a point release (or a rolling-tag change)
+# that breaks tailbond before anyone's router takes it. Bump the tag when
+# OpenWrt's next stable series ships: the test itself pins nothing above
+# the 25.12 apk line.
+on:
+  schedule:
+    - cron: "23 4 * * 1" # Mondays, off the busy minutes
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "openwrt/rootfs image to test (default: the rolling 25.12 tag)"
+        default: docker.io/openwrt/rootfs:armsr-armv8-openwrt-25.12
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    name: OpenWrt 25.12 apk install test (latest image)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Install podman
+        run: command -v podman || { sudo apt-get update -q && sudo apt-get install -y -q podman; }
+      - name: mqvpn submodule revision
+        id: mq
+        # sha: the pinned mqvpn. week: a fresh build at least weekly, for
+        # the distro packages it links. Same key as jobs mqvpn-aarch64 and
+        # openwrt in ci.yml, so the binary is usually already cached.
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD:third_party/mqvpn)"
+            echo "week=$(date -u +%G-W%V)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Cache static aarch64 mqvpn
+        id: mqbin
+        uses: actions/cache@v6
+        with:
+          path: out/aarch64/mqvpn
+          key: mqvpn-aarch64-bin-${{ steps.mq.outputs.sha }}-${{ hashFiles('patches/mqvpn/*.patch', 'scripts/build-mqvpn-aarch64-musl.sh', 'scripts/build-mqvpn-musl.sh', 'scripts/lib/*.sh') }}-${{ steps.mq.outputs.week }}
+      - name: Static aarch64 mqvpn
+        if: steps.mqbin.outputs.cache-hit != 'true'
+        run: scripts/build-mqvpn-aarch64-musl.sh
+      - name: Build the ipk and the apk (no Android app; the phone page
+          links the release instead)
+        run: |
+          packaging/openwrt/build-ipk.sh
+          packaging/openwrt/build-apk.sh
+      - name: Install test in the latest OpenWrt 25.12 image
+        env:
+          PODMAN: sudo podman
+          IMAGE: ${{ inputs.image || 'docker.io/openwrt/rootfs:armsr-armv8-openwrt-25.12' }}
+        run: scripts/test-openwrt-apk.sh

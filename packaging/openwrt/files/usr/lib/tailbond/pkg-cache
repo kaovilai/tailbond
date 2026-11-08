@@ -14,11 +14,18 @@
 #   pkg-cache keep-list LIST     sysupgrade: in LIST (the files to keep), only
 #                                the current ipk, plus the reinstall script
 #   pkg-cache installed-version  the installed package version ("-" for "~")
-#   pkg-cache ipk-version FILE   an ipk's version ("-" for "~")
+#   pkg-cache ipk-version FILE   an ipk's version ("-" for "~"), an apk's
+#                                from its name (tailbond_<version>_<arch>.apk)
+#
+# Works on opkg (23.05, 24.10, GL.iNet stock) and apk (OpenWrt 25.12+)
+# systems: the installed version comes from opkg's control file or
+# `apk list --installed`; install scripts that call a package manager
+# branch on `command -v apk`.
 #
 # /etc/tailbond/pkg (kept across firmware upgrades with "Keep settings", as
 # all of /etc/tailbond/ is, by /lib/upgrade/keep.d/tailbond):
-#   tailbond_<version>_<arch>.ipk  the installed package and the previous one
+#   tailbond_<version>_<arch>.ipk/apk  the installed package and the
+#                                  previous one
 #   current, previous              their file names
 #   reinstall                      run at boot from /etc/rc.local: reinstalls
 #                                  the package after a firmware upgrade
@@ -32,6 +39,10 @@ MARK="# tailbond-reinstall"
 LINE="[ -x $PKGDIR/reinstall ] && $PKGDIR/reinstall boot </dev/null >/dev/null 2>&1 & $MARK"
 
 log() { logger -t tailbond "$*" 2>/dev/null; echo "$*" >&2; }
+
+# apk_installed: the tailbond apk's version, "" when not installed (apk
+# exits 0 for a missing package too, so the output is grepped)
+apk_installed() { apk list --installed 2>/dev/null | sed -n 's/^tailbond-\([^ ]*\) .*/\1/p' | head -1; }
 
 rc_local_add() {
 	if [ -f "$RC_LOCAL" ] && grep -qF "$MARK" "$RC_LOCAL"; then
@@ -68,9 +79,34 @@ install_reinstall() {
 
 # ver_of CONTROL_FILE_CONTENT on stdin -> Version, "~" back to "-"
 ver_of() { sed -n 's/^Version: *//p' | head -1 | tr '~' '-'; }
-installed_version() { [ -f "$INFO" ] && ver_of <"$INFO"; }
-ipk_version() { tar -xzOf "$1" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null | ver_of; }
-installed_arch() { [ -f "$INFO" ] && sed -n 's/^Architecture: *//p' "$INFO" | head -1; }
+installed_version() {
+	[ -f "$INFO" ] && ver_of <"$INFO" && return 0
+	command -v apk >/dev/null 2>&1 && apk_installed && return 0
+}
+ipk_version() {
+	case "$1" in
+	*.apk)
+		# tailbond_<version>_<arch>.apk: an arch (aarch64_cortex-a53) has
+		# an underscore, so try the arches this router knows, the widest
+		# (its own) last
+		local b rest a
+		b="$(basename "$1")"
+		rest="${b#tailbond_}"
+		rest="${rest%.apk}"
+		for a in $(cat /etc/apk/arch 2>/dev/null) $(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }'); do
+			case "$rest" in
+			*_"$a") [ "${rest%_$a}" != "$rest" ] && echo "${rest%_$a}" && return 0 ;;
+			esac
+		done
+		return 1
+		;;
+	esac
+	tar -xzOf "$1" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null | ver_of
+}
+installed_arch() {
+	[ -f "$INFO" ] && sed -n 's/^Architecture: *//p' "$INFO" | head -1 && return 0
+	command -v apk >/dev/null 2>&1 && head -1 /etc/apk/arch 2>/dev/null
+}
 
 seed() {
 	local cur ver arch name
@@ -80,6 +116,11 @@ seed() {
 	if [ -n "$cur" ] && [ -f "$PKGDIR/$cur" ] && [ "$(ipk_version "$PKGDIR/$cur")" = "$ver" ]; then
 		return 0
 	fi
+	# apk (OpenWrt 25.12+): the agent rebuilds its package from opkg's file
+	# list (GET /tailbond-glinet.ipk), which an apk system has none of. No
+	# rollback copy then; update-ipk reports "no previous package" if the
+	# new one never answers.
+	command -v apk >/dev/null 2>&1 && { log "no apk copy of the running package (the agent rebuilds .ipk only)"; return 1; }
 	arch="$(installed_arch)"
 	name="tailbond_${ver}_${arch:-all}.ipk"
 	mkdir -p "$PKGDIR" && chmod 700 "$PKGDIR"
@@ -116,7 +157,7 @@ keep() {
 	# update rolled back with "the agent didn't answer".
 	extra=""
 	[ -n "${TB_PENDING:-}" ] && extra="$(basename "$TB_PENDING")"
-	for f in "$PKGDIR"/*.ipk; do
+	for f in "$PKGDIR"/*.ipk "$PKGDIR"/*.apk; do
 		[ -e "$f" ] || continue
 		b="$(basename "$f")"
 		spare=0
@@ -133,9 +174,9 @@ keep_list() {
 	local list="$1" cur f
 	[ -n "$list" ] && [ -f "$list" ] || return 0
 	cur="$(cat "$PKGDIR/current" 2>/dev/null)"
-	# Only the current ipk travels (the backup is held in RAM and the
+	# Only the current package travels (the backup is held in RAM and the
 	# previous one isn't needed to reinstall).
-	grep -v "^$PKGDIR/.*\.ipk\$" "$list" >"$list.tb" && cat "$list.tb" >"$list"
+	grep -v "^$PKGDIR/.*\.\(ipk\|apk\)\$" "$list" >"$list.tb" && cat "$list.tb" >"$list"
 	rm -f "$list.tb"
 	for f in ${cur:+"$PKGDIR/$cur"} "$PKGDIR/current" "$PKGDIR/reinstall" "$RC_LOCAL"; do
 		[ -f "$f" ] && ! grep -qxF "$f" "$list" && echo "$f" >>"$list"

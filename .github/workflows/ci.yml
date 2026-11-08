@@ -769,10 +769,26 @@ jobs:
           # rootful: the container needs the OpenWrt feed (lua, uhttpd)
           PODMAN: sudo podman
         run: scripts/test-openwrt-ipk.sh
+      # OpenWrt 25.12 replaced opkg with apk: the same package as an .apk
+      # (built from the ipk, so the formats can't drift), installed and
+      # updated in a 25.12 rootfs. The weekly openwrt-latest.yml runs the
+      # same test against the newest 25.12 image (the README badge).
+      - name: Build apk (OpenWrt 25.12+)
+        run: packaging/openwrt/build-apk.sh
+      - name: Install test in OpenWrt 25.12 arm64 (apk)
+        env:
+          # rootful: the container needs the OpenWrt feed (lua, uhttpd)
+          PODMAN: sudo podman
+        run: scripts/test-openwrt-apk.sh
       - uses: actions/upload-artifact@v7
         with:
           name: glinet-ipk
           path: out/ipk/*.ipk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openwrt-apk
+          path: out/apk/tailbond_*.apk
           if-no-files-found: error
 
   # Report a problem (docs/reporting.md) in a browser against a real
@@ -1368,6 +1384,11 @@ jobs:
         with:
           name: glinet-ipk
           path: dist/glinet-ipk/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true'
+        with:
+          name: openwrt-apk
+          path: dist/openwrt-apk/
       - uses: actions/download-artifact@v8
         if: env.IS_TAG != 'true'
         with:

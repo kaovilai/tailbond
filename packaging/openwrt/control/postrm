@@ -17,10 +17,20 @@ if [ "$1" != upgrade ]; then
 		rm -f /tmp/rc.local.tb
 	fi
 	if [ -d /etc/tailbond/pkg ]; then
-		(
-			sleep "${TB_PKG_PURGE_DELAY:-120}"
-			[ -f /usr/lib/opkg/info/tailbond.control ] || rm -rf /etc/tailbond/pkg
-		) </dev/null >/dev/null 2>&1 &
+		if command -v apk >/dev/null 2>&1; then
+			# apk (OpenWrt 25.12+): a removal is a removal — apk runs
+			# these scripts on no reinstall (its --force-reinstall
+			# replaces the files without them), so there is nothing
+			# to wait for.
+			rm -rf /etc/tailbond/pkg
+		else
+			(
+				sleep "${TB_PKG_PURGE_DELAY:-120}"
+				# the package back already (opkg's --force-reinstall
+				# removes it first, running this on the way)
+				[ -f /usr/lib/opkg/info/tailbond.control ] || rm -rf /etc/tailbond/pkg
+			) </dev/null >/dev/null 2>&1 &
+		fi
 	fi
 fi
 exit 0

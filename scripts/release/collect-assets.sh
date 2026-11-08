@@ -8,7 +8,8 @@
 #
 #   tailbond-android.apk                                 Android (release key)
 #   tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk    GL.iNet stock firmware
-#   tailbond-openwrt-aarch64_cortex-a53.ipk              OpenWrt 23.05+
+#   tailbond-openwrt-aarch64_cortex-a53.ipk              OpenWrt 23.05/24.10 (opkg)
+#   tailbond-openwrt-aarch64_cortex-a53.apk              OpenWrt 25.12+ (apk)
 #   tailbond-server.x86_64.rpm                           Fedora
 #   tailbond-linux-x86_64.tar.gz, tailbond-linux-aarch64.tar.gz   VPS, Linux client
 #   tailbond-macos-arm64.tar.gz, tailbond.rb             Mac (bundle, Homebrew)
@@ -75,6 +76,23 @@ for f in "$DIST"/glinet-ipk/tailbond_*.ipk; do
 done
 [ "$n" -gt 0 ] || die "no ipk in $DIST/glinet-ipk"
 
+# OpenWrt 25.12+ (apk, it replaced opkg): the versioned apk and its stable
+# copy. An apk feed can't live on GitHub Releases (apk follows no
+# redirects), so there is no feed section here: scripts/release/apk-feed.sh
+# builds one for a server that answers directly (GitHub Pages, a VPS), and
+# the package's update flow (update-ipk, reinstall) works from these files.
+n=0
+for f in "$DIST"/openwrt-apk/tailbond_*.apk; do
+    [ -f "$f" ] || continue
+    b="${f##*/}"
+    arch="$(sed -n 's/^tailbond_.*-r[0-9]*_\(.*\)\.apk$/\1/p' <<<"$b")"
+    [ -n "$arch" ] || die "$b: not tailbond_<version>-r<N>_<arch>.apk"
+    cp "$f" "$OUT/$b"
+    cp "$f" "$OUT/tailbond-openwrt-$arch.apk"
+    n=$((n + 1))
+done
+[ "$n" -gt 0 ] || die "no apk in $DIST/openwrt-apk"
+
 # Fedora: the versioned RPM (dnf shows its name) and a stable copy
 rpm="$(one "$DIST/fedora-rpm/tailbond-server-[0-9]*.x86_64.rpm")"
 cp "$rpm" "$OUT/"
@@ -94,6 +112,7 @@ for d in "$DIST"/tailbondd/linux-*; do
 done
 
 for f in tailbond-android.apk tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk tailbond-openwrt-aarch64_cortex-a53.ipk \
+    tailbond-openwrt-aarch64_cortex-a53.apk \
     tailbond-server.x86_64.rpm tailbond-linux-x86_64.tar.gz tailbond-linux-aarch64.tar.gz \
     tailbond-macos-arm64.tar.gz tailbond.rb tailbondd-linux-amd64.tar.gz tailbondd-linux-arm64.tar.gz; do
     [ -s "$OUT/$f" ] || die "$f missing"
