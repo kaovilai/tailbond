@@ -7,17 +7,19 @@
 # /etc/tailbond/ (/lib/upgrade/keep.d/tailbond), /etc/config/ and
 # /etc/rc.local, but not the package. The package keeps a copy of this
 # script in /etc/tailbond/pkg/reinstall and one line in /etc/rc.local that
-# runs it in the background at every boot:
+# runs it in the background at every boot. Works on opkg (23.05, 24.10,
+# GL.iNet stock; .ipk files) and apk (OpenWrt 25.12+; .apk) systems:
 #
 #   reinstall boot    package installed and intact: nothing to do. Missing,
-#                     or half-installed (opkg's record kept, the files not:
-#                     seen after a GL.iNet 4.9.0 firmware upgrade, issue
-#                     #49): install the cached ipk (/etc/tailbond/pkg/current),
-#                     else download that version's ipk from the GitHub release
-#                     (the latest release's when nothing names one), checked
-#                     against the release's SHA256SUMS; retry for up to 20
-#                     minutes (the network may come up later). At most once
-#                     per boot.
+#                     or half-installed (the package manager's record kept,
+#                     the files not: seen after a GL.iNet 4.9.0 firmware
+#                     upgrade, issue #49): install the cached package
+#                     (/etc/tailbond/pkg/current), else download that
+#                     version's from the GitHub release (the latest
+#                     release's when nothing names one), checked against
+#                     the release's SHA256SUMS; retry for up to 20 minutes
+#                     (the network may come up later). At most once per
+#                     boot.
 #   reinstall now     the same, ignoring the once-per-boot marker
 #
 # Logs to the system log (logread -e tailbond-reinstall). Writes
@@ -35,13 +37,18 @@ TRIES="${TB_TRIES:-40}"
 PAUSE="${TB_PAUSE:-30}"
 
 log() { logger -t tailbond-reinstall "$*" 2>/dev/null; echo "$*" >&2; }
-# Not only opkg's record: a firmware upgrade was seen keeping the record
-# and /usr/bin/tailbondd while dropping /usr/lib/tailbond and
-# /usr/share/tailbond (issue #49) -- half-installed, exactly the state
-# this script exists to repair. render-config is the file the init
-# script cannot run without, and it only ever comes from the package.
+# The package manager's record (opkg's control file, or apk's database):
+# a firmware upgrade was seen keeping the record and /usr/bin/tailbondd
+# while dropping /usr/lib/tailbond and /usr/share/tailbond (issue #49) --
+# half-installed, exactly the state this script exists to repair.
+# render-config is the file the init script cannot run without, and it
+# only ever comes from the package.
+recorded() {
+	[ -f "$INFO" ] && return 0
+	command -v apk >/dev/null 2>&1 && apk list --installed 2>/dev/null | grep -q '^tailbond-'
+}
 installed() {
-	[ -f "$INFO" ] && [ -x /usr/bin/tailbondd ] && [ -x /usr/lib/tailbond/render-config ]
+	recorded && [ -x /usr/bin/tailbondd ] && [ -x /usr/lib/tailbond/render-config ]
 }
 
 installed && exit 0
@@ -52,6 +59,23 @@ now) ;;
 esac
 
 ipk_version() {
+	case "$1" in
+	*.apk)
+		# tailbond_<version>_<arch>.apk: an arch (aarch64_cortex-a53) has
+		# an underscore, so try the arches this router knows, its own
+		# (first line of /etc/apk/arch, opkg's first arch) first
+		local b rest a
+		b="$(basename "$1")"
+		rest="${b#tailbond_}"
+		rest="${rest%.apk}"
+		for a in $(head -1 /etc/apk/arch 2>/dev/null) $(cat /etc/apk/arch 2>/dev/null) $(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }'); do
+			case "$rest" in
+			*_"$a") echo "${rest%_$a}"; return 0 ;;
+			esac
+		done
+		return 1
+		;;
+	esac
 	tar -xzOf "$1" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null |
 		sed -n 's/^Version: *//p' | head -1 | tr '~' '-'
 }
@@ -63,9 +87,9 @@ cached() {
 		echo "$PKGDIR/$cur"
 		return 0
 	fi
-	# no pointer: the newest ipk there
+	# no pointer: the newest package there
 	# shellcheck disable=SC2012 # our own file names, no odd characters
-	f="$(ls -t "$PKGDIR"/tailbond_*.ipk 2>/dev/null | head -1)"
+	f="$(ls -t "$PKGDIR"/tailbond_*.apk "$PKGDIR"/tailbond_*.ipk 2>/dev/null | head -1)"
 	[ -n "$f" ] && echo "$f"
 }
 
@@ -81,23 +105,26 @@ fetch() {
 	uclient-fetch -q -T 120 -O "$2" "$1" 2>/dev/null
 }
 
-# stable_ipk ARCH: the release asset with the same name in every release
+# stable_pkg ARCH: the release asset with the same name in every release
 # (tailbond-glinet-<arch>.ipk for GL.iNet's stock firmware, else
-# tailbond-openwrt-<arch>.ipk); the agent's updater uses the same names
+# tailbond-openwrt-<arch>.ipk, and tailbond-openwrt-<arch>.apk for the
+# OpenWrt 25.12+ package); the agent's updater uses the same names
 stable_ipk() {
 	case "$1" in
 	*_neon-vfpv4) echo "tailbond-glinet-$1.ipk" ;;
 	*) echo "tailbond-openwrt-$1.ipk" ;;
 	esac
 }
+stable_apk() { echo "tailbond-openwrt-$1.apk"; }
 
-# from_github -> path of a checked ipk in $PKGDIR: the release of the
-# version the cache pointer names (tailbond_<v>-r<N>_<arch>.ipk), else the
-# latest release's ipk for this router, checked against SHA256SUMS. It
-# downloads the stable asset name when the release has it and keeps the
-# file under the versioned name (the cache pointer reads the version).
+# from_github -> path of a checked package in $PKGDIR: the release of the
+# version the cache pointer names (tailbond_<v>-r<N>_<arch>.{ipk,apk}),
+# else the latest release's package for this router, checked against
+# SHA256SUMS. It downloads the stable asset name when the release has it
+# and keeps the file under the versioned name (the cache pointer reads
+# the version).
 from_github() {
-	local repo name ver rel tmp a n url sums want names tag arch dl
+	local repo name ver rel tmp a n url sums want names tag arch dl ext s
 	repo="$(jsonfilter -i "$CONF" -e '@.update.repo' 2>/dev/null)"
 	repo="${repo#https://github.com/}"
 	repo="${repo%/}"
@@ -106,33 +133,44 @@ from_github() {
 	mkdir -p "$PKGDIR"
 	tmp="$PKGDIR/.gh.$$"
 	name="$(cat "$PKGDIR/current" 2>/dev/null)"
-	ver="$(echo "$name" | sed -n 's/^tailbond_\(.*\)-r[0-9]*_.*\.ipk$/\1/p')"
+	# the package format this router installs (the cache pointer may name
+	# none yet)
+	if command -v apk >/dev/null 2>&1; then ext=apk; else ext=ipk; fi
+	ver="$(echo "$name" | sed -n "s/^tailbond_\\(.*\\)-r[0-9]*_.*\\.$ext\$/\\1/p")"
 	if [ -n "$ver" ]; then rel="$API/repos/$repo/releases/tags/v$ver"; else rel="$API/repos/$repo/releases/latest"; name=""; fi
 	fetch "$rel" "$tmp.json" || { log "can't reach $rel yet"; rm -f "$tmp.json"; return 1; }
 	names="$(jsonfilter -i "$tmp.json" -e '@.assets[*].name' 2>/dev/null)"
 	tag="$(jsonfilter -i "$tmp.json" -e '@.tag_name' 2>/dev/null)"
 	if [ -z "$name" ]; then
-		# opkg print-architecture lists by ascending priority: the last match wins
-		for a in $(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }'); do
-			n="$(echo "$names" | grep -E "^tailbond_.*_${a}\.ipk$" | head -1)"
-			if [ -z "$n" ] && [ -n "$tag" ] && echo "$names" | grep -qxF "$(stable_ipk "$a")"; then
-				n="tailbond_${tag#v}-r1_${a}.ipk"
+		# the router's package architectures, best (most specific) last:
+		# opkg lists them by ascending priority, apk's /etc/apk/arch has
+		# the primary first
+		if command -v opkg >/dev/null 2>&1; then
+			archs="$(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }')"
+		else
+			archs="$(awk '{a[NR] = $0} END {for (i = NR; i >= 1; i--) print a[i]}' /etc/apk/arch 2>/dev/null)"
+		fi
+		for a in $archs; do
+			n="$(echo "$names" | grep -E "^tailbond_.*_${a}\\.$ext\$" | head -1)"
+			if [ "$ext" = apk ]; then s="$(stable_apk "$a")"; else s="$(stable_ipk "$a")"; fi
+			if [ -z "$n" ] && [ -n "$tag" ] && echo "$names" | grep -qxF "$s"; then
+				n="tailbond_${tag#v}-r1_${a}.$ext"
 			fi
 			[ -n "$n" ] && name="$n"
 		done
 	fi
-	case "$name" in tailbond_*.ipk) ;; *) log "$rel: no ipk for this router"; rm -f "$tmp.json"; return 1 ;; esac
-	arch="$(echo "$name" | sed -n 's/^tailbond_.*-r[0-9]*_\(.*\)\.ipk$/\1/p')"
-	dl="$(stable_ipk "$arch")"
+	case "$name" in tailbond_*.ipk | tailbond_*.apk) ;; *) log "$rel: no $ext for this router"; rm -f "$tmp.json"; return 1 ;; esac
+	arch="$(echo "$name" | sed -n "s/^tailbond_.*-r[0-9]*_\\(.*\\)\\.$ext\$/\\1/p")"
+	if [ "$ext" = apk ]; then dl="$(stable_apk "$arch")"; else dl="$(stable_ipk "$arch")"; fi
 	[ -n "$arch" ] && echo "$names" | grep -qxF "$dl" || dl="$name"
 	url="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='$dl'].browser_download_url" 2>/dev/null | head -1)"
 	sums="$(jsonfilter -i "$tmp.json" -e "@.assets[@.name='SHA256SUMS'].browser_download_url" 2>/dev/null | head -1)"
 	rm -f "$tmp.json"
 	[ -n "$url" ] && [ -n "$sums" ] || { log "$rel: no $dl or no SHA256SUMS"; return 1; }
-	fetch "$sums" "$tmp.sums" && fetch "$url" "$tmp.ipk" || { log "download of $dl failed"; rm -f "$tmp.sums" "$tmp.ipk"; return 1; }
+	fetch "$sums" "$tmp.sums" && fetch "$url" "$tmp.pkg" || { log "download of $dl failed"; rm -f "$tmp.sums" "$tmp.pkg"; return 1; }
 	want="$(awk -v n="$dl" '$2 == n || $2 == "*" n { print $1 }' "$tmp.sums" | head -1)"
-	if [ -n "$want" ] && [ "$(sha256sum "$tmp.ipk" | cut -d' ' -f1)" = "$want" ]; then
-		mv -f "$tmp.ipk" "$PKGDIR/$name"
+	if [ -n "$want" ] && [ "$(sha256sum "$tmp.pkg" | cut -d' ' -f1)" = "$want" ]; then
+		mv -f "$tmp.pkg" "$PKGDIR/$name"
 		echo "$name" >"$PKGDIR/current"
 		rm -f "$tmp.sums"
 		log "downloaded $dl from the GitHub release (kept as $name)"
@@ -140,7 +178,7 @@ from_github() {
 		return 0
 	fi
 	log "$dl doesn't match the release's SHA256SUMS: not installing it"
-	rm -f "$tmp.sums" "$tmp.ipk"
+	rm -f "$tmp.sums" "$tmp.pkg"
 	return 1
 }
 
@@ -160,21 +198,35 @@ while [ "$i" -lt "$TRIES" ]; do
 	ipk="$(cached)"
 	[ -n "$ipk" ] || ipk="$(from_github)"
 	if [ -n "$ipk" ]; then
-		# Half-installed: opkg's record is there, so a plain install is a
-		# no-op ("already installed"). --force-reinstall removes the
-		# package first, which runs the removal scripts -- postrm's
-		# delayed cache purge is guarded (it only fires if the package is
-		# not back), and postinst re-adds the rc.local line.
-		set -- install
-		[ -f "$INFO" ] && set -- install --force-reinstall
-		if opkg "$@" "$ipk" >/tmp/tailbond-reinstall.log 2>&1 && installed; then
+		# Half-installed: the package manager's record is there, so a
+		# plain install is a no-op ("already installed"). A forced
+		# reinstall replaces the files without running the removal
+		# scripts first -- postrm's delayed cache purge is guarded (it
+		# only fires if the package is not back), and postinst re-adds
+		# the rc.local line.
+		if command -v apk >/dev/null 2>&1; then
+			set -- add --allow-untrusted
+			recorded && set -- add --allow-untrusted --force-reinstall
+			# a file install pins its content hash in /etc/apk/world,
+			# which would block every later upgrade from a feed
+			apk "$@" "$ipk" >/tmp/tailbond-reinstall.log 2>&1 && \
+				sed -i 's/^tailbond[><=].*/tailbond/' /etc/apk/world 2>/dev/null
+		else
+			set -- install
+			[ -f "$INFO" ] && set -- install --force-reinstall
+			opkg "$@" "$ipk" >/tmp/tailbond-reinstall.log 2>&1
+		fi
+		if installed; then
 			result "$(ipk_version "$ipk")"
 			log "reinstalled $(basename "$ipk"); settings kept"
 			exit 0
 		fi
-		log "opkg install $(basename "$ipk") failed: $(grep -m1 -i -E 'error|cannot|satisfy' /tmp/tailbond-reinstall.log)"
+		log "install $(basename "$ipk") failed: $(grep -m1 -i -E 'error|cannot|satisfy' /tmp/tailbond-reinstall.log)"
 		# missing dependencies come from the feeds, once online
-		[ "$updated" = 1 ] || { opkg update >/dev/null 2>&1 && updated=1; }
+		[ "$updated" = 1 ] || {
+			if command -v apk >/dev/null 2>&1; then apk update >/dev/null 2>&1 && updated=1
+			else opkg update >/dev/null 2>&1 && updated=1; fi
+		}
 	else
 		log "no cached package and GitHub not reachable yet (try $i of $TRIES)"
 	fi

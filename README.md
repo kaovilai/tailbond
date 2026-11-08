@@ -9,6 +9,7 @@
 [![Auto release](https://github.com/kaovilai/tailbond/actions/workflows/auto-release.yml/badge.svg)](https://github.com/kaovilai/tailbond/actions/workflows/auto-release.yml)
 [![Pages](https://github.com/kaovilai/tailbond/actions/workflows/pages.yml/badge.svg)](https://github.com/kaovilai/tailbond/actions/workflows/pages.yml)
 [![iPhone path probe](https://github.com/kaovilai/tailbond/actions/workflows/probe-ios-paths.yml/badge.svg)](https://github.com/kaovilai/tailbond/actions/workflows/probe-ios-paths.yml)
+[![OpenWrt latest](https://github.com/kaovilai/tailbond/actions/workflows/openwrt-latest.yml/badge.svg)](https://github.com/kaovilai/tailbond/actions/workflows/openwrt-latest.yml)
 [![Latest release](https://img.shields.io/github/v/release/kaovilai/tailbond?sort=semver&color=0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/kaovilai/tailbond/total?color=0D9488)](https://github.com/kaovilai/tailbond/releases)
 [![Website](https://img.shields.io/website?url=https%3A%2F%2Fgithub.tig.pw%2Ftailbond%2F&label=website&up_color=0D9488)](https://github.tig.pw/tailbond/)
@@ -19,6 +20,7 @@
 **Download:**
 [![Android APK](https://img.shields.io/badge/Android-APK-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-android.apk)
 [![GL.iNet ipk](https://img.shields.io/badge/GL.iNet-ipk-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk)
+[![OpenWrt apk](https://img.shields.io/badge/OpenWrt-25.12%2B%20apk-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-openwrt-aarch64_cortex-a53.apk)
 [![Fedora RPM](https://img.shields.io/badge/Fedora-RPM-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-server.x86_64.rpm)
 [![Linux bundle](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20aarch64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-arm64-0D9488)](https://github.com/kaovilai/tailbond/releases/latest/download/tailbond-macos-arm64.tar.gz)
@@ -35,7 +37,7 @@ The server image (amd64, arm64) is CI-tested in Podman, Docker Compose and a kin
 
 **Speedify-style bonding to your own server:** tailbond joins Wi-Fi, mobile data, Ethernet and nearby phones into one faster, steadier tunnel to a server you run, with your [Tailscale](https://tailscale.com) tailnet reachable through it.
 
-> **Status: early.** Every part is built and tested in CI: unit tests, network-namespace end-to-end tests, an OpenWrt install test in a container, an Android emulator test, macOS runner tests with the Mac as hub (against a Linux server VM) and as server (with a Linux client VM), an [accessibility check](docs/accessibility.md) of every web page, and simulated user testing. On real hardware, only the **GL.iNet Flint 3 as a home server** has run so far; travel routers, phones, Macs and VPSes have not. Expect rough edges and please [file issues](https://github.com/kaovilai/tailbond/issues/new/choose).
+> **Status: early.** Every part is built and tested in CI: unit tests, network-namespace end-to-end tests, OpenWrt install tests in containers (opkg and, for 25.12, apk — the [OpenWrt latest](https://github.com/kaovilai/tailbond/actions/workflows/openwrt-latest.yml) badge runs the apk one weekly against the newest release), an Android emulator test, macOS runner tests with the Mac as hub (against a Linux server VM) and as server (with a Linux client VM), an [accessibility check](docs/accessibility.md) of every web page, and simulated user testing. On real hardware, only the **GL.iNet Flint 3 as a home server** has run so far; travel routers, phones, Macs and VPSes have not. Expect rough edges and please [file issues](https://github.com/kaovilai/tailbond/issues/new/choose).
 
 ## How it works
 
@@ -101,6 +103,7 @@ The data plane is [mqvpn](https://github.com/mp0rta/mqvpn) (MASQUE CONNECT-IP ov
 | Debian, Ubuntu, AlmaLinux / RHEL / Rocky, Fedora (VPS) | Home or backup server | [VPS](docs/vps.md) (`install.sh`, Ansible) | CI-tested |
 | Container: Docker, Podman, Kubernetes | Home or backup server | [Deploy](docs/deploy.md) (`ghcr.io/kaovilai/tailbond`) | CI-tested (Podman, kind) |
 | GL.iNet Slate 7 (GL-BE3600), OpenWrt 23.05+ aarch64 | Travel router (hub) | [GL.iNet](docs/glinet.md) | CI-tested |
+| Any aarch64_cortex-a53 router, OpenWrt 25.12+ (apk) | Travel router (hub) | [GL.iNet / OpenWrt](docs/glinet.md#openwrt-2512-and-apk) | CI-tested weekly on the latest 25.12 image |
 | macOS (Apple silicon) | Hub and sharer | [macOS](docs/macos.md) (`install.sh`, Homebrew) | CI-tested (sharing: over `lo0` on the runner, not a real adapter) |
 | macOS (Apple silicon) | Home server | [Mac as home server](docs/macos.md#mac-as-home-server) (`install.sh --role server`) | CI-tested (runner + Linux client VM; not on a real Mac or with a real Tailscale) |
 | Linux laptop | Hub and sharer | [VPS guide, `--client`](docs/vps.md#a-linux-laptop-instead-client-role) | CI-tested |
@@ -131,6 +134,7 @@ agent/build.sh                          # tailbondd (static, amd64 + arm64)
 scripts/build-mqvpn-native.sh           # patched mqvpn for this machine
 packaging/fedora/build-rpm.sh           # Fedora RPM → out/rpm/
 scripts/build-mqvpn-aarch64-musl.sh && packaging/openwrt/build-ipk.sh   # GL.iNet/OpenWrt → out/ipk/
+packaging/openwrt/build-apk.sh           # OpenWrt 25.12+ (apk) → out/apk/
 android/scripts/setup-sdk.sh && android/scripts/build-apk.sh            # Android → out/android/
 (cd ios && xcodegen) && open ios/TailbondShare.xcodeproj               # iPhone (macOS, Xcode), see docs/ios.md
 scripts/build-mqvpn-macos.sh && agent/build.sh darwin/arm64 && packaging/macos/build-bundle.sh   # Mac → out/macos/ (on a Mac)

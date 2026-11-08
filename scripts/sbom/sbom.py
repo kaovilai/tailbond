@@ -210,7 +210,15 @@ def libevent_of(binary):
 
 # ---------------------------------------------------------------- build
 
+def is_openwrt_apk(name):
+    # OpenWrt 25.12+ packages are .apk too (tailbond_<version>_<arch>.apk,
+    # tailbond-openwrt-<arch>.apk): not the Android app
+    return name.endswith(".apk") and (name.startswith("tailbond_") or name.startswith("tailbond-openwrt-"))
+
+
 def purpose(name):
+    if is_openwrt_apk(name):
+        return "INSTALL"
     if name.endswith(".apk"):
         return "APPLICATION"
     if name.endswith((".ipk", ".rpm")):
@@ -389,7 +397,7 @@ def build(a):
             pkgs, prels, lic = syft_packages(dest, ids[n][len("SPDXRef-"):])
             for l in lic:
                 licenses.setdefault(l["licenseId"], l)
-            if n.endswith(".apk"):
+            if n.endswith(".apk") and not is_openwrt_apk(n):
                 if a.android_graph:
                     pkgs += maven_packages(a.android_graph, ids[n][len("SPDXRef-"):])
                 else:

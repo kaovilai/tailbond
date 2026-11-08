@@ -15,7 +15,7 @@ and under each one what it contains:
 | mqvpn, xquic, BoringSSL, lwIP, yyjson (in every file that ships mqvpn) | [`scripts/sbom/mqvpn-components.json`](../scripts/sbom/mqvpn-components.json); versions from the pinned submodule commits and their sources |
 | libevent (Linux bundles, ipks, macOS bundle: linked statically) | the version string in the shipped `mqvpn` binary |
 | The Android app's Maven libraries | Gradle, `releaseRuntimeClasspath` (what the release APK ships) |
-| The APK inside the ipk and rpm | matched by SHA256 to `tailbond-android.apk` |
+| The APK inside the ipk and rpm | matched by SHA256 to `tailbond-android.apk` (the OpenWrt 25.12 apk carries it too; its container is not extracted, so the ipk is the match) |
 
 syft can't see C libraries linked statically into mqvpn (there's no
 package metadata in the binary), so they come from a hand-kept list. The

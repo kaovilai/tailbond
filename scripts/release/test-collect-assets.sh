@@ -173,10 +173,11 @@ mkipk "$T/rot2/tailbond_1.2.5-r1_aarch64_cortex-a53.ipk" aarch64_cortex-a53 "$RK
     && ok "... one that only has the old key refuses it (it needs the key by hand)" || bad "old-key router accepted the new feed"
 
 D="$T/dist"
-mkdir -p "$D"/{android-release-apk,glinet-ipk,fedora-rpm,linux-bundle,macos-bundle,tailbondd/linux-amd64,tailbondd/linux-arm64}
+mkdir -p "$D"/{android-release-apk,glinet-ipk,openwrt-apk,fedora-rpm,linux-bundle,macos-bundle,tailbondd/linux-amd64,tailbondd/linux-arm64}
 echo apk >"$D/android-release-apk/tailbond-1.2.3.apk"
 mkipk "$D/glinet-ipk/tailbond_1.2.3-r1_aarch64_cortex-a53_neon-vfpv4.ipk" aarch64_cortex-a53_neon-vfpv4 "$PUB"
 mkipk "$D/glinet-ipk/tailbond_1.2.3-r1_aarch64_cortex-a53.ipk" aarch64_cortex-a53 "$PUB"
+echo apk >"$D/openwrt-apk/tailbond_1.2.3-r1_aarch64_cortex-a53.apk"
 echo rpm >"$D/fedora-rpm/tailbond-server-1.2.3-1.fc44.x86_64.rpm"
 echo x86 >"$D/linux-bundle/tailbond-linux-x86_64.tar.gz"
 echo arm >"$D/linux-bundle/tailbond-linux-aarch64.tar.gz"
@@ -191,14 +192,15 @@ TB_OPKG_SIGNING_KEY="$(cat "$T/sec/opkg.sec")" "$ROOT/scripts/release/collect-as
 for f in tailbond-android.apk tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk tailbond-openwrt-aarch64_cortex-a53.ipk \
     tailbond-server.x86_64.rpm tailbond-linux-x86_64.tar.gz tailbond-linux-aarch64.tar.gz tailbond-macos-arm64.tar.gz \
     tailbond.rb tailbondd-linux-amd64.tar.gz tailbondd-linux-arm64.tar.gz \
-    tailbond_1.2.3-r1_aarch64_cortex-a53_neon-vfpv4.ipk tailbond_1.2.3-r1_aarch64_cortex-a53.ipk tailbond-server-1.2.3-1.fc44.x86_64.rpm \
+    tailbond-openwrt-aarch64_cortex-a53.apk \
+    tailbond_1.2.3-r1_aarch64_cortex-a53_neon-vfpv4.ipk tailbond_1.2.3-r1_aarch64_cortex-a53.ipk tailbond_1.2.3-r1_aarch64_cortex-a53.apk tailbond-server-1.2.3-1.fc44.x86_64.rpm \
     Packages Packages.gz Packages.sig tailbond-opkg.pub; do
     if [ -s "$T/a/$f" ] && grep -q "  $f\$" "$T/a/SHA256SUMS"; then ok "$f (in SHA256SUMS)"; else bad "$f"; fi
 done
 [ "$(arch_of "$T/a/tailbond-glinet-aarch64_cortex-a53_neon-vfpv4.ipk")" = aarch64_cortex-a53_neon-vfpv4 ] && [ "$(arch_of "$T/a/tailbond-openwrt-aarch64_cortex-a53.ipk")" = aarch64_cortex-a53 ] \
     && ok "each stable ipk is its architecture's" || bad "ipk architectures mixed up"
 (cd "$T/a" && sha256sum -c --quiet SHA256SUMS) && ok "SHA256SUMS checks" || bad "SHA256SUMS"
-[ "$(grep -c . "$T/a/SHA256SUMS")" = 17 ] && ok "17 files, no SHA256SUMS line for itself" || bad "SHA256SUMS lines: $(cat "$T/a/SHA256SUMS")"
+[ "$(grep -c . "$T/a/SHA256SUMS")" = 19 ] && ok "19 files, no SHA256SUMS line for itself" || bad "SHA256SUMS lines: $(cat "$T/a/SHA256SUMS")"
 
 echo "== the opkg feed"
 P="$T/a/Packages"
@@ -237,7 +239,7 @@ echo "== no feed key: a release without the feed, and a warning"
 "$ROOT/scripts/release/collect-assets.sh" "$D" "$T/nk" >"$T/log" 2>&1 || { cat "$T/log"; bad "no key: collect-assets failed"; }
 grep -q '^::warning::.*TB_OPKG_SIGNING_KEY is not set' "$T/log" && ok "warns that there's no feed" || bad "no warning: $(cat "$T/log")"
 [ ! -e "$T/nk/Packages" ] && [ ! -e "$T/nk/Packages.gz" ] && [ ! -e "$T/nk/Packages.sig" ] && ! grep -q Packages "$T/nk/SHA256SUMS" \
-    && [ "$(grep -c . "$T/nk/SHA256SUMS")" = 13 ] && ok "no Packages* published, the 13 other files are" || bad "keyless release: $(ls "$T/nk")"
+    && [ "$(grep -c . "$T/nk/SHA256SUMS")" = 15 ] && ok "no Packages* published, the 15 other files are" || bad "keyless release: $(ls "$T/nk")"
 
 echo "== a key the packages don't ship fails"
 if TB_OPKG_SIGNING_KEY="$(cat "$T/other.sec")" "$ROOT/scripts/release/collect-assets.sh" "$D" "$T/wk" >"$T/log" 2>&1; then

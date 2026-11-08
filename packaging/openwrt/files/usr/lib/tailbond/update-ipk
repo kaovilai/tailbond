@@ -5,19 +5,23 @@
 #
 #   update-ipk NEW_IPK [PREV_IPK]
 #
-# Run by the agent detached from itself (its own session, e.g. Go's
-# Setsid or `start-stop-daemon -b`; GL firmware has no setsid command),
-# since installing restarts the agent. Steps:
-#   1. opkg install NEW (config kept: /etc/config/tailbond is a conffile,
+# Works on opkg (23.05, 24.10, GL.iNet stock; NEW/PREV are .ipk) and apk
+# (OpenWrt 25.12+, .apk) systems. Run by the agent detached from itself
+# (its own session, e.g. Go's Setsid or `start-stop-daemon -b`; GL
+# firmware has no setsid command), since installing restarts the agent.
+# Steps:
+#   1. install NEW (config kept: /etc/config/tailbond is a conffile,
 #      /etc/tailbond/ isn't in the package), restart the service;
 #   2. wait up to TB_WAIT (90) s for GET /api/status to answer with the same
 #      role (TB_ROLE, else UCI) and, if the tunnel was connected before
 #      (TB_WAS_CONNECTED=1), "state": "connected" again;
-#   3. else install PREV again (--force-downgrade), restart. Not
-#      --force-reinstall: opkg would remove the package first, running its
-#      removal scripts (which drop the network config and this cache).
+#   3. else install PREV again (a downgrade apk allows from a file, opkg
+#      with --force-downgrade), restart. Not a reinstall: that would remove
+#      the package first, running its removal scripts (which drop the
+#      network config and this cache).
 # Without PREV, the running package is first saved as the rollback copy
-# (the agent rebuilds its own package, GET /tailbond-glinet.ipk).
+# (the agent rebuilds its own package, GET /tailbond-glinet.ipk — opkg
+# only; an apk system has no rollback copy until one update has run).
 #
 # Result: /etc/tailbond/state/update-result.json
 #   {"result":"ok"|"rolled_back"|"failed","version","from","at","detail"}
@@ -69,17 +73,22 @@ if [ -w /sys/fs/cgroup/cgroup.procs ]; then { echo $$ >/sys/fs/cgroup/cgroup.pro
 
 FROM="$("$CACHE" installed-version)"
 VERSION="$("$CACHE" ipk-version "$NEW")"
-pkgname="$(tar -xzOf "$NEW" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null | sed -n 's/^Package: *//p')"
-if [ "$pkgname" != tailbond ] || [ -z "$VERSION" ]; then
-	result failed "$VERSION" "$FROM" "not a tailbond package: $(basename "$NEW")"
-	exit 1
-fi
+case "$(basename "$NEW")" in
+tailbond_*.apk) [ -n "$VERSION" ] || { echo "$NEW: not a tailbond apk name" >&2; exit 2; } ;;
+*)
+	pkgname="$(tar -xzOf "$NEW" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null | sed -n 's/^Package: *//p')"
+	if [ "$pkgname" != tailbond ] || [ -z "$VERSION" ]; then
+		result failed "$VERSION" "$FROM" "not a tailbond package: $(basename "$NEW")"
+		exit 1
+	fi
+	;;
+esac
 ROLE="${TB_ROLE:-$(uci -q get tailbond.main.role || echo client)}"
 log "updating $FROM -> $VERSION (role $ROLE, was connected: ${TB_WAS_CONNECTED:-0})"
-# opkg treats the same version as already installed and replaces nothing (and
-# --force-reinstall would run the removal scripts), so a "successful" update
-# would leave the running build as it is: e.g. a build from source whose
-# package version equals the release's.
+# opkg and apk both treat the same version as already installed and
+# replace nothing (and a forced reinstall would run the removal scripts),
+# so a "successful" update would leave the running build as it is: e.g. a
+# build from source whose package version equals the release's.
 if [ -n "$FROM" ] && [ "$FROM" = "$VERSION" ]; then
 	result failed "$VERSION" "$FROM" "$VERSION is already the installed package version; nothing was replaced"
 	exit 1
@@ -92,6 +101,16 @@ if [ -z "$PREV" ] && [ -n "$FROM" ]; then
 	# the prune deleted the package `opkg install` was about to read.
 	TB_PENDING="$NEW" "$CACHE" seed >>"$LOG" 2>&1 && PREV="/etc/tailbond/pkg/$(cat /etc/tailbond/pkg/current 2>/dev/null)"
 	[ -f "$PREV" ] || PREV=""
+	# Nothing seeded (apk: the agent rebuilds .ipk only) — but the
+	# previous update's cache is the running package: that's the rollback
+	# copy from the second update on.
+	if [ -z "$PREV" ]; then
+		cur="$(cat /etc/tailbond/pkg/current 2>/dev/null)"
+		if [ -n "$cur" ] && [ -f "/etc/tailbond/pkg/$cur" ] && [ "$("$CACHE" ipk-version "/etc/tailbond/pkg/$cur")" = "$FROM" ]; then
+			PREV="/etc/tailbond/pkg/$cur"
+			log "rollback copy: the cached $cur"
+		fi
+	fi
 fi
 
 healthy() { # NEED_CONNECTED -> 0 when the agent answers as expected
@@ -116,11 +135,22 @@ healthy() { # NEED_CONNECTED -> 0 when the agent answers as expected
 	return 1
 }
 
-install_ipk() { # IPK [opkg options]
+install_ipk() { # IPK [package-manager options]
 	local ipk="$1"
 	shift
-	log "opkg install $* $(basename "$ipk")"
-	opkg install --force-downgrade "$@" "$ipk" >>"$LOG" 2>&1 || return 1
+	if command -v apk >/dev/null 2>&1; then
+		# a file install: apk allows the downgrade a rollback needs. It
+		# also pins the file's content hash in /etc/apk/world, which would
+		# block every later upgrade from a feed, so name the package
+		# plainly again (as a feed install leaves it).
+		log "apk add $(basename "$ipk")"
+		apk add --allow-untrusted "$ipk" >>"$LOG" 2>&1 || return 1
+		grep -q '^tailbond$' /etc/apk/world 2>/dev/null ||
+			sed -i 's/^tailbond[><=].*/tailbond/' /etc/apk/world 2>/dev/null
+	else
+		log "opkg install $* $(basename "$ipk")"
+		opkg install --force-downgrade "$@" "$ipk" >>"$LOG" 2>&1 || return 1
+	fi
 	[ "$("$CACHE" installed-version)" = "$("$CACHE" ipk-version "$ipk")" ]
 }
 
@@ -133,7 +163,7 @@ if install_ipk "$NEW"; then
 		exit 0
 	fi
 else
-	why="opkg install failed: $(grep -i -m1 -E 'error|cannot|collide' "$LOG" | tail -c 160)"
+	why="package install failed: $(grep -i -m1 -E 'error|cannot|collide' "$LOG" | tail -c 160)"
 fi
 log "$VERSION failed: $why"
 
