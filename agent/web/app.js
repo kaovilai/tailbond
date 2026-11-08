@@ -1200,7 +1200,7 @@ function brewCmd(u) {
   return `sudo brew services stop tailbond && sudo chown -R "$USER" "$(brew --prefix)/Cellar/tailbond" && curl -fsSLo "$(brew --repository local/tailbond)/Formula/tailbond.rb" ${releasesUrl(u)}/latest/download/tailbond.rb && brew reinstall local/tailbond/tailbond && sudo brew services start tailbond`;
 }
 // methods that install by themselves (one click, or Automatic)
-const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg';
+const selfUpdates = (u) => u.method === 'static' || u.method === 'opkg' || u.method === 'apk';
 
 const isPhone = (c) => c.kind === 'android' || c.kind === 'phone';
 // semver order of "0.2.0" / "v0.2.1-beta.1": <0, 0, >0 (a pre-release sorts before its release)

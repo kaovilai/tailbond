@@ -80,16 +80,26 @@ ipk_version() {
 		sed -n 's/^Version: *//p' | head -1 | tr '~' '-'
 }
 
+# pkg_ext: the package format this router installs (apk on OpenWrt 25.12+,
+# else opkg's ipk). A firmware upgrade 24.10 -> 25.12 keeps the old .ipk in
+# the cache; apk can't install it, and without this filter every retry
+# would pass it to `apk add` instead of reaching the release's .apk.
+pkg_ext() {
+	if command -v apk >/dev/null 2>&1; then echo apk; else echo ipk; fi
+}
+
 cached() {
-	local cur f
+	local cur f ext
+	ext="$(pkg_ext)"
 	cur="$(cat "$PKGDIR/current" 2>/dev/null)"
 	if [ -n "$cur" ] && [ -f "$PKGDIR/$cur" ]; then
-		echo "$PKGDIR/$cur"
-		return 0
+		case "$cur" in
+		*."$ext") echo "$PKGDIR/$cur"; return 0 ;;
+		esac
 	fi
-	# no pointer: the newest package there
+	# no pointer: the newest package of this router's format there
 	# shellcheck disable=SC2012 # our own file names, no odd characters
-	f="$(ls -t "$PKGDIR"/tailbond_*.apk "$PKGDIR"/tailbond_*.ipk 2>/dev/null | head -1)"
+	f="$(ls -t "$PKGDIR"/tailbond_*."$ext" 2>/dev/null | head -1)"
 	[ -n "$f" ] && echo "$f"
 }
 
@@ -133,9 +143,7 @@ from_github() {
 	mkdir -p "$PKGDIR"
 	tmp="$PKGDIR/.gh.$$"
 	name="$(cat "$PKGDIR/current" 2>/dev/null)"
-	# the package format this router installs (the cache pointer may name
-	# none yet)
-	if command -v apk >/dev/null 2>&1; then ext=apk; else ext=ipk; fi
+	ext="$(pkg_ext)"
 	ver="$(echo "$name" | sed -n "s/^tailbond_\\(.*\\)-r[0-9]*_.*\\.$ext\$/\\1/p")"
 	if [ -n "$ver" ]; then rel="$API/repos/$repo/releases/tags/v$ver"; else rel="$API/repos/$repo/releases/latest"; name=""; fi
 	fetch "$rel" "$tmp.json" || { log "can't reach $rel yet"; rm -f "$tmp.json"; return 1; }

@@ -21,3 +21,4 @@ deploy/docker/.env
 
 # core dumps (a crashing test process)
 core.[0-9]*
+__pycache__/

@@ -104,6 +104,11 @@ def main():
                "./data.tar.gz": data})
     open(os.path.join(assets, "tailbond-openwrt-aarch64_cortex-a53.ipk"), "wb").write(ipk)
     open(os.path.join(assets, "tailbond_1.0.0-r1_aarch64_cortex-a53.ipk"), "wb").write(ipk)
+    # the OpenWrt 25.12+ package (apkv3, not a zip or tar: not extractable):
+    # its mqvpn/tailbondd/Android-APK are the ipk's, which the checks cover
+    owapk = b"apkv3\x00 not a zip, not a tar (binary, like the real container)"
+    open(os.path.join(assets, "tailbond-openwrt-aarch64_cortex-a53.apk"), "wb").write(owapk)
+    open(os.path.join(assets, "tailbond_1.0.0-r1_aarch64_cortex-a53.apk"), "wb").write(owapk)
     # the signed opkg feed (scripts/release/opkg-feed.sh): Packages.gz is a gzip, not a tar
     feed = b"Package: tailbond\nVersion: 1.0.0-r1\n\n"
     for n, b in (("Packages", feed), ("Packages.gz", gzip.compress(feed)),
@@ -126,7 +131,14 @@ def main():
     if r.returncode:
         sys.exit(1)
     chk = ("check", doc, "--assets", assets, "--require-android-deps", "--require-sums")
-    expect("check: good SBOM", run(*chk), True, "OK")
+    expect("check: good SBOM (the OpenWrt apks need no extracted contents)", run(*chk), True, "OK")
+    d = json.load(open(doc))
+    # the stable name is the canonical package ("-" sorts before "_"); the
+    # versioned one is its COPY_OF alias
+    ow = next(p for p in d["packages"] if p["name"] == "tailbond-openwrt-aarch64_cortex-a53.apk")
+    expect("the OpenWrt apk is an INSTALL with the not-extracted note",
+           subprocess.CompletedProcess([], 0 if ow.get("primaryPackagePurpose") == "INSTALL"
+                                       and "not extracted" in ow.get("comment", "") else 1, "", ""), True)
 
     snap = json.loads(run("snapshot", doc, "--sha", "0" * 40, "--ref", "refs/heads/x").stdout)
     m = snap["manifests"]

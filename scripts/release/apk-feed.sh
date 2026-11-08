@@ -87,8 +87,11 @@ for arch in "${archs[@]}"; do
     done
     sign=()
     if [ -n "$KEY" ]; then
-        # apk-tools mounts only $out: the secret key travels with it
+        # apk-tools mounts only $out: the secret key travels with it — and
+        # comes back out even when mkndx fails, before this directory is
+        # published anywhere
         cp "$KEY" "$out/.signing-key"
+        trap 'rm -f "$pub" "$out/.signing-key"' EXIT
         sign=(--sign .signing-key)
     fi
     (cd "$out" && "$APK_TOOLS" "$out" mkndx --allow-untrusted "${sign[@]}" \

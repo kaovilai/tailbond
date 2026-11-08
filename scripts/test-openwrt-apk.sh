@@ -94,6 +94,9 @@ V="$(basename "$IPK" | sed -n 's/^tailbond_\(.*\)_aarch64_cortex-a53\.ipk$/\1/p'
 repack "$TMP/tailbond_${V}_aarch64_cortex-a53.ipk"
 apk_of "$TMP/tailbond_${V}_aarch64_cortex-a53.ipk"
 cp "$TMP/apkbuild/tailbond_${V}_aarch64_cortex-a53.apk" "$TMP/tailbond.apk"
+# the built artifact itself, Depends and all (out/apk's, not a rebuild)
+cp "$APK" "$TMP/tailbond-built.apk"
+printf '%s\n' "$V" >"$TMP/built-version"
 # For the update tests: an older package, a newer one, and a newer one
 # whose agent exits at once (rollback).
 printf '#!/bin/sh\necho "broken build" >&2\nexit 1\n' >"$TMP/broken-tailbondd"
@@ -124,7 +127,10 @@ cp "$TMP/other.sec" "$TMP/feed-otherkey/feed/aarch64_cortex-a53/"
 "$ROOT/scripts/release/apk-tools.sh" "$TMP/feed-otherkey/feed/aarch64_cortex-a53" \
     mkndx --allow-untrusted --sign other.sec --output packages.adb tailbond-99.2.0-r1.apk >/dev/null
 rm -f "$TMP/feed-otherkey/feed/aarch64_cortex-a53/other.sec"
-chmod -R a+rX "$TMP"
+# best effort: under rootful podman (CI) the files apk-tools wrote are
+# root-owned and can't be chmod'ed — the container runs as root and reads
+# them anyway
+chmod -R a+rX "$TMP" 2>/dev/null || true
 # A pairing link whose payload names the server.
 printf '%s' '{"v":1,"name":"slate7","server_name":"homebox","sni":"homebox.tail1234.ts.net","server":"203.0.113.7:443"}' |
     base64 -w0 | tr '+/' '-_' | tr -d '=' >"$TMP/pair-d.txt"
@@ -154,6 +160,28 @@ done
 	apk update 2>&1 | tail -5
 	exit 2
 }
+
+# feed_update: apk update, retried while it fails without a verdict on our
+# feed (a distfeed fetch that flakes is not this feed's doing); the last
+# attempt's output is in /tmp/feed.log
+feed_update() {
+	local i=0
+	while :; do
+		apk update >/tmp/feed.log 2>&1 && return 0
+		grep -qi 'untrusted\|signature\|invalid' /tmp/feed.log && return 1
+		i=$((i + 1)); [ $i -ge 3 ] && return 1
+		sleep $((i * 3))
+	done
+}
+
+echo "== the built artifact, with its Depends (the release's apk, not a rebuild)"
+BUILTVER="$(cat /t/built-version)"
+# the feed serves kmod-tun, ip-full, jshn and jsonfilter, so the Depends
+# resolve in the container too
+apk add --allow-untrusted /t/tailbond-built.apk >/tmp/built.log 2>&1 && ok "apk add the built tailbond apk (with its Depends)" || { cat /tmp/built.log; bad "built apk install"; }
+sed -i 's/^tailbond[><=].*/tailbond/' /etc/apk/world
+[ "$(ver)" = "$BUILTVER" ] && ok "installed at $(ver)" || bad "built version: $(ver)"
+apk del tailbond >/tmp/built-del.log 2>&1 && ok "removed again (the repacked one takes over)" || { cat /tmp/built-del.log; bad "built apk del"; }
 
 echo "== install"
 apk add --allow-untrusted /t/tailbond.apk >/tmp/install.log 2>&1 && ok "apk add (file)" || { cat /tmp/install.log; bad "apk add"; }
@@ -526,7 +554,7 @@ apk del tailbond >/dev/null 2>&1 # takes the key it shipped with it (asserted ab
 cp /etc/apk/repositories.d/customfeeds.list /tmp/customfeeds.list
 echo "http://127.0.0.1:8098/f/packages.adb" >>/etc/apk/repositories.d/customfeeds.list
 rejected() { # VERSION: apk warns, and nothing from the refused feed installs
-	apk update >/tmp/feed.log 2>&1
+	feed_update
 	grep -qi 'untrusted\|signature\|invalid' /tmp/feed.log || return 1
 	if apk add tailbond >/tmp/feed-add.log 2>&1 && [ "$(ver)" = "$1" ]; then return 1; fi
 	return 0
@@ -535,13 +563,13 @@ rejected 99.2.0-r1 && ok "without the key, the feed is refused (UNTRUSTED signat
 # the documented first step: the release's tailbond-apk.pub
 mkdir -p /etc/apk/keys && cp /t/keys/tailbond-testfeed.pem $K
 [ -f "$K" ] && ok "the package's key (the release's tailbond-apk.pub) is in /etc/apk/keys" || bad "key"
-apk update >/tmp/feed.log 2>&1 && ! grep -qi 'untrusted\|signature\|invalid' /tmp/feed.log \
+feed_update && ! grep -qi 'untrusted\|signature\|invalid' /tmp/feed.log \
 	&& ok "apk update: the feed's signature checks" || { bad "apk update"; cat /tmp/feed.log; }
 apk add tailbond >/tmp/feed.log 2>&1 && [ "$(ver)" = 99.2.0-r1 ] \
 	&& ok "apk add tailbond from the feed (packages.adb and the apk through http)" || { bad "install from feed"; cat /tmp/feed.log; }
 [ -f "$K" ] && ok "the package owns the key (a conffile); the key added first didn't clash" || bad "key gone after feed install"
 serve feed2
-apk update >/tmp/feed.log 2>&1 && apk add --upgrade tailbond >>/tmp/feed.log 2>&1 && [ "$(ver)" = 99.3.0-r1 ] \
+feed_update && apk add --upgrade tailbond >>/tmp/feed.log 2>&1 && [ "$(ver)" = 99.3.0-r1 ] \
 	&& ok "a new release: apk update + add --upgrade to 99.3.0-r1" || { bad "upgrade from feed"; cat /tmp/feed.log; }
 [ "$(uci -q get tailbond.main.keep_test)" = kept ] && [ -f "$K" ] && ok "settings and the key stay over the upgrade" || bad "upgrade lost settings or key"
 for v in tampered otherkey; do
@@ -549,15 +577,15 @@ for v in tampered otherkey; do
 	rejected 99.2.0-r1 && ok "feed-$v: refused (the last good index stays; opkg deleted its list)" || { bad "feed-$v accepted"; cat /tmp/feed.log /tmp/feed-add.log; }
 done
 serve feed2
-apk update >/tmp/feed.log 2>&1 && ! grep -qi 'untrusted\|signature\|invalid' /tmp/feed.log && [ "$(ver)" = 99.3.0-r1 ] \
+feed_update && ! grep -qi 'untrusted\|signature\|invalid' /tmp/feed.log && [ "$(ver)" = 99.3.0-r1 ] \
 	&& ok "the good feed checks again" || { bad "good feed after rejections"; cat /tmp/feed.log; }
 apk del tailbond >/tmp/feed.log 2>&1
 [ ! -e "$K" ] && ok "apk del tailbond removes its key (an unmodified conffile)" || { bad "key left after del"; cat /tmp/feed.log; }
 # no key by hand: the package installed by hand brings the key
 serve feed1
 apk add --allow-untrusted /t/feed1/feed/aarch64_cortex-a53/tailbond-99.2.0-r1.apk >/tmp/feed.log 2>&1 && sed -i 's/^tailbond[><=].*/tailbond/' /etc/apk/world && [ -f "$K" ] \
-	&& apk update >>/tmp/feed.log 2>&1 && serve feed2 \
-	&& apk update >>/tmp/feed.log 2>&1 && apk add --upgrade tailbond >>/tmp/feed.log 2>&1 && [ "$(ver)" = 99.3.0-r1 ] \
+	&& feed_update && serve feed2 \
+	&& feed_update && apk add --upgrade tailbond >>/tmp/feed.log 2>&1 && [ "$(ver)" = 99.3.0-r1 ] \
 	&& ok "after one install by hand, the feed checks with the package's key and upgrades it" || { bad "manual install then feed"; cat /tmp/feed.log; }
 apk del tailbond >/dev/null 2>&1
 kill $U2 2>/dev/null

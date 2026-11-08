@@ -29,7 +29,7 @@ func (a *Agent) hUpdateCheck(w http.ResponseWriter, r *http.Request) {
 
 func (a *Agent) hUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	switch m := a.method(); m {
-	case methodStatic, methodOpkg:
+	case methodStatic, methodOpkg, methodApk:
 	case methodDnf:
 		httpErr(w, http.StatusBadRequest, errors.New("this server updates with dnf: sudo dnf upgrade tailbond-server"))
 		return

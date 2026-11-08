@@ -563,7 +563,7 @@
         if (!st.update && !this.updX) return null; // an agent without updates
         var cur = u.current || (this.info && this.info.version) || st.version || "";
         var policy = u.policy || "notify", S = this.updState(u), off = S.off;
-        var selfUp = u.method === "opkg" || u.method === "static";
+        var selfUp = u.method === "opkg" || u.method === "apk" || u.method === "static";
         var busyState = S.busy;
         var win = (u.auto_window || "03:00-05:00").split("-");
         var chip = u.state === "rolled_back" ? ["warn", "Went back to " + (cur || "the previous version")]

@@ -44,6 +44,7 @@ const ExitRestart = 75
 const (
 	methodStatic = "static"
 	methodOpkg   = "opkg"
+	methodApk    = "apk" // OpenWrt 25.12+: apk (the Alpine package keeper) replaced opkg
 	methodDnf    = "dnf"
 	methodBrew   = "brew" // macOS, installed by the Homebrew formula: brew upgrades it
 	methodNone   = "none"
@@ -270,6 +271,9 @@ func (a *Agent) method() string {
 		if _, err := exec.LookPath("opkg"); err == nil {
 			return methodOpkg
 		}
+		if _, err := exec.LookPath("apk"); err == nil {
+			return methodApk
+		}
 	}
 	if goruntime.GOOS == "darwin" && brewInstalled() {
 		return methodBrew
@@ -323,7 +327,7 @@ func (a *Agent) serverAPIBase() string {
 	return "http://" + net.JoinHostPort(host, a.apiPort)
 }
 
-func installable(m string) bool { return m == methodStatic || m == methodOpkg }
+func installable(m string) bool { return m == methodStatic || m == methodOpkg || m == methodApk }
 
 // updateView is the status object (copied).
 func (a *Agent) updateView() *status.Update {
@@ -602,8 +606,8 @@ func (a *Agent) install(ctx context.Context, rel *update.Release, m string) erro
 	switch m {
 	case methodStatic:
 		return a.installStatic(ctx, rel)
-	case methodOpkg:
-		return a.installIPK(ctx, rel)
+	case methodOpkg, methodApk:
+		return a.installPkg(ctx, rel)
 	}
 	return fmt.Errorf("this install updates with %s", m)
 }
@@ -764,32 +768,49 @@ func opkgArchs() []string {
 	return names
 }
 
-// stableIPK is the release asset name of the ipk for an opkg architecture
-// that stays the same in every release (docs/glinet.md, Download):
-// tailbond-glinet-<arch>.ipk for GL.iNet's stock firmware (neon-vfpv4),
-// tailbond-openwrt-<arch>.ipk otherwise.
-func stableIPK(arch string) string {
-	if strings.HasSuffix(arch, "_neon-vfpv4") {
-		return "tailbond-glinet-" + arch + ".ipk"
+// apkArchs lists the package architectures, best first (OpenWrt 25.12+):
+// /etc/apk/arch's first line is the router's own, the widest ("all") last.
+func apkArchs() []string {
+	b, err := os.ReadFile("/etc/apk/arch")
+	if err != nil {
+		return nil
 	}
-	return "tailbond-openwrt-" + arch + ".ipk"
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if l = strings.TrimSpace(l); l != "" && l != "all" && l != "noarch" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
-// ipkFor picks the release's ipk for one of the archs (best first): the
-// stable name, else the versioned tailbond_<version>-r<N>_<arch>.ipk.
+// stablePkg is the release asset name of the package for an architecture
+// that stays the same in every release (docs/glinet.md, Download):
+// tailbond-glinet-<arch>.ipk for GL.iNet's stock firmware (neon-vfpv4,
+// opkg only), tailbond-openwrt-<arch>.ipk for OpenWrt's opkg, and
+// tailbond-openwrt-<arch>.apk for OpenWrt 25.12+ (apk).
+func stablePkg(arch, ext string) string {
+	if ext == "ipk" && strings.HasSuffix(arch, "_neon-vfpv4") {
+		return "tailbond-glinet-" + arch + ".ipk"
+	}
+	return "tailbond-openwrt-" + arch + "." + ext
+}
+
+// pkgFor picks the release's package for one of the archs (best first):
+// the stable name, else the versioned tailbond_<version>-r<N>_<arch>.<ext>.
 // local is the package cache's file name, always versioned: update-ipk
 // keeps the previous package beside it and reinstall reads the version
 // from it (the release has the same file under that name too).
-func ipkFor(rel *update.Release, archs []string) (art update.Asset, local string, ok bool) {
+func pkgFor(rel *update.Release, archs []string, ext string) (art update.Asset, local string, ok bool) {
 	for _, arch := range archs {
 		versioned, vok := rel.FindAsset(func(n string) bool {
-			return strings.HasPrefix(n, "tailbond_") && strings.HasSuffix(n, "_"+arch+".ipk")
+			return strings.HasPrefix(n, "tailbond_") && strings.HasSuffix(n, "_"+arch+"."+ext)
 		})
-		local = "tailbond_" + rel.Version + "-r1_" + arch + ".ipk"
+		local = "tailbond_" + rel.Version + "-r1_" + arch + "." + ext
 		if vok {
 			local = versioned.Name
 		}
-		if a, sok := rel.FindAsset(func(n string) bool { return n == stableIPK(arch) }); sok {
+		if a, sok := rel.FindAsset(func(n string) bool { return n == stablePkg(arch, ext) }); sok {
 			return a, local, true
 		}
 		if vok {
@@ -799,15 +820,26 @@ func ipkFor(rel *update.Release, archs []string) (art update.Asset, local string
 	return update.Asset{}, "", false
 }
 
-// installIPK: download the ipk (checked against SHA256SUMS) into the
-// package cache and run update-ipk detached (opkg install, health check,
-// the previous package back on failure).
-func (a *Agent) installIPK(ctx context.Context, rel *update.Release) error {
-	archs := opkgArchs()
-	if len(archs) == 0 && a.upd.method == methodOpkg { // tests: no opkg here
-		archs = []string{"aarch64_cortex-a53"}
+// installPkg: download the package (checked against SHA256SUMS) into the
+// package cache and run update-ipk detached (opkg install or apk add,
+// health check, the previous package back on failure).
+func (a *Agent) installPkg(ctx context.Context, rel *update.Release) error {
+	// the package format this router installs, and its architectures,
+	// best first: opkg's (.ipk, 23.05/24.10 and GL.iNet's stock firmware)
+	// or apk's (.apk, OpenWrt 25.12+)
+	ext, archs := "ipk", opkgArchs()
+	if len(archs) == 0 {
+		if as := apkArchs(); len(as) > 0 {
+			ext, archs = "apk", as
+		}
 	}
-	art, local, ok := ipkFor(rel, archs)
+	if len(archs) == 0 { // tests: no package manager here
+		archs = []string{"aarch64_cortex-a53"}
+		if a.upd.method == methodApk {
+			ext = "apk"
+		}
+	}
+	art, local, ok := pkgFor(rel, archs, ext)
 	if !ok {
 		return errors.New("the release has no package for this router's architecture")
 	}

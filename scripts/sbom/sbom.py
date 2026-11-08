@@ -388,9 +388,10 @@ def build(a):
                 continue
             dest = os.path.join(work, ids[n])
             if not extract(os.path.join(a.assets, n), dest):
-                if is_binary(os.path.join(a.assets, n)):
-                    dest = os.path.join(work, ids[n])
-                    os.makedirs(dest)
+                # an OpenWrt .apk (apkv3) is a binary container no extractor
+                # here reads: copied as is, its contents covered via the .ipk
+                if is_binary(os.path.join(a.assets, n)) or is_openwrt_apk(n):
+                    os.makedirs(dest, exist_ok=True)  # extract() may have made it before failing
                     shutil.copy(os.path.join(a.assets, n), dest)
                 else:
                     continue  # a text file (the Homebrew formula)
@@ -403,6 +404,10 @@ def build(a):
                 else:
                     print(f"::warning::{n}: no Gradle dependency graph given; its Maven dependencies are missing")
                     pkg["comment"] = "Maven dependencies not listed (no Gradle dependency graph)."
+            elif is_openwrt_apk(n):
+                # apkv3 isn't extracted: the .ipk in the same release carries
+                # the same files, and check() skips them for this one
+                pkg["comment"] = "OpenWrt 25.12+ package (apkv3; contents not extracted -- the .ipk carries the same files)."
             notes = []
             bins = mqvpn_binaries(dest)
             if bins:
@@ -589,7 +594,9 @@ def check(a):
             errs.append(f"{n}: SHA256 {got} is not {want}")
         sid = copy_of.get(p["SPDXID"], p["SPDXID"])
         inside = {c.get("name"): c for c in contains.get(sid, [])}
-        if re.search(r"(\.ipk|\.rpm|\.apk|^tailbond-(linux|macos)-.*\.tar\.gz)$", n):
+        # an OpenWrt .apk (apkv3) isn't extracted: its mqvpn, Go modules and
+        # the Android APK inside are the .ipk's, which the checks below cover
+        if re.search(r"(\.ipk|\.rpm|\.apk|^tailbond-(linux|macos)-.*\.tar\.gz)$", n) and not is_openwrt_apk(n):
             for lib in MQVPN_LIBS:
                 c = inside.get(lib)
                 if not c or c.get("versionInfo", "NOASSERTION") in ("", "NOASSERTION") or not purl_of(c):
@@ -601,7 +608,7 @@ def check(a):
         if re.search(r"^tailbondd-.*\.tar\.gz$|^tailbond-(linux|macos)-.*\.tar\.gz$|\.ipk$|\.rpm$", n):
             if not any(purl_of(c).startswith("pkg:golang/") for c in inside.values()):
                 errs.append(f"{n}: no Go modules (tailbondd)")
-        if n.endswith(".apk") and a.require_android_deps:
+        if n.endswith(".apk") and not is_openwrt_apk(n) and a.require_android_deps:
             if sum(purl_of(c).startswith("pkg:maven/") for c in inside.values()) < 10:
                 errs.append(f"{n}: fewer than 10 Maven dependencies (the Gradle dependency graph)")
         mq = inside.get("mqvpn")

@@ -1387,6 +1387,11 @@ jobs:
       - uses: actions/download-artifact@v8
         if: env.IS_TAG != 'true'
         with:
+          name: openwrt-apk
+          path: dist/openwrt-apk/
+      - uses: actions/download-artifact@v8
+        if: env.IS_TAG != 'true'
+        with:
           name: fedora-rpm
           path: dist/fedora-rpm/
       - uses: actions/download-artifact@v8
