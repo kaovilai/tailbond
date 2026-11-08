@@ -84,7 +84,9 @@ jobs:
             # Same classifier as ci.yml's changes job: per-file loop (no
             # grep -q SIGPIPE under pipefail), markdown/text anywhere in the
             # tree, CMakeLists.txt is a build input, --no-renames so a move
-            # out of the code tree still shows the deletion.
+            # out of the code tree still shows the deletion. An empty diff
+            # (nothing changed since the last tag) cuts no release either.
+            [ -n "$changed" ] || { echo "nothing changed since $last: no release"; echo "skip=1" >> "$GITHUB_OUTPUT"; }
             if [ -n "$changed" ]; then
               docs_only=true
               while IFS= read -r f; do

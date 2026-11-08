@@ -65,6 +65,10 @@ jobs:
                 # A per-file loop, not a grep pipeline: grep -q exits early,
                 # printf takes SIGPIPE under pipefail, and the inverted
                 # failure would read a code change as docs-only.
+                # An empty diff (an empty commit) changed nothing: there is
+                # nothing to build either -- seen live as a PR whose branch
+                # pointed at main's tree, running the whole matrix.
+                [ -n "$files" ] || code=false
                 if [ -n "$files" ]; then
                   code=false
                   while IFS= read -r f; do
