@@ -68,48 +68,62 @@ trimmings. There is no clean seam that leaves the crown jewel.
 
 ## The architecture that would work
 
-Same topology as the parent note — one network namespace per WAN, veths back
-to the single mqvpn — with the N daemons replaced by one process:
+Not the parent note's topology: one process means one namespace, so the
+per-WAN namespaces, their veths and the SNAT hop are gone. Everything —
+mqvpn, the engines, every tun, every WAN interface — lives in the main
+namespace, and the per-WAN separation moves from namespaces to per-socket
+steering:
 
 ```
- main namespace                                  per-WAN namespace N
- ┌───────────────────────────────┐              ┌────────────────────────────┐
- │ mqvpn  --path tbv0 --path tbv1│  veth pair   │  (created by minitsd)      │
- │  socket bound to tbvN         │ tbvN ────────│ tailscale0 = 100.x/32      │
- └───────────────┬───────────────┘ 10.99.N.1/.2 │ SNAT veth -> 100.x on tun  │
-                 │                              └─────────────┬──────────────┘
- ┌───────────────┴──────────────────────────┐                 │ hole punch / DERP
- │ minitsd (one process, one Go runtime)    │           WAN N │
- │  engine 0..N-1: controlclient + magicsock│                 ▼
- │   + wgengine + tstun  (per WAN)          │   server: one tailscaled + mqvpn
- │  per-engine socket steering (see below)  │           on 0.0.0.0:443
- └──────────────────────────────────────────┘
+ main namespace (one process, every WAN an interface here)
+ ┌────────────────────────────────────────────────────┐
+ │ mqvpn  --path tailscale0 --path tailscale1 ...     │
+ │   one socket per path, bound to that engine's tun; │
+ │   source address = that engine's 100.x             │
+ │ minitsd (one process, one Go runtime)              │
+ │   engine 0..N-1: controlclient + magicsock         │
+ │     + wgengine + tstun                             │
+ │   tailscaleN = 100.x/32, one tun per engine        │
+ │   per-engine socket steering (below)               │
+ └──────────┬──────────────────────┬──────────────────┘
+       WAN 0│                WAN 1 │
+            ▼                      ▼
+         eth0                    wlan0      hole punch / DERP / control,
+                                                one engine's traffic per WAN
+                          server: one tailscaled + mqvpn on 0.0.0.0:443
 ```
+
+Per path: mqvpn's socket binds the engine's tun (the parent note measured
+that a socket bound to `tailscale0` takes that instance's `100.x` source
+and passes the `SO_BINDTODEVICE` pin and FIB-match gate); a metric route
+per tun (`ip route add 100.y/32 dev tailscaleN metric N`) satisfies the
+FIB match.
 
 The hard part is not the engines, it is **steering each engine's sockets
-out the right WAN**. Go creates sockets on arbitrary threads, and a Go
-control hook (`net.Dialer.Control`) runs *after* socket creation, so a
-namespace cannot be chosen there — sockets belong to the namespace they
-were created in. `tailscaled` itself does not setns at all: verified at
-v1.104.5, `tailscale.com/net/netns`'s Linux control functions set
-`SO_MARK` (or `SO_BINDTODEVICE`) — `setsockopt` calls, valid at that
-point. A deconstruction gives each engine its own control function and
-routes accordingly:
+out the right WAN** — the WireGuard UDP, STUN, control and DERP
+connections each engine makes. Go creates sockets on arbitrary threads,
+and a Go control hook (`net.Dialer.Control`) runs *after* socket
+creation, so a namespace cannot be chosen there — sockets belong to the
+namespace they were created in. `tailscaled` itself does not setns at
+all: verified at v1.104.5, `tailscale.com/net/netns`'s Linux control
+functions set `SO_MARK` (or `SO_BINDTODEVICE`) — `setsockopt` calls,
+valid at that point. A deconstruction gives each engine its own control
+function:
 
 - **Per-engine `SO_BINDTODEVICE`** to WAN N's interface: the same knob
-  mqvpn uses for its paths; no mark space to collide in, but every WAN
-  must be an interface in the main namespace.
+  mqvpn uses for its paths; no mark space to collide in. A down WAN
+  fails its engine's sockets outright instead of leaking onto another
+  uplink — the property the parent note built blackhole defaults for.
 - **Per-engine `SO_MARK` + policy routing**: the marks must not collide
   with tailbond's own fwmark-keyed per-WAN tables
-  (`packaging/openwrt/hooks/bypass-apply`); reserve a range.
+  (`packaging/openwrt/hooks/bypass-apply`); reserve a range, and keep
+  the parent note's blackhole-default per-WAN tables: a table that
+  loses its default must drop, not leak (two paths on one uplink,
+  silently).
 
 Both keep all engines in one namespace; the parent note's per-WAN
 namespace isolation is *not* available to a single process, which is
 itself a reason to stay with separate stock daemons.
-
-Either way the parent note's blackhole-default per-WAN tables stay: a table
-that loses its default must drop, not leak onto another WAN (two paths on one
-uplink, silently).
 
 ## The maintenance treadmill (what "we have CI" has to carry)
 
@@ -127,7 +141,7 @@ forever" is not available.
 - **The harness**: a local [headscale](https://github.com/juanfont/headscale)
   control server inside the CI job (the same double this note's numbers were
   measured against): `minitsd` joins, gets its `100.x`, punches to a peer
-  across namespaces. `scripts/e2e-cgnat-relay.sh` models an inbound-filtering
+  across the harness's fake WANs. `scripts/e2e-cgnat-relay.sh` models an inbound-filtering
   carrier (MASQUERADE plus drop-unsolicited), not endpoint-dependent
   mapping — plain MASQUERADE preserves the source port across
   destinations, so it is not a symmetric NAT. Punch assertions under
