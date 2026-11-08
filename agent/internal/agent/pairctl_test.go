@@ -39,7 +39,7 @@ type fakeCtl struct {
 
 func newFakeCtl(t *testing.T) *fakeCtl {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func newFakeCtl(t *testing.T) *fakeCtl {
 func (f *fakeCtl) startAfter(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
-		ln, err := net.Listen("tcp", f.addr)
+		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", f.addr)
 		if err != nil {
 			return
 		}
@@ -367,6 +367,39 @@ func TestRemoveClientCanceledCallerStillRevokes(t *testing.T) {
 		t.Fatalf("removeClient with a canceled caller: %v", err)
 	}
 	cmds := f.commands()
+	if len(cmds) != 2 || cmds[0] != "add_user" || cmds[1] != "remove_user" {
+		t.Fatalf("control API saw %v, want add_user then remove_user", cmds)
+	}
+	if got := srv.store.Get().Server.Users; len(got) != 0 {
+		t.Fatalf("store users %+v", got)
+	}
+}
+
+// A success that arrives after the caller gave up must not bypass the
+// abandonment cleanup: mqctl uses the context only for dialing, so AddUser
+// can return nil for a caller that is long gone, and a credential nobody
+// will ever see would block the name.
+func TestPairingCancelAfterSuccessCleansRegistration(t *testing.T) {
+	f := newFakeCtl(t)
+	f.delayFirst = 600 * time.Millisecond // answers ok, after the caller gave up
+	f.startAfter(0)
+	f.waitBound(t)
+	srv := pairServerCtl(t, f.addr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := srv.addClient(ctx, "pixel")
+	if err == nil || !strings.Contains(err.Error(), "abandoned") {
+		t.Fatalf("addClient: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var cmds []string
+	for time.Now().Before(deadline) {
+		if cmds = f.commands(); len(cmds) >= 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if len(cmds) != 2 || cmds[0] != "add_user" || cmds[1] != "remove_user" {
 		t.Fatalf("control API saw %v, want add_user then remove_user", cmds)
 	}

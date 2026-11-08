@@ -605,48 +605,48 @@ func (a *Agent) addClientNode(ctx context.Context, name, nodeID string) (*pairRe
 	}); err != nil {
 		return nil, err
 	}
-	if err := a.addUserToMqvpn(ctx, name, key); err != nil {
-		var apiErr *mqctl.APIError
-		switch {
-		case ctx.Err() != nil:
-			// The caller is gone (request canceled, phone gave up): the
-			// URI would never be delivered, so free the name instead of
-			// leaving a credential nothing can authenticate with. First
-			// case: a cancel that coincides with another failure is still
-			// a cancel.
-			a.Logf("add_user %s: caller gone during the retry (%v)", name, ctx.Err())
-			rolled := a.rollbackClient(name, key)
-			// ctx.Err() alone does not prove the request was never sent:
-			// mqctl uses the context only for dialing, and an answer lost
-			// after mqvpn served the add leaves a live registration for a
-			// credential nobody holds. Take the key back out unless a
-			// replacement owns the name now. WithoutCancel: the cleanup
-			// must not die with the caller it is cleaning up after.
-			if !storeHasName(a.store.Get(), name) {
-				if rerr := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); rerr != nil && !errors.Is(rerr, mqctl.ErrUnavailable) {
-					a.Logf("remove_user %s (caller gone): %v", name, rerr)
-				}
+	err = a.addUserToMqvpn(ctx, name, key)
+	var apiErr *mqctl.APIError
+	switch {
+	case ctx.Err() != nil:
+		// The caller is gone (request canceled, phone gave up): the URI
+		// would never be delivered, so free the name instead of leaving a
+		// credential nothing can authenticate with. First case: a cancel
+		// that coincides with any other outcome -- failure, an unanswered
+		// call, or even a success that arrived too late -- is still a
+		// cancel.
+		a.Logf("add_user %s: caller gone during the retry (%v)", name, ctx.Err())
+		rolled := a.rollbackClient(name, key)
+		// ctx.Err() alone does not prove the request was never sent:
+		// mqctl uses the context only for dialing, and an answer lost
+		// after mqvpn served the add leaves a live registration for a
+		// credential nobody holds. Take the key back out unless a
+		// replacement owns the name now. WithoutCancel: the cleanup
+		// must not die with the caller it is cleaning up after.
+		if !storeHasName(a.store.Get(), name) {
+			if rerr := a.ctl.RemoveUser(context.WithoutCancel(ctx), name); rerr != nil && !errors.Is(rerr, mqctl.ErrUnavailable) {
+				a.Logf("remove_user %s (caller gone): %v", name, rerr)
 			}
-			return nil, fmt.Errorf("pairing for client %q was abandoned: %w%s", name, ctx.Err(), rolled)
-		case errors.Is(err, mqctl.ErrUnavailable):
-			// mqvpn is down or predates the control API: the config render
-			// carries the user when it (re)starts, and the tunnel port is
-			// down with it, so nothing connects in the meantime. Say so.
-			a.Logf("add_user %s: mqvpn control API unavailable; client takes effect when mqvpn (re)starts", name)
-		case errors.As(err, &apiErr):
-			// mqvpn heard us and refused: the URI would never authenticate.
-			// Roll the entry back rather than hand it out (and block the
-			// name).
-			a.Logf("add_user %s: %v", name, err)
-			return nil, fmt.Errorf("mqvpn did not accept client %q: %v%s", name, err, a.rollbackClient(name, key))
-		default:
-			// A transport failure the control API never answered: mqvpn may
-			// have registered the user, so keep the credential rather than
-			// delete a possibly-working one. If it didn't, removing the
-			// client and pairing again fixes it.
-			a.Logf("add_user %s: control API answered unclearly (%v); keeping the client", name, err)
 		}
-	} else {
+		return nil, fmt.Errorf("pairing for client %q was abandoned: %w%s", name, ctx.Err(), rolled)
+	case err != nil && errors.Is(err, mqctl.ErrUnavailable):
+		// mqvpn is down or predates the control API: the config render
+		// carries the user when it (re)starts, and the tunnel port is
+		// down with it, so nothing connects in the meantime. Say so.
+		a.Logf("add_user %s: mqvpn control API unavailable; client takes effect when mqvpn (re)starts", name)
+	case err != nil && errors.As(err, &apiErr):
+		// mqvpn heard us and refused: the URI would never authenticate.
+		// Roll the entry back rather than hand it out (and block the
+		// name).
+		a.Logf("add_user %s: %v", name, err)
+		return nil, fmt.Errorf("mqvpn did not accept client %q: %v%s", name, err, a.rollbackClient(name, key))
+	case err != nil:
+		// A transport failure the control API never answered: mqvpn may
+		// have registered the user, so keep the credential rather than
+		// delete a possibly-working one. If it didn't, removing the
+		// client and pairing again fixes it.
+		a.Logf("add_user %s: control API answered unclearly (%v); keeping the client", name, err)
+	default:
 		a.Logf("client %s added", name)
 	}
 	// A delete may have landed while the retry waited for the control
