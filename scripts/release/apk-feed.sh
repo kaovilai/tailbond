@@ -111,7 +111,7 @@ for p in d.get("paths", []):
     if p.get("name") == "etc/apk/keys":
         for f in p.get("files", []):
             print(f.get("hash", ""))
-' | grep -x "$want" | head -1)"
+' | { grep -x "$want" || true; } | head -1)"
             [ "$got" = "$want" ] ||
                 die "$b does not ship the feed public key (hash $want): commit the key that matches secret TB_APK_SIGNING_KEY (scripts/release/gen-apk-key.sh) and rebuild, or routers that install it cannot check the feed"
         done

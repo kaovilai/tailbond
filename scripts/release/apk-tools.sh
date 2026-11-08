@@ -15,8 +15,10 @@
 # pinned image's version writes what OpenWrt 25.12's apk (3.0.5) installs,
 # which scripts/test-openwrt-apk.sh verifies against the real rootfs.
 #
-# Env: APK_IMAGE (default docker.io/library/alpine:3.23, whose apk-tools is
-# 3.0.x; bump the pin with the format), PODMAN (CI: "sudo podman").
+# Env: APK_IMAGE (default docker.io/library/alpine:3.23@sha256:..., the
+# manifest-list digest pinning that tag: a moved tag would change the code
+# that sees a signing key, and the apk format it writes; APK_IMAGE is also
+# the override to try a newer apk-tools), PODMAN (CI: "sudo podman").
 set -euo pipefail
 
 die() { echo "apk-tools: $*" >&2; exit 2; }
@@ -26,8 +28,10 @@ shift
 [ -d "$DIR" ] || die "$DIR is not a directory"
 DIR="$(cd "$DIR" && pwd)"
 
-IMAGE="${APK_IMAGE:-docker.io/library/alpine:3.23}"
+IMAGE="${APK_IMAGE:-docker.io/library/alpine:3.23@sha256:f3d55900449227ae9e237ede521e7b665d53a253b42065ba90b9db9275e198ad}"
 read -ra podman <<<"${PODMAN:-podman}"
 command -v "${podman[0]}" >/dev/null || die "${podman[0]} not found"
 
-"${podman[@]}" run --rm --log-level error -v "$DIR:/w:z" -w /w "$IMAGE" apk "$@"
+# --network none: mkpkg/mkndx/adbdump need no network, and the container
+# sometimes handles a signing key
+"${podman[@]}" run --rm --log-level error --network none -v "$DIR:/w:z" -w /w "$IMAGE" apk "$@"

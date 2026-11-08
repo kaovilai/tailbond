@@ -74,7 +74,7 @@ if [ -w /sys/fs/cgroup/cgroup.procs ]; then { echo $$ >/sys/fs/cgroup/cgroup.pro
 FROM="$("$CACHE" installed-version)"
 VERSION="$("$CACHE" ipk-version "$NEW")"
 case "$(basename "$NEW")" in
-tailbond_*.apk) [ -n "$VERSION" ] || { echo "$NEW: not a tailbond apk name" >&2; exit 2; } ;;
+tailbond_*.apk) [ -n "$VERSION" ] || { result failed "$VERSION" "$FROM" "not a tailbond package: $(basename "$NEW")"; exit 1; } ;;
 *)
 	pkgname="$(tar -xzOf "$NEW" ./control.tar.gz 2>/dev/null | tar -xzOf - ./control 2>/dev/null | sed -n 's/^Package: *//p')"
 	if [ "$pkgname" != tailbond ] || [ -z "$VERSION" ]; then

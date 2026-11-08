@@ -409,6 +409,12 @@ uclient-fetch -q -O - http://127.0.0.1:8077/api/status | jsonfilter -e '@.role' 
 /usr/lib/tailbond/update-ipk $V99 "" || true
 [ "$(res result)" = failed ] && res detail | grep -q 'already the installed' && [ "$(ver)" = 99.0.0-r1 ] \
 	&& ok "the same version again is refused, not reported as done: $(res detail)" || { bad "same-version update"; cat $R /tmp/tailbond-update.log; }
+# a file that isn't a tailbond apk: reported as a failed update, not just
+# stderr (the agent runs update-ipk detached; the panel reads the result)
+cp $V99 /tmp/badname.apk
+/usr/lib/tailbond/update-ipk /tmp/badname.apk "" || true
+[ "$(res result)" = failed ] && res detail | grep -q 'not a tailbond package' \
+	&& ok "a wrongly-named apk reports a failed update: $(res detail)" || { bad "bad name"; cat $R; }
 # nothing was seeded (the agent rebuilds .ipk only), so the cached current
 # is the rollback copy from the second update on: a broken one rolls back
 # onto it without an explicit PREV
