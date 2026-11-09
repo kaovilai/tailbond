@@ -65,12 +65,15 @@ updates:
   # refuses an unpatched mqvpn by design, so the PR can only be red (PR
   # #58: 0001-client-control-api.patch, 1 of 14 hunks). Bump it by hand
   # with the patch rebased and the e2e green. A future submodule without
-  # vendored patches can drop the exclude-paths.
+  # vendored patches can drop the ignore. Note: ignore, not exclude-paths
+  # -- the git-submodule fetcher parses .gitmodules directly and never
+  # consults the path exclusions; a submodule's dependency name is its
+  # path (dependabot-core git_submodules/file_parser.rb: name = path).
   - package-ecosystem: gitsubmodule
     directory: /
     patterns: ["*"]
-    exclude-paths:
-      - third_party/
+    ignore:
+      - dependency-name: "third_party/mqvpn"
     multi-ecosystem-group: all-dependencies
 
   # Add once ios/ is on main (the iPhone share app's Swift package):
