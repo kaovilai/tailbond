@@ -34,6 +34,16 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     patterns: ["*"]
+    # Never scan the compiled gh-aw files: their `uses:` pins are owned by
+    # .github/aw/actions-lock.json (gh-aw-actions) and the pinned gh-aw
+    # compiler (actions/checkout & friends in the scaffolding). Dependabot
+    # editing compiled output is stale by construction -- the lock check
+    # recompiles and reverts it, so the PR can only be red (PR #58). The
+    # upgrade path for these pins is `gh aw upgrade` + recompile, not
+    # dependabot. Hand-written workflows still get their bumps.
+    exclude-paths:
+      - .github/workflows/*.lock.yml
+      - .github/workflows/agentics-maintenance.yml
     multi-ecosystem-group: all-dependencies
     groups:
       actions-security:
@@ -50,11 +60,17 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
 
-  # mqvpn (data plane). A bump can break patches/mqvpn/*.patch or the
-  # Android SDK fork in android/mqvpn-sdk; CI's e2e and Android jobs catch it.
+  # mqvpn (data plane) is NOT auto-bumped: it sits under vendored patches
+  # (patches/mqvpn/*.patch), and a pointer bump rejects them -- the build
+  # refuses an unpatched mqvpn by design, so the PR can only be red (PR
+  # #58: 0001-client-control-api.patch, 1 of 14 hunks). Bump it by hand
+  # with the patch rebased and the e2e green. A future submodule without
+  # vendored patches can drop the exclude-paths.
   - package-ecosystem: gitsubmodule
     directory: /
     patterns: ["*"]
+    exclude-paths:
+      - third_party/
     multi-ecosystem-group: all-dependencies
 
   # Add once ios/ is on main (the iPhone share app's Swift package):
