@@ -141,7 +141,7 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
 
     // Compose
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
@@ -165,8 +165,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // screen renders: Robolectric (native graphics) + Roborazzi
     testImplementation("org.robolectric:robolectric:4.17")
-    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.77.0")
-    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.77.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.79.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.79.0")
     testImplementation(platform("androidx.compose:compose-bom:2026.09.00"))
     testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("androidx.test.ext:junit:1.3.0")
