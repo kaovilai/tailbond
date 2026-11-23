@@ -144,7 +144,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
 
     // Compose
-    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation(platform("androidx.compose:compose-bom:2026.11.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
@@ -153,9 +153,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
 
     // QR scanning: CameraX preview + ZXing decode (no Google Play services)
-    implementation("androidx.camera:camera-camera2:1.6.2")
-    implementation("androidx.camera:camera-lifecycle:1.6.2")
-    implementation("androidx.camera:camera-view:1.6.2")
+    implementation("androidx.camera:camera-camera2:1.7.0")
+    implementation("androidx.camera:camera-lifecycle:1.7.0")
+    implementation("androidx.camera:camera-view:1.7.0")
     implementation("com.google.zxing:core:3.5.4")
 
     // "One click from your Mac": Shizuku starts the hotspot (ble/HotspotShell.kt)
@@ -164,10 +164,10 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     // screen renders: Robolectric (native graphics) + Roborazzi
-    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("org.robolectric:robolectric:4.18.1")
     testImplementation("io.github.takahirom.roborazzi:roborazzi:1.79.0")
     testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.79.0")
-    testImplementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    testImplementation(platform("androidx.compose:compose-bom:2026.11.01"))
     testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("androidx.test.ext:junit:1.3.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
